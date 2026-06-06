@@ -1,0 +1,112 @@
+name: release
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+  DOCKERHUB_IMAGE_NAME: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Validate example config
+        env:
+          RABBITMQ_URL: amqp://guest:guest@localhost:5672/
+          PADDLE_WEBHOOK_SECRET: ci-secret
+          GITHUB_WEBHOOK_SECRET: ci-secret
+        run: go run ./cmd/hookway validate --config examples/config.yaml
+
+      - name: Unit tests
+        run: make test
+
+      - name: Race tests
+        run: make test-race
+
+      - name: RabbitMQ integration tests
+        run: make integration-test
+
+      - name: Vet
+        run: make lint
+
+      - name: Docker build
+        run: make docker-build
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: hookway:local
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Upload vulnerability scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          if-no-files-found: error
+
+      - name: Check Docker Hub publishing config
+        if: github.event_name != 'pull_request'
+        run: |
+          test -n "$DOCKERHUB_USERNAME" || (echo "Missing GitHub Actions secret DOCKERHUB_USERNAME" && exit 1)
+          test -n "$DOCKERHUB_NAMESPACE" || (echo "Missing GitHub Actions secret DOCKERHUB_NAMESPACE" && exit 1)
+          test -n "$DOCKERHUB_IMAGE_NAME" || (echo "Missing GitHub Actions secret DOCKERHUB_IMAGE_NAME" && exit 1)
+          test -n "$DOCKERHUB_TOKEN" || (echo "Missing GitHub Actions secret DOCKERHUB_TOKEN" && exit 1)
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata
+        if: github.event_name != 'pull_request'
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{raw}}
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+
+      - name: Update Docker Hub description
+        if: github.event_name != 'pull_request'
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
+          readme-filepath: ./docs/dockerhub/README.md
+          short-description: ${{ github.event.repository.description }}
