@@ -1,0 +1,92 @@
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  max_body_bytes: 1048576
+
+security:
+  trusted_proxy_headers: false
+  request_id_header: "X-Request-ID"
+  redacted_header_denylist:
+    - "Authorization"
+    - "Cookie"
+    - "Paddle-Signature"
+    - "X-Hub-Signature-256"
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 120
+  burst: 20
+  key_by: "ip"
+
+metrics:
+  enabled: true
+  path: "/metrics"
+
+message_queue:
+  type: "rabbitmq"
+  rabbitmq:
+    url: "${RABBITMQ_URL}"
+    exchange: "hookway.webhooks"
+    exchange_type: "direct"
+    durable: true
+    publish_timeout: "5s"
+    declare_queues: true
+    dead_letter:
+      enabled: true
+      exchange: "hookway.webhooks.dlx"
+      exchange_type: "direct"
+      queue: "hookway.webhooks.dlq"
+      routing_key: "webhooks.dead"
+      durable: true
+      create_queue: true
+
+endpoints:
+  paddle_billing:
+    enabled: true
+    path: "/webhooks/paddle/billing"
+    queue: "billing-events"
+    create_queue: true
+    max_body_bytes: 2097152
+    rate_limit:
+      enabled: true
+      requests_per_minute: 60
+      burst: 10
+      key_by: "ip"
+    replay_protection:
+      enabled: true
+      ttl: "10m"
+      max_entries: 50000
+    ip_allowlist:
+      - "203.0.113.10"
+      - "198.51.100.0/24"
+    auth:
+      type: "hmac_sha256"
+      secret: "${PADDLE_WEBHOOK_SECRET}"
+      signature_header: "Paddle-Signature"
+      timestamp_tolerance: "5m"
+
+  github_events:
+    enabled: true
+    path: "/webhooks/github/events"
+    queue: "github-events"
+    create_queue: true
+    max_body_bytes: 1048576
+    rate_limit:
+      enabled: false
+    replay_protection:
+      enabled: true
+      ttl: "5m"
+      max_entries: 25000
+    ip_allowlist:
+      - "192.30.252.0/22"
+      - "185.199.108.0/22"
+      - "140.82.112.0/20"
+      - "143.55.64.0/20"
+    auth:
+      type: "hmac_sha256"
+      secret: "${GITHUB_WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"
+      timestamp_tolerance: "5m"
