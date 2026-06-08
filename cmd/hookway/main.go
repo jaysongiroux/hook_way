@@ -22,6 +22,7 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
+// run dispatches subcommands and returns a process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "validate" {
 		return runValidate(args[1:], stdout, stderr)
@@ -32,6 +33,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return runServe(args, stdout, stderr)
 }
 
+// runValidate checks config syntax and semantic validation without opening network connections.
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -52,6 +54,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// runHealthcheck returns success when the target endpoint responds with any 2xx status.
 func runHealthcheck(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -75,6 +78,7 @@ func runHealthcheck(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// runServe loads config, connects the message queue publisher, and serves until shutdown.
 func runServe(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("hookway", flag.ContinueOnError)
 	flags.SetOutput(stderr)

@@ -18,11 +18,16 @@ type HMACSHA256Verifier struct {
 	tolerance time.Duration
 }
 
+// NewHMACSHA256Verifier builds a verifier for timestamped HMAC-SHA256 headers.
 func NewHMACSHA256Verifier(secret string, tolerance time.Duration) HMACSHA256Verifier {
 	return HMACSHA256Verifier{secret: secret, tolerance: tolerance}
 }
 
+// Verify checks a header shaped like `ts=<unix>;h1=<hex_hmac>` against the exact raw body bytes.
 func (v HMACSHA256Verifier) Verify(header string, rawBody []byte, now time.Time) error {
+	if v.secret == "" || v.tolerance <= 0 {
+		return ErrUnauthorized
+	}
 	ts, signature, err := parseSignature(header)
 	if err != nil {
 		return ErrUnauthorized
@@ -37,6 +42,9 @@ func (v HMACSHA256Verifier) Verify(header string, rawBody []byte, now time.Time)
 	expected := mac.Sum(nil)
 	got, err := hex.DecodeString(signature)
 	if err != nil {
+		return ErrUnauthorized
+	}
+	if len(got) != sha256.Size {
 		return ErrUnauthorized
 	}
 	if !hmac.Equal(expected, got) {
@@ -55,6 +63,9 @@ func parseSignature(header string) (int64, string, error) {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok || key == "" || value == "" {
 			return 0, "", errors.New("malformed signature")
+		}
+		if _, exists := values[key]; exists {
+			return 0, "", errors.New("duplicate signature key")
 		}
 		values[key] = value
 	}

@@ -86,6 +86,7 @@ On non-PR runs, the release workflow publishes the Docker image to Docker Hub. I
 
 See:
 
+- [CLI](docs/cli.md)
 - [Configuration](docs/configuration.md)
 - [Security](docs/security.md)
 - [Local Development](docs/local-development.md)

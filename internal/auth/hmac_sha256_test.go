@@ -29,7 +29,10 @@ func TestHMACSHA256VerifierRejectsInvalidInputs(t *testing.T) {
 		"malformed":      "bad",
 		"missing ts":     "h1=abc",
 		"missing h1":     "ts=1710000000",
+		"duplicate ts":   fmt.Sprintf("ts=%d;ts=%d;h1=%s", now.Unix(), now.Add(time.Second).Unix(), valid[len("ts=1710000000;h1="):]),
+		"duplicate h1":   valid + ";h1=" + valid[len("ts=1710000000;h1="):],
 		"invalid hmac":   valid[:len(valid)-1] + "0",
+		"short hmac":     "ts=1710000000;h1=abcd",
 		"expired":        signHeader("secret", now.Add(-10*time.Minute), body, "ts-first"),
 		"future":         signHeader("secret", now.Add(10*time.Minute), body, "ts-first"),
 	}
@@ -40,6 +43,19 @@ func TestHMACSHA256VerifierRejectsInvalidInputs(t *testing.T) {
 				t.Fatal("expected verification error")
 			}
 		})
+	}
+}
+
+func TestHMACSHA256VerifierRejectsUnsafeConfiguration(t *testing.T) {
+	body := []byte(`{"hello":"world"}`)
+	now := time.Unix(1710000000, 0)
+	header := signHeader("", now, body, "ts-first")
+
+	if err := NewHMACSHA256Verifier("", 5*time.Minute).Verify(header, body, now); err == nil {
+		t.Fatal("expected empty secret to fail closed")
+	}
+	if err := NewHMACSHA256Verifier("secret", 0).Verify(signHeader("secret", now, body, "ts-first"), body, now); err == nil {
+		t.Fatal("expected non-positive tolerance to fail closed")
 	}
 }
 

@@ -29,3 +29,19 @@ func TestLimiterSeparatesKeysAndDisabledNoops(t *testing.T) {
 		}
 	}
 }
+
+func TestLimiterEvictsIdleKeys(t *testing.T) {
+	limiter := New(true, 60, 1)
+	now := time.Unix(0, 0)
+	for _, key := range []string{"a", "b", "c"} {
+		if !limiter.Allow(key, now) {
+			t.Fatalf("expected first request for %s to pass", key)
+		}
+	}
+
+	limiter.Sweep(now.Add(11 * time.Minute))
+
+	if got := limiter.Len(); got != 0 {
+		t.Fatalf("bucket count = %d, want 0 after idle sweep", got)
+	}
+}
