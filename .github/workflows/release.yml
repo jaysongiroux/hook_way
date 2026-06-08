@@ -108,5 +108,5 @@ jobs:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
-          readme-filepath: ./README.md
+          readme-filepath: ./docs/dockerhub/README.md
           short-description: ${{ github.event.repository.description }}
