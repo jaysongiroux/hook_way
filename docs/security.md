@@ -22,6 +22,7 @@ Put secrets in environment variables and reference them from YAML with `${ENV_NA
 - Server timeouts are configured from YAML.
 - Shutdown handles `SIGINT` and `SIGTERM`.
 - `/healthz` reports process liveness for container healthchecks.
+- `/ready` reports message-queue readiness.
 - `/readyz` reports message-queue readiness.
 - `/health` reports the same readiness state as `/readyz`.
 

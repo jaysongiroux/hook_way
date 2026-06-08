@@ -77,7 +77,7 @@ func TestHealthEndpointUsesReadinessButPublicErrorIsGeneric(t *testing.T) {
 	var logs bytes.Buffer
 	pub := &fakePublisher{readyErr: errors.New("rabbitmq dial tcp secret-url failed")}
 	srv := NewServer(testConfig(), pub, slog.New(slog.NewJSONHandler(&logs, nil)))
-	for _, path := range []string{"/health", "/readyz"} {
+	for _, path := range []string{"/health", "/ready", "/readyz"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
@@ -223,7 +223,7 @@ func TestHealthReadyAndDisabledMetrics(t *testing.T) {
 	cfg := testConfig()
 	cfg.Metrics.Enabled = false
 	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
-	for path, want := range map[string]int{"/health": 200, "/healthz": 200, "/readyz": 200, "/metrics": 404} {
+	for path, want := range map[string]int{"/health": 200, "/healthz": 200, "/ready": 200, "/readyz": 200, "/metrics": 404} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)

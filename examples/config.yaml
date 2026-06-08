@@ -46,47 +46,21 @@ message_queue:
 endpoints:
   paddle_billing:
     enabled: true
-    path: "/webhooks/paddle/billing"
-    queue: "billing-events"
+    path: "/webhooks/paddle"
+    queue: "paddle-webhooks"
     create_queue: true
     max_body_bytes: 2097152
     rate_limit:
       enabled: true
-      requests_per_minute: 60
-      burst: 10
+      requests_per_minute: 500
+      burst: 1000
       key_by: "ip"
     replay_protection:
       enabled: true
       ttl: "10m"
       max_entries: 50000
-    ip_allowlist:
-      - "203.0.113.10"
-      - "198.51.100.0/24"
     auth:
       type: "hmac_sha256"
       secret: "${PADDLE_WEBHOOK_SECRET}"
       signature_header: "Paddle-Signature"
-      timestamp_tolerance: "5m"
-
-  github_events:
-    enabled: true
-    path: "/webhooks/github/events"
-    queue: "github-events"
-    create_queue: true
-    max_body_bytes: 1048576
-    rate_limit:
-      enabled: false
-    replay_protection:
-      enabled: true
-      ttl: "5m"
-      max_entries: 25000
-    ip_allowlist:
-      - "192.30.252.0/22"
-      - "185.199.108.0/22"
-      - "140.82.112.0/20"
-      - "143.55.64.0/20"
-    auth:
-      type: "hmac_sha256"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
       timestamp_tolerance: "5m"

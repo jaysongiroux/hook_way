@@ -62,7 +62,7 @@ make docker-build
 
 ## Container Probes
 
-The Docker image healthcheck calls `GET /healthz` on `127.0.0.1:8080`. Orchestrators should use `GET /readyz` for readiness because it verifies RabbitMQ connectivity before routing webhook traffic.
+The Docker image healthcheck calls `GET /healthz` on `127.0.0.1:8080`. Orchestrators should use `GET /readyz` or `GET /ready` for readiness because it verifies RabbitMQ connectivity before routing webhook traffic.
 
 ## RabbitMQ Dead Letters
 

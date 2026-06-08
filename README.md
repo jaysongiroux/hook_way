@@ -40,6 +40,7 @@ go run ./cmd/hookway --config examples/config.yaml
 
 - Configured endpoint paths, such as `POST /webhooks/paddle/billing`, accept webhook events.
 - `GET /healthz` confirms the process is alive.
+- `GET /ready` confirms RabbitMQ is reachable.
 - `GET /readyz` confirms RabbitMQ is reachable.
 - `GET /health` reports the same readiness state as `/readyz`.
 - `GET /metrics` exposes Prometheus metrics when enabled.

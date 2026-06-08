@@ -72,6 +72,7 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 func (s *Server) routes() {
 	s.mux.HandleFunc("/health", s.handleReady)
 	s.mux.HandleFunc("/healthz", s.handleLive)
+	s.mux.HandleFunc("/ready", s.handleReady)
 	s.mux.HandleFunc("/readyz", s.handleReady)
 	if s.cfg.Metrics.Enabled {
 		s.mux.Handle(s.cfg.Metrics.Path, promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{}))

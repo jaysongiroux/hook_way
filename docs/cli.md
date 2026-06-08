@@ -42,4 +42,4 @@ Check a running service:
 go run ./cmd/hookway healthcheck --url http://127.0.0.1:8080/healthz --timeout 5s
 ```
 
-The command exits `0` for any `2xx` response and `1` for connection failures or non-`2xx` responses. Use `/healthz` for process liveness and `/readyz` or `/health` when the check must include RabbitMQ readiness.
+The command exits `0` for any `2xx` response and `1` for connection failures or non-`2xx` responses. Use `/healthz` for process liveness and `/ready`, `/readyz`, or `/health` when the check must include RabbitMQ readiness.
