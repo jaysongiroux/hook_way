@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 env:
-  DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
-  DOCKERHUB_IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE_NAME }}
+  DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+  DOCKERHUB_IMAGE_NAME: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
 
 jobs:
   release-check:
@@ -64,7 +64,17 @@ jobs:
           path: trivy-results.sarif
           if-no-files-found: error
 
+      - name: Check Docker Hub publishing config
+        if: github.event_name != 'pull_request'
+        run: |
+          test -n "$DOCKERHUB_NAMESPACE" || (echo "Missing GitHub Actions secret DOCKERHUB_NAMESPACE" && exit 1)
+          test -n "$DOCKERHUB_IMAGE_NAME" || (echo "Missing GitHub Actions secret DOCKERHUB_IMAGE_NAME" && exit 1)
+          test -n "$DOCKERHUB_TOKEN" || (echo "Missing GitHub Actions secret DOCKERHUB_TOKEN" && exit 1)
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Docker metadata
+        if: github.event_name != 'pull_request'
         id: docker-meta
         uses: docker/metadata-action@v5
         with:
