@@ -5,9 +5,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/hookway ./cmd/hookway
 
-FROM alpine:3.22
-RUN adduser -D -H hookway
-USER hookway
+FROM scratch
+USER 65532:65532
 COPY --from=build /out/hookway /usr/local/bin/hookway
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
-ENTRYPOINT ["hookway"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/hookway", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/hookway"]

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -24,6 +25,9 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "validate" {
 		return runValidate(args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "healthcheck" {
+		return runHealthcheck(args[1:], stdout, stderr)
 	}
 	return runServe(args, stdout, stderr)
 }
@@ -45,6 +49,29 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "config valid: %s\n", path)
+	return 0
+}
+
+func runHealthcheck(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	url := flags.String("url", "http://127.0.0.1:8080/healthz", "health endpoint URL")
+	timeout := flags.Duration("timeout", 5*time.Second, "health request timeout")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	client := http.Client{Timeout: *timeout}
+	resp, err := client.Get(*url)
+	if err != nil {
+		fmt.Fprintf(stderr, "healthcheck failed: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Fprintf(stderr, "healthcheck failed: status %d\n", resp.StatusCode)
+		return 1
+	}
+	fmt.Fprintln(stdout, "healthy")
 	return 0
 }
 

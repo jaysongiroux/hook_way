@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,5 +41,39 @@ func TestRunValidateRejectsInvalidConfig(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "config validation failed") {
 		t.Fatalf("stderr = %q, want validation failure", stderr.String())
+	}
+}
+
+func TestRunHealthcheckAcceptsHealthyEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"healthcheck", "--url", server.URL}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("run() code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "healthy") {
+		t.Fatalf("stdout = %q, want healthy message", stdout.String())
+	}
+}
+
+func TestRunHealthcheckRejectsUnhealthyEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"healthcheck", "--url", server.URL}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatal("run() code = 0, want nonzero")
+	}
+	if !strings.Contains(stderr.String(), "status 503") {
+		t.Fatalf("stderr = %q, want status 503", stderr.String())
 	}
 }
