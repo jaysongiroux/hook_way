@@ -82,7 +82,7 @@ make vuln-scan
 
 Release checks run config validation, unit tests, race tests, RabbitMQ integration tests, vet, Docker build, and image vulnerability scanning in GitHub Actions.
 
-On non-PR runs, the release workflow publishes the Docker image to Docker Hub. In GitHub, set Actions repository secrets `DOCKERHUB_NAMESPACE`, `DOCKERHUB_IMAGE_NAME`, and `DOCKERHUB_TOKEN`. `DOCKERHUB_TOKEN` should be a Docker Hub access token.
+On non-PR runs, the release workflow publishes the Docker image to Docker Hub. In GitHub, set Actions repository secrets `DOCKERHUB_NAMESPACE`, `DOCKERHUB_IMAGE_NAME`, and `DOCKERHUB_TOKEN`. `DOCKERHUB_TOKEN` should be a Docker Hub access token. Push Git tags such as `v1.0.0` to publish matching Docker tags, and the workflow syncs this README to the Docker Hub repository description.
 
 See:
 
