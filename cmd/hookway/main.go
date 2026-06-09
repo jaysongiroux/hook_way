@@ -116,6 +116,21 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		errs <- srv.ListenAndServe()
 	}()
 
+	metricsSrv := app.MetricsServer()
+	if metricsSrv != nil {
+		go func() {
+			logger.Info("hookway metrics listening", "addr", metricsSrv.Addr, "path", cfg.Metrics.Path)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("metrics server stopped", "error", err)
+			}
+		}()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = httpapi.Shutdown(ctx, metricsSrv)
+		}()
+	}
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	select {

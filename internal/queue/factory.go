@@ -37,7 +37,8 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 		return f.rabbitMQConnector(ctx, RabbitMQConfig{
 			URL: rabbit.URL, Exchange: rabbit.Exchange, ExchangeType: rabbit.ExchangeType,
 			Durable: rabbit.Durable, PublishTimeout: rabbit.PublishTimeout,
-			DeclareQueues: rabbit.DeclareQueues, Queues: collectQueues(cfg),
+			DeclareQueues: rabbit.DeclareQueues, PublisherChannels: rabbit.PublisherChannels,
+			Queues:            collectQueues(cfg),
 			QueueDeclarations: collectQueueDeclarations(cfg),
 			Metrics:           f.metrics,
 		})

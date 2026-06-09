@@ -41,6 +41,17 @@ func (c *Cache) Accept(endpoint, signature string, now time.Time) bool {
 	return true
 }
 
+// Release removes a previously accepted signature. The server calls this when
+// publishing fails so a sender's retry of the same event is not rejected as a
+// replay; the reservation is only meant to stick once the event is published.
+func (c *Cache) Release(endpoint, signature string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entries, ok := c.endpoints[endpoint]; ok {
+		delete(entries, signature)
+	}
+}
+
 func (c *Cache) evictExpired(entries map[string]time.Time, now time.Time) {
 	cutoff := now.Add(-c.window)
 	for signature, seen := range entries {

@@ -11,17 +11,50 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+const defaultPublisherChannels = 8
+
+// RabbitMQPublisher publishes envelopes to RabbitMQ using a bounded pool of
+// confirm channels so requests publish concurrently instead of serialising
+// through a single channel. A dropped connection is recovered proactively in
+// the background (NotifyClose) as well as lazily on the next publish.
 type RabbitMQPublisher struct {
-	cfg  RabbitMQConfig
-	mu   sync.Mutex
+	cfg RabbitMQConfig
+
+	mu   sync.RWMutex
 	conn *amqp.Connection
-	ch   *amqp.Channel
-	acks <-chan amqp.Confirmation
+
+	pool      chan *publishChannel
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+// publishChannel is a confirm-enabled channel owned by exactly one in-flight
+// publish at a time, which keeps confirm correlation trivial (one outstanding
+// publish per channel).
+type publishChannel struct {
+	ch       *amqp.Channel
+	conn     *amqp.Connection
+	confirms <-chan amqp.Confirmation
 }
 
 func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPublisher, error) {
-	pub := &RabbitMQPublisher{cfg: cfg}
-	_ = pub.connect(ctx)
+	size := cfg.PublisherChannels
+	if size <= 0 {
+		size = defaultPublisherChannels
+	}
+	pub := &RabbitMQPublisher{
+		cfg:    cfg,
+		pool:   make(chan *publishChannel, size),
+		closed: make(chan struct{}),
+	}
+	// Pre-fill the pool with empty slots; channels are created lazily on first
+	// use so an unavailable broker at startup is tolerated.
+	for i := 0; i < size; i++ {
+		pub.pool <- nil
+	}
+	// Best-effort eager connect so the first request is fast; failures are fine
+	// because publish and readiness both reconnect on demand.
+	_, _ = pub.connection(ctx)
 	return pub, nil
 }
 
@@ -51,7 +84,6 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, queueName string, msg M
 			}
 			return nil
 		}
-		p.resetChannel()
 		if attempt == attempts {
 			break
 		}
@@ -63,81 +95,214 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, queueName string, msg M
 	return last
 }
 
+// Ready reports broker reachability without dialing under the publish path.
+// It reflects the current connection state (kept fresh by the reconnect
+// watcher) and only dials when no connection has been established yet, so
+// readiness probes never contend with in-flight publish round-trips.
 func (p *RabbitMQPublisher) Ready(ctx context.Context) error {
-	return p.ensure(ctx)
-}
-
-func (p *RabbitMQPublisher) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	var err error
-	if p.ch != nil {
-		err = errors.Join(err, p.ch.Close())
+	p.mu.RLock()
+	conn := p.conn
+	p.mu.RUnlock()
+	if conn != nil && !conn.IsClosed() {
+		return nil
 	}
-	if p.conn != nil {
-		err = errors.Join(err, p.conn.Close())
-	}
+	_, err := p.connection(ctx)
 	return err
 }
 
-func (p *RabbitMQPublisher) ensure(ctx context.Context) error {
+func (p *RabbitMQPublisher) Close() error {
+	p.closeOnce.Do(func() { close(p.closed) })
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.conn != nil && !p.conn.IsClosed() && p.ch != nil && !p.ch.IsClosed() {
-		return nil
-	}
-	return p.connectLocked(ctx)
-}
-
-func (p *RabbitMQPublisher) connect(ctx context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.connectLocked(ctx)
-}
-
-func (p *RabbitMQPublisher) connectLocked(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-	conn, err := amqp.Dial(p.cfg.URL)
-	if err != nil {
+	if p.conn != nil {
+		err := p.conn.Close()
+		p.conn = nil
 		return err
-	}
-	ch, err := conn.Channel()
-	if err != nil {
-		_ = conn.Close()
-		return err
-	}
-	if err := ch.Confirm(false); err != nil {
-		_ = ch.Close()
-		_ = conn.Close()
-		return err
-	}
-	if err := p.declare(ch); err != nil {
-		_ = ch.Close()
-		_ = conn.Close()
-		return err
-	}
-	p.conn = conn
-	p.ch = ch
-	p.acks = ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-	if p.cfg.Metrics != nil {
-		p.cfg.Metrics.RabbitMQReconnect()
 	}
 	return nil
 }
 
-func (p *RabbitMQPublisher) declare(ch *amqp.Channel) error {
+func (p *RabbitMQPublisher) publishOnce(ctx context.Context, queueName string, msg Message, body []byte) error {
+	pc, err := p.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	broken := false
+	defer func() { p.release(pc, broken) }()
+
+	var headers amqp.Table
+	if msg.IdempotencyKey != "" {
+		headers = amqp.Table{"x-idempotency-key": msg.IdempotencyKey}
+	}
+	if err := pc.ch.PublishWithContext(ctx, p.cfg.Exchange, queueName, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		Timestamp:    msg.ReceivedAt,
+		MessageId:    msg.ID,
+		Type:         msg.Endpoint,
+		Headers:      headers,
+		Body:         body,
+	}); err != nil {
+		broken = true
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		broken = true
+		return ctx.Err()
+	case ack, ok := <-pc.confirms:
+		if !ok {
+			broken = true
+			return errors.New("rabbitmq publisher confirms closed")
+		}
+		if !ack.Ack {
+			return fmt.Errorf("rabbitmq publish nack delivery_tag=%d", ack.DeliveryTag)
+		}
+		if p.cfg.Metrics != nil {
+			p.cfg.Metrics.RabbitMQPublishConfirm()
+		}
+		return nil
+	}
+}
+
+// acquire checks out a usable confirm channel, recreating it when the slot is
+// empty or its channel/connection is stale. Blocking on an empty pool provides
+// natural backpressure at PublisherChannels concurrency.
+func (p *RabbitMQPublisher) acquire(ctx context.Context) (*publishChannel, error) {
+	var pc *publishChannel
+	select {
+	case pc = <-p.pool:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	conn, err := p.connection(ctx)
+	if err != nil {
+		// Return the slot so capacity is preserved; the stale channel is
+		// rebuilt on a later acquire once the connection is back.
+		p.pool <- pc
+		return nil, err
+	}
+	if pc != nil && pc.conn == conn && !pc.ch.IsClosed() {
+		return pc, nil
+	}
+	if pc != nil && pc.ch != nil {
+		_ = pc.ch.Close()
+	}
+	fresh, err := p.openChannel(conn)
+	if err != nil {
+		p.pool <- nil
+		return nil, err
+	}
+	return fresh, nil
+}
+
+func (p *RabbitMQPublisher) release(pc *publishChannel, broken bool) {
+	if broken {
+		if pc != nil && pc.ch != nil {
+			_ = pc.ch.Close()
+		}
+		p.pool <- nil
+		return
+	}
+	p.pool <- pc
+}
+
+func (p *RabbitMQPublisher) openChannel(conn *amqp.Connection) (*publishChannel, error) {
+	ch, err := conn.Channel()
+	if err != nil {
+		return nil, err
+	}
+	if err := ch.Confirm(false); err != nil {
+		_ = ch.Close()
+		return nil, err
+	}
+	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+	return &publishChannel{ch: ch, conn: conn, confirms: confirms}, nil
+}
+
+// connection returns a live connection, dialing once under the write lock when
+// needed. Concurrent callers coalesce: only the first dials, the rest observe
+// the established connection.
+func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, error) {
+	p.mu.RLock()
+	conn := p.conn
+	p.mu.RUnlock()
+	if conn != nil && !conn.IsClosed() {
+		return conn, nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn != nil && !p.conn.IsClosed() {
+		return p.conn, nil
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-p.closed:
+		return nil, errors.New("rabbitmq publisher closed")
+	default:
+	}
+	dialed, err := amqp.Dial(p.cfg.URL)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.declareTopology(dialed); err != nil {
+		_ = dialed.Close()
+		return nil, err
+	}
+	p.conn = dialed
+	if p.cfg.Metrics != nil {
+		p.cfg.Metrics.RabbitMQReconnect()
+	}
+	go p.watchClose(dialed)
+	return dialed, nil
+}
+
+// watchClose proactively re-establishes the connection when the broker drops it,
+// rather than waiting for the next publish to discover the failure.
+func (p *RabbitMQPublisher) watchClose(conn *amqp.Connection) {
+	notify := conn.NotifyClose(make(chan *amqp.Error, 1))
+	select {
+	case <-p.closed:
+		return
+	case _, ok := <-notify:
+		if !ok {
+			return
+		}
+	}
+	delay := p.initialBackoff()
+	for {
+		select {
+		case <-p.closed:
+			return
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), p.dialTimeout())
+		_, err := p.connection(ctx)
+		cancel()
+		if err == nil {
+			return
+		}
+		if waitErr := sleepContextOrClosed(p.closed, delay); waitErr != nil {
+			return
+		}
+		delay = nextBackoff(delay, p.maxBackoff())
+	}
+}
+
+// declareTopology declares the exchange and any managed queues/DLX once per
+// connection on a short-lived channel, independent of the publish channels.
+func (p *RabbitMQPublisher) declareTopology(conn *amqp.Connection) error {
+	ch, err := conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
 	if err := ch.ExchangeDeclare(p.cfg.Exchange, p.cfg.ExchangeType, p.cfg.Durable, false, false, false, nil); err != nil {
 		return err
 	}
-	declarations := p.queueDeclarations()
-	if len(declarations) == 0 {
-		return nil
-	}
-	for _, declaration := range declarations {
+	for _, declaration := range p.queueDeclarations() {
 		if declaration.Name == "" || !declaration.CreateQueue {
 			continue
 		}
@@ -162,51 +327,6 @@ func (p *RabbitMQPublisher) declare(ch *amqp.Channel) error {
 		}
 	}
 	return nil
-}
-
-func (p *RabbitMQPublisher) publishOnce(ctx context.Context, queueName string, msg Message, body []byte) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.conn == nil || p.conn.IsClosed() || p.ch == nil || p.ch.IsClosed() {
-		if err := p.connectLocked(ctx); err != nil {
-			return err
-		}
-	}
-	if err := p.ch.PublishWithContext(ctx, p.cfg.Exchange, queueName, false, false, amqp.Publishing{
-		ContentType:  "application/json",
-		DeliveryMode: amqp.Persistent,
-		Timestamp:    msg.ReceivedAt,
-		MessageId:    msg.ID,
-		Type:         msg.Endpoint,
-		Body:         body,
-	}); err != nil {
-		return err
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case ack, ok := <-p.acks:
-		if !ok {
-			return errors.New("rabbitmq publisher confirms closed")
-		}
-		if !ack.Ack {
-			return fmt.Errorf("rabbitmq publish nack delivery_tag=%d", ack.DeliveryTag)
-		}
-		if p.cfg.Metrics != nil {
-			p.cfg.Metrics.RabbitMQPublishConfirm()
-		}
-		return nil
-	}
-}
-
-func (p *RabbitMQPublisher) resetChannel() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.ch != nil {
-		_ = p.ch.Close()
-	}
-	p.ch = nil
-	p.acks = nil
 }
 
 func (p *RabbitMQPublisher) declareDeadLetter(ch *amqp.Channel, dlq *DeadLetterDeclaration) error {
@@ -289,6 +409,13 @@ func (p *RabbitMQPublisher) maxBackoff() time.Duration {
 	return 2 * time.Second
 }
 
+func (p *RabbitMQPublisher) dialTimeout() time.Duration {
+	if p.cfg.PublishTimeout > 0 {
+		return p.cfg.PublishTimeout
+	}
+	return 5 * time.Second
+}
+
 func nextBackoff(delay, maxDelay time.Duration) time.Duration {
 	if delay <= 0 {
 		delay = 100 * time.Millisecond
@@ -309,6 +436,20 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func sleepContextOrClosed(closed <-chan struct{}, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-closed:
+		return errors.New("closed")
 	case <-timer.C:
 		return nil
 	}
