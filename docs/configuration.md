@@ -60,12 +60,14 @@ security:
 - `metrics.enabled`: boolean.
 - `metrics.path`: path beginning with `/`, usually `/metrics`.
 - `metrics.addr`: optional listen address such as `":9090"`. When set, metrics are served on a dedicated listener instead of the public webhook port, so `/metrics` is not exposed on the internet-facing port. When empty, metrics are mounted on the main server at `metrics.path`.
+- `metrics.runtime_metrics`: optional boolean, default `true`. When enabled, registers the standard Go runtime and process collectors (`go_goroutines`, `go_memstats_*`, `process_cpu_seconds_total`, `process_resident_memory_bytes`, open FDs). `process_*` metrics require Linux (`/proc`); Go runtime metrics are cross-platform. Set to `false` if your platform already collects container CPU/memory (e.g. cAdvisor) and you want to avoid duplication.
 
 When disabled, the metrics route is not registered.
 
 Metrics include HTTP request counts, auth failures, rate limits, load-shedding
 saturation (`hookway_saturated_total`), publish latency,
-RabbitMQ reconnect/confirm/retry/DLQ counters, and config load failures. Startup
+RabbitMQ reconnect/confirm/retry/DLQ counters, config load failures, and —
+when `runtime_metrics` is enabled — Go runtime and process CPU/memory metrics. Startup
 config failures still block serving traffic, so config failure metrics are
 recorded in-process before exit and are most useful for tests or future reload
 paths.

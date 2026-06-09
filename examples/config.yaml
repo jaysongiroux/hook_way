@@ -5,15 +5,30 @@ server:
   idle_timeout: "60s"
   shutdown_timeout: "10s"
   max_body_bytes: 1048576
+  # Cap concurrent webhook processing; excess is shed with 503 + Retry-After
+  # before any body is buffered. 0 (or omit) means unlimited.
+  max_inflight_requests: 256
 
 security:
-  trusted_proxy_headers: false
+  # Honor X-Forwarded-For / X-Real-IP, but only from the trusted proxy ranges
+  # below, so clients can't spoof their source IP to bypass the allowlist or
+  # rate limit. Set trusted_proxies to your load balancer/ingress CIDRs.
+  # If clients reach Hookway directly (no proxy), set this to false instead.
+  trusted_proxy_headers: true
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
   request_id_header: "X-Request-ID"
   redacted_header_denylist:
     - "Authorization"
     - "Cookie"
     - "Paddle-Signature"
     - "X-Hub-Signature-256"
+  # Optional fail-safe: forward ONLY these headers to the queue and logs; every
+  # other header is dropped. Omit this block to keep the legacy denylist behavior.
+  forwarded_header_allowlist:
+    - "Content-Type"
+    - "X-Request-ID"
 
 rate_limit:
   enabled: true
@@ -24,6 +39,14 @@ rate_limit:
 metrics:
   enabled: true
   path: "/metrics"
+  # Serve metrics on a private port so /metrics is not exposed on the public
+  # webhook listener. Scrape this from inside the cluster only. Omit to mount
+  # /metrics on the main server port.
+  addr: ":9090"
+  # Go runtime + process CPU/memory collectors (go_goroutines, heap/GC,
+  # process_cpu_seconds_total, process_resident_memory_bytes). Default true;
+  # set false if your platform (e.g. cAdvisor) already collects container CPU/mem.
+  runtime_metrics: true
 
 message_queue:
   type: "rabbitmq"
@@ -34,6 +57,9 @@ message_queue:
     durable: true
     publish_timeout: "5s"
     declare_queues: true
+    # Publish concurrency: pool of confirm channels. Default is 8; raise it if a
+    # single broker round-trip per request becomes the throughput ceiling.
+    publisher_channels: 8
     dead_letter:
       enabled: true
       exchange: "hookway.webhooks.dlx"
@@ -65,6 +91,10 @@ endpoints:
       secret: "${PADDLE_WEBHOOK_SECRET}"
       signature_header: "Paddle-Signature"
       timestamp_tolerance: "5m"
+      # No idempotency_header: Paddle has no stable per-delivery header (the
+      # event id is in the JSON body), so Hookway derives the envelope
+      # idempotency_key from a hash of the verified signature, which is stable
+      # across Paddle's retries of the same event.
   github_events:
     enabled: true
     path: "/webhooks/github"

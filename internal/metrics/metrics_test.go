@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 
@@ -42,6 +43,34 @@ hookway_rabbitmq_retries_total 1
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnableRuntimeCollectorsExposesGoAndProcessMetrics(t *testing.T) {
+	m := New()
+	m.EnableRuntimeCollectors()
+	m.EnableRuntimeCollectors() // idempotent: must not panic on re-register
+
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := map[string]bool{}
+	for _, fam := range families {
+		present[fam.GetName()] = true
+	}
+	// Go runtime metrics are available on every platform.
+	if !present["go_goroutines"] {
+		t.Fatal("expected go_goroutines to be exposed")
+	}
+	// The process collector reads /proc, so process_* metrics only materialise
+	// on Linux (e.g. the production container); skip the assertion elsewhere.
+	if runtime.GOOS == "linux" {
+		for _, want := range []string{"process_cpu_seconds_total", "process_resident_memory_bytes"} {
+			if !present[want] {
+				t.Fatalf("expected runtime metric %q to be exposed", want)
+			}
+		}
 	}
 }
 
