@@ -85,6 +85,13 @@ RabbitMQ fields live under `message_queue.rabbitmq`:
 - `message_queue.rabbitmq.publish_timeout`: optional duration, default `5s`.
 - `message_queue.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
 - `message_queue.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
+- `message_queue.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
+  - `ca_cert`: path to a PEM bundle to trust instead of/in addition to system roots (for private/self-signed CAs).
+  - `client_cert` / `client_key`: PEM paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: disables certificate verification. Dev-only; logs a warning at startup. Do not use in production.
+
+  Bad or unreadable CA/cert paths fail fast at startup. Note: the published container image must contain a CA bundle for `amqps://` to work at all — the provided Dockerfile copies `ca-certificates` into the `scratch` image for this reason.
 - `message_queue.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
 
 ```yaml

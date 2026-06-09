@@ -77,6 +77,7 @@ Logs include request method, path, endpoint, queue, status, and duration. Raw we
 
 - Terminate TLS at a trusted load balancer or reverse proxy. Enable `trusted_proxy_headers` only with `trusted_proxies` set to your proxy/ingress CIDRs so forwarded client IPs cannot be spoofed.
 - Keep RabbitMQ durable exchanges/queues enabled for production and configure dead-letter queues for failed consumers.
+- Use `amqps://` for the broker connection. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `message_queue.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
 - Run at least two replicas, but treat rate limiting and replay protection as process-local until a shared backend is added.
 - Keep `server.max_body_bytes` tight per endpoint and set `server.max_inflight_requests` to bound memory and shed load under flood.
 - Tune `message_queue.rabbitmq.publisher_channels` to the desired publish concurrency (default 8).

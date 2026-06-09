@@ -60,6 +60,15 @@ message_queue:
     # Publish concurrency: pool of confirm channels. Default is 8; raise it if a
     # single broker round-trip per request becomes the throughput ceiling.
     publisher_channels: 8
+    # TLS options for amqps:// brokers. Omit entirely for brokers with publicly
+    # trusted certs (e.g. CloudAMQP) — the image ships the system CA bundle.
+    # Configure only for private CAs, mutual TLS, or a custom server name.
+    # tls:
+    #   ca_cert: "/etc/hookway/ca.pem"
+    #   client_cert: "/etc/hookway/tls.crt"
+    #   client_key: "/etc/hookway/tls.key"
+    #   server_name: "rabbitmq.internal"
+    #   insecure_skip_verify: false
     dead_letter:
       enabled: true
       exchange: "hookway.webhooks.dlx"

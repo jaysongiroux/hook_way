@@ -38,6 +38,10 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			URL: rabbit.URL, Exchange: rabbit.Exchange, ExchangeType: rabbit.ExchangeType,
 			Durable: rabbit.Durable, PublishTimeout: rabbit.PublishTimeout,
 			DeclareQueues: rabbit.DeclareQueues, PublisherChannels: rabbit.PublisherChannels,
+			TLS: RabbitMQTLSConfig{
+				CACert: rabbit.TLS.CACert, ClientCert: rabbit.TLS.ClientCert, ClientKey: rabbit.TLS.ClientKey,
+				ServerName: rabbit.TLS.ServerName, InsecureSkipVerify: rabbit.TLS.InsecureSkipVerify,
+			},
 			Queues:            collectQueues(cfg),
 			QueueDeclarations: collectQueueDeclarations(cfg),
 			Metrics:           f.metrics,

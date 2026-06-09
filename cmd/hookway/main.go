@@ -104,6 +104,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if cfg.Metrics.RuntimeMetricsEnabled() {
 		appMetrics.EnableRuntimeCollectors()
 	}
+	if cfg.MessageQueue.RabbitMQ.TLS.InsecureSkipVerify {
+		logger.Warn("rabbitmq TLS certificate verification is disabled (message_queue.rabbitmq.tls.insecure_skip_verify=true); do not use this in production")
+	}
 	publisher, err := queue.NewFactory(queue.FactoryOptions{Metrics: appMetrics}).Create(context.Background(), cfg)
 	if err != nil {
 		logger.Error("message queue connection failed", "error", err)
