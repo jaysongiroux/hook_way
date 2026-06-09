@@ -20,21 +20,32 @@ config validation failed
 - `server.idle_timeout`: optional duration, default `60s`.
 - `server.shutdown_timeout`: optional duration, default `10s`.
 - `server.max_body_bytes`: required positive integer.
+- `server.max_inflight_requests`: optional non-negative integer. When `> 0`, caps concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. `0` (default) means unlimited. Health, readiness, and metrics endpoints are never subject to this limit.
 
 ## Security
 
-- `security.trusted_proxy_headers`: optional boolean. Default false behavior uses `RemoteAddr`.
+- `security.trusted_proxy_headers`: optional boolean. When false (default), the source IP is always the TCP peer (`RemoteAddr`) and `X-Forwarded-For`/`X-Real-IP` are ignored.
+- `security.trusted_proxies`: optional list of IP addresses or CIDR ranges. When `trusted_proxy_headers` is true *and* this list is non-empty, forwarding headers are only honored when the immediate TCP peer falls inside one of these ranges; otherwise the peer IP is used. This prevents clients from spoofing `X-Forwarded-For` to bypass the IP allowlist and per-IP rate limiting. Leaving it empty with the flag on is the legacy permissive behavior and should only be used when clients cannot reach Hookway directly.
 - `security.request_id_header`: optional request ID header name.
-- `security.redacted_header_denylist`: optional list of exact HTTP header names that must be redacted in logs or diagnostics. This augments later code heuristics; it does not replace automatic redaction of obvious secrets.
+- `security.redacted_header_denylist`: optional list of exact HTTP header names that are redacted in logs and in the published envelope. This augments automatic redaction of obvious secrets; it does not replace it.
+- `security.forwarded_header_allowlist`: optional list of HTTP header names. When non-empty, only these headers are logged and forwarded to the queue (fail-safe); every other header is dropped entirely. The denylist and built-in sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through. When empty, behavior is the legacy denylist filter (everything except denylisted/sensitive headers is forwarded).
 
 ```yaml
 security:
-  trusted_proxy_headers: false
+  trusted_proxy_headers: true
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
   request_id_header: "X-Request-ID"
   redacted_header_denylist:
     - "Authorization"
     - "Cookie"
     - "Paddle-Signature"
+    - "X-Hub-Signature-256"
+  # Optional fail-safe: forward only these headers to consumers/logs.
+  forwarded_header_allowlist:
+    - "Content-Type"
+    - "X-Request-ID"
 ```
 
 ## Rate Limit
@@ -48,10 +59,12 @@ security:
 
 - `metrics.enabled`: boolean.
 - `metrics.path`: path beginning with `/`, usually `/metrics`.
+- `metrics.addr`: optional listen address such as `":9090"`. When set, metrics are served on a dedicated listener instead of the public webhook port, so `/metrics` is not exposed on the internet-facing port. When empty, metrics are mounted on the main server at `metrics.path`.
 
 When disabled, the metrics route is not registered.
 
-Metrics include HTTP request counts, auth failures, rate limits, publish latency,
+Metrics include HTTP request counts, auth failures, rate limits, load-shedding
+saturation (`hookway_saturated_total`), publish latency,
 RabbitMQ reconnect/confirm/retry/DLQ counters, and config load failures. Startup
 config failures still block serving traffic, so config failure metrics are
 recorded in-process before exit and are most useful for tests or future reload
@@ -69,6 +82,7 @@ RabbitMQ fields live under `message_queue.rabbitmq`:
 - `message_queue.rabbitmq.durable`: boolean for exchange/queue durability.
 - `message_queue.rabbitmq.publish_timeout`: optional duration, default `5s`.
 - `message_queue.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
+- `message_queue.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
 - `message_queue.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
 
 ```yaml
@@ -127,6 +141,7 @@ endpoints:
       - "198.51.100.0/24"
     auth:
       type: "hmac_sha256"
+      scheme: "paddle"
       secret: "${PADDLE_WEBHOOK_SECRET}"
       signature_header: "Paddle-Signature"
       timestamp_tolerance: "5m"
@@ -149,9 +164,10 @@ endpoints:
       - "143.55.64.0/20"
     auth:
       type: "hmac_sha256"
+      scheme: "github"
       secret: "${GITHUB_WEBHOOK_SECRET}"
       signature_header: "X-Hub-Signature-256"
-      timestamp_tolerance: "5m"
+      idempotency_header: "X-GitHub-Delivery"
 ```
 
 Endpoint fields:
@@ -174,6 +190,16 @@ Replay protection fields:
 - `ttl`: positive duration for replay cache entries.
 - `max_entries`: positive per-process entry cap.
 
-Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node.
+Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node. The reservation is only committed after a successful publish, so a transient broker outage does not turn a provider's legitimate retry into a permanent `409 replay detected`.
 
-Auth type `hmac_sha256` verifies headers shaped like `ts=<unix>;h1=<hex_hmac>`.
+Auth fields:
+
+- `type`: signature algorithm family; `hmac_sha256` for MVP.
+- `scheme`: signature *layout*. Optional, defaults to `paddle`. Built-in schemes:
+  - `paddle`: timestamped header shaped like `ts=<unix>;h1=<hex_hmac>` over `ts + ":" + raw_body`; requires `timestamp_tolerance`.
+  - `github`: `X-Hub-Signature-256: sha256=<hex>` HMAC over the exact raw body, with no signed timestamp (so `timestamp_tolerance` is not required).
+  - New providers are added by registering a scheme in `internal/auth`, without changing the request path or config shape.
+- `secret`: required; reference an environment variable such as `${PADDLE_WEBHOOK_SECRET}`.
+- `signature_header`: required header carrying the signature.
+- `timestamp_tolerance`: positive duration; required only for timestamped schemes (e.g. `paddle`).
+- `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted, Hookway falls back to a hash of the verified signature, which is stable across provider retries of the same event.

@@ -61,6 +61,31 @@ endpoints:
       max_entries: 50000
     auth:
       type: "hmac_sha256"
+      scheme: "paddle"
       secret: "${PADDLE_WEBHOOK_SECRET}"
       signature_header: "Paddle-Signature"
       timestamp_tolerance: "5m"
+  github_events:
+    enabled: true
+    path: "/webhooks/github"
+    queue: "github-webhooks"
+    create_queue: true
+    max_body_bytes: 2097152
+    rate_limit:
+      enabled: true
+      requests_per_minute: 500
+      burst: 1000
+      key_by: "ip"
+    replay_protection:
+      enabled: true
+      ttl: "10m"
+      max_entries: 50000
+    auth:
+      type: "hmac_sha256"
+      # GitHub signs the raw body with no timestamp, so it uses the "github"
+      # scheme rather than Paddle's timestamped ts;h1 layout.
+      scheme: "github"
+      secret: "${GITHUB_WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"
+      # GitHub sends a stable delivery UUID consumers can dedupe on.
+      idempotency_header: "X-GitHub-Delivery"

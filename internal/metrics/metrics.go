@@ -12,6 +12,7 @@ type Metrics struct {
 	httpRequests         *prometheus.CounterVec
 	authFailures         *prometheus.CounterVec
 	rateLimited          *prometheus.CounterVec
+	saturated            *prometheus.CounterVec
 	publishTotal         *prometheus.CounterVec
 	publishDuration      *prometheus.HistogramVec
 	bodyBytes            *prometheus.HistogramVec
@@ -36,6 +37,10 @@ func New() *Metrics {
 	m.rateLimited = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_rate_limited_total",
 		Help: "Rate limited webhook requests.",
+	}, []string{"endpoint", "queue"})
+	m.saturated = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_saturated_total",
+		Help: "Webhook requests rejected because the in-flight limit was reached.",
 	}, []string{"endpoint", "queue"})
 	m.publishTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_publish_total",
@@ -75,7 +80,7 @@ func New() *Metrics {
 		Help: "RabbitMQ dead-letter publish attempts.",
 	})
 	m.registry.MustRegister(
-		m.httpRequests, m.authFailures, m.rateLimited, m.publishTotal, m.publishDuration,
+		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.publishTotal, m.publishDuration,
 		m.bodyBytes, m.inflight, m.configLoadFailures, m.rabbitMQReconnects, m.rabbitMQConfirms,
 		m.rabbitMQRetries, m.rabbitMQDLQPublishes,
 	)
@@ -96,6 +101,10 @@ func (m *Metrics) AuthFailure(endpoint, reason string) {
 
 func (m *Metrics) RateLimited(endpoint, queue string) {
 	m.rateLimited.WithLabelValues(endpoint, queue).Inc()
+}
+
+func (m *Metrics) Saturated(endpoint, queue string) {
+	m.saturated.WithLabelValues(endpoint, queue).Inc()
 }
 
 func (m *Metrics) Publish(endpoint, queue, status string, duration time.Duration) {

@@ -13,21 +13,22 @@ type Publisher interface {
 }
 
 type Message struct {
-	SchemaVersion string         `json:"schema_version"`
-	ID            string         `json:"id"`
-	RequestID     string         `json:"request_id,omitempty"`
-	TraceID       string         `json:"trace_id,omitempty"`
-	Endpoint      string         `json:"endpoint"`
-	Queue         string         `json:"queue"`
-	ReceivedAt    time.Time      `json:"received_at"`
-	Method        string         `json:"method,omitempty"`
-	Path          string         `json:"path,omitempty"`
-	Headers       http.Header    `json:"headers,omitempty"`
-	Query         map[string]any `json:"query,omitempty"`
-	Body          any            `json:"body"`
-	RawBodyBase64 *string        `json:"raw_body_base64,omitempty"`
-	SourceIP      string         `json:"source_ip,omitempty"`
-	Auth          any            `json:"auth,omitempty"`
+	SchemaVersion  string         `json:"schema_version"`
+	ID             string         `json:"id"`
+	IdempotencyKey string         `json:"idempotency_key,omitempty"`
+	RequestID      string         `json:"request_id,omitempty"`
+	TraceID        string         `json:"trace_id,omitempty"`
+	Endpoint       string         `json:"endpoint"`
+	Queue          string         `json:"queue"`
+	ReceivedAt     time.Time      `json:"received_at"`
+	Method         string         `json:"method,omitempty"`
+	Path           string         `json:"path,omitempty"`
+	Headers        http.Header    `json:"headers,omitempty"`
+	Query          map[string]any `json:"query,omitempty"`
+	Body           any            `json:"body"`
+	RawBodyBase64  *string        `json:"raw_body_base64,omitempty"`
+	SourceIP       string         `json:"source_ip,omitempty"`
+	Auth           any            `json:"auth,omitempty"`
 }
 
 type RabbitMQConfig struct {
@@ -37,7 +38,11 @@ type RabbitMQConfig struct {
 	Durable        bool
 	PublishTimeout time.Duration
 	DeclareQueues  bool
-	Queues         []string
+	// PublisherChannels bounds how many AMQP channels publish concurrently.
+	// Each channel carries one publisher-confirm round-trip at a time, so this
+	// is the effective publish concurrency. Defaults to 8 when <= 0.
+	PublisherChannels int
+	Queues            []string
 	// QueueDeclarations is the queue-native shape factory/config can grow into
 	// without changing Publisher. Queues remains for existing simple config.
 	QueueDeclarations []QueueDeclaration

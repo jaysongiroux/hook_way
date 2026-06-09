@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,6 +62,66 @@ func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
 	}
 	if got.ID != "evt_1" || got.Endpoint != "paddle_billing" {
 		t.Fatalf("message = %#v", got)
+	}
+}
+
+func TestRabbitMQPublisherPublishesConcurrentlyAcrossChannelPool(t *testing.T) {
+	ctx := context.Background()
+	container, err := runRabbitMQ(ctx)
+	if err != nil {
+		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	url, err := container.AmqpURL(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
+		URL: url, Exchange: "hookway.concurrent", ExchangeType: "direct", Durable: true,
+		PublishTimeout: 5 * time.Second, DeclareQueues: true, Queues: []string{"billing-events"},
+		PublisherChannels: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+
+	const total = 50
+	var wg sync.WaitGroup
+	errs := make(chan error, total)
+	for i := 0; i < total; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			msg := Message{ID: fmt.Sprintf("evt_%d", n), Endpoint: "paddle_billing", Body: map[string]any{"n": n}, ReceivedAt: time.Now().UTC()}
+			if err := pub.Publish(ctx, "billing-events", msg); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent publish failed: %v", err)
+	}
+
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ch, err := conn.Channel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ch.Close() })
+	q, err := ch.QueueDeclarePassive("billing-events", true, false, false, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Messages != total {
+		t.Fatalf("queued messages = %d, want %d", q.Messages, total)
 	}
 }
 
@@ -176,7 +237,12 @@ func TestRabbitMQPublisherReconnectsAfterDisconnectBeforePublish(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pub.Close() })
 
-	if err := pub.ch.Close(); err != nil {
+	// Simulate a broker-side drop by closing the live connection out from under
+	// the publisher; the next publish (and the reconnect watcher) must recover.
+	pub.mu.Lock()
+	conn := pub.conn
+	pub.mu.Unlock()
+	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
 	msg := Message{ID: "evt_reconnect_disconnect", Endpoint: "paddle_billing", Body: map[string]any{"ok": true}, ReceivedAt: time.Now().UTC()}

@@ -12,7 +12,18 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jasongiroux/hookway/internal/auth"
 )
+
+// authScheme defaults the per-endpoint signature scheme to Paddle for
+// backward compatibility when the field is omitted.
+func authScheme(scheme string) string {
+	if scheme == "" {
+		return auth.SchemePaddle
+	}
+	return scheme
+}
 
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 var safeHeaderName = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
@@ -27,18 +38,21 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr            string
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ShutdownTimeout time.Duration
-	MaxBodyBytes    int64
+	Addr                string
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	ShutdownTimeout     time.Duration
+	MaxBodyBytes        int64
+	MaxInflightRequests int
 }
 
 type SecurityConfig struct {
-	TrustedProxyHeaders    bool     `yaml:"trusted_proxy_headers"`
-	RequestIDHeader        string   `yaml:"request_id_header"`
-	RedactedHeaderDenylist []string `yaml:"redacted_header_denylist"`
+	TrustedProxyHeaders      bool     `yaml:"trusted_proxy_headers"`
+	TrustedProxies           []string `yaml:"trusted_proxies"`
+	RequestIDHeader          string   `yaml:"request_id_header"`
+	RedactedHeaderDenylist   []string `yaml:"redacted_header_denylist"`
+	ForwardedHeaderAllowlist []string `yaml:"forwarded_header_allowlist"`
 }
 
 type RateLimitConfig struct {
@@ -51,16 +65,20 @@ type RateLimitConfig struct {
 type MetricsConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Path    string `yaml:"path"`
+	// Addr, when set, serves metrics on a dedicated listener (e.g. ":9090")
+	// instead of the public webhook port, so /metrics is not internet-exposed.
+	Addr string `yaml:"addr"`
 }
 
 type RabbitMQConfig struct {
-	URL            string
-	Exchange       string
-	ExchangeType   string
-	Durable        bool
-	PublishTimeout time.Duration
-	DeclareQueues  bool
-	DeadLetter     RabbitMQDeadLetterConfig
+	URL               string
+	Exchange          string
+	ExchangeType      string
+	Durable           bool
+	PublishTimeout    time.Duration
+	DeclareQueues     bool
+	PublisherChannels int
+	DeadLetter        RabbitMQDeadLetterConfig
 }
 
 type RabbitMQDeadLetterConfig struct {
@@ -105,19 +123,22 @@ type ReplayProtectionConfig struct {
 
 type AuthConfig struct {
 	Type               string
+	Scheme             string
 	Secret             string
 	SignatureHeader    string
 	TimestampTolerance time.Duration
+	IdempotencyHeader  string
 }
 
 type rawConfig struct {
 	Server struct {
-		Addr            string `yaml:"addr"`
-		ReadTimeout     string `yaml:"read_timeout"`
-		WriteTimeout    string `yaml:"write_timeout"`
-		IdleTimeout     string `yaml:"idle_timeout"`
-		ShutdownTimeout string `yaml:"shutdown_timeout"`
-		MaxBodyBytes    int64  `yaml:"max_body_bytes"`
+		Addr                string `yaml:"addr"`
+		ReadTimeout         string `yaml:"read_timeout"`
+		WriteTimeout        string `yaml:"write_timeout"`
+		IdleTimeout         string `yaml:"idle_timeout"`
+		ShutdownTimeout     string `yaml:"shutdown_timeout"`
+		MaxBodyBytes        int64  `yaml:"max_body_bytes"`
+		MaxInflightRequests int    `yaml:"max_inflight_requests"`
 	} `yaml:"server"`
 	Security     SecurityConfig  `yaml:"security"`
 	RateLimit    RateLimitConfig `yaml:"rate_limit"`
@@ -125,13 +146,14 @@ type rawConfig struct {
 	MessageQueue struct {
 		Type     string `yaml:"type"`
 		RabbitMQ struct {
-			URL            string `yaml:"url"`
-			Exchange       string `yaml:"exchange"`
-			ExchangeType   string `yaml:"exchange_type"`
-			Durable        bool   `yaml:"durable"`
-			PublishTimeout string `yaml:"publish_timeout"`
-			DeclareQueues  bool   `yaml:"declare_queues"`
-			DeadLetter     struct {
+			URL               string `yaml:"url"`
+			Exchange          string `yaml:"exchange"`
+			ExchangeType      string `yaml:"exchange_type"`
+			Durable           bool   `yaml:"durable"`
+			PublishTimeout    string `yaml:"publish_timeout"`
+			DeclareQueues     bool   `yaml:"declare_queues"`
+			PublisherChannels int    `yaml:"publisher_channels"`
+			DeadLetter        struct {
 				Enabled      bool   `yaml:"enabled"`
 				Exchange     string `yaml:"exchange"`
 				ExchangeType string `yaml:"exchange_type"`
@@ -157,9 +179,11 @@ type rawConfig struct {
 		IPAllowlist []string `yaml:"ip_allowlist"`
 		Auth        struct {
 			Type               string `yaml:"type"`
+			Scheme             string `yaml:"scheme"`
 			Secret             string `yaml:"secret"`
 			SignatureHeader    string `yaml:"signature_header"`
 			TimestampTolerance string `yaml:"timestamp_tolerance"`
+			IdempotencyHeader  string `yaml:"idempotency_header"`
 		} `yaml:"auth"`
 	} `yaml:"endpoints"`
 }
@@ -281,9 +305,24 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	if c.Server.MaxBodyBytes <= 0 {
 		issues = append(issues, validationError("server.max_body_bytes", "must be a positive integer", "set a safe byte limit, for example 1048576"))
 	}
+	if c.Server.MaxInflightRequests < 0 {
+		issues = append(issues, validationError("server.max_inflight_requests", "must be zero (unlimited) or a positive integer", "set a bound such as 256 to apply backpressure under load"))
+	}
 	for i, header := range c.Security.RedactedHeaderDenylist {
 		if !safeHeaderName.MatchString(header) {
 			issues = append(issues, validationError(fmt.Sprintf("security.redacted_header_denylist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"Authorization\" or \"X-Signature\""))
+		}
+	}
+	for i, header := range c.Security.ForwardedHeaderAllowlist {
+		if !safeHeaderName.MatchString(header) {
+			issues = append(issues, validationError(fmt.Sprintf("security.forwarded_header_allowlist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"X-Request-ID\" or \"Content-Type\""))
+		}
+	}
+	for i, entry := range c.Security.TrustedProxies {
+		if net.ParseIP(entry) == nil {
+			if _, _, err := net.ParseCIDR(entry); err != nil {
+				issues = append(issues, validationError(fmt.Sprintf("security.trusted_proxies[%d]", i), "must be an IP address or CIDR range", "use values such as \"10.0.0.0/8\" or \"203.0.113.10\""))
+			}
 		}
 	}
 	if c.MessageQueue.Type == "" {
@@ -300,6 +339,9 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 		if c.MessageQueue.RabbitMQ.ExchangeType == "" {
 			issues = append(issues, validationError("message_queue.rabbitmq.exchange_type", "exchange type is required", "set exchange_type to \"direct\""))
+		}
+		if c.MessageQueue.RabbitMQ.PublisherChannels < 0 {
+			issues = append(issues, validationError("message_queue.rabbitmq.publisher_channels", "must be zero (default) or a positive integer", "set publish concurrency such as 8"))
 		}
 		if c.MessageQueue.RabbitMQ.DeadLetter.Enabled {
 			if !safeName.MatchString(c.MessageQueue.RabbitMQ.DeadLetter.Exchange) {
@@ -388,14 +430,17 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		} else if endpoint.Auth.Type != "hmac_sha256" {
 			issues = append(issues, validationError(fieldPrefix+".auth.type", fmt.Sprintf("%q is not supported", endpoint.Auth.Type), "supported value for MVP is \"hmac_sha256\""))
 		}
+		if !auth.SchemeRegistered(endpoint.Auth.Scheme) {
+			issues = append(issues, validationError(fieldPrefix+".auth.scheme", fmt.Sprintf("%q is not a known signature scheme", endpoint.Auth.Scheme), fmt.Sprintf("use one of %v", auth.Schemes())))
+		}
 		if endpoint.Auth.Secret == "" {
 			issues = append(issues, validationError(fieldPrefix+".auth.secret", "secret is required", "reference an environment variable such as ${PADDLE_WEBHOOK_SECRET}"))
 		}
 		if endpoint.Auth.SignatureHeader == "" {
 			issues = append(issues, validationError(fieldPrefix+".auth.signature_header", "signature header is required", "for Paddle, set \"Paddle-Signature\""))
 		}
-		if endpoint.Auth.TimestampTolerance <= 0 {
-			issues = append(issues, validationError(fieldPrefix+".auth.timestamp_tolerance", "must be a positive duration", "set a value such as \"5m\""))
+		if auth.SchemeRequiresTimestamp(endpoint.Auth.Scheme) && endpoint.Auth.TimestampTolerance <= 0 {
+			issues = append(issues, validationError(fieldPrefix+".auth.timestamp_tolerance", "must be a positive duration for timestamped schemes", "set a value such as \"5m\""))
 		}
 	}
 	return issues
@@ -441,6 +486,7 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
 			IdleTimeout: idle, ShutdownTimeout: shutdown, MaxBodyBytes: raw.Server.MaxBodyBytes,
+			MaxInflightRequests: raw.Server.MaxInflightRequests,
 		},
 		Security:  raw.Security,
 		RateLimit: raw.RateLimit,
@@ -451,6 +497,7 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				URL: raw.MessageQueue.RabbitMQ.URL, Exchange: raw.MessageQueue.RabbitMQ.Exchange,
 				ExchangeType: raw.MessageQueue.RabbitMQ.ExchangeType, Durable: raw.MessageQueue.RabbitMQ.Durable,
 				PublishTimeout: publish, DeclareQueues: raw.MessageQueue.RabbitMQ.DeclareQueues,
+				PublisherChannels: raw.MessageQueue.RabbitMQ.PublisherChannels,
 				DeadLetter: RabbitMQDeadLetterConfig{
 					Enabled: raw.MessageQueue.RabbitMQ.DeadLetter.Enabled, Exchange: raw.MessageQueue.RabbitMQ.DeadLetter.Exchange,
 					ExchangeType: raw.MessageQueue.RabbitMQ.DeadLetter.ExchangeType, Queue: raw.MessageQueue.RabbitMQ.DeadLetter.Queue,
@@ -481,9 +528,10 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				Enabled: endpoint.ReplayProtection.Enabled, TTL: replayTTL, MaxEntries: endpoint.ReplayProtection.MaxEntries,
 			},
 			IPAllowlist: endpoint.IPAllowlist,
-			Auth: AuthConfig{Type: endpoint.Auth.Type, Secret: endpoint.Auth.Secret,
+			Auth: AuthConfig{Type: endpoint.Auth.Type, Scheme: authScheme(endpoint.Auth.Scheme), Secret: endpoint.Auth.Secret,
 				SignatureHeader:    endpoint.Auth.SignatureHeader,
-				TimestampTolerance: tolerance},
+				TimestampTolerance: tolerance,
+				IdempotencyHeader:  endpoint.Auth.IdempotencyHeader},
 		}
 	}
 	return cfg, issues
