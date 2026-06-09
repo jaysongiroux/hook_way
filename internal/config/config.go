@@ -87,7 +87,20 @@ type RabbitMQConfig struct {
 	PublishTimeout    time.Duration
 	DeclareQueues     bool
 	PublisherChannels int
+	TLS               RabbitMQTLSConfig
 	DeadLetter        RabbitMQDeadLetterConfig
+}
+
+// RabbitMQTLSConfig configures TLS for amqps:// connections. All fields are
+// optional: with an empty block, amqps:// still works against brokers whose
+// certificates chain to the system trust store (e.g. CloudAMQP). Set these only
+// for private CAs, mutual TLS, or a non-default server name.
+type RabbitMQTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
 }
 
 type RabbitMQDeadLetterConfig struct {
@@ -162,7 +175,14 @@ type rawConfig struct {
 			PublishTimeout    string `yaml:"publish_timeout"`
 			DeclareQueues     bool   `yaml:"declare_queues"`
 			PublisherChannels int    `yaml:"publisher_channels"`
-			DeadLetter        struct {
+			TLS               struct {
+				CACert             string `yaml:"ca_cert"`
+				ClientCert         string `yaml:"client_cert"`
+				ClientKey          string `yaml:"client_key"`
+				ServerName         string `yaml:"server_name"`
+				InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+			} `yaml:"tls"`
+			DeadLetter struct {
 				Enabled      bool   `yaml:"enabled"`
 				Exchange     string `yaml:"exchange"`
 				ExchangeType string `yaml:"exchange_type"`
@@ -352,6 +372,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if c.MessageQueue.RabbitMQ.PublisherChannels < 0 {
 			issues = append(issues, validationError("message_queue.rabbitmq.publisher_channels", "must be zero (default) or a positive integer", "set publish concurrency such as 8"))
 		}
+		tls := c.MessageQueue.RabbitMQ.TLS
+		if (tls.ClientCert == "") != (tls.ClientKey == "") {
+			issues = append(issues, validationError("message_queue.rabbitmq.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+		}
 		if c.MessageQueue.RabbitMQ.DeadLetter.Enabled {
 			if !safeName.MatchString(c.MessageQueue.RabbitMQ.DeadLetter.Exchange) {
 				issues = append(issues, validationError("message_queue.rabbitmq.dead_letter.exchange", "exchange name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
@@ -507,6 +531,11 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				ExchangeType: raw.MessageQueue.RabbitMQ.ExchangeType, Durable: raw.MessageQueue.RabbitMQ.Durable,
 				PublishTimeout: publish, DeclareQueues: raw.MessageQueue.RabbitMQ.DeclareQueues,
 				PublisherChannels: raw.MessageQueue.RabbitMQ.PublisherChannels,
+				TLS: RabbitMQTLSConfig{
+					CACert: raw.MessageQueue.RabbitMQ.TLS.CACert, ClientCert: raw.MessageQueue.RabbitMQ.TLS.ClientCert,
+					ClientKey: raw.MessageQueue.RabbitMQ.TLS.ClientKey, ServerName: raw.MessageQueue.RabbitMQ.TLS.ServerName,
+					InsecureSkipVerify: raw.MessageQueue.RabbitMQ.TLS.InsecureSkipVerify,
+				},
 				DeadLetter: RabbitMQDeadLetterConfig{
 					Enabled: raw.MessageQueue.RabbitMQ.DeadLetter.Enabled, Exchange: raw.MessageQueue.RabbitMQ.DeadLetter.Exchange,
 					ExchangeType: raw.MessageQueue.RabbitMQ.DeadLetter.ExchangeType, Queue: raw.MessageQueue.RabbitMQ.DeadLetter.Queue,

@@ -2,9 +2,12 @@ package queue
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -19,6 +22,8 @@ const defaultPublisherChannels = 8
 // the background (NotifyClose) as well as lazily on the next publish.
 type RabbitMQPublisher struct {
 	cfg RabbitMQConfig
+
+	tlsConfig *tls.Config
 
 	mu   sync.RWMutex
 	conn *amqp.Connection
@@ -42,10 +47,17 @@ func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPub
 	if size <= 0 {
 		size = defaultPublisherChannels
 	}
+	// Build TLS config eagerly so a bad CA/cert path fails fast at startup
+	// rather than surfacing only on the first publish.
+	tlsConfig, err := buildTLSConfig(cfg.TLS)
+	if err != nil {
+		return nil, err
+	}
 	pub := &RabbitMQPublisher{
-		cfg:    cfg,
-		pool:   make(chan *publishChannel, size),
-		closed: make(chan struct{}),
+		cfg:       cfg,
+		tlsConfig: tlsConfig,
+		pool:      make(chan *publishChannel, size),
+		closed:    make(chan struct{}),
 	}
 	// Pre-fill the pool with empty slots; channels are created lazily on first
 	// use so an unavailable broker at startup is tolerated.
@@ -243,7 +255,7 @@ func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, e
 		return nil, errors.New("rabbitmq publisher closed")
 	default:
 	}
-	dialed, err := amqp.Dial(p.cfg.URL)
+	dialed, err := p.dialBroker()
 	if err != nil {
 		return nil, err
 	}
@@ -257,6 +269,54 @@ func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, e
 	}
 	go p.watchClose(dialed)
 	return dialed, nil
+}
+
+// dialBroker opens the AMQP connection, using the custom TLS config when one
+// was built. With no custom TLS options, amqp.Dial handles amqps:// using the
+// system trust store.
+func (p *RabbitMQPublisher) dialBroker() (*amqp.Connection, error) {
+	if p.tlsConfig != nil {
+		return amqp.DialTLS(p.cfg.URL, p.tlsConfig)
+	}
+	return amqp.Dial(p.cfg.URL)
+}
+
+// buildTLSConfig assembles a *tls.Config from the configured options, or returns
+// nil when no TLS customisation is requested (amqp.Dial then uses system roots
+// for amqps://). Unreadable or invalid CA/cert material is a hard error.
+func buildTLSConfig(c RabbitMQTLSConfig) (*tls.Config, error) {
+	if c.CACert == "" && c.ClientCert == "" && c.ClientKey == "" && c.ServerName == "" && !c.InsecureSkipVerify {
+		return nil, nil
+	}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	if c.ServerName != "" {
+		cfg.ServerName = c.ServerName
+	}
+	if c.InsecureSkipVerify {
+		cfg.InsecureSkipVerify = true
+	}
+	if c.CACert != "" {
+		pem, err := os.ReadFile(c.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("read rabbitmq tls ca_cert: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("rabbitmq tls ca_cert %q contained no valid certificates", c.CACert)
+		}
+		cfg.RootCAs = pool
+	}
+	if c.ClientCert != "" || c.ClientKey != "" {
+		if c.ClientCert == "" || c.ClientKey == "" {
+			return nil, errors.New("rabbitmq tls client_cert and client_key must both be set for mutual TLS")
+		}
+		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("load rabbitmq tls client cert/key: %w", err)
+		}
+		cfg.Certificates = []tls.Certificate{cert}
+	}
+	return cfg, nil
 }
 
 // watchClose proactively re-establishes the connection when the broker drops it,

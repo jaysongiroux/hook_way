@@ -42,12 +42,22 @@ type RabbitMQConfig struct {
 	// Each channel carries one publisher-confirm round-trip at a time, so this
 	// is the effective publish concurrency. Defaults to 8 when <= 0.
 	PublisherChannels int
+	TLS               RabbitMQTLSConfig
 	Queues            []string
 	// QueueDeclarations is the queue-native shape factory/config can grow into
 	// without changing Publisher. Queues remains for existing simple config.
 	QueueDeclarations []QueueDeclaration
 	Retry             RetryPolicy
 	Metrics           RabbitMQMetrics
+}
+
+// RabbitMQTLSConfig mirrors the config-package TLS options for amqps:// dialing.
+type RabbitMQTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
 }
 
 type QueueDeclaration struct {
