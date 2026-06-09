@@ -68,6 +68,15 @@ type MetricsConfig struct {
 	// Addr, when set, serves metrics on a dedicated listener (e.g. ":9090")
 	// instead of the public webhook port, so /metrics is not internet-exposed.
 	Addr string `yaml:"addr"`
+	// RuntimeMetrics toggles the standard Go runtime and process collectors
+	// (goroutines, heap/GC, CPU, resident memory). Defaults to true when omitted.
+	RuntimeMetrics *bool `yaml:"runtime_metrics"`
+}
+
+// RuntimeMetricsEnabled reports whether Go runtime/process collectors should be
+// registered. Defaults to true unless explicitly disabled.
+func (m MetricsConfig) RuntimeMetricsEnabled() bool {
+	return m.RuntimeMetrics == nil || *m.RuntimeMetrics
 }
 
 type RabbitMQConfig struct {

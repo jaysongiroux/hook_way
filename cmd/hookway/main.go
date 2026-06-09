@@ -101,6 +101,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		logger.Error("config load failed", "error", err)
 		return 1
 	}
+	if cfg.Metrics.RuntimeMetricsEnabled() {
+		appMetrics.EnableRuntimeCollectors()
+	}
 	publisher, err := queue.NewFactory(queue.FactoryOptions{Metrics: appMetrics}).Create(context.Background(), cfg)
 	if err != nil {
 		logger.Error("message queue connection failed", "error", err)

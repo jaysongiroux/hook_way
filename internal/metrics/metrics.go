@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 type Metrics struct {
@@ -22,6 +23,7 @@ type Metrics struct {
 	rabbitMQConfirms     prometheus.Counter
 	rabbitMQRetries      prometheus.Counter
 	rabbitMQDLQPublishes prometheus.Counter
+	runtimeRegistered    bool
 }
 
 func New() *Metrics {
@@ -85,6 +87,22 @@ func New() *Metrics {
 		m.rabbitMQRetries, m.rabbitMQDLQPublishes,
 	)
 	return m
+}
+
+// EnableRuntimeCollectors registers the standard Go runtime and process
+// collectors (goroutines, heap/GC, CPU seconds, resident memory, open FDs) on
+// the metrics registry. It is idempotent and safe to call once after config is
+// loaded. Go runtime metrics in particular are the cheapest way to catch a
+// goroutine or memory leak in the publisher pool / reconnect watcher.
+func (m *Metrics) EnableRuntimeCollectors() {
+	if m.runtimeRegistered {
+		return
+	}
+	m.registry.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	m.runtimeRegistered = true
 }
 
 func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
