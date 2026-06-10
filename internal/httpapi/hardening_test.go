@@ -24,7 +24,7 @@ type blockingPublisher struct {
 	release chan struct{}
 }
 
-func (b *blockingPublisher) Publish(ctx context.Context, q string, msg queue.Message) error {
+func (b *blockingPublisher) Publish(ctx context.Context, destinationID, q string, msg queue.Message) error {
 	b.entered <- struct{}{}
 	<-b.release
 	return nil
@@ -96,7 +96,7 @@ func githubSigned(secret string, body []byte) string {
 func githubConfig() config.Config {
 	cfg := testConfig()
 	cfg.Endpoints["github_events"] = config.EndpointConfig{
-		Enabled: true, Path: "/webhooks/github", Queue: "github-events",
+		Enabled: true, Path: "/webhooks/github", DestinationQueueID: "activity", Queue: "github-events",
 		Auth: config.AuthConfig{
 			Type: "hmac_sha256", Scheme: "github", Secret: "ghsecret",
 			SignatureHeader: "X-Hub-Signature-256", IdempotencyHeader: "X-GitHub-Delivery",

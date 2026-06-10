@@ -39,8 +39,8 @@ func TestRabbitMQMutualTLSRequiresBothCertAndKey(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqps://guest:guest@broker.example.com/")
 	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	body := replace(validYAML(),
-		"    declare_queues: true",
-		"    declare_queues: true\n    tls:\n      client_cert: \"/etc/hookway/tls.crt\"")
+		"      declare_queues: true",
+		"      declare_queues: true\n      tls:\n        client_cert: \"/etc/hookway/tls.crt\"")
 
 	_, err := Load(writeConfig(t, body))
 	if err == nil || !strings.Contains(err.Error(), "tls.client_cert") {
@@ -52,15 +52,15 @@ func TestRabbitMQTLSCABlockIsValid(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqps://guest:guest@broker.example.com/")
 	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	body := replace(validYAML(),
-		"    declare_queues: true",
-		"    declare_queues: true\n    tls:\n      ca_cert: \"/etc/hookway/ca.pem\"\n      server_name: \"broker.example.com\"")
+		"      declare_queues: true",
+		"      declare_queues: true\n      tls:\n        ca_cert: \"/etc/hookway/ca.pem\"\n        server_name: \"broker.example.com\"")
 
 	cfg, err := Load(writeConfig(t, body))
 	if err != nil {
 		t.Fatalf("ca-only tls block should be valid: %v", err)
 	}
-	if cfg.MessageQueue.RabbitMQ.TLS.CACert != "/etc/hookway/ca.pem" {
-		t.Fatalf("ca_cert = %q", cfg.MessageQueue.RabbitMQ.TLS.CACert)
+	if cfg.MessageQueues["billing"].RabbitMQ.TLS.CACert != "/etc/hookway/ca.pem" {
+		t.Fatalf("ca_cert = %q", cfg.MessageQueues["billing"].RabbitMQ.TLS.CACert)
 	}
 }
 

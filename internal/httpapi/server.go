@@ -188,11 +188,11 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	status := http.StatusInternalServerError
-	endpointLabel, queueLabel := "", ""
+	endpointLabel, destinationLabel, queueLabel := "", "", ""
 	defer func() {
-		s.metrics.HTTP(endpointLabel, queueLabel, status)
+		s.metrics.HTTP(endpointLabel, destinationLabel, queueLabel, status)
 		hooklogging.Request(s.logger, hooklogging.RequestAttrs{
-			Method: r.Method, Path: r.URL.Path, Endpoint: endpointLabel, Queue: queueLabel,
+			Method: r.Method, Path: r.URL.Path, Endpoint: endpointLabel, DestinationQueueID: destinationLabel, Queue: queueLabel,
 			Status: status, Duration: time.Since(start), RequestID: requestIDFromContext(r.Context()),
 			TraceID: traceIDFromContext(r.Context()), Headers: r.Header,
 			HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
@@ -205,7 +205,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "not found"})
 		return
 	}
-	endpointLabel, queueLabel = endpointName, endpoint.Queue
+	endpointLabel, destinationLabel, queueLabel = endpointName, endpoint.DestinationQueueID, endpoint.Queue
 	if r.Method != http.MethodPost {
 		status = http.StatusMethodNotAllowed
 		w.Header().Set("Allow", http.MethodPost)
@@ -222,7 +222,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		default:
 			status = http.StatusServiceUnavailable
 			w.Header().Set("Retry-After", "1")
-			s.metrics.Saturated(endpointName, endpoint.Queue)
+			s.metrics.Saturated(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
 			writeJSON(w, status, map[string]string{"error": "server busy"})
 			return
 		}
@@ -235,7 +235,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.limiterForEndpoint(endpointName).Allow(sourceIP, time.Now()) {
 		status = http.StatusTooManyRequests
-		s.metrics.RateLimited(endpointName, endpoint.Queue)
+		s.metrics.RateLimited(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
 		writeJSON(w, status, map[string]string{"error": "rate limited"})
 		return
 	}
@@ -255,7 +255,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "empty body"})
 		return
 	}
-	s.metrics.BodyBytes(endpointName, endpoint.Queue, len(rawBody))
+	s.metrics.BodyBytes(endpointName, endpoint.DestinationQueueID, endpoint.Queue, len(rawBody))
 	if err := s.verifiers[endpointName].Verify(r.Header.Get(endpoint.Auth.SignatureHeader), rawBody, time.Now()); err != nil {
 		status = http.StatusUnauthorized
 		s.metrics.AuthFailure(endpointName, "invalid_signature")
@@ -280,7 +280,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	env, err := webhook.BuildEnvelopeWithOptions(r, webhook.EnvelopeOptions{
-		Endpoint: endpointName, Queue: endpoint.Queue, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
+		Endpoint: endpointName, DestinationQueueID: endpoint.DestinationQueueID, Queue: endpoint.Queue, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
 		RequestID: requestIDFromContext(r.Context()), TraceID: traceIDFromContext(r.Context()),
 		AuthType: endpoint.Auth.Type, AuthScheme: defaultScheme(endpoint.Auth.Scheme),
 		IdempotencyKey:  s.idempotencyKey(r, endpoint),
@@ -295,22 +295,22 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := queue.Message{
 		SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
-		Endpoint: env.Endpoint, Queue: env.Queue, ReceivedAt: env.ReceivedAt,
+		Endpoint: env.Endpoint, DestinationQueueID: env.DestinationQueueID, Queue: env.Queue, ReceivedAt: env.ReceivedAt,
 		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
 		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
 	}
 	publishStart := time.Now()
-	if err := s.publisher.Publish(r.Context(), endpoint.Queue, msg); err != nil {
+	if err := s.publisher.Publish(r.Context(), endpoint.DestinationQueueID, endpoint.Queue, msg); err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable
-		s.metrics.Publish(endpointName, endpoint.Queue, "failure", time.Since(publishStart))
+		s.metrics.Publish(endpointName, endpoint.DestinationQueueID, endpoint.Queue, "failure", time.Since(publishStart))
 		writeJSON(w, status, map[string]string{"error": "service unavailable"})
 		return
 	}
-	s.metrics.Publish(endpointName, endpoint.Queue, "success", time.Since(publishStart))
+	s.metrics.Publish(endpointName, endpoint.DestinationQueueID, endpoint.Queue, "success", time.Since(publishStart))
 	status = http.StatusAccepted
 	writeJSON(w, status, map[string]string{
-		"status": "accepted", "endpoint": endpointName, "queue": endpoint.Queue, "event_id": env.ID, "request_id": env.RequestID,
+		"status": "accepted", "endpoint": endpointName, "destination_queue_id": endpoint.DestinationQueueID, "queue": endpoint.Queue, "event_id": env.ID, "request_id": env.RequestID,
 	})
 }
 

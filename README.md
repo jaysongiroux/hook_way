@@ -51,6 +51,7 @@ Successful webhook response:
 {
   "status": "accepted",
   "endpoint": "paddle_billing",
+  "destination_queue_id": "billing",
   "queue": "billing-events",
   "event_id": "018f..."
 }
@@ -58,9 +59,9 @@ Successful webhook response:
 
 ## Consuming Messages
 
-Hookway publishes JSON envelopes to the configured direct exchange using each endpoint's `queue` as routing key. With `declare_queues: true`, endpoint queues are declared and bound automatically.
+Hookway publishes JSON envelopes to the endpoint's configured `destination_queue_id` using each endpoint's `queue` as RabbitMQ routing key. With `declare_queues: true`, endpoint queues are declared and bound automatically.
 
-The queue backend is configured under `message_queue`; MVP supports `type: rabbitmq`. SQS is the likely next backend. BullMQ may come later if worker ecosystems need Redis-native delivery.
+Queue backends are configured under top-level `message_queues`, keyed by destination id. MVP supports `type: rabbitmq` for each entry. SQS is the likely next backend. BullMQ may come later if worker ecosystems need Redis-native delivery.
 
 Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind endpoint queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
 

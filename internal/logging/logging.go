@@ -8,18 +8,19 @@ import (
 )
 
 type RequestAttrs struct {
-	Message         string
-	Method          string
-	Path            string
-	Endpoint        string
-	Queue           string
-	Status          int
-	Duration        time.Duration
-	RequestID       string
-	TraceID         string
-	Headers         http.Header
-	HeaderDenylist  []string
-	HeaderAllowlist []string
+	Message            string
+	Method             string
+	Path               string
+	Endpoint           string
+	DestinationQueueID string
+	Queue              string
+	Status             int
+	Duration           time.Duration
+	RequestID          string
+	TraceID            string
+	Headers            http.Header
+	HeaderDenylist     []string
+	HeaderAllowlist    []string
 }
 
 func Request(logger *slog.Logger, attrs RequestAttrs) {
@@ -34,6 +35,7 @@ func Request(logger *slog.Logger, attrs RequestAttrs) {
 		"method", attrs.Method,
 		"path", attrs.Path,
 		"endpoint", attrs.Endpoint,
+		"destination_queue_id", attrs.DestinationQueueID,
 		"queue", attrs.Queue,
 		"status", attrs.Status,
 		"duration", attrs.Duration.String(),

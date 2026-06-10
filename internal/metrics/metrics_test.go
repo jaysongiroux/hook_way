@@ -46,6 +46,39 @@ hookway_rabbitmq_retries_total 1
 	}
 }
 
+func TestWebhookMetricsIncludeDestinationQueueID(t *testing.T) {
+	m := New()
+
+	m.HTTP("paddle_billing", "billing", "billing-events", 202)
+	m.Publish("paddle_billing", "billing", "billing-events", "success", 0)
+	m.RateLimited("paddle_billing", "billing", "billing-events")
+	m.Saturated("paddle_billing", "billing", "billing-events")
+	m.BodyBytes("paddle_billing", "billing", "billing-events", 512)
+
+	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP hookway_http_requests_total HTTP requests handled by Hookway.
+# TYPE hookway_http_requests_total counter
+hookway_http_requests_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events",status="202"} 1
+# HELP hookway_publish_total RabbitMQ publish attempts.
+# TYPE hookway_publish_total counter
+hookway_publish_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events",status="success"} 1
+# HELP hookway_rate_limited_total Rate limited webhook requests.
+# TYPE hookway_rate_limited_total counter
+hookway_rate_limited_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
+# HELP hookway_saturated_total Webhook requests rejected because the in-flight limit was reached.
+# TYPE hookway_saturated_total counter
+hookway_saturated_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
+`),
+		"hookway_http_requests_total",
+		"hookway_publish_total",
+		"hookway_rate_limited_total",
+		"hookway_saturated_total",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEnableRuntimeCollectorsExposesGoAndProcessMetrics(t *testing.T) {
 	m := New()
 	m.EnableRuntimeCollectors()

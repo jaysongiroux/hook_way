@@ -7,7 +7,7 @@ It is designed for production webhook ingress where the receiving service should
 ## Features
 
 - Generic HMAC SHA-256 webhook verification
-- Configurable endpoint paths and RabbitMQ routing keys
+- Configurable endpoint paths, RabbitMQ destinations, and routing keys
 - RabbitMQ publishing with optional queue declaration
 - Optional dead-letter exchange and queue setup
 - Request size limits, IP allowlists, replay protection, and rate limiting

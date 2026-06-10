@@ -36,12 +36,41 @@ func TestWebhookSuccessReturnsAccepted(t *testing.T) {
 	if pub.published == 0 {
 		t.Fatal("expected publish")
 	}
+	if pub.destinationID != "billing" {
+		t.Fatalf("destination = %q", pub.destinationID)
+	}
+	if pub.msg.DestinationQueueID != "billing" {
+		t.Fatalf("message destination = %q", pub.msg.DestinationQueueID)
+	}
 	var res map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res["status"] != "accepted" || res["endpoint"] != "paddle_billing" || res["queue"] != "billing-events" || res["event_id"] == "" {
+	if res["status"] != "accepted" || res["endpoint"] != "paddle_billing" || res["destination_queue_id"] != "billing" || res["queue"] != "billing-events" || res["event_id"] == "" {
 		t.Fatalf("bad response: %#v", res)
+	}
+}
+
+func TestWebhookRoutesToEndpointDestination(t *testing.T) {
+	cfg := testConfig()
+	cfg.Endpoints["github_events"] = config.EndpointConfig{
+		Enabled: true, Path: "/webhooks/github", DestinationQueueID: "activity", Queue: "github-events",
+		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "github", Secret: "secret", SignatureHeader: "X-Hub-Signature-256"},
+	}
+	pub := &fakePublisher{}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`{"zen":"keep it logically awesome"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", githubSigned("secret", body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if pub.destinationID != "activity" || pub.queue != "github-events" {
+		t.Fatalf("publish target = %q/%q", pub.destinationID, pub.queue)
 	}
 }
 
@@ -234,14 +263,18 @@ func TestHealthReadyAndDisabledMetrics(t *testing.T) {
 }
 
 type fakePublisher struct {
-	err       error
-	readyErr  error
-	published int
-	msg       queue.Message
+	err           error
+	readyErr      error
+	published     int
+	destinationID string
+	queue         string
+	msg           queue.Message
 }
 
-func (f *fakePublisher) Publish(ctx context.Context, q string, msg queue.Message) error {
+func (f *fakePublisher) Publish(ctx context.Context, destinationID, q string, msg queue.Message) error {
 	f.published++
+	f.destinationID = destinationID
+	f.queue = q
 	f.msg = msg
 	return f.err
 }
@@ -250,14 +283,17 @@ func (f *fakePublisher) Close() error                    { return nil }
 
 func testConfig() config.Config {
 	return config.Config{
-		Server:       config.ServerConfig{Addr: ":0", MaxBodyBytes: 1024},
-		Security:     config.SecurityConfig{RequestIDHeader: "X-Request-ID"},
-		RateLimit:    config.RateLimitConfig{Enabled: false, RequestsPerMinute: 120, Burst: 20, KeyBy: "ip"},
-		Metrics:      config.MetricsConfig{Enabled: true, Path: "/metrics"},
-		MessageQueue: config.MessageQueueConfig{Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://guest:guest@localhost:5672/", Exchange: "hookway.webhooks", ExchangeType: "direct", PublishTimeout: time.Second}},
+		Server:    config.ServerConfig{Addr: ":0", MaxBodyBytes: 1024},
+		Security:  config.SecurityConfig{RequestIDHeader: "X-Request-ID"},
+		RateLimit: config.RateLimitConfig{Enabled: false, RequestsPerMinute: 120, Burst: 20, KeyBy: "ip"},
+		Metrics:   config.MetricsConfig{Enabled: true, Path: "/metrics"},
+		MessageQueues: map[string]config.MessageQueueConfig{
+			"billing":  {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://guest:guest@localhost:5672/", Exchange: "hookway.billing", ExchangeType: "direct", PublishTimeout: time.Second}},
+			"activity": {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://guest:guest@localhost:5673/", Exchange: "hookway.activity", ExchangeType: "direct", PublishTimeout: time.Second}},
+		},
 		Endpoints: map[string]config.EndpointConfig{
 			"paddle_billing": {
-				Enabled: true, Path: "/webhooks/paddle/billing", Queue: "billing-events",
+				Enabled: true, Path: "/webhooks/paddle/billing", DestinationQueueID: "billing", Queue: "billing-events",
 				Auth: config.AuthConfig{Type: "hmac_sha256", Secret: "secret", SignatureHeader: "Paddle-Signature", TimestampTolerance: 5 * time.Minute},
 			},
 		},

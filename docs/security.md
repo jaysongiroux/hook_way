@@ -28,8 +28,8 @@ Put secrets in environment variables and reference them from YAML with `${ENV_NA
 - Server timeouts are configured from YAML.
 - Shutdown handles `SIGINT` and `SIGTERM`.
 - `/healthz` reports process liveness for container healthchecks.
-- `/ready` reports message-queue readiness.
-- `/readyz` reports message-queue readiness.
+- `/ready` reports readiness for every message queue used by enabled endpoints.
+- `/readyz` reports readiness for every message queue used by enabled endpoints.
 - `/health` reports the same readiness state as `/readyz`.
 
 ## Rate Limiting
@@ -63,11 +63,11 @@ Each published envelope carries an `idempotency_key` (also set as the AMQP `x-id
 
 ## Availability Model
 
-Hookway does not durably spool requests locally. A webhook is acknowledged with `202 Accepted` only after RabbitMQ confirms the publish; if the broker is unavailable after retries, Hookway responds `503 Service Unavailable` and relies on the provider's own retry policy to redeliver. Under load shedding (`server.max_inflight_requests`) it also responds `503` with `Retry-After`. Operate behind providers that retry on 5xx, and size `publisher_channels`/`max_inflight_requests` for expected burst volume. The replay reservation is released on publish failure, so legitimate provider retries after a transient outage are not rejected as replays.
+Hookway does not durably spool requests locally. A webhook is acknowledged with `202 Accepted` only after the endpoint's configured RabbitMQ destination confirms the publish; if that broker is unavailable after retries, Hookway responds `503 Service Unavailable` and relies on the provider's own retry policy to redeliver. Under load shedding (`server.max_inflight_requests`) it also responds `503` with `Retry-After`. Operate behind providers that retry on 5xx, and size each destination's `publisher_channels` plus global `max_inflight_requests` for expected burst volume. The replay reservation is released on publish failure, so legitimate provider retries after a transient outage are not rejected as replays.
 
 ## Logging
 
-Logs include request method, path, endpoint, queue, status, and duration. Raw webhook payloads and secrets are not logged.
+Logs include request method, path, endpoint, destination queue id, queue, status, and duration. Raw webhook payloads and secrets are not logged.
 
 ## Envelope Compatibility
 
@@ -77,10 +77,10 @@ Logs include request method, path, endpoint, queue, status, and duration. Raw we
 
 - Terminate TLS at a trusted load balancer or reverse proxy. Enable `trusted_proxy_headers` only with `trusted_proxies` set to your proxy/ingress CIDRs so forwarded client IPs cannot be spoofed.
 - Keep RabbitMQ durable exchanges/queues enabled for production and configure dead-letter queues for failed consumers.
-- Use `amqps://` for the broker connection. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `message_queue.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
+- Use `amqps://` for broker connections. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `message_queues.<id>.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
 - Run at least two replicas, but treat rate limiting and replay protection as process-local until a shared backend is added.
 - Keep `server.max_body_bytes` tight per endpoint and set `server.max_inflight_requests` to bound memory and shed load under flood.
-- Tune `message_queue.rabbitmq.publisher_channels` to the desired publish concurrency (default 8).
+- Tune `message_queues.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
 - Set `security.forwarded_header_allowlist` so only intended headers reach consumers and logs.

@@ -32,7 +32,7 @@ The repo wrapper is:
 make validate
 ```
 
-Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate endpoint paths, unsupported backends, unsupported auth types, unsafe queue names, invalid header names, invalid IP allowlist entries, and missing endpoint secrets.
+Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping endpoint paths, unsupported backends, unknown endpoint `destination_queue_id` values, unsupported auth types, unsafe queue names, invalid header names, invalid IP allowlist entries, and missing endpoint secrets.
 
 ## Healthcheck
 

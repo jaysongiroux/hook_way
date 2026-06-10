@@ -31,20 +31,21 @@ func TestStructuredRequestLogDoesNotLeakSecrets(t *testing.T) {
 	headers.Set("X-Request-ID", "req_123")
 
 	Request(logger, RequestAttrs{
-		Message:        "request handled",
-		Method:         http.MethodPost,
-		Path:           "/webhooks/paddle/billing",
-		Endpoint:       "paddle_billing",
-		Queue:          "billing-events",
-		Status:         202,
-		RequestID:      "req_123",
-		TraceID:        "trace_123",
-		Headers:        headers,
-		HeaderDenylist: []string{"x-api-key"},
+		Message:            "request handled",
+		Method:             http.MethodPost,
+		Path:               "/webhooks/paddle/billing",
+		Endpoint:           "paddle_billing",
+		DestinationQueueID: "billing",
+		Queue:              "billing-events",
+		Status:             202,
+		RequestID:          "req_123",
+		TraceID:            "trace_123",
+		Headers:            headers,
+		HeaderDenylist:     []string{"x-api-key"},
 	})
 
 	got := buf.String()
-	for _, want := range []string{`"request_id":"req_123"`, `"trace_id":"trace_123"`, `"status":202`} {
+	for _, want := range []string{`"request_id":"req_123"`, `"trace_id":"trace_123"`, `"destination_queue_id":"billing"`, `"status":202`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("log missing %s: %s", want, got)
 		}

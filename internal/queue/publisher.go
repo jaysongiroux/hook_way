@@ -7,28 +7,29 @@ import (
 )
 
 type Publisher interface {
-	Publish(ctx context.Context, queue string, msg Message) error
+	Publish(ctx context.Context, destinationQueueID, queue string, msg Message) error
 	Ready(ctx context.Context) error
 	Close() error
 }
 
 type Message struct {
-	SchemaVersion  string         `json:"schema_version"`
-	ID             string         `json:"id"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	RequestID      string         `json:"request_id,omitempty"`
-	TraceID        string         `json:"trace_id,omitempty"`
-	Endpoint       string         `json:"endpoint"`
-	Queue          string         `json:"queue"`
-	ReceivedAt     time.Time      `json:"received_at"`
-	Method         string         `json:"method,omitempty"`
-	Path           string         `json:"path,omitempty"`
-	Headers        http.Header    `json:"headers,omitempty"`
-	Query          map[string]any `json:"query,omitempty"`
-	Body           any            `json:"body"`
-	RawBodyBase64  *string        `json:"raw_body_base64,omitempty"`
-	SourceIP       string         `json:"source_ip,omitempty"`
-	Auth           any            `json:"auth,omitempty"`
+	SchemaVersion      string         `json:"schema_version"`
+	ID                 string         `json:"id"`
+	IdempotencyKey     string         `json:"idempotency_key,omitempty"`
+	RequestID          string         `json:"request_id,omitempty"`
+	TraceID            string         `json:"trace_id,omitempty"`
+	Endpoint           string         `json:"endpoint"`
+	DestinationQueueID string         `json:"destination_queue_id"`
+	Queue              string         `json:"queue"`
+	ReceivedAt         time.Time      `json:"received_at"`
+	Method             string         `json:"method,omitempty"`
+	Path               string         `json:"path,omitempty"`
+	Headers            http.Header    `json:"headers,omitempty"`
+	Query              map[string]any `json:"query,omitempty"`
+	Body               any            `json:"body"`
+	RawBodyBase64      *string        `json:"raw_body_base64,omitempty"`
+	SourceIP           string         `json:"source_ip,omitempty"`
+	Auth               any            `json:"auth,omitempty"`
 }
 
 type RabbitMQConfig struct {
@@ -64,7 +65,16 @@ type QueueDeclaration struct {
 	Name        string
 	CreateQueue bool
 	Durable     *bool
+	Options     QueueOptions
 	DLQ         *DeadLetterDeclaration
+}
+
+type QueueOptions struct {
+	MessageTTL           time.Duration
+	Expires              time.Duration
+	MaxLength            int64
+	Overflow             string
+	DeadLetterRoutingKey string
 }
 
 type DeadLetterDeclaration struct {
