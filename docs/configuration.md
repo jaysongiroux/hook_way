@@ -2,7 +2,7 @@
 
 Hookway reads one YAML config file. Set it with `HOOKWAY_CONFIG` or pass `--config`; the flag wins. YAML string values support `${ENV_NAME}` expansion.
 
-Startup parses and validates the config before connecting to the message queue or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
+Startup parses and validates the config before connecting to the message queue or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
 
 Example validation output:
 
@@ -74,44 +74,56 @@ paths.
 
 ## Message Queue
 
-`message_queue.type` selects the message queue backend. Only `rabbitmq` is supported in MVP, but the root is generic so future providers such as SQS or BullMQ can be added without changing the top-level shape.
+`message_queues` is a top-level map of queue destinations keyed by stable id. Endpoints use `destination_queue_id` to choose one destination. Only `rabbitmq` is supported in MVP, but each entry keeps a `type` field so future providers such as SQS or BullMQ can be added without changing endpoint shape.
 
-RabbitMQ fields live under `message_queue.rabbitmq`:
+RabbitMQ fields live under `message_queues.<id>.rabbitmq`:
 
-- `message_queue.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
-- `message_queue.rabbitmq.exchange`: required direct exchange name.
-- `message_queue.rabbitmq.exchange_type`: required, use `direct` for MVP.
-- `message_queue.rabbitmq.durable`: boolean for exchange/queue durability.
-- `message_queue.rabbitmq.publish_timeout`: optional duration, default `5s`.
-- `message_queue.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
-- `message_queue.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
-- `message_queue.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
+- `message_queues.<id>.type`: required backend type; use `rabbitmq`.
+- `message_queues.<id>.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
+- `message_queues.<id>.rabbitmq.exchange`: required direct exchange name.
+- `message_queues.<id>.rabbitmq.exchange_type`: required, use `direct` for MVP.
+- `message_queues.<id>.rabbitmq.durable`: boolean for exchange/queue durability.
+- `message_queues.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
+- `message_queues.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
+- `message_queues.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
+- `message_queues.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint queue Hookway declares for that destination. Endpoint `queue_options` override these defaults.
+  - `message_ttl`: optional positive duration mapped to RabbitMQ `x-message-ttl` in milliseconds. Stale messages are expired from the queue.
+  - `expires`: optional positive duration mapped to `x-expires` in milliseconds. Useful for temporary/test queues; usually omit for production webhook queues.
+  - `max_length`: optional positive integer mapped to `x-max-length` to cap backlog size.
+  - `overflow`: optional overflow mode. Supported values are `reject-publish` and `reject-publish-dlx`; `reject-publish` is recommended so providers retry instead of silently losing older webhook messages.
+  - `dead_letter_routing_key`: optional default RabbitMQ `x-dead-letter-routing-key` override.
+- `message_queues.<id>.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
   - `ca_cert`: path to a PEM bundle to trust instead of/in addition to system roots (for private/self-signed CAs).
   - `client_cert` / `client_key`: PEM paths for mutual TLS. Both must be set together.
   - `server_name`: overrides the SNI/verification hostname.
   - `insecure_skip_verify`: disables certificate verification. Dev-only; logs a warning at startup. Do not use in production.
 
   Bad or unreadable CA/cert paths fail fast at startup. Note: the published container image must contain a CA bundle for `amqps://` to work at all — the provided Dockerfile copies `ca-certificates` into the `scratch` image for this reason.
-- `message_queue.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
+- `message_queues.<id>.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
 
 ```yaml
-message_queue:
-  type: "rabbitmq"
-  rabbitmq:
-    url: "${RABBITMQ_URL}"
-    exchange: "hookway.webhooks"
-    exchange_type: "direct"
-    durable: true
-    publish_timeout: "5s"
-    declare_queues: true
-    dead_letter:
-      enabled: true
-      exchange: "hookway.webhooks.dlx"
+message_queues:
+  billing:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${BILLING_RABBITMQ_URL}"
+      exchange: "hookway.billing"
       exchange_type: "direct"
-      queue: "hookway.webhooks.dlq"
-      routing_key: "webhooks.dead"
       durable: true
-      create_queue: true
+      publish_timeout: "5s"
+      declare_queues: true
+      queue_defaults:
+        message_ttl: "24h"
+        max_length: 100000
+        overflow: "reject-publish"
+      dead_letter:
+        enabled: true
+        exchange: "hookway.billing.dlx"
+        exchange_type: "direct"
+        queue: "hookway.billing.dlq"
+        routing_key: "webhooks.dead"
+        durable: true
+        create_queue: true
 ```
 
 Dead-letter fields:
@@ -133,6 +145,7 @@ endpoints:
   paddle_billing:
     enabled: true
     path: "/webhooks/paddle/billing"
+    destination_queue_id: "billing"
     queue: "billing-events"
     create_queue: true
     max_body_bytes: 2097152
@@ -158,6 +171,7 @@ endpoints:
   github_events:
     enabled: true
     path: "/webhooks/github/events"
+    destination_queue_id: "billing"
     queue: "github-events"
     create_queue: true
     rate_limit:
@@ -182,9 +196,11 @@ endpoints:
 Endpoint fields:
 
 - `enabled`: only enabled endpoints are registered.
-- `path`: public HTTP path; must start with `/` and be unique among enabled endpoints.
+- `path`: public HTTP path; must start with `/` and be unique among enabled endpoints. Parent/child overlaps such as `/webhooks/paddle` and `/webhooks/paddle/billing` are rejected to avoid ambiguous webhook routing.
+- `destination_queue_id`: required key under `message_queues`; selects which RabbitMQ instance receives this endpoint's messages.
 - `queue`: target RabbitMQ routing key/queue name; must match `^[a-zA-Z0-9._-]{1,128}$`.
 - `create_queue`: when true, queue layer can declare and bind this endpoint queue during startup.
+- `queue_options`: optional per-endpoint RabbitMQ queue arguments. Same fields as `message_queues.<id>.rabbitmq.queue_defaults`; endpoint values override defaults. Use this for source-specific retention/backlog policy, for example longer TTLs for billing webhooks than low-value activity events. Endpoints sharing one queue within one destination must use identical queue options.
 - `max_body_bytes`: optional positive endpoint override. Omit or set `0` to inherit `server.max_body_bytes`.
 - `rate_limit`: optional endpoint override. Omit to inherit global `rate_limit`; set `enabled: false` to disable endpoint-specific limiting in later HTTP code.
 - `replay_protection`: optional endpoint replay cache settings.

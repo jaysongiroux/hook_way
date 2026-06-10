@@ -29,12 +29,12 @@ var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 var safeHeaderName = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
 
 type Config struct {
-	Server       ServerConfig              `yaml:"server"`
-	Security     SecurityConfig            `yaml:"security"`
-	RateLimit    RateLimitConfig           `yaml:"rate_limit"`
-	Metrics      MetricsConfig             `yaml:"metrics"`
-	MessageQueue MessageQueueConfig        `yaml:"message_queue"`
-	Endpoints    map[string]EndpointConfig `yaml:"endpoints"`
+	Server        ServerConfig                  `yaml:"server"`
+	Security      SecurityConfig                `yaml:"security"`
+	RateLimit     RateLimitConfig               `yaml:"rate_limit"`
+	Metrics       MetricsConfig                 `yaml:"metrics"`
+	MessageQueues map[string]MessageQueueConfig `yaml:"message_queues"`
+	Endpoints     map[string]EndpointConfig     `yaml:"endpoints"`
 }
 
 type ServerConfig struct {
@@ -89,6 +89,7 @@ type RabbitMQConfig struct {
 	PublisherChannels int
 	TLS               RabbitMQTLSConfig
 	DeadLetter        RabbitMQDeadLetterConfig
+	QueueDefaults     RabbitMQQueueOptions
 }
 
 // RabbitMQTLSConfig configures TLS for amqps:// connections. All fields are
@@ -113,21 +114,31 @@ type RabbitMQDeadLetterConfig struct {
 	CreateQueue  bool
 }
 
+type RabbitMQQueueOptions struct {
+	MessageTTL           time.Duration
+	Expires              time.Duration
+	MaxLength            int64
+	Overflow             string
+	DeadLetterRoutingKey string
+}
+
 type MessageQueueConfig struct {
 	Type     string
 	RabbitMQ RabbitMQConfig
 }
 
 type EndpointConfig struct {
-	Enabled          bool                    `yaml:"enabled"`
-	Path             string                  `yaml:"path"`
-	Queue            string                  `yaml:"queue"`
-	CreateQueue      bool                    `yaml:"create_queue"`
-	MaxBodyBytes     int64                   `yaml:"max_body_bytes"`
-	RateLimit        EndpointRateLimitConfig `yaml:"rate_limit"`
-	ReplayProtection ReplayProtectionConfig  `yaml:"replay_protection"`
-	IPAllowlist      []string                `yaml:"ip_allowlist"`
-	Auth             AuthConfig              `yaml:"auth"`
+	Enabled            bool                    `yaml:"enabled"`
+	Path               string                  `yaml:"path"`
+	DestinationQueueID string                  `yaml:"destination_queue_id"`
+	Queue              string                  `yaml:"queue"`
+	CreateQueue        bool                    `yaml:"create_queue"`
+	QueueOptions       RabbitMQQueueOptions    `yaml:"queue_options"`
+	MaxBodyBytes       int64                   `yaml:"max_body_bytes"`
+	RateLimit          EndpointRateLimitConfig `yaml:"rate_limit"`
+	ReplayProtection   ReplayProtectionConfig  `yaml:"replay_protection"`
+	IPAllowlist        []string                `yaml:"ip_allowlist"`
+	Auth               AuthConfig              `yaml:"auth"`
 }
 
 type EndpointRateLimitConfig struct {
@@ -152,6 +163,44 @@ type AuthConfig struct {
 	IdempotencyHeader  string
 }
 
+type rawRabbitMQQueueOptions struct {
+	MessageTTL           string `yaml:"message_ttl"`
+	Expires              string `yaml:"expires"`
+	MaxLength            int64  `yaml:"max_length"`
+	Overflow             string `yaml:"overflow"`
+	DeadLetterRoutingKey string `yaml:"dead_letter_routing_key"`
+}
+
+type rawMessageQueueConfig struct {
+	Type     string `yaml:"type"`
+	RabbitMQ struct {
+		URL               string                  `yaml:"url"`
+		Exchange          string                  `yaml:"exchange"`
+		ExchangeType      string                  `yaml:"exchange_type"`
+		Durable           bool                    `yaml:"durable"`
+		PublishTimeout    string                  `yaml:"publish_timeout"`
+		DeclareQueues     bool                    `yaml:"declare_queues"`
+		PublisherChannels int                     `yaml:"publisher_channels"`
+		QueueDefaults     rawRabbitMQQueueOptions `yaml:"queue_defaults"`
+		TLS               struct {
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+		DeadLetter struct {
+			Enabled      bool   `yaml:"enabled"`
+			Exchange     string `yaml:"exchange"`
+			ExchangeType string `yaml:"exchange_type"`
+			Queue        string `yaml:"queue"`
+			RoutingKey   string `yaml:"routing_key"`
+			Durable      bool   `yaml:"durable"`
+			CreateQueue  bool   `yaml:"create_queue"`
+		} `yaml:"dead_letter"`
+	} `yaml:"rabbitmq"`
+}
+
 type rawConfig struct {
 	Server struct {
 		Addr                string `yaml:"addr"`
@@ -162,45 +211,20 @@ type rawConfig struct {
 		MaxBodyBytes        int64  `yaml:"max_body_bytes"`
 		MaxInflightRequests int    `yaml:"max_inflight_requests"`
 	} `yaml:"server"`
-	Security     SecurityConfig  `yaml:"security"`
-	RateLimit    RateLimitConfig `yaml:"rate_limit"`
-	Metrics      MetricsConfig   `yaml:"metrics"`
-	MessageQueue struct {
-		Type     string `yaml:"type"`
-		RabbitMQ struct {
-			URL               string `yaml:"url"`
-			Exchange          string `yaml:"exchange"`
-			ExchangeType      string `yaml:"exchange_type"`
-			Durable           bool   `yaml:"durable"`
-			PublishTimeout    string `yaml:"publish_timeout"`
-			DeclareQueues     bool   `yaml:"declare_queues"`
-			PublisherChannels int    `yaml:"publisher_channels"`
-			TLS               struct {
-				CACert             string `yaml:"ca_cert"`
-				ClientCert         string `yaml:"client_cert"`
-				ClientKey          string `yaml:"client_key"`
-				ServerName         string `yaml:"server_name"`
-				InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
-			} `yaml:"tls"`
-			DeadLetter struct {
-				Enabled      bool   `yaml:"enabled"`
-				Exchange     string `yaml:"exchange"`
-				ExchangeType string `yaml:"exchange_type"`
-				Queue        string `yaml:"queue"`
-				RoutingKey   string `yaml:"routing_key"`
-				Durable      bool   `yaml:"durable"`
-				CreateQueue  bool   `yaml:"create_queue"`
-			} `yaml:"dead_letter"`
-		} `yaml:"rabbitmq"`
-	} `yaml:"message_queue"`
-	Endpoints map[string]struct {
-		Enabled          bool                    `yaml:"enabled"`
-		Path             string                  `yaml:"path"`
-		Queue            string                  `yaml:"queue"`
-		CreateQueue      bool                    `yaml:"create_queue"`
-		MaxBodyBytes     int64                   `yaml:"max_body_bytes"`
-		RateLimit        EndpointRateLimitConfig `yaml:"rate_limit"`
-		ReplayProtection struct {
+	Security      SecurityConfig                   `yaml:"security"`
+	RateLimit     RateLimitConfig                  `yaml:"rate_limit"`
+	Metrics       MetricsConfig                    `yaml:"metrics"`
+	MessageQueues map[string]rawMessageQueueConfig `yaml:"message_queues"`
+	Endpoints     map[string]struct {
+		Enabled            bool                    `yaml:"enabled"`
+		Path               string                  `yaml:"path"`
+		DestinationQueueID string                  `yaml:"destination_queue_id"`
+		Queue              string                  `yaml:"queue"`
+		CreateQueue        bool                    `yaml:"create_queue"`
+		QueueOptions       rawRabbitMQQueueOptions `yaml:"queue_options"`
+		MaxBodyBytes       int64                   `yaml:"max_body_bytes"`
+		RateLimit          EndpointRateLimitConfig `yaml:"rate_limit"`
+		ReplayProtection   struct {
 			Enabled    bool   `yaml:"enabled"`
 			TTL        string `yaml:"ttl"`
 			MaxEntries int    `yaml:"max_entries"`
@@ -354,40 +378,51 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 		}
 	}
-	if c.MessageQueue.Type == "" {
-		issues = append(issues, validationError("message_queue.type", "message queue backend type is required", "set message_queue.type to \"rabbitmq\""))
-	} else if c.MessageQueue.Type != "rabbitmq" {
-		issues = append(issues, validationError("message_queue.type", fmt.Sprintf("%q is not supported", c.MessageQueue.Type), "supported value for MVP is \"rabbitmq\""))
+	if len(c.MessageQueues) == 0 {
+		issues = append(issues, validationError("message_queues", "at least one message queue is required", "add message_queues.billing with type \"rabbitmq\""))
 	}
-	if c.MessageQueue.Type == "rabbitmq" || c.MessageQueue.Type == "" {
-		if c.MessageQueue.RabbitMQ.URL == "" {
-			issues = append(issues, validationError("message_queue.rabbitmq.url", "AMQP URL is required", "set url to ${RABBITMQ_URL} and export RABBITMQ_URL"))
+	for id, mq := range c.MessageQueues {
+		fieldPrefix := "message_queues." + id
+		if !safeName.MatchString(id) {
+			issues = append(issues, validationError(fieldPrefix, "message queue id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
-		if c.MessageQueue.RabbitMQ.Exchange == "" {
-			issues = append(issues, validationError("message_queue.rabbitmq.exchange", "exchange name is required", "set a direct exchange such as \"hookway.webhooks\""))
+		if mq.Type == "" {
+			issues = append(issues, validationError(fieldPrefix+".type", "message queue backend type is required", "set type to \"rabbitmq\""))
+		} else if mq.Type != "rabbitmq" {
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", mq.Type), "supported value for MVP is \"rabbitmq\""))
 		}
-		if c.MessageQueue.RabbitMQ.ExchangeType == "" {
-			issues = append(issues, validationError("message_queue.rabbitmq.exchange_type", "exchange type is required", "set exchange_type to \"direct\""))
-		}
-		if c.MessageQueue.RabbitMQ.PublisherChannels < 0 {
-			issues = append(issues, validationError("message_queue.rabbitmq.publisher_channels", "must be zero (default) or a positive integer", "set publish concurrency such as 8"))
-		}
-		tls := c.MessageQueue.RabbitMQ.TLS
-		if (tls.ClientCert == "") != (tls.ClientKey == "") {
-			issues = append(issues, validationError("message_queue.rabbitmq.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
-		}
-		if c.MessageQueue.RabbitMQ.DeadLetter.Enabled {
-			if !safeName.MatchString(c.MessageQueue.RabbitMQ.DeadLetter.Exchange) {
-				issues = append(issues, validationError("message_queue.rabbitmq.dead_letter.exchange", "exchange name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+		if mq.Type == "rabbitmq" || mq.Type == "" {
+			rabbitPrefix := fieldPrefix + ".rabbitmq"
+			if mq.RabbitMQ.URL == "" {
+				issues = append(issues, validationError(rabbitPrefix+".url", "AMQP URL is required", "set url to ${RABBITMQ_URL} and export RABBITMQ_URL"))
 			}
-			if c.MessageQueue.RabbitMQ.DeadLetter.ExchangeType == "" {
-				issues = append(issues, validationError("message_queue.rabbitmq.dead_letter.exchange_type", "exchange type is required", "set exchange_type to \"direct\""))
+			if mq.RabbitMQ.Exchange == "" {
+				issues = append(issues, validationError(rabbitPrefix+".exchange", "exchange name is required", "set a direct exchange such as \"hookway.webhooks\""))
 			}
-			if c.MessageQueue.RabbitMQ.DeadLetter.CreateQueue && !safeName.MatchString(c.MessageQueue.RabbitMQ.DeadLetter.Queue) {
-				issues = append(issues, validationError("message_queue.rabbitmq.dead_letter.queue", "queue name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+			if mq.RabbitMQ.ExchangeType == "" {
+				issues = append(issues, validationError(rabbitPrefix+".exchange_type", "exchange type is required", "set exchange_type to \"direct\""))
 			}
-			if c.MessageQueue.RabbitMQ.DeadLetter.RoutingKey == "" {
-				issues = append(issues, validationError("message_queue.rabbitmq.dead_letter.routing_key", "routing key is required", "set a routing key such as \"webhooks.dead\""))
+			if mq.RabbitMQ.PublisherChannels < 0 {
+				issues = append(issues, validationError(rabbitPrefix+".publisher_channels", "must be zero (default) or a positive integer", "set publish concurrency such as 8"))
+			}
+			issues = append(issues, queueOptionValidationIssues(rabbitPrefix+".queue_defaults", mq.RabbitMQ.QueueDefaults)...)
+			tls := mq.RabbitMQ.TLS
+			if (tls.ClientCert == "") != (tls.ClientKey == "") {
+				issues = append(issues, validationError(rabbitPrefix+".tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+			}
+			if mq.RabbitMQ.DeadLetter.Enabled {
+				if !safeName.MatchString(mq.RabbitMQ.DeadLetter.Exchange) {
+					issues = append(issues, validationError(rabbitPrefix+".dead_letter.exchange", "exchange name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+				}
+				if mq.RabbitMQ.DeadLetter.ExchangeType == "" {
+					issues = append(issues, validationError(rabbitPrefix+".dead_letter.exchange_type", "exchange type is required", "set exchange_type to \"direct\""))
+				}
+				if mq.RabbitMQ.DeadLetter.CreateQueue && !safeName.MatchString(mq.RabbitMQ.DeadLetter.Queue) {
+					issues = append(issues, validationError(rabbitPrefix+".dead_letter.queue", "queue name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+				}
+				if mq.RabbitMQ.DeadLetter.RoutingKey == "" {
+					issues = append(issues, validationError(rabbitPrefix+".dead_letter.routing_key", "routing key is required", "set a routing key such as \"webhooks.dead\""))
+				}
 			}
 		}
 	}
@@ -409,6 +444,7 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 	}
 	paths := map[string]string{}
+	queueOptions := map[string]RabbitMQQueueOptions{}
 	for name, endpoint := range c.Endpoints {
 		fieldPrefix := "endpoints." + name
 		if !safeName.MatchString(name) {
@@ -417,6 +453,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if !endpoint.Enabled {
 			continue
 		}
+		if endpoint.DestinationQueueID == "" {
+			issues = append(issues, validationError(fieldPrefix+".destination_queue_id", "destination queue id is required for enabled endpoints", "set destination_queue_id to a key under message_queues"))
+		} else if _, ok := c.MessageQueues[endpoint.DestinationQueueID]; !ok {
+			issues = append(issues, validationError(fieldPrefix+".destination_queue_id", "destination queue id is not configured", "reference an existing message_queues entry"))
+		}
 		if endpoint.Path == "" {
 			issues = append(issues, validationError(fieldPrefix+".path", "path is required for enabled endpoints", "set a path such as \"/webhooks/paddle/billing\""))
 		} else if endpoint.Path[0] != '/' {
@@ -424,11 +465,24 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		} else if other, ok := paths[endpoint.Path]; ok {
 			issues = append(issues, validationError(fieldPrefix+".path", "path duplicates endpoint "+other, "each enabled endpoint must use a unique path"))
 		} else {
+			for otherPath, otherName := range paths {
+				if endpointPathsOverlap(endpoint.Path, otherPath) {
+					issues = append(issues, validationError(fieldPrefix+".path", "path overlaps endpoint "+otherName, "avoid parent/child paths such as \"/webhooks/paddle\" and \"/webhooks/paddle/billing\""))
+					break
+				}
+			}
 			paths[endpoint.Path] = name
 		}
 		if !safeName.MatchString(endpoint.Queue) {
 			issues = append(issues, validationError(fieldPrefix+".queue", "queue name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
 		}
+		queueOptionKey := endpoint.DestinationQueueID + "\x00" + endpoint.Queue
+		if previous, ok := queueOptions[queueOptionKey]; ok && previous != endpoint.QueueOptions {
+			issues = append(issues, validationError(fieldPrefix+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
+		} else {
+			queueOptions[queueOptionKey] = endpoint.QueueOptions
+		}
+		issues = append(issues, queueOptionValidationIssues(fieldPrefix+".queue_options", endpoint.QueueOptions)...)
 		if endpoint.MaxBodyBytes < 0 {
 			issues = append(issues, validationError(fieldPrefix+".max_body_bytes", "must be positive when set", "omit to inherit server.max_body_bytes or set a positive byte limit"))
 		}
@@ -511,40 +565,22 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
-	publish, issue := parseDuration("message_queue.rabbitmq.publish_timeout", raw.MessageQueue.RabbitMQ.PublishTimeout, 5*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
 	cfg := Config{
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
 			IdleTimeout: idle, ShutdownTimeout: shutdown, MaxBodyBytes: raw.Server.MaxBodyBytes,
 			MaxInflightRequests: raw.Server.MaxInflightRequests,
 		},
-		Security:  raw.Security,
-		RateLimit: raw.RateLimit,
-		Metrics:   raw.Metrics,
-		MessageQueue: MessageQueueConfig{
-			Type: raw.MessageQueue.Type,
-			RabbitMQ: RabbitMQConfig{
-				URL: raw.MessageQueue.RabbitMQ.URL, Exchange: raw.MessageQueue.RabbitMQ.Exchange,
-				ExchangeType: raw.MessageQueue.RabbitMQ.ExchangeType, Durable: raw.MessageQueue.RabbitMQ.Durable,
-				PublishTimeout: publish, DeclareQueues: raw.MessageQueue.RabbitMQ.DeclareQueues,
-				PublisherChannels: raw.MessageQueue.RabbitMQ.PublisherChannels,
-				TLS: RabbitMQTLSConfig{
-					CACert: raw.MessageQueue.RabbitMQ.TLS.CACert, ClientCert: raw.MessageQueue.RabbitMQ.TLS.ClientCert,
-					ClientKey: raw.MessageQueue.RabbitMQ.TLS.ClientKey, ServerName: raw.MessageQueue.RabbitMQ.TLS.ServerName,
-					InsecureSkipVerify: raw.MessageQueue.RabbitMQ.TLS.InsecureSkipVerify,
-				},
-				DeadLetter: RabbitMQDeadLetterConfig{
-					Enabled: raw.MessageQueue.RabbitMQ.DeadLetter.Enabled, Exchange: raw.MessageQueue.RabbitMQ.DeadLetter.Exchange,
-					ExchangeType: raw.MessageQueue.RabbitMQ.DeadLetter.ExchangeType, Queue: raw.MessageQueue.RabbitMQ.DeadLetter.Queue,
-					RoutingKey: raw.MessageQueue.RabbitMQ.DeadLetter.RoutingKey, Durable: raw.MessageQueue.RabbitMQ.DeadLetter.Durable,
-					CreateQueue: raw.MessageQueue.RabbitMQ.DeadLetter.CreateQueue,
-				},
-			},
-		},
-		Endpoints: map[string]EndpointConfig{},
+		Security:      raw.Security,
+		RateLimit:     raw.RateLimit,
+		Metrics:       raw.Metrics,
+		MessageQueues: map[string]MessageQueueConfig{},
+		Endpoints:     map[string]EndpointConfig{},
+	}
+	for id, rawMQ := range raw.MessageQueues {
+		mq, mqIssues := convertMessageQueue("message_queues."+id, rawMQ)
+		issues = append(issues, mqIssues...)
+		cfg.MessageQueues[id] = mq
 	}
 	for name, endpoint := range raw.Endpoints {
 		tolerance, issue := parseDuration("endpoints."+name+".auth.timestamp_tolerance", endpoint.Auth.TimestampTolerance, 5*time.Minute)
@@ -555,13 +591,17 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		if issue.Field != "" {
 			issues = append(issues, issue)
 		}
+		queueOptions, queueOptionIssues := convertQueueOptions("endpoints."+name+".queue_options", endpoint.QueueOptions)
+		issues = append(issues, queueOptionIssues...)
 		cfg.Endpoints[name] = EndpointConfig{
-			Enabled:      endpoint.Enabled,
-			Path:         endpoint.Path,
-			Queue:        endpoint.Queue,
-			CreateQueue:  endpoint.CreateQueue,
-			MaxBodyBytes: endpoint.MaxBodyBytes,
-			RateLimit:    endpoint.RateLimit,
+			Enabled:            endpoint.Enabled,
+			Path:               endpoint.Path,
+			DestinationQueueID: endpoint.DestinationQueueID,
+			Queue:              endpoint.Queue,
+			CreateQueue:        endpoint.CreateQueue,
+			QueueOptions:       queueOptions,
+			MaxBodyBytes:       endpoint.MaxBodyBytes,
+			RateLimit:          endpoint.RateLimit,
 			ReplayProtection: ReplayProtectionConfig{
 				Enabled: endpoint.ReplayProtection.Enabled, TTL: replayTTL, MaxEntries: endpoint.ReplayProtection.MaxEntries,
 			},
@@ -575,6 +615,37 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 	return cfg, issues
 }
 
+func convertMessageQueue(fieldPrefix string, raw rawMessageQueueConfig) (MessageQueueConfig, []ValidationIssue) {
+	var issues []ValidationIssue
+	publish, issue := parseDuration(fieldPrefix+".rabbitmq.publish_timeout", raw.RabbitMQ.PublishTimeout, 5*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	queueDefaults, queueDefaultIssues := convertQueueOptions(fieldPrefix+".rabbitmq.queue_defaults", raw.RabbitMQ.QueueDefaults)
+	issues = append(issues, queueDefaultIssues...)
+	return MessageQueueConfig{
+		Type: raw.Type,
+		RabbitMQ: RabbitMQConfig{
+			URL: raw.RabbitMQ.URL, Exchange: raw.RabbitMQ.Exchange,
+			ExchangeType: raw.RabbitMQ.ExchangeType, Durable: raw.RabbitMQ.Durable,
+			PublishTimeout: publish, DeclareQueues: raw.RabbitMQ.DeclareQueues,
+			PublisherChannels: raw.RabbitMQ.PublisherChannels,
+			TLS: RabbitMQTLSConfig{
+				CACert: raw.RabbitMQ.TLS.CACert, ClientCert: raw.RabbitMQ.TLS.ClientCert,
+				ClientKey: raw.RabbitMQ.TLS.ClientKey, ServerName: raw.RabbitMQ.TLS.ServerName,
+				InsecureSkipVerify: raw.RabbitMQ.TLS.InsecureSkipVerify,
+			},
+			DeadLetter: RabbitMQDeadLetterConfig{
+				Enabled: raw.RabbitMQ.DeadLetter.Enabled, Exchange: raw.RabbitMQ.DeadLetter.Exchange,
+				ExchangeType: raw.RabbitMQ.DeadLetter.ExchangeType, Queue: raw.RabbitMQ.DeadLetter.Queue,
+				RoutingKey: raw.RabbitMQ.DeadLetter.RoutingKey, Durable: raw.RabbitMQ.DeadLetter.Durable,
+				CreateQueue: raw.RabbitMQ.DeadLetter.CreateQueue,
+			},
+			QueueDefaults: queueDefaults,
+		},
+	}, issues
+}
+
 func parseDuration(field, value string, fallback time.Duration) (time.Duration, ValidationIssue) {
 	if value == "" {
 		return fallback, ValidationIssue{}
@@ -584,6 +655,63 @@ func parseDuration(field, value string, fallback time.Duration) (time.Duration, 
 		return 0, validationError(field, fmt.Sprintf("%q is not a valid Go duration", value), "use values like \"5s\", \"10s\", or \"5m\"")
 	}
 	return d, ValidationIssue{}
+}
+
+func convertQueueOptions(fieldPrefix string, raw rawRabbitMQQueueOptions) (RabbitMQQueueOptions, []ValidationIssue) {
+	var issues []ValidationIssue
+	messageTTL, issue := parsePositiveDuration(fieldPrefix+".message_ttl", raw.MessageTTL)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	expires, issue := parsePositiveDuration(fieldPrefix+".expires", raw.Expires)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	return RabbitMQQueueOptions{
+		MessageTTL:           messageTTL,
+		Expires:              expires,
+		MaxLength:            raw.MaxLength,
+		Overflow:             raw.Overflow,
+		DeadLetterRoutingKey: raw.DeadLetterRoutingKey,
+	}, issues
+}
+
+func parsePositiveDuration(field, value string) (time.Duration, ValidationIssue) {
+	if value == "" {
+		return 0, ValidationIssue{}
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, validationError(field, fmt.Sprintf("%q is not a valid Go duration", value), "use values like \"1h\", \"24h\", or \"168h\"")
+	}
+	if d <= 0 {
+		return 0, validationError(field, "must be a positive duration when set", "omit it or set a value such as \"24h\"")
+	}
+	return d, ValidationIssue{}
+}
+
+func queueOptionValidationIssues(fieldPrefix string, opts RabbitMQQueueOptions) []ValidationIssue {
+	var issues []ValidationIssue
+	if opts.MaxLength < 0 {
+		issues = append(issues, validationError(fieldPrefix+".max_length", "must be zero (omitted) or a positive integer", "set a queue cap such as 100000"))
+	}
+	switch opts.Overflow {
+	case "", "reject-publish", "reject-publish-dlx":
+	default:
+		issues = append(issues, validationError(fieldPrefix+".overflow", fmt.Sprintf("%q is not supported", opts.Overflow), "use \"reject-publish\" or \"reject-publish-dlx\" for webhook queues"))
+	}
+	if opts.DeadLetterRoutingKey != "" && !safeName.MatchString(opts.DeadLetterRoutingKey) {
+		issues = append(issues, validationError(fieldPrefix+".dead_letter_routing_key", "routing key contains unsupported characters", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+	}
+	return issues
+}
+
+func endpointPathsOverlap(a, b string) bool {
+	shorter, longer := a, b
+	if len(shorter) > len(longer) {
+		shorter, longer = longer, shorter
+	}
+	return strings.HasPrefix(longer, shorter+"/")
 }
 
 func (c Config) EndpointForPath(path string) (string, EndpointConfig, bool) {

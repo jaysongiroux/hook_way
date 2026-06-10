@@ -48,42 +48,62 @@ metrics:
   # set false if your platform (e.g. cAdvisor) already collects container CPU/mem.
   runtime_metrics: true
 
-message_queue:
-  type: "rabbitmq"
-  rabbitmq:
-    url: "${RABBITMQ_URL}"
-    exchange: "hookway.webhooks"
-    exchange_type: "direct"
-    durable: true
-    publish_timeout: "5s"
-    declare_queues: true
-    # Publish concurrency: pool of confirm channels. Default is 8; raise it if a
-    # single broker round-trip per request becomes the throughput ceiling.
-    publisher_channels: 8
-    # TLS options for amqps:// brokers. Omit entirely for brokers with publicly
-    # trusted certs (e.g. CloudAMQP) — the image ships the system CA bundle.
-    # Configure only for private CAs, mutual TLS, or a custom server name.
-    # tls:
-    #   ca_cert: "/etc/hookway/ca.pem"
-    #   client_cert: "/etc/hookway/tls.crt"
-    #   client_key: "/etc/hookway/tls.key"
-    #   server_name: "rabbitmq.internal"
-    #   insecure_skip_verify: false
-    dead_letter:
-      enabled: true
-      exchange: "hookway.webhooks.dlx"
+message_queues:
+  primary:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
       exchange_type: "direct"
-      queue: "hookway.webhooks.dlq"
-      routing_key: "webhooks.dead"
       durable: true
-      create_queue: true
+      publish_timeout: "5s"
+      declare_queues: true
+      # Publish concurrency: pool of confirm channels. Default is 8; raise it if a
+      # single broker round-trip per request becomes the throughput ceiling.
+      publisher_channels: 8
+      # Default queue arguments applied to endpoint queues Hookway declares.
+      # Endpoint-level queue_options can override these when a webhook source
+      # needs different retention/backlog limits.
+      queue_defaults:
+        # Drop stale webhook deliveries after this much time in queue. RabbitMQ
+        # receives this as x-message-ttl in milliseconds.
+        message_ttl: "24h"
+        # Bound queue growth so a broken consumer cannot fill the broker.
+        max_length: 100000
+        # For webhooks, reject new publishes when full so providers retry instead
+        # of silently discarding older queued deliveries.
+        overflow: "reject-publish"
+      # TLS options for amqps:// brokers. Omit entirely for brokers with publicly
+      # trusted certs (e.g. CloudAMQP) — the image ships the system CA bundle.
+      # Configure only for private CAs, mutual TLS, or a custom server name.
+      # tls:
+      #   ca_cert: "/etc/hookway/ca.pem"
+      #   client_cert: "/etc/hookway/tls.crt"
+      #   client_key: "/etc/hookway/tls.key"
+      #   server_name: "rabbitmq.internal"
+      #   insecure_skip_verify: false
+      dead_letter:
+        enabled: true
+        exchange: "hookway.webhooks.dlx"
+        exchange_type: "direct"
+        queue: "hookway.webhooks.dlq"
+        routing_key: "webhooks.dead"
+        durable: true
+        create_queue: true
 
 endpoints:
   paddle_billing:
     enabled: true
     path: "/webhooks/paddle"
+    destination_queue_id: "primary"
     queue: "paddle-webhooks"
     create_queue: true
+    queue_options:
+      # Billing events matter more than generic activity events; keep them
+      # longer and allow a deeper backlog than the RabbitMQ defaults.
+      message_ttl: "72h"
+      max_length: 500000
+      dead_letter_routing_key: "paddle.dead"
     max_body_bytes: 2097152
     rate_limit:
       enabled: true
@@ -107,6 +127,7 @@ endpoints:
   github_events:
     enabled: true
     path: "/webhooks/github"
+    destination_queue_id: "primary"
     queue: "github-webhooks"
     create_queue: true
     max_body_bytes: 2097152

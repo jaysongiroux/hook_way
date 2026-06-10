@@ -38,14 +38,15 @@ func TestBuildEnvelopeIncludesPublishedContractFields(t *testing.T) {
 	req.Header.Set("X-Partner-Secret", "secret")
 
 	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{
-		Endpoint:       "paddle_billing",
-		Queue:          "billing-events",
-		RawBody:        []byte(`{"event_type":"subscription.created"}`),
-		ReceivedAt:     time.Unix(0, 0),
-		SourceIP:       "203.0.113.42",
-		RequestID:      "req_123",
-		TraceID:        "4bf92f3577b34da6a3ce929d0e0e4736",
-		HeaderDenylist: []string{"x-partner-secret"},
+		Endpoint:           "paddle_billing",
+		DestinationQueueID: "billing",
+		Queue:              "billing-events",
+		RawBody:            []byte(`{"event_type":"subscription.created"}`),
+		ReceivedAt:         time.Unix(0, 0),
+		SourceIP:           "203.0.113.42",
+		RequestID:          "req_123",
+		TraceID:            "4bf92f3577b34da6a3ce929d0e0e4736",
+		HeaderDenylist:     []string{"x-partner-secret"},
 	})
 	if err != nil {
 		t.Fatalf("BuildEnvelopeWithOptions returned error: %v", err)
@@ -58,6 +59,7 @@ func TestBuildEnvelopeIncludesPublishedContractFields(t *testing.T) {
 		`"schema_version":"1.0"`,
 		`"request_id":"req_123"`,
 		`"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"`,
+		`"destination_queue_id":"billing"`,
 		`"x-partner-secret":["redacted"]`,
 	} {
 		if !strings.Contains(string(got), want) {

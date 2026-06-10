@@ -70,7 +70,7 @@ func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPub
 	return pub, nil
 }
 
-func (p *RabbitMQPublisher) Publish(ctx context.Context, queueName string, msg Message) error {
+func (p *RabbitMQPublisher) Publish(ctx context.Context, destinationQueueID, queueName string, msg Message) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -372,13 +372,18 @@ func (p *RabbitMQPublisher) declareTopology(conn *amqp.Connection) error {
 			if declaration.DLQ.Exchange != "" {
 				args["x-dead-letter-exchange"] = declaration.DLQ.Exchange
 			}
-			if declaration.DLQ.RoutingKey != "" {
-				args["x-dead-letter-routing-key"] = declaration.DLQ.RoutingKey
+			deadLetterRoutingKey := declaration.DLQ.RoutingKey
+			if declaration.Options.DeadLetterRoutingKey != "" {
+				deadLetterRoutingKey = declaration.Options.DeadLetterRoutingKey
+			}
+			if deadLetterRoutingKey != "" {
+				args["x-dead-letter-routing-key"] = deadLetterRoutingKey
 			}
 			if err := p.declareDeadLetter(ch, declaration.DLQ); err != nil {
 				return err
 			}
 		}
+		addQueueOptionArgs(args, declaration.Options)
 		if _, err := ch.QueueDeclare(declaration.Name, durable, false, false, false, args); err != nil {
 			return err
 		}
@@ -387,6 +392,28 @@ func (p *RabbitMQPublisher) declareTopology(conn *amqp.Connection) error {
 		}
 	}
 	return nil
+}
+
+func addQueueOptionArgs(args amqp.Table, opts QueueOptions) {
+	if opts.MessageTTL > 0 {
+		args["x-message-ttl"] = amqpInt(opts.MessageTTL.Milliseconds())
+	}
+	if opts.Expires > 0 {
+		args["x-expires"] = amqpInt(opts.Expires.Milliseconds())
+	}
+	if opts.MaxLength > 0 {
+		args["x-max-length"] = amqpInt(opts.MaxLength)
+	}
+	if opts.Overflow != "" {
+		args["x-overflow"] = opts.Overflow
+	}
+}
+
+func amqpInt(value int64) any {
+	if value <= int64(^uint32(0)>>1) {
+		return int32(value)
+	}
+	return value
 }
 
 func (p *RabbitMQPublisher) declareDeadLetter(ch *amqp.Channel, dlq *DeadLetterDeclaration) error {
