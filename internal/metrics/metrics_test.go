@@ -4,9 +4,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/jasongiroux/hookway/internal/config"
 )
 
 func TestRabbitMQReliabilityMetricsAreExposed(t *testing.T) {
@@ -104,6 +107,75 @@ func TestEnableRuntimeCollectorsExposesGoAndProcessMetrics(t *testing.T) {
 				t.Fatalf("expected runtime metric %q to be exposed", want)
 			}
 		}
+	}
+}
+
+func TestMessagesEndpointsAndDestinationsMetricsAreExposed(t *testing.T) {
+	m := New()
+
+	m.MessagePublished("paddle_billing", "billing", "billing-events")
+	m.Forbidden("paddle_billing", "billing", "billing-events")
+	m.ReplayRejected("paddle_billing", "billing", "billing-events")
+	m.RequestDuration("paddle_billing", "billing", "billing-events", 202, 25*time.Millisecond)
+
+	m.RegisterConfig(config.Config{
+		MessageQueues: map[string]config.MessageQueueConfig{
+			"billing": {Type: "rabbitmq"},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"paddle_billing": {
+				Enabled:            true,
+				Path:               "/webhooks/paddle/billing",
+				DestinationQueueID: "billing",
+				Queue:              "billing-events",
+			},
+		},
+	})
+
+	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP hookway_destination_info Configured message queue destination (value is always 1).
+# TYPE hookway_destination_info gauge
+hookway_destination_info{destination_queue_id="billing",type="rabbitmq"} 1
+# HELP hookway_endpoint_info Enabled webhook endpoint (value is always 1).
+# TYPE hookway_endpoint_info gauge
+hookway_endpoint_info{destination_queue_id="billing",endpoint="paddle_billing",path="/webhooks/paddle/billing",queue="billing-events"} 1
+# HELP hookway_forbidden_total Webhook requests rejected by the endpoint IP allowlist.
+# TYPE hookway_forbidden_total counter
+hookway_forbidden_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
+# HELP hookway_messages_published_total Webhook messages successfully published to RabbitMQ.
+# TYPE hookway_messages_published_total counter
+hookway_messages_published_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
+# HELP hookway_replay_rejected_total Webhook requests rejected as signature replays.
+# TYPE hookway_replay_rejected_total counter
+hookway_replay_rejected_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
+`),
+		"hookway_messages_published_total",
+		"hookway_forbidden_total",
+		"hookway_replay_rejected_total",
+		"hookway_endpoint_info",
+		"hookway_destination_info",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestDurationCount uint64
+	for _, fam := range families {
+		if fam.GetName() != "hookway_request_duration_seconds" {
+			continue
+		}
+		for _, metric := range fam.GetMetric() {
+			if metric.GetHistogram() != nil {
+				requestDurationCount = metric.GetHistogram().GetSampleCount()
+			}
+		}
+	}
+	if requestDurationCount != 1 {
+		t.Fatalf("expected 1 request duration sample, got %d", requestDurationCount)
 	}
 }
 

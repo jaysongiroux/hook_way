@@ -88,6 +88,7 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 	if cfg.Server.MaxInflightRequests > 0 {
 		s.inflight = make(chan struct{}, cfg.Server.MaxInflightRequests)
 	}
+	s.metrics.RegisterConfig(cfg)
 	s.routes()
 	return s
 }
@@ -191,6 +192,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	endpointLabel, destinationLabel, queueLabel := "", "", ""
 	defer func() {
 		s.metrics.HTTP(endpointLabel, destinationLabel, queueLabel, status)
+		if endpointLabel != "" {
+			s.metrics.RequestDuration(endpointLabel, destinationLabel, queueLabel, status, time.Since(start))
+		}
 		hooklogging.Request(s.logger, hooklogging.RequestAttrs{
 			Method: r.Method, Path: r.URL.Path, Endpoint: endpointLabel, DestinationQueueID: destinationLabel, Queue: queueLabel,
 			Status: status, Duration: time.Since(start), RequestID: requestIDFromContext(r.Context()),
@@ -230,6 +234,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	sourceIP := s.sourceIP(r)
 	if !s.ipAllowed(sourceIP, endpoint.IPAllowlist) {
 		status = http.StatusForbidden
+		s.metrics.Forbidden(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
 		writeJSON(w, status, map[string]string{"error": "forbidden"})
 		return
 	}
@@ -270,6 +275,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if replayCache != nil {
 		if !replayCache.Accept(endpointName, signature, time.Now()) {
 			status = http.StatusConflict
+			s.metrics.ReplayRejected(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
 			writeJSON(w, status, map[string]string{"error": "replay detected"})
 			return
 		}
@@ -308,6 +314,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.metrics.Publish(endpointName, endpoint.DestinationQueueID, endpoint.Queue, "success", time.Since(publishStart))
+	s.metrics.MessagePublished(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
 	status = http.StatusAccepted
 	writeJSON(w, status, map[string]string{
 		"status": "accepted", "endpoint": endpointName, "destination_queue_id": endpoint.DestinationQueueID, "queue": endpoint.Queue, "event_id": env.ID, "request_id": env.RequestID,

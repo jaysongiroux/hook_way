@@ -6,6 +6,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+
+	"github.com/jasongiroux/hookway/internal/config"
 )
 
 type Metrics struct {
@@ -14,9 +16,15 @@ type Metrics struct {
 	authFailures         *prometheus.CounterVec
 	rateLimited          *prometheus.CounterVec
 	saturated            *prometheus.CounterVec
+	forbidden            *prometheus.CounterVec
+	replayRejected       *prometheus.CounterVec
 	publishTotal         *prometheus.CounterVec
 	publishDuration      *prometheus.HistogramVec
+	messagesPublished    *prometheus.CounterVec
+	requestDuration      *prometheus.HistogramVec
 	bodyBytes            *prometheus.HistogramVec
+	endpointInfo         *prometheus.GaugeVec
+	destinationInfo      *prometheus.GaugeVec
 	inflight             prometheus.Gauge
 	configLoadFailures   *prometheus.CounterVec
 	rabbitMQReconnects   prometheus.Counter
@@ -44,6 +52,14 @@ func New() *Metrics {
 		Name: "hookway_saturated_total",
 		Help: "Webhook requests rejected because the in-flight limit was reached.",
 	}, []string{"endpoint", "destination_queue_id", "queue"})
+	m.forbidden = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_forbidden_total",
+		Help: "Webhook requests rejected by the endpoint IP allowlist.",
+	}, []string{"endpoint", "destination_queue_id", "queue"})
+	m.replayRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_replay_rejected_total",
+		Help: "Webhook requests rejected as signature replays.",
+	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.publishTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_publish_total",
 		Help: "RabbitMQ publish attempts.",
@@ -52,11 +68,28 @@ func New() *Metrics {
 		Name: "hookway_publish_duration_seconds",
 		Help: "RabbitMQ publish duration.",
 	}, []string{"endpoint", "destination_queue_id", "queue"})
+	m.messagesPublished = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_messages_published_total",
+		Help: "Webhook messages successfully published to RabbitMQ.",
+	}, []string{"endpoint", "destination_queue_id", "queue"})
+	m.requestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "hookway_request_duration_seconds",
+		Help:    "End-to-end webhook request handling duration.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"endpoint", "destination_queue_id", "queue", "status"})
 	m.bodyBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "hookway_request_body_bytes",
 		Help:    "Webhook request body bytes.",
 		Buckets: []float64{128, 512, 1024, 4096, 16384, 65536, 262144, 1048576},
 	}, []string{"endpoint", "destination_queue_id", "queue"})
+	m.endpointInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_endpoint_info",
+		Help: "Enabled webhook endpoint (value is always 1).",
+	}, []string{"endpoint", "destination_queue_id", "queue", "path"})
+	m.destinationInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_destination_info",
+		Help: "Configured message queue destination (value is always 1).",
+	}, []string{"destination_queue_id", "type"})
 	m.inflight = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "hookway_inflight_requests",
 		Help: "In-flight Hookway requests.",
@@ -82,9 +115,10 @@ func New() *Metrics {
 		Help: "RabbitMQ dead-letter publish attempts.",
 	})
 	m.registry.MustRegister(
-		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.publishTotal, m.publishDuration,
-		m.bodyBytes, m.inflight, m.configLoadFailures, m.rabbitMQReconnects, m.rabbitMQConfirms,
-		m.rabbitMQRetries, m.rabbitMQDLQPublishes,
+		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected,
+		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
+		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
+		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes,
 	)
 	return m
 }
@@ -125,6 +159,14 @@ func (m *Metrics) Saturated(endpoint, destinationQueueID, queue string) {
 	m.saturated.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
 }
 
+func (m *Metrics) Forbidden(endpoint, destinationQueueID, queue string) {
+	m.forbidden.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
+}
+
+func (m *Metrics) ReplayRejected(endpoint, destinationQueueID, queue string) {
+	m.replayRejected.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
+}
+
 func (m *Metrics) Publish(endpoint, destinationQueueID, queue, status string, duration time.Duration) {
 	m.publishTotal.WithLabelValues(endpoint, destinationQueueID, queue, status).Inc()
 	m.publishDuration.WithLabelValues(endpoint, destinationQueueID, queue).Observe(duration.Seconds())
@@ -132,6 +174,32 @@ func (m *Metrics) Publish(endpoint, destinationQueueID, queue, status string, du
 
 func (m *Metrics) BodyBytes(endpoint, destinationQueueID, queue string, bytes int) {
 	m.bodyBytes.WithLabelValues(endpoint, destinationQueueID, queue).Observe(float64(bytes))
+}
+
+func (m *Metrics) MessagePublished(endpoint, destinationQueueID, queue string) {
+	m.messagesPublished.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
+}
+
+func (m *Metrics) RequestDuration(endpoint, destinationQueueID, queue string, status int, duration time.Duration) {
+	m.requestDuration.WithLabelValues(endpoint, destinationQueueID, queue, strconv.Itoa(status)).Observe(duration.Seconds())
+}
+
+// RegisterConfig exposes enabled endpoints and configured destinations as info
+// gauges so dashboards can list routing topology without scraping YAML.
+func (m *Metrics) RegisterConfig(cfg config.Config) {
+	for name, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		m.endpointInfo.WithLabelValues(name, endpoint.DestinationQueueID, endpoint.Queue, endpoint.Path).Set(1)
+	}
+	for id, messageQueue := range cfg.MessageQueues {
+		queueType := messageQueue.Type
+		if queueType == "" {
+			queueType = "rabbitmq"
+		}
+		m.destinationInfo.WithLabelValues(id, queueType).Set(1)
+	}
 }
 
 func (m *Metrics) ConfigLoadFailure(reason string) {
