@@ -96,7 +96,10 @@ func githubSigned(secret string, body []byte) string {
 func githubConfig() config.Config {
 	cfg := testConfig()
 	cfg.Endpoints["github_events"] = config.EndpointConfig{
-		Enabled: true, Path: "/webhooks/github", DestinationQueueID: "activity", Queue: "github-events",
+		Enabled: true, Path: "/webhooks/github",
+		Destinations: []config.EndpointDestinationConfig{{
+			DestinationQueueID: "activity", Queue: "github-events",
+		}},
 		Auth: config.AuthConfig{
 			Type: "hmac_sha256", Scheme: "github", Secret: "ghsecret",
 			SignatureHeader: "X-Hub-Signature-256", IdempotencyHeader: "X-GitHub-Delivery",
@@ -119,8 +122,11 @@ func TestGitHubSchemeEndpointVerifiesAndUsesDeliveryIdempotencyKey(t *testing.T)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if pub.msg.IdempotencyKey != "delivery-123" {
-		t.Fatalf("idempotency key = %q, want delivery header value", pub.msg.IdempotencyKey)
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1 publish", pub.published)
+	}
+	if pub.published[0].msg.IdempotencyKey != "delivery-123" {
+		t.Fatalf("idempotency key = %q, want delivery header value", pub.published[0].msg.IdempotencyKey)
 	}
 }
 
@@ -152,7 +158,10 @@ func TestPaddleIdempotencyKeyFallsBackToSignatureHashAndIsStable(t *testing.T) {
 		if rec.Code != http.StatusAccepted {
 			t.Fatalf("status = %d", rec.Code)
 		}
-		return pub.msg.IdempotencyKey
+		if len(pub.published) == 0 {
+			t.Fatal("expected publish")
+		}
+		return pub.published[len(pub.published)-1].msg.IdempotencyKey
 	}
 
 	first := send()
@@ -248,10 +257,13 @@ func TestForwardedHeaderAllowlistDropsUnlistedHeaders(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if _, ok := pub.msg.Headers["x-secret-internal"]; ok {
-		t.Fatalf("non-allowlisted header forwarded to queue: %#v", pub.msg.Headers)
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1 publish", pub.published)
 	}
-	if _, ok := pub.msg.Headers["content-type"]; !ok {
-		t.Fatalf("allowlisted header missing from envelope: %#v", pub.msg.Headers)
+	if _, ok := pub.published[0].msg.Headers["x-secret-internal"]; ok {
+		t.Fatalf("non-allowlisted header forwarded to queue: %#v", pub.published[0].msg.Headers)
+	}
+	if _, ok := pub.published[0].msg.Headers["content-type"]; !ok {
+		t.Fatalf("allowlisted header missing from envelope: %#v", pub.published[0].msg.Headers)
 	}
 }

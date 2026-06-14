@@ -16,8 +16,7 @@ import (
 	"github.com/jasongiroux/hookway/internal/auth"
 )
 
-// authScheme defaults the per-endpoint signature scheme to Paddle for
-// backward compatibility when the field is omitted.
+// authScheme defaults the per-endpoint signature scheme to Paddle when omitted.
 func authScheme(scheme string) string {
 	if scheme == "" {
 		return auth.SchemePaddle
@@ -45,6 +44,7 @@ type ServerConfig struct {
 	ShutdownTimeout     time.Duration
 	MaxBodyBytes        int64
 	MaxInflightRequests int
+	FanoutConcurrency   int
 }
 
 type SecurityConfig struct {
@@ -128,17 +128,21 @@ type MessageQueueConfig struct {
 }
 
 type EndpointConfig struct {
-	Enabled            bool                    `yaml:"enabled"`
-	Path               string                  `yaml:"path"`
-	DestinationQueueID string                  `yaml:"destination_queue_id"`
-	Queue              string                  `yaml:"queue"`
-	CreateQueue        bool                    `yaml:"create_queue"`
-	QueueOptions       RabbitMQQueueOptions    `yaml:"queue_options"`
-	MaxBodyBytes       int64                   `yaml:"max_body_bytes"`
-	RateLimit          EndpointRateLimitConfig `yaml:"rate_limit"`
-	ReplayProtection   ReplayProtectionConfig  `yaml:"replay_protection"`
-	IPAllowlist        []string                `yaml:"ip_allowlist"`
-	Auth               AuthConfig              `yaml:"auth"`
+	Enabled          bool                        `yaml:"enabled"`
+	Path             string                      `yaml:"path"`
+	Destinations     []EndpointDestinationConfig `yaml:"destinations"`
+	MaxBodyBytes     int64                       `yaml:"max_body_bytes"`
+	RateLimit        EndpointRateLimitConfig     `yaml:"rate_limit"`
+	ReplayProtection ReplayProtectionConfig      `yaml:"replay_protection"`
+	IPAllowlist      []string                    `yaml:"ip_allowlist"`
+	Auth             AuthConfig                  `yaml:"auth"`
+}
+
+type EndpointDestinationConfig struct {
+	DestinationQueueID string               `yaml:"destination_queue_id"`
+	Queue              string               `yaml:"queue"`
+	CreateQueue        bool                 `yaml:"create_queue"`
+	QueueOptions       RabbitMQQueueOptions `yaml:"queue_options"`
 }
 
 type EndpointRateLimitConfig struct {
@@ -169,6 +173,13 @@ type rawRabbitMQQueueOptions struct {
 	MaxLength            int64  `yaml:"max_length"`
 	Overflow             string `yaml:"overflow"`
 	DeadLetterRoutingKey string `yaml:"dead_letter_routing_key"`
+}
+
+type rawEndpointDestinationConfig struct {
+	DestinationQueueID string                  `yaml:"destination_queue_id"`
+	Queue              string                  `yaml:"queue"`
+	CreateQueue        bool                    `yaml:"create_queue"`
+	QueueOptions       rawRabbitMQQueueOptions `yaml:"queue_options"`
 }
 
 type rawMessageQueueConfig struct {
@@ -210,21 +221,19 @@ type rawConfig struct {
 		ShutdownTimeout     string `yaml:"shutdown_timeout"`
 		MaxBodyBytes        int64  `yaml:"max_body_bytes"`
 		MaxInflightRequests int    `yaml:"max_inflight_requests"`
+		FanoutConcurrency   int    `yaml:"fanout_concurrency"`
 	} `yaml:"server"`
 	Security      SecurityConfig                   `yaml:"security"`
 	RateLimit     RateLimitConfig                  `yaml:"rate_limit"`
 	Metrics       MetricsConfig                    `yaml:"metrics"`
 	MessageQueues map[string]rawMessageQueueConfig `yaml:"message_queues"`
 	Endpoints     map[string]struct {
-		Enabled            bool                    `yaml:"enabled"`
-		Path               string                  `yaml:"path"`
-		DestinationQueueID string                  `yaml:"destination_queue_id"`
-		Queue              string                  `yaml:"queue"`
-		CreateQueue        bool                    `yaml:"create_queue"`
-		QueueOptions       rawRabbitMQQueueOptions `yaml:"queue_options"`
-		MaxBodyBytes       int64                   `yaml:"max_body_bytes"`
-		RateLimit          EndpointRateLimitConfig `yaml:"rate_limit"`
-		ReplayProtection   struct {
+		Enabled          bool                           `yaml:"enabled"`
+		Path             string                         `yaml:"path"`
+		Destinations     []rawEndpointDestinationConfig `yaml:"destinations"`
+		MaxBodyBytes     int64                          `yaml:"max_body_bytes"`
+		RateLimit        EndpointRateLimitConfig        `yaml:"rate_limit"`
+		ReplayProtection struct {
 			Enabled    bool   `yaml:"enabled"`
 			TTL        string `yaml:"ttl"`
 			MaxEntries int    `yaml:"max_entries"`
@@ -361,6 +370,9 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	if c.Server.MaxInflightRequests < 0 {
 		issues = append(issues, validationError("server.max_inflight_requests", "must be zero (unlimited) or a positive integer", "set a bound such as 256 to apply backpressure under load"))
 	}
+	if c.Server.FanoutConcurrency < 0 {
+		issues = append(issues, validationError("server.fanout_concurrency", "must be zero (default) or a positive integer", "set a bound such as 8"))
+	}
 	for i, header := range c.Security.RedactedHeaderDenylist {
 		if !safeHeaderName.MatchString(header) {
 			issues = append(issues, validationError(fmt.Sprintf("security.redacted_header_denylist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"Authorization\" or \"X-Signature\""))
@@ -453,10 +465,35 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if !endpoint.Enabled {
 			continue
 		}
-		if endpoint.DestinationQueueID == "" {
-			issues = append(issues, validationError(fieldPrefix+".destination_queue_id", "destination queue id is required for enabled endpoints", "set destination_queue_id to a key under message_queues"))
-		} else if _, ok := c.MessageQueues[endpoint.DestinationQueueID]; !ok {
-			issues = append(issues, validationError(fieldPrefix+".destination_queue_id", "destination queue id is not configured", "reference an existing message_queues entry"))
+		if len(endpoint.Destinations) == 0 {
+			issues = append(issues, validationError(fieldPrefix+".destinations", "at least one destination is required for enabled endpoints", "add destination objects that reference message_queues entries"))
+		}
+		seenRoutes := map[string]struct{}{}
+		for i, destination := range endpoint.Destinations {
+			field := fmt.Sprintf("%s.destinations[%d]", fieldPrefix, i)
+			if destination.DestinationQueueID == "" {
+				issues = append(issues, validationError(field+".destination_queue_id", "destination queue id is required", "reference an existing message_queues entry"))
+				continue
+			}
+			if _, ok := c.MessageQueues[destination.DestinationQueueID]; !ok {
+				issues = append(issues, validationError(field+".destination_queue_id", "destination queue id is not configured", "reference an existing message_queues entry"))
+			}
+			if !safeName.MatchString(destination.Queue) {
+				issues = append(issues, validationError(field+".queue", "queue name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+			}
+			routeKey := destination.DestinationQueueID + "\x00" + destination.Queue
+			if _, duplicate := seenRoutes[routeKey]; duplicate {
+				issues = append(issues, validationError(field, "destination route is duplicated", "list each destination queue and queue pair once"))
+				continue
+			}
+			seenRoutes[routeKey] = struct{}{}
+			queueOptionKey := routeKey
+			if previous, ok := queueOptions[queueOptionKey]; ok && previous != destination.QueueOptions {
+				issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
+			} else {
+				queueOptions[queueOptionKey] = destination.QueueOptions
+			}
+			issues = append(issues, queueOptionValidationIssues(field+".queue_options", destination.QueueOptions)...)
 		}
 		if endpoint.Path == "" {
 			issues = append(issues, validationError(fieldPrefix+".path", "path is required for enabled endpoints", "set a path such as \"/webhooks/paddle/billing\""))
@@ -473,16 +510,6 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			paths[endpoint.Path] = name
 		}
-		if !safeName.MatchString(endpoint.Queue) {
-			issues = append(issues, validationError(fieldPrefix+".queue", "queue name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
-		}
-		queueOptionKey := endpoint.DestinationQueueID + "\x00" + endpoint.Queue
-		if previous, ok := queueOptions[queueOptionKey]; ok && previous != endpoint.QueueOptions {
-			issues = append(issues, validationError(fieldPrefix+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
-		} else {
-			queueOptions[queueOptionKey] = endpoint.QueueOptions
-		}
-		issues = append(issues, queueOptionValidationIssues(fieldPrefix+".queue_options", endpoint.QueueOptions)...)
 		if endpoint.MaxBodyBytes < 0 {
 			issues = append(issues, validationError(fieldPrefix+".max_body_bytes", "must be positive when set", "omit to inherit server.max_body_bytes or set a positive byte limit"))
 		}
@@ -569,7 +596,7 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
 			IdleTimeout: idle, ShutdownTimeout: shutdown, MaxBodyBytes: raw.Server.MaxBodyBytes,
-			MaxInflightRequests: raw.Server.MaxInflightRequests,
+			MaxInflightRequests: raw.Server.MaxInflightRequests, FanoutConcurrency: raw.Server.FanoutConcurrency,
 		},
 		Security:      raw.Security,
 		RateLimit:     raw.RateLimit,
@@ -591,17 +618,14 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		if issue.Field != "" {
 			issues = append(issues, issue)
 		}
-		queueOptions, queueOptionIssues := convertQueueOptions("endpoints."+name+".queue_options", endpoint.QueueOptions)
-		issues = append(issues, queueOptionIssues...)
+		destinations, destinationIssues := convertEndpointDestinations("endpoints."+name+".destinations", endpoint.Destinations)
+		issues = append(issues, destinationIssues...)
 		cfg.Endpoints[name] = EndpointConfig{
-			Enabled:            endpoint.Enabled,
-			Path:               endpoint.Path,
-			DestinationQueueID: endpoint.DestinationQueueID,
-			Queue:              endpoint.Queue,
-			CreateQueue:        endpoint.CreateQueue,
-			QueueOptions:       queueOptions,
-			MaxBodyBytes:       endpoint.MaxBodyBytes,
-			RateLimit:          endpoint.RateLimit,
+			Enabled:      endpoint.Enabled,
+			Path:         endpoint.Path,
+			Destinations: destinations,
+			MaxBodyBytes: endpoint.MaxBodyBytes,
+			RateLimit:    endpoint.RateLimit,
 			ReplayProtection: ReplayProtectionConfig{
 				Enabled: endpoint.ReplayProtection.Enabled, TTL: replayTTL, MaxEntries: endpoint.ReplayProtection.MaxEntries,
 			},
@@ -613,6 +637,22 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		}
 	}
 	return cfg, issues
+}
+
+func convertEndpointDestinations(fieldPrefix string, raw []rawEndpointDestinationConfig) ([]EndpointDestinationConfig, []ValidationIssue) {
+	var issues []ValidationIssue
+	destinations := make([]EndpointDestinationConfig, 0, len(raw))
+	for i, destination := range raw {
+		queueOptions, queueOptionIssues := convertQueueOptions(fmt.Sprintf("%s[%d].queue_options", fieldPrefix, i), destination.QueueOptions)
+		issues = append(issues, queueOptionIssues...)
+		destinations = append(destinations, EndpointDestinationConfig{
+			DestinationQueueID: destination.DestinationQueueID,
+			Queue:              destination.Queue,
+			CreateQueue:        destination.CreateQueue,
+			QueueOptions:       queueOptions,
+		})
+	}
+	return destinations, issues
 }
 
 func convertMessageQueue(fieldPrefix string, raw rawMessageQueueConfig) (MessageQueueConfig, []ValidationIssue) {
@@ -721,4 +761,35 @@ func (c Config) EndpointForPath(path string) (string, EndpointConfig, bool) {
 		}
 	}
 	return "", EndpointConfig{}, false
+}
+
+func (e EndpointConfig) DestinationRoutes() []EndpointDestinationConfig {
+	return append([]EndpointDestinationConfig(nil), e.Destinations...)
+}
+
+func (e EndpointConfig) DestinationIDs() []string {
+	ids := make([]string, 0, len(e.Destinations))
+	for _, destination := range e.Destinations {
+		ids = append(ids, destination.DestinationQueueID)
+	}
+	return ids
+}
+
+func (e EndpointConfig) DestinationLabel() string {
+	return strings.Join(e.DestinationIDs(), ",")
+}
+
+func (e EndpointConfig) QueueLabel() string {
+	queues := make([]string, 0, len(e.Destinations))
+	for _, destination := range e.Destinations {
+		queues = append(queues, destination.Queue)
+	}
+	return strings.Join(queues, ",")
+}
+
+func (s ServerConfig) FanoutConcurrencyLimit() int {
+	if s.FanoutConcurrency <= 0 {
+		return 8
+	}
+	return s.FanoutConcurrency
 }

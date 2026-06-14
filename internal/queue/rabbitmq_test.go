@@ -282,8 +282,18 @@ func configForRabbitMQIntegration(billingURL, activityURL string) config.Config 
 			},
 		},
 		Endpoints: map[string]config.EndpointConfig{
-			"paddle_billing": {Enabled: true, DestinationQueueID: "billing", Queue: "billing-events", CreateQueue: true},
-			"github_events":  {Enabled: true, DestinationQueueID: "activity", Queue: "activity-events", CreateQueue: true},
+			"paddle_billing": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "billing", Queue: "billing-events", CreateQueue: true,
+				}},
+			},
+			"github_events": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "activity", Queue: "activity-events", CreateQueue: true,
+				}},
+			},
 		},
 	}
 }

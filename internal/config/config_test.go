@@ -23,20 +23,24 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if cfg.MessageQueues["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" {
 		t.Fatalf("RabbitMQ URL not expanded: %q", cfg.MessageQueues["billing"].RabbitMQ.URL)
 	}
-	if cfg.Endpoints["paddle_billing"].DestinationQueueID != "billing" {
-		t.Fatalf("endpoint destination = %q", cfg.Endpoints["paddle_billing"].DestinationQueueID)
+	destinations := cfg.Endpoints["paddle_billing"].Destinations
+	if len(destinations) != 1 || destinations[0].DestinationQueueID != "billing" {
+		t.Fatalf("endpoint destinations = %#v", destinations)
 	}
 	if cfg.Endpoints["paddle_billing"].Path != "/webhooks/paddle/billing" {
 		t.Fatalf("endpoint path = %q", cfg.Endpoints["paddle_billing"].Path)
 	}
-	if cfg.Endpoints["paddle_billing"].Queue != "billing-events" {
-		t.Fatalf("endpoint queue = %q", cfg.Endpoints["paddle_billing"].Queue)
+	if destinations[0].Queue != "billing-events" {
+		t.Fatalf("endpoint queue = %q", destinations[0].Queue)
 	}
 	if cfg.Endpoints["paddle_billing"].Auth.Secret != "pdl_secret" {
 		t.Fatalf("Paddle secret not expanded")
 	}
 	if cfg.Server.ReadTimeout != 5*time.Second {
 		t.Fatalf("read timeout = %s", cfg.Server.ReadTimeout)
+	}
+	if cfg.Server.FanoutConcurrency != 4 {
+		t.Fatalf("fanout concurrency = %d", cfg.Server.FanoutConcurrency)
 	}
 	if got := cfg.Security.RedactedHeaderDenylist; len(got) != 3 || got[0] != "Authorization" || got[2] != "X-Signature" {
 		t.Fatalf("redacted header denylist = %#v", got)
@@ -53,19 +57,19 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.Overflow != "reject-publish" {
 		t.Fatalf("queue default overflow = %q", cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.Overflow)
 	}
-	if cfg.Endpoints["paddle_billing"].QueueOptions.MessageTTL != 72*time.Hour {
-		t.Fatalf("endpoint queue message ttl = %s", cfg.Endpoints["paddle_billing"].QueueOptions.MessageTTL)
+	if destinations[0].QueueOptions.MessageTTL != 72*time.Hour {
+		t.Fatalf("endpoint queue message ttl = %s", destinations[0].QueueOptions.MessageTTL)
 	}
-	if cfg.Endpoints["paddle_billing"].QueueOptions.MaxLength != 500000 {
-		t.Fatalf("endpoint queue max length = %d", cfg.Endpoints["paddle_billing"].QueueOptions.MaxLength)
+	if destinations[0].QueueOptions.MaxLength != 500000 {
+		t.Fatalf("endpoint queue max length = %d", destinations[0].QueueOptions.MaxLength)
 	}
-	if cfg.Endpoints["paddle_billing"].QueueOptions.DeadLetterRoutingKey != "paddle.dead" {
-		t.Fatalf("endpoint dead letter routing key = %q", cfg.Endpoints["paddle_billing"].QueueOptions.DeadLetterRoutingKey)
+	if destinations[0].QueueOptions.DeadLetterRoutingKey != "paddle.dead" {
+		t.Fatalf("endpoint dead letter routing key = %q", destinations[0].QueueOptions.DeadLetterRoutingKey)
 	}
 	if cfg.MessageQueues["billing"].RabbitMQ.DeadLetter.Exchange != "hookway.webhooks.dlx" {
 		t.Fatalf("dead-letter exchange = %q", cfg.MessageQueues["billing"].RabbitMQ.DeadLetter.Exchange)
 	}
-	if !cfg.Endpoints["paddle_billing"].CreateQueue {
+	if !destinations[0].CreateQueue {
 		t.Fatal("endpoint create_queue not parsed")
 	}
 	if cfg.Endpoints["paddle_billing"].MaxBodyBytes != 2097152 {
@@ -88,22 +92,66 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	}
 }
 
+func TestLoadParsesEndpointFanoutDestinationObjects(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	body := strings.Replace(validYAML(), `          dead_letter_routing_key: "paddle.dead"`, `          dead_letter_routing_key: "paddle.dead"
+      - destination_queue_id: "archive"
+        queue: "billing-archive-events"
+        create_queue: false
+        queue_options:
+          message_ttl: "6h"`, 1)
+	body = strings.Replace(body, `message_queues:
+  billing:`, `message_queues:
+  archive:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.archive"
+      exchange_type: "direct"
+  billing:`, 1)
+
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	got := cfg.Endpoints["paddle_billing"].Destinations
+	if len(got) != 2 {
+		t.Fatalf("destinations = %#v", got)
+	}
+	if got[0].DestinationQueueID != "billing" || got[0].Queue != "billing-events" || !got[0].CreateQueue || got[0].QueueOptions.MessageTTL != 72*time.Hour {
+		t.Fatalf("first destination = %#v", got[0])
+	}
+	if got[1].DestinationQueueID != "archive" || got[1].Queue != "billing-archive-events" || got[1].CreateQueue || got[1].QueueOptions.MessageTTL != 6*time.Hour {
+		t.Fatalf("second destination = %#v", got[1])
+	}
+}
+
 func TestLoadRejectsInvalidConfig(t *testing.T) {
 	tests := map[string]string{
 		"missing message queue type": replace(validYAML(), "type: \"rabbitmq\"", "type: \"\""),
 		"unsupported queue type":     replace(validYAML(), "type: \"rabbitmq\"", "type: \"sqs\""),
 		"invalid message queue id":   replace(validYAML(), "billing:", "bad queue:"),
+		"missing destinations":       strings.Replace(validYAML(), "    destinations:\n      - destination_queue_id: \"billing\"", "    destinations: []\n    #", 1),
 		"missing destination id":     replace(validYAML(), "destination_queue_id: \"billing\"", "destination_queue_id: \"\""),
-		"unknown destination id":     replace(validYAML(), "destination_queue_id: \"billing\"", "destination_queue_id: \"missing\""),
-		"missing rabbitmq url":       replace(validYAML(), "url: \"${RABBITMQ_URL}\"", "url: \"\""),
-		"invalid endpoint":           replace(validYAML(), "paddle_billing:", "bad/endpoint:"),
-		"missing endpoint path":      replace(validYAML(), "path: \"/webhooks/paddle/billing\"", "path: \"\""),
-		"invalid endpoint path":      replace(validYAML(), "path: \"/webhooks/paddle/billing\"", "path: \"webhooks/paddle/billing\""),
-		"invalid queue":              replace(validYAML(), "queue: \"billing-events\"", "queue: \"bad queue\""),
-		"missing secret":             replace(validYAML(), "secret: \"${PADDLE_SECRET}\"", "secret: \"\""),
-		"missing signature header":   replace(validYAML(), "signature_header: \"Paddle-Signature\"", "signature_header: \"\""),
-		"unsupported auth":           replace(validYAML(), "auth:\n      type: \"hmac_sha256\"", "auth:\n      type: \"other\""),
-		"invalid rate limit":         replace(validYAML(), "requests_per_minute: 120", "requests_per_minute: 0"),
+		"unknown fanout destination": replace(validYAML(), "destination_queue_id: \"billing\"", "destination_queue_id: \"missing\""),
+		"duplicate fanout destination route": strings.Replace(validYAML(), `          dead_letter_routing_key: "paddle.dead"`, `          dead_letter_routing_key: "paddle.dead"
+      - destination_queue_id: "billing"
+        queue: "billing-events"
+        create_queue: true
+        queue_options:
+          message_ttl: "72h"
+          max_length: 500000
+          dead_letter_routing_key: "paddle.dead"`, 1),
+		"missing rabbitmq url":     replace(validYAML(), "url: \"${RABBITMQ_URL}\"", "url: \"\""),
+		"invalid endpoint":         replace(validYAML(), "paddle_billing:", "bad/endpoint:"),
+		"missing endpoint path":    replace(validYAML(), "path: \"/webhooks/paddle/billing\"", "path: \"\""),
+		"invalid endpoint path":    replace(validYAML(), "path: \"/webhooks/paddle/billing\"", "path: \"webhooks/paddle/billing\""),
+		"invalid queue":            replace(validYAML(), "queue: \"billing-events\"", "queue: \"bad queue\""),
+		"missing secret":           replace(validYAML(), "secret: \"${PADDLE_SECRET}\"", "secret: \"\""),
+		"missing signature header": replace(validYAML(), "signature_header: \"Paddle-Signature\"", "signature_header: \"\""),
+		"unsupported auth":         replace(validYAML(), "auth:\n      type: \"hmac_sha256\"", "auth:\n      type: \"other\""),
+		"invalid rate limit":       replace(validYAML(), "requests_per_minute: 120", "requests_per_minute: 0"),
 		"invalid metrics path": replace(validYAML(),
 			"path: \"/metrics\"", "path: \"metrics\""),
 		"invalid dead letter exchange": replace(validYAML(), "exchange: \"hookway.webhooks.dlx\"", "exchange: \"bad exchange\""),
@@ -138,8 +186,9 @@ func TestLoadRejectsOverlappingEndpointPaths(t *testing.T) {
   paddle_child:
     enabled: true
     path: "/webhooks/paddle"
-    destination_queue_id: "billing"
-    queue: "billing-child-events"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "billing-child-events"
     auth:
       type: "hmac_sha256"
       secret: "${PADDLE_SECRET}"
@@ -163,8 +212,9 @@ func TestLoadAllowsEndpointPathsWithCommonPrefixButDifferentSegment(t *testing.T
   paddle_archive:
     enabled: true
     path: "/webhooks/paddle-archive"
-    destination_queue_id: "billing"
-    queue: "billing-archive-events"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "billing-archive-events"
     auth:
       type: "hmac_sha256"
       secret: "${PADDLE_SECRET}"
@@ -239,7 +289,7 @@ func TestLoadReturnsHelpfulValidationErrors(t *testing.T) {
 		"message_queues.billing.type",
 		"metrics.path",
 		"endpoints.paddle_billing.path",
-		"endpoints.paddle_billing.queue",
+		"endpoints.paddle_billing.destinations[0].queue",
 		"endpoints.paddle_billing.auth.secret",
 		"endpoints.paddle_billing.auth.signature_header",
 		"security.redacted_header_denylist",
@@ -327,6 +377,7 @@ server:
   idle_timeout: "60s"
   shutdown_timeout: "10s"
   max_body_bytes: 1048576
+  fanout_concurrency: 4
 security:
   trusted_proxy_headers: false
   request_id_header: "X-Request-ID"
@@ -368,13 +419,14 @@ endpoints:
   paddle_billing:
     enabled: true
     path: "/webhooks/paddle/billing"
-    destination_queue_id: "billing"
-    queue: "billing-events"
-    create_queue: true
-    queue_options:
-      message_ttl: "72h"
-      max_length: 500000
-      dead_letter_routing_key: "paddle.dead"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "billing-events"
+        create_queue: true
+        queue_options:
+          message_ttl: "72h"
+          max_length: 500000
+          dead_letter_routing_key: "paddle.dead"
     max_body_bytes: 2097152
     rate_limit:
       enabled: true

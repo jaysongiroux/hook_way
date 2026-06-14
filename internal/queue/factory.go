@@ -64,8 +64,10 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 
 func destinationUsed(cfg config.Config, destinationID string) bool {
 	for _, endpoint := range cfg.Endpoints {
-		if endpoint.Enabled && endpoint.DestinationQueueID == destinationID {
-			return true
+		for _, route := range endpoint.DestinationRoutes() {
+			if endpoint.Enabled && route.DestinationQueueID == destinationID {
+				return true
+			}
 		}
 	}
 	return false
@@ -74,24 +76,26 @@ func destinationUsed(cfg config.Config, destinationID string) bool {
 func collectQueueDeclarations(cfg config.Config, destinationID string) []QueueDeclaration {
 	byQueue := map[string]QueueDeclaration{}
 	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled || endpoint.DestinationQueueID != destinationID {
-			continue
-		}
-		declaration, ok := byQueue[endpoint.Queue]
-		if !ok {
-			declaration = QueueDeclaration{Name: endpoint.Queue}
-		}
-		declaration.CreateQueue = declaration.CreateQueue || endpoint.CreateQueue
-		rabbit := cfg.MessageQueues[destinationID].RabbitMQ
-		declaration.Options = mergeQueueOptions(rabbit.QueueDefaults, endpoint.QueueOptions)
-		if rabbit.DeadLetter.Enabled {
-			dlq := rabbit.DeadLetter
-			declaration.DLQ = &DeadLetterDeclaration{
-				Exchange: dlq.Exchange, ExchangeType: dlq.ExchangeType, Queue: dlq.Queue,
-				RoutingKey: dlq.RoutingKey, CreateQueue: dlq.CreateQueue, Durable: &dlq.Durable,
+		for _, route := range endpoint.DestinationRoutes() {
+			if !endpoint.Enabled || route.DestinationQueueID != destinationID {
+				continue
 			}
+			declaration, ok := byQueue[route.Queue]
+			if !ok {
+				declaration = QueueDeclaration{Name: route.Queue}
+			}
+			declaration.CreateQueue = declaration.CreateQueue || route.CreateQueue
+			rabbit := cfg.MessageQueues[destinationID].RabbitMQ
+			declaration.Options = mergeQueueOptions(rabbit.QueueDefaults, route.QueueOptions)
+			if rabbit.DeadLetter.Enabled {
+				dlq := rabbit.DeadLetter
+				declaration.DLQ = &DeadLetterDeclaration{
+					Exchange: dlq.Exchange, ExchangeType: dlq.ExchangeType, Queue: dlq.Queue,
+					RoutingKey: dlq.RoutingKey, CreateQueue: dlq.CreateQueue, Durable: &dlq.Durable,
+				}
+			}
+			byQueue[route.Queue] = declaration
 		}
-		byQueue[endpoint.Queue] = declaration
 	}
 	declarations := make([]QueueDeclaration, 0, len(byQueue))
 	for _, declaration := range byQueue {
@@ -107,12 +111,14 @@ func collectQueues(cfg config.Config, destinationID string) []string {
 	seen := map[string]struct{}{}
 	var queues []string
 	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled || endpoint.DestinationQueueID != destinationID {
-			continue
-		}
-		if _, ok := seen[endpoint.Queue]; !ok {
-			seen[endpoint.Queue] = struct{}{}
-			queues = append(queues, endpoint.Queue)
+		for _, route := range endpoint.DestinationRoutes() {
+			if !endpoint.Enabled || route.DestinationQueueID != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Queue]; !ok {
+				seen[route.Queue] = struct{}{}
+				queues = append(queues, route.Queue)
+			}
 		}
 	}
 	return queues

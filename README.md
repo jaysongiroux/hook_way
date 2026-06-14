@@ -21,7 +21,7 @@ make validate
 Example Paddle-style webhook URL:
 
 ```txt
-http://localhost:8080/webhooks/paddle/billing
+http://localhost:8080/webhooks/paddle
 ```
 
 Run locally without Docker:
@@ -38,10 +38,10 @@ go run ./cmd/hookway --config examples/config.yaml
 
 ## HTTP Endpoints
 
-- Configured endpoint paths, such as `POST /webhooks/paddle/billing`, accept webhook events.
+- Configured endpoint paths, such as `POST /webhooks/paddle`, accept webhook events.
 - `GET /healthz` confirms the process is alive.
-- `GET /ready` confirms RabbitMQ is reachable.
-- `GET /readyz` confirms RabbitMQ is reachable.
+- `GET /ready` checks every configured message queue destination used by enabled endpoints, including fan-out destinations.
+- `GET /readyz` checks every configured message queue destination used by enabled endpoints, including fan-out destinations.
 - `GET /health` reports the same readiness state as `/readyz`.
 - `GET /metrics` exposes Prometheus metrics when enabled.
 
@@ -51,15 +51,18 @@ Successful webhook response:
 {
   "status": "accepted",
   "endpoint": "paddle_billing",
-  "destination_queue_id": "billing",
-  "queue": "billing-events",
-  "event_id": "018f..."
+  "destinations": [
+    {"destination_queue_id": "primary", "queue": "paddle-webhooks"},
+    {"destination_queue_id": "audit", "queue": "paddle-audit-webhooks"}
+  ],
+  "event_id": "018f...",
+  "request_id": "req_..."
 }
 ```
 
 ## Consuming Messages
 
-Hookway publishes JSON envelopes to the endpoint's configured `destination_queue_id` using each endpoint's `queue` as RabbitMQ routing key. With `declare_queues: true`, endpoint queues are declared and bound automatically.
+Hookway publishes JSON envelopes to each endpoint `destinations` route. Every route names a `destination_queue_id` under `message_queues` and its own RabbitMQ `queue` routing key. With `declare_queues: true`, route queues are declared and bound automatically.
 
 Queue backends are configured under top-level `message_queues`, keyed by destination id. MVP supports `type: rabbitmq` for each entry. SQS is the likely next backend. BullMQ may come later if worker ecosystems need Redis-native delivery.
 
