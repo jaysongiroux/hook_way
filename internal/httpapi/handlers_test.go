@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,20 +34,31 @@ func TestWebhookSuccessReturnsAccepted(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if pub.published == 0 {
-		t.Fatal("expected publish")
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1 publish", pub.published)
 	}
-	if pub.destinationID != "billing" {
-		t.Fatalf("destination = %q", pub.destinationID)
+	if pub.published[0].destinationID != "billing" {
+		t.Fatalf("destination = %q", pub.published[0].destinationID)
 	}
-	if pub.msg.DestinationQueueID != "billing" {
-		t.Fatalf("message destination = %q", pub.msg.DestinationQueueID)
+	if pub.published[0].msg.DestinationQueueID != "billing" {
+		t.Fatalf("message destination = %q", pub.published[0].msg.DestinationQueueID)
 	}
-	var res map[string]string
+	var res struct {
+		Status       string `json:"status"`
+		Endpoint     string `json:"endpoint"`
+		EventID      string `json:"event_id"`
+		Destinations []struct {
+			DestinationQueueID string `json:"destination_queue_id"`
+			Queue              string `json:"queue"`
+		} `json:"destinations"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
 		t.Fatal(err)
 	}
-	if res["status"] != "accepted" || res["endpoint"] != "paddle_billing" || res["destination_queue_id"] != "billing" || res["queue"] != "billing-events" || res["event_id"] == "" {
+	if res.Status != "accepted" || res.Endpoint != "paddle_billing" || res.EventID == "" {
+		t.Fatalf("bad response: %#v", res)
+	}
+	if len(res.Destinations) != 1 || res.Destinations[0].DestinationQueueID != "billing" || res.Destinations[0].Queue != "billing-events" {
 		t.Fatalf("bad response: %#v", res)
 	}
 }
@@ -54,7 +66,10 @@ func TestWebhookSuccessReturnsAccepted(t *testing.T) {
 func TestWebhookRoutesToEndpointDestination(t *testing.T) {
 	cfg := testConfig()
 	cfg.Endpoints["github_events"] = config.EndpointConfig{
-		Enabled: true, Path: "/webhooks/github", DestinationQueueID: "activity", Queue: "github-events",
+		Enabled: true, Path: "/webhooks/github",
+		Destinations: []config.EndpointDestinationConfig{{
+			DestinationQueueID: "activity", Queue: "github-events",
+		}},
 		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "github", Secret: "secret", SignatureHeader: "X-Hub-Signature-256"},
 	}
 	pub := &fakePublisher{}
@@ -69,8 +84,134 @@ func TestWebhookRoutesToEndpointDestination(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
-	if pub.destinationID != "activity" || pub.queue != "github-events" {
-		t.Fatalf("publish target = %q/%q", pub.destinationID, pub.queue)
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1 publish", pub.published)
+	}
+	if pub.published[0].destinationID != "activity" || pub.published[0].queue != "github-events" {
+		t.Fatalf("publish target = %q/%q", pub.published[0].destinationID, pub.published[0].queue)
+	}
+}
+
+func TestWebhookFansOutToEndpointDestinations(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{DestinationQueueID: "billing", Queue: "billing-events"},
+		{DestinationQueueID: "activity", Queue: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`{"event_type":"subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 2 {
+		t.Fatalf("published = %#v", pub.published)
+	}
+	byDestination := map[string]publishedMessage{}
+	for _, message := range pub.published {
+		byDestination[message.destinationID] = message
+	}
+	if byDestination["billing"].queue != "billing-events" || byDestination["billing"].msg.Queue != "billing-events" {
+		t.Fatalf("billing publish = %#v", byDestination["billing"])
+	}
+	if byDestination["activity"].queue != "activity-events" || byDestination["activity"].msg.Queue != "activity-events" {
+		t.Fatalf("activity publish = %#v", byDestination["activity"])
+	}
+	var res struct {
+		Status       string `json:"status"`
+		Endpoint     string `json:"endpoint"`
+		Destinations []struct {
+			DestinationQueueID string `json:"destination_queue_id"`
+			Queue              string `json:"queue"`
+		} `json:"destinations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Destinations) != 2 || res.Destinations[1].DestinationQueueID != "activity" || res.Destinations[1].Queue != "activity-events" {
+		t.Fatalf("bad response: %#v", res)
+	}
+}
+
+func TestWebhookFanoutFailureReturnsUnavailableAndAllowsRetry(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{DestinationQueueID: "billing", Queue: "billing-events"},
+		{DestinationQueueID: "activity", Queue: "activity-events"},
+	}
+	endpoint.ReplayProtection = config.ReplayProtectionConfig{Enabled: true, TTL: time.Minute, MaxEntries: 10}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{err: errors.New("activity down"), errDestination: "activity"}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`true`)
+	sig := signed("secret", time.Now(), body)
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+		req.Header.Set("Paddle-Signature", sig)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("request %d status = %d body = %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if len(pub.published) != 4 {
+		t.Fatalf("published = %#v, want 4 attempts", pub.published)
+	}
+	successes, failures := 0, 0
+	for _, published := range pub.published {
+		switch published.destinationID {
+		case "billing":
+			if published.err != nil {
+				t.Fatalf("billing publish failed: %#v", published)
+			}
+			successes++
+		case "activity":
+			if !errors.Is(published.err, pub.err) {
+				t.Fatalf("activity publish = %#v", published)
+			}
+			failures++
+		default:
+			t.Fatalf("unexpected publish = %#v", published)
+		}
+	}
+	if successes != 2 || failures != 2 {
+		t.Fatalf("successes=%d failures=%d published=%#v", successes, failures, pub.published)
+	}
+}
+
+func TestWebhookFanoutHonorsConcurrencyLimit(t *testing.T) {
+	cfg := testConfig()
+	cfg.Server.FanoutConcurrency = 1
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{DestinationQueueID: "billing", Queue: "billing-events"},
+		{DestinationQueueID: "activity", Queue: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{delay: 10 * time.Millisecond}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`{"event_type":"subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if pub.maxConcurrent != 1 {
+		t.Fatalf("max concurrent publishes = %d, want 1", pub.maxConcurrent)
 	}
 }
 
@@ -91,11 +232,14 @@ func TestRequestIDPropagatesToResponseEnvelopeAndLogs(t *testing.T) {
 	if rec.Header().Get("X-Request-ID") != "req_abc" {
 		t.Fatalf("response request id = %q", rec.Header().Get("X-Request-ID"))
 	}
-	if pub.msg.RequestID != "req_abc" {
-		t.Fatalf("published request id = %q", pub.msg.RequestID)
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1 publish", pub.published)
 	}
-	if pub.msg.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
-		t.Fatalf("published trace id = %q", pub.msg.TraceID)
+	if pub.published[0].msg.RequestID != "req_abc" {
+		t.Fatalf("published request id = %q", pub.published[0].msg.RequestID)
+	}
+	if pub.published[0].msg.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("published trace id = %q", pub.published[0].msg.TraceID)
 	}
 	if !strings.Contains(logs.String(), `"request_id":"req_abc"`) || !strings.Contains(logs.String(), `"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"`) {
 		t.Fatalf("logs missing ids: %s", logs.String())
@@ -262,21 +406,49 @@ func TestHealthReadyAndDisabledMetrics(t *testing.T) {
 	}
 }
 
-type fakePublisher struct {
-	err           error
-	readyErr      error
-	published     int
+type publishedMessage struct {
 	destinationID string
 	queue         string
 	msg           queue.Message
+	err           error
+}
+
+type fakePublisher struct {
+	err            error
+	errDestination string
+	readyErr       error
+	delay          time.Duration
+	mu             sync.Mutex
+	active         int
+	maxConcurrent  int
+	published      []publishedMessage
 }
 
 func (f *fakePublisher) Publish(ctx context.Context, destinationID, q string, msg queue.Message) error {
-	f.published++
-	f.destinationID = destinationID
-	f.queue = q
-	f.msg = msg
-	return f.err
+	f.mu.Lock()
+	f.active++
+	if f.active > f.maxConcurrent {
+		f.maxConcurrent = f.active
+	}
+	f.mu.Unlock()
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	defer func() {
+		f.mu.Lock()
+		f.active--
+		f.mu.Unlock()
+	}()
+	if f.err != nil && (f.errDestination == "" || f.errDestination == destinationID) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.published = append(f.published, publishedMessage{destinationID: destinationID, queue: q, msg: msg, err: f.err})
+		return f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.published = append(f.published, publishedMessage{destinationID: destinationID, queue: q, msg: msg})
+	return nil
 }
 func (f *fakePublisher) Ready(ctx context.Context) error { return f.readyErr }
 func (f *fakePublisher) Close() error                    { return nil }
@@ -293,7 +465,10 @@ func testConfig() config.Config {
 		},
 		Endpoints: map[string]config.EndpointConfig{
 			"paddle_billing": {
-				Enabled: true, Path: "/webhooks/paddle/billing", DestinationQueueID: "billing", Queue: "billing-events",
+				Enabled: true, Path: "/webhooks/paddle/billing",
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "billing", Queue: "billing-events",
+				}},
 				Auth: config.AuthConfig{Type: "hmac_sha256", Secret: "secret", SignatureHeader: "Paddle-Signature", TimestampTolerance: 5 * time.Minute},
 			},
 		},

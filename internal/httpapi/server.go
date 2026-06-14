@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -209,7 +210,10 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "not found"})
 		return
 	}
-	endpointLabel, destinationLabel, queueLabel = endpointName, endpoint.DestinationQueueID, endpoint.Queue
+	endpointLabel = endpointName
+	destinationLabel = endpoint.DestinationLabel()
+	queueLabel = endpoint.QueueLabel()
+	routes := endpoint.DestinationRoutes()
 	if r.Method != http.MethodPost {
 		status = http.StatusMethodNotAllowed
 		w.Header().Set("Allow", http.MethodPost)
@@ -226,7 +230,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		default:
 			status = http.StatusServiceUnavailable
 			w.Header().Set("Retry-After", "1")
-			s.metrics.Saturated(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
+			for _, route := range routes {
+				s.metrics.Saturated(endpointName, route.DestinationQueueID, route.Queue)
+			}
 			writeJSON(w, status, map[string]string{"error": "server busy"})
 			return
 		}
@@ -234,13 +240,17 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	sourceIP := s.sourceIP(r)
 	if !s.ipAllowed(sourceIP, endpoint.IPAllowlist) {
 		status = http.StatusForbidden
-		s.metrics.Forbidden(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
+		for _, route := range routes {
+			s.metrics.Forbidden(endpointName, route.DestinationQueueID, route.Queue)
+		}
 		writeJSON(w, status, map[string]string{"error": "forbidden"})
 		return
 	}
 	if !s.limiterForEndpoint(endpointName).Allow(sourceIP, time.Now()) {
 		status = http.StatusTooManyRequests
-		s.metrics.RateLimited(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
+		for _, route := range routes {
+			s.metrics.RateLimited(endpointName, route.DestinationQueueID, route.Queue)
+		}
 		writeJSON(w, status, map[string]string{"error": "rate limited"})
 		return
 	}
@@ -260,22 +270,27 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "empty body"})
 		return
 	}
-	s.metrics.BodyBytes(endpointName, endpoint.DestinationQueueID, endpoint.Queue, len(rawBody))
+	for _, route := range routes {
+		s.metrics.BodyBytes(endpointName, route.DestinationQueueID, route.Queue, len(rawBody))
+	}
 	if err := s.verifiers[endpointName].Verify(r.Header.Get(endpoint.Auth.SignatureHeader), rawBody, time.Now()); err != nil {
 		status = http.StatusUnauthorized
 		s.metrics.AuthFailure(endpointName, "invalid_signature")
 		writeJSON(w, status, map[string]string{"error": "unauthorized"})
 		return
 	}
-	// Reserve the signature against replays. The reservation is released on any
-	// failure before a successful publish so a transient outage does not turn a
-	// sender's legitimate retry into a permanent "replay detected" rejection.
+	// Reserve the signature against replays. Release it on publish failure so a
+	// sender retry is not permanently rejected as a replay. In fan-out mode that
+	// retry can duplicate destinations already published before a later
+	// destination failed; consumers must keep using idempotency keys.
 	signature := r.Header.Get(endpoint.Auth.SignatureHeader)
 	replayCache := s.replayCaches[endpointName]
 	if replayCache != nil {
 		if !replayCache.Accept(endpointName, signature, time.Now()) {
 			status = http.StatusConflict
-			s.metrics.ReplayRejected(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
+			for _, route := range routes {
+				s.metrics.ReplayRejected(endpointName, route.DestinationQueueID, route.Queue)
+			}
 			writeJSON(w, status, map[string]string{"error": "replay detected"})
 			return
 		}
@@ -286,7 +301,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	env, err := webhook.BuildEnvelopeWithOptions(r, webhook.EnvelopeOptions{
-		Endpoint: endpointName, DestinationQueueID: endpoint.DestinationQueueID, Queue: endpoint.Queue, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
+		Endpoint: endpointName, DestinationQueueID: destinationLabel, Queue: queueLabel, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
 		RequestID: requestIDFromContext(r.Context()), TraceID: traceIDFromContext(r.Context()),
 		AuthType: endpoint.Auth.Type, AuthScheme: defaultScheme(endpoint.Auth.Scheme),
 		IdempotencyKey:  s.idempotencyKey(r, endpoint),
@@ -299,26 +314,89 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "internal error"})
 		return
 	}
-	msg := queue.Message{
-		SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
-		Endpoint: env.Endpoint, DestinationQueueID: env.DestinationQueueID, Queue: env.Queue, ReceivedAt: env.ReceivedAt,
-		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
-		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
-	}
-	publishStart := time.Now()
-	if err := s.publisher.Publish(r.Context(), endpoint.DestinationQueueID, endpoint.Queue, msg); err != nil {
+	published, err := s.publishRoutes(r.Context(), endpointName, env, routes)
+	if err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable
-		s.metrics.Publish(endpointName, endpoint.DestinationQueueID, endpoint.Queue, "failure", time.Since(publishStart))
 		writeJSON(w, status, map[string]string{"error": "service unavailable"})
 		return
 	}
-	s.metrics.Publish(endpointName, endpoint.DestinationQueueID, endpoint.Queue, "success", time.Since(publishStart))
-	s.metrics.MessagePublished(endpointName, endpoint.DestinationQueueID, endpoint.Queue)
 	status = http.StatusAccepted
-	writeJSON(w, status, map[string]string{
-		"status": "accepted", "endpoint": endpointName, "destination_queue_id": endpoint.DestinationQueueID, "queue": endpoint.Queue, "event_id": env.ID, "request_id": env.RequestID,
-	})
+	body := map[string]any{
+		"status": "accepted", "endpoint": endpointName, "destinations": published,
+		"event_id": env.ID, "request_id": env.RequestID,
+	}
+	writeJSON(w, status, body)
+}
+
+type publishRouteResult struct {
+	index         int
+	destinationID string
+	queue         string
+	duration      time.Duration
+	err           error
+}
+
+func (s *Server) publishRoutes(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	workerCount := s.cfg.Server.FanoutConcurrencyLimit()
+	if workerCount > len(routes) {
+		workerCount = len(routes)
+	}
+	jobs := make(chan int)
+	results := make(chan publishRouteResult, len(routes))
+	var wg sync.WaitGroup
+	for range workerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				route := routes[index]
+				msg := queue.Message{
+					SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
+					Endpoint: env.Endpoint, DestinationQueueID: route.DestinationQueueID, Queue: route.Queue, ReceivedAt: env.ReceivedAt,
+					Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
+					Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
+				}
+				start := time.Now()
+				err := s.publisher.Publish(ctx, route.DestinationQueueID, route.Queue, msg)
+				if err != nil {
+					cancel()
+				}
+				results <- publishRouteResult{
+					index: index, destinationID: route.DestinationQueueID, queue: route.Queue,
+					duration: time.Since(start), err: err,
+				}
+			}
+		}()
+	}
+	for index := range routes {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
+	close(results)
+
+	published := make([]map[string]string, len(routes))
+	var publishErr error
+	for result := range results {
+		status := "success"
+		if result.err != nil {
+			status = "failure"
+			publishErr = result.err
+		}
+		s.metrics.Publish(endpointName, result.destinationID, result.queue, status, result.duration)
+		if result.err == nil {
+			s.metrics.MessagePublished(endpointName, result.destinationID, result.queue)
+			published[result.index] = map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue}
+		}
+	}
+	if publishErr != nil {
+		return nil, publishErr
+	}
+	return published, nil
 }
 
 var errBodyTooLarge = errors.New("body too large")

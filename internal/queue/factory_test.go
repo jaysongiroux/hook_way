@@ -38,12 +38,20 @@ func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
 		},
 		Endpoints: map[string]config.EndpointConfig{
 			"paddle_billing": {
-				Enabled: true, DestinationQueueID: "billing", Queue: "billing-events", CreateQueue: true,
-				QueueOptions: config.RabbitMQQueueOptions{
-					MessageTTL: 72 * time.Hour, MaxLength: 500000, Overflow: "reject-publish",
-				},
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "billing", Queue: "billing-events", CreateQueue: true,
+					QueueOptions: config.RabbitMQQueueOptions{
+						MessageTTL: 72 * time.Hour, MaxLength: 500000, Overflow: "reject-publish",
+					},
+				}},
 			},
-			"github_activity": {Enabled: true, DestinationQueueID: "activity", Queue: "activity-events", CreateQueue: true},
+			"github_activity": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "activity", Queue: "activity-events", CreateQueue: true,
+				}},
+			},
 		},
 	})
 	if err != nil {
@@ -65,6 +73,55 @@ func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
 	activity := called["activity"]
 	if activity.URL != "amqp://activity" || activity.QueueDeclarations[0].Options.MessageTTL != 24*time.Hour {
 		t.Fatalf("bad activity rabbitmq config: %#v", activity)
+	}
+}
+
+func TestFactoryCreatesPublishersAndDeclarationsForFanoutDestinations(t *testing.T) {
+	called := map[string]RabbitMQConfig{}
+	factory := NewFactory(FactoryOptions{
+		RabbitMQConnector: func(ctx context.Context, destinationID string, cfg RabbitMQConfig) (Publisher, error) {
+			called[destinationID] = cfg
+			return &recordingPublisher{}, nil
+		},
+	})
+
+	_, err := factory.Create(context.Background(), config.Config{
+		MessageQueues: map[string]config.MessageQueueConfig{
+			"primary": {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://primary", Exchange: "hookway.primary", ExchangeType: "direct"}},
+			"audit":   {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://audit", Exchange: "hookway.audit", ExchangeType: "direct"}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"example": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{
+					{DestinationQueueID: "primary", Queue: "example-webhooks", CreateQueue: true, QueueOptions: config.RabbitMQQueueOptions{MessageTTL: time.Hour}},
+					{DestinationQueueID: "audit", Queue: "example-audit-webhooks", CreateQueue: false, QueueOptions: config.RabbitMQQueueOptions{MessageTTL: 2 * time.Hour}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	primary := called["primary"]
+	if len(primary.Queues) != 1 || primary.Queues[0] != "example-webhooks" {
+		t.Fatalf("primary queues = %#v", primary.Queues)
+	}
+	if len(primary.QueueDeclarations) != 1 || primary.QueueDeclarations[0].Name != "example-webhooks" {
+		t.Fatalf("primary declarations = %#v", primary.QueueDeclarations)
+	}
+	if !primary.QueueDeclarations[0].CreateQueue || primary.QueueDeclarations[0].Options.MessageTTL != time.Hour {
+		t.Fatalf("primary declaration options = %#v", primary.QueueDeclarations[0])
+	}
+	audit := called["audit"]
+	if len(audit.Queues) != 1 || audit.Queues[0] != "example-audit-webhooks" {
+		t.Fatalf("audit queues = %#v", audit.Queues)
+	}
+	if len(audit.QueueDeclarations) != 1 || audit.QueueDeclarations[0].Name != "example-audit-webhooks" {
+		t.Fatalf("audit declarations = %#v", audit.QueueDeclarations)
+	}
+	if audit.QueueDeclarations[0].CreateQueue || audit.QueueDeclarations[0].Options.MessageTTL != 2*time.Hour {
+		t.Fatalf("audit declaration options = %#v", audit.QueueDeclarations[0])
 	}
 }
 
@@ -121,10 +178,18 @@ func TestFactoryHonorsEndpointCreateQueueAndDeadLetterConfigPerDestination(t *te
 			},
 		},
 		Endpoints: map[string]config.EndpointConfig{
-			"created": {Enabled: true, DestinationQueueID: "billing", Queue: "created-events", CreateQueue: true},
+			"created": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "billing", Queue: "created-events", CreateQueue: true,
+				}},
+			},
 			"external": {
-				Enabled: true, DestinationQueueID: "billing", Queue: "external-events", CreateQueue: false,
-				QueueOptions: config.RabbitMQQueueOptions{MessageTTL: 6 * time.Hour, DeadLetterRoutingKey: "external.dead"},
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					DestinationQueueID: "billing", Queue: "external-events", CreateQueue: false,
+					QueueOptions: config.RabbitMQQueueOptions{MessageTTL: 6 * time.Hour, DeadLetterRoutingKey: "external.dead"},
+				}},
 			},
 		},
 	})
@@ -140,7 +205,12 @@ func TestFactoryRejectsUnsupportedQueueType(t *testing.T) {
 	factory := NewFactory(FactoryOptions{})
 	_, err := factory.Create(context.Background(), config.Config{
 		MessageQueues: map[string]config.MessageQueueConfig{"billing": {Type: "sqs"}},
-		Endpoints:     map[string]config.EndpointConfig{"paddle": {Enabled: true, DestinationQueueID: "billing", Queue: "events"}},
+		Endpoints: map[string]config.EndpointConfig{"paddle": {
+			Enabled: true,
+			Destinations: []config.EndpointDestinationConfig{{
+				DestinationQueueID: "billing", Queue: "events",
+			}},
+		}},
 	})
 	if err == nil {
 		t.Fatal("expected unsupported type error")

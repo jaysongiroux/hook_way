@@ -21,6 +21,7 @@ config validation failed
 - `server.shutdown_timeout`: optional duration, default `10s`.
 - `server.max_body_bytes`: required positive integer.
 - `server.max_inflight_requests`: optional non-negative integer. When `> 0`, caps concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. `0` (default) means unlimited. Health, readiness, and metrics endpoints are never subject to this limit.
+- `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request when an endpoint has multiple destination routes. `0` (default) uses `8`.
 
 ## Security
 
@@ -74,7 +75,7 @@ paths.
 
 ## Message Queue
 
-`message_queues` is a top-level map of queue destinations keyed by stable id. Endpoints use `destination_queue_id` to choose one destination. Only `rabbitmq` is supported in MVP, but each entry keeps a `type` field so future providers such as SQS or BullMQ can be added without changing endpoint shape.
+`message_queues` is a top-level map of queue destinations keyed by stable id. Endpoint `destinations` route to these ids and choose the queue for each destination. Only `rabbitmq` is supported in MVP, but each entry keeps a `type` field so future providers such as SQS or BullMQ can be added without changing endpoint shape.
 
 RabbitMQ fields live under `message_queues.<id>.rabbitmq`:
 
@@ -86,7 +87,7 @@ RabbitMQ fields live under `message_queues.<id>.rabbitmq`:
 - `message_queues.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
 - `message_queues.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
 - `message_queues.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
-- `message_queues.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint queue Hookway declares for that destination. Endpoint `queue_options` override these defaults.
+- `message_queues.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint route queue Hookway declares for that destination. Destination route `queue_options` override these defaults.
   - `message_ttl`: optional positive duration mapped to RabbitMQ `x-message-ttl` in milliseconds. Stale messages are expired from the queue.
   - `expires`: optional positive duration mapped to `x-expires` in milliseconds. Useful for temporary/test queues; usually omit for production webhook queues.
   - `max_length`: optional positive integer mapped to `x-max-length` to cap backlog size.
@@ -124,6 +125,15 @@ message_queues:
         routing_key: "webhooks.dead"
         durable: true
         create_queue: true
+  audit:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${AUDIT_RABBITMQ_URL}"
+      exchange: "hookway.audit"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
 ```
 
 Dead-letter fields:
@@ -145,9 +155,15 @@ endpoints:
   paddle_billing:
     enabled: true
     path: "/webhooks/paddle/billing"
-    destination_queue_id: "billing"
-    queue: "billing-events"
-    create_queue: true
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "billing-events"
+        create_queue: true
+        queue_options:
+          message_ttl: "72h"
+      - destination_queue_id: "audit"
+        queue: "billing-audit-events"
+        create_queue: true
     max_body_bytes: 2097152
     rate_limit:
       enabled: true
@@ -171,9 +187,10 @@ endpoints:
   github_events:
     enabled: true
     path: "/webhooks/github/events"
-    destination_queue_id: "billing"
-    queue: "github-events"
-    create_queue: true
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "github-events"
+        create_queue: true
     rate_limit:
       enabled: false
     replay_protection:
@@ -197,15 +214,19 @@ Endpoint fields:
 
 - `enabled`: only enabled endpoints are registered.
 - `path`: public HTTP path; must start with `/` and be unique among enabled endpoints. Parent/child overlaps such as `/webhooks/paddle` and `/webhooks/paddle/billing` are rejected to avoid ambiguous webhook routing.
-- `destination_queue_id`: required key under `message_queues`; selects which RabbitMQ instance receives this endpoint's messages.
-- `queue`: target RabbitMQ routing key/queue name; must match `^[a-zA-Z0-9._-]{1,128}$`.
-- `create_queue`: when true, queue layer can declare and bind this endpoint queue during startup.
-- `queue_options`: optional per-endpoint RabbitMQ queue arguments. Same fields as `message_queues.<id>.rabbitmq.queue_defaults`; endpoint values override defaults. Use this for source-specific retention/backlog policy, for example longer TTLs for billing webhooks than low-value activity events. Endpoints sharing one queue within one destination must use identical queue options.
+- `destinations`: required list of destination route objects. Each route is published once. Multiple routes fan out concurrently up to `server.fanout_concurrency`.
 - `max_body_bytes`: optional positive endpoint override. Omit or set `0` to inherit `server.max_body_bytes`.
 - `rate_limit`: optional endpoint override. Omit to inherit global `rate_limit`; set `enabled: false` to disable endpoint-specific limiting in later HTTP code.
 - `replay_protection`: optional endpoint replay cache settings.
 - `ip_allowlist`: optional list of IP addresses or CIDR ranges accepted for this endpoint.
 - `auth`: endpoint authentication settings.
+
+Destination route fields:
+
+- `destination_queue_id`: required target key under `message_queues`.
+- `queue`: required RabbitMQ routing key/queue name for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`.
+- `create_queue`: when true, queue layer can declare and bind this route queue during startup.
+- `queue_options`: optional RabbitMQ queue arguments. Same fields as `message_queues.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
 
 Endpoint rate-limit fields match global rate-limit fields. `key_by` must be `ip` for MVP.
 
@@ -216,6 +237,8 @@ Replay protection fields:
 - `max_entries`: positive per-process entry cap.
 
 Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node. The reservation is only committed after a successful publish, so a transient broker outage does not turn a provider's legitimate retry into a permanent `409 replay detected`.
+
+Fan-out is at-least-once per destination, not atomic across destinations. If one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`.
 
 Auth fields:
 

@@ -28,8 +28,8 @@ Put secrets in environment variables and reference them from YAML with `${ENV_NA
 - Server timeouts are configured from YAML.
 - Shutdown handles `SIGINT` and `SIGTERM`.
 - `/healthz` reports process liveness for container healthchecks.
-- `/ready` reports readiness for every message queue used by enabled endpoints.
-- `/readyz` reports readiness for every message queue used by enabled endpoints.
+- `/ready` reports readiness for every message queue used by enabled endpoints, including every fan-out destination.
+- `/readyz` reports readiness for every message queue used by enabled endpoints, including every fan-out destination.
 - `/health` reports the same readiness state as `/readyz`.
 
 ## Rate Limiting
@@ -61,9 +61,11 @@ By default this is a denylist (fail-open): headers not matched above are forward
 
 Each published envelope carries an `idempotency_key` (also set as the AMQP `x-idempotency-key` header) so consumers can deduplicate at-least-once deliveries. The key is taken from the per-endpoint `auth.idempotency_header` (e.g. GitHub's `X-GitHub-Delivery`) when configured, and otherwise derived from a hash of the verified signature, which is stable across provider retries of the same event. Because delivery is at-least-once and replay protection is process-local, consumers should treat the idempotency key as authoritative for deduplication.
 
+For fan-out endpoints, delivery is not atomic across destinations. If an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries; earlier destinations can see the same event again and must dedupe by `idempotency_key`.
+
 ## Availability Model
 
-Hookway does not durably spool requests locally. A webhook is acknowledged with `202 Accepted` only after the endpoint's configured RabbitMQ destination confirms the publish; if that broker is unavailable after retries, Hookway responds `503 Service Unavailable` and relies on the provider's own retry policy to redeliver. Under load shedding (`server.max_inflight_requests`) it also responds `503` with `Retry-After`. Operate behind providers that retry on 5xx, and size each destination's `publisher_channels` plus global `max_inflight_requests` for expected burst volume. The replay reservation is released on publish failure, so legitimate provider retries after a transient outage are not rejected as replays.
+Hookway does not durably spool requests locally. A webhook is acknowledged with `202 Accepted` only after every endpoint destination route confirms the publish; if a broker is unavailable after retries, Hookway responds `503 Service Unavailable` and relies on the provider's own retry policy to redeliver. Under load shedding (`server.max_inflight_requests`) it also responds `503` with `Retry-After`. Operate behind providers that retry on 5xx, and size each destination's `publisher_channels`, per-request `server.fanout_concurrency`, and global `max_inflight_requests` for expected burst volume. The replay reservation is released on publish failure, so legitimate provider retries after a transient outage are not rejected as replays.
 
 ## Logging
 
@@ -81,6 +83,7 @@ Logs include request method, path, endpoint, destination queue id, queue, status
 - Run at least two replicas, but treat rate limiting and replay protection as process-local until a shared backend is added.
 - Keep `server.max_body_bytes` tight per endpoint and set `server.max_inflight_requests` to bound memory and shed load under flood.
 - Tune `message_queues.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
+- Tune `server.fanout_concurrency` to bound per-request goroutines and concurrent publishes across fan-out routes (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
 - Set `security.forwarded_header_allowlist` so only intended headers reach consumers and logs.
