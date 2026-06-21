@@ -169,3 +169,19 @@ endpoints:
       signature_header: "X-Hub-Signature-256"
       # GitHub sends a stable delivery UUID consumers can dedupe on.
       idempotency_header: "X-GitHub-Delivery"
+
+  RevenueCat sends a static Authorization header you configure in the dashboard.
+  Set REVENUECAT_WEBHOOK_AUTH to the token value when remove_bearer is true.
+  revenuecat_billing:
+    enabled: false
+    path: "/webhooks/revenuecat/billing"
+    destinations:
+      - destination_queue_id: "primary"
+        queue: "revenuecat-events"
+        create_queue: true
+    auth:
+      type: "header_exact"
+      scheme: "exact"
+      secret: "${REVENUECAT_WEBHOOK_AUTH}"
+      signature_header: "Authorization"
+      remove_bearer: true

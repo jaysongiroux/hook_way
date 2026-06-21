@@ -6,6 +6,7 @@
 export RABBITMQ_URL='amqp://guest:guest@rabbitmq:5672/'
 export PADDLE_WEBHOOK_SECRET='change-me'
 export GITHUB_WEBHOOK_SECRET='change-me'
+export REVENUECAT_WEBHOOK_AUTH='change-me'
 make dev-up
 ```
 
@@ -29,6 +30,7 @@ Start RabbitMQ first, then:
 export RABBITMQ_URL='amqp://guest:guest@localhost:5672/'
 export PADDLE_WEBHOOK_SECRET='change-me'
 export GITHUB_WEBHOOK_SECRET='change-me'
+export REVENUECAT_WEBHOOK_AUTH='change-me'
 go run ./cmd/hookway validate --config examples/config.yaml
 HOOKWAY_CONFIG=examples/config.yaml go run ./cmd/hookway
 ```
@@ -48,6 +50,8 @@ For local-only manual testing, generate the configured `signature_header` over t
 ```txt
 ts + ":" + raw_body
 ```
+
+For `header_exact` endpoints (e.g. RevenueCat), set `auth.remove_bearer: true` when the provider sends `Authorization: Bearer <token>` but your secret holds only `<token>`. Otherwise configure `secret` to match the full header value exactly.
 
 ## Tests
 

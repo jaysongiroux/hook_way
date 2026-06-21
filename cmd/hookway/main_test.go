@@ -14,6 +14,7 @@ func TestRunValidateAcceptsValidConfig(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("PADDLE_WEBHOOK_SECRET", "test-secret")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "test-secret")
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"validate", "--config", filepath.Join("..", "..", "examples", "config.yaml")}, &stdout, &stderr)

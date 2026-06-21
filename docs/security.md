@@ -1,20 +1,28 @@
 # Security
 
-Hookway verifies HMAC SHA256 webhook signatures before publishing to RabbitMQ. The signature *layout* is selected per endpoint by `auth.scheme`, so the proxy is provider-neutral: Paddle is the default scheme today, and additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path.
+Hookway verifies webhook authentication before publishing to RabbitMQ. Auth **type** selects the verifier family (`hmac_sha256` or `header_exact`); **scheme** selects the header layout within that family. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path.
 
-## Signature Schemes
+## Auth Schemes
 
-Each endpoint builds its verifier once at startup from `auth.scheme` (default `paddle`). An unknown scheme fails closed — the endpoint rejects every request rather than accepting unverified traffic.
+Each endpoint builds its verifier once at startup from `auth.type` and `auth.scheme` (HMAC schemes default to `paddle` when omitted). An unknown or mismatched type/scheme pair fails closed — the endpoint rejects every request rather than accepting unverified traffic.
 
-### `paddle` (timestamped)
+### `paddle` (timestamped, `hmac_sha256`)
 
 Hookway reads the exact raw request body once, reads the configured `signature_header`, extracts one `ts` value and one `h1` value, builds `ts + ":" + raw_body`, computes HMAC-SHA256 using the configured endpoint secret, hex-encodes it, and compares it to `h1` using `hmac.Equal`. Requests outside `timestamp_tolerance` are rejected with `401 Unauthorized`. Empty secrets, non-positive timestamp tolerances, malformed signatures, duplicate signature keys, and non-SHA256-length HMAC values fail closed.
 
-### `github`
+### `github` (`hmac_sha256`)
 
 Hookway reads the `X-Hub-Signature-256` header shaped like `sha256=<hex>`, computes HMAC-SHA256 over the exact raw body with the endpoint secret, and compares using `hmac.Equal`. GitHub does not sign a timestamp, so `timestamp_tolerance` is not used. A missing/short/tampered signature or empty secret fails closed.
 
-In all schemes the body is not parsed, trimmed, normalized, or re-serialized before verification, and the endpoint secret is used as a raw string (not base64-decoded).
+### `exact` (`header_exact`)
+
+For providers that authenticate with a static shared secret sent in a request header (e.g. RevenueCat `Authorization`), set `auth.type` to `header_exact` and `auth.scheme` to `exact`. Hookway reads `signature_header` and compares its value to `secret` using a constant-time equality check. The raw body is not part of verification.
+
+Set `auth.remove_bearer: true` when the provider sends a `Bearer` or `bearer` prefix but your configured `secret` stores only the token value. Hookway strips the prefix (case-insensitively) and any following whitespace before comparing.
+
+Because the header value is identical on every request, replay protection and idempotency fall back to a SHA-256 hash of the raw body when `idempotency_header` is not set. Configure `idempotency_header` when the provider sends a per-delivery header.
+
+For HMAC schemes the body is not parsed, trimmed, normalized, or re-serialized before verification, and the endpoint secret is used as a raw string (not base64-decoded).
 
 ## Secrets
 
@@ -59,7 +67,7 @@ By default this is a denylist (fail-open): headers not matched above are forward
 
 ## Idempotency
 
-Each published envelope carries an `idempotency_key` (also set as the AMQP `x-idempotency-key` header) so consumers can deduplicate at-least-once deliveries. The key is taken from the per-endpoint `auth.idempotency_header` (e.g. GitHub's `X-GitHub-Delivery`) when configured, and otherwise derived from a hash of the verified signature, which is stable across provider retries of the same event. Because delivery is at-least-once and replay protection is process-local, consumers should treat the idempotency key as authoritative for deduplication.
+Each published envelope carries an `idempotency_key` (also set as the AMQP `x-idempotency-key` header) so consumers can deduplicate at-least-once deliveries. The key is taken from the per-endpoint `auth.idempotency_header` (e.g. GitHub's `X-GitHub-Delivery`) when configured. For `hmac_sha256` endpoints without that header, Hookway hashes the verified signature header value, which is stable across provider retries of the same event. For `header_exact` endpoints without `idempotency_header`, Hookway hashes the raw body instead, because the auth header value is static across requests.
 
 For fan-out endpoints, delivery is not atomic across destinations. If an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries; earlier destinations can see the same event again and must dedupe by `idempotency_key`.
 

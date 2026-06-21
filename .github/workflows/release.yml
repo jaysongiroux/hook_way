@@ -31,6 +31,7 @@ jobs:
           RABBITMQ_URL: amqp://guest:guest@localhost:5672/
           PADDLE_WEBHOOK_SECRET: ci-secret
           GITHUB_WEBHOOK_SECRET: ci-secret
+          REVENUECAT_WEBHOOK_AUTH: ci-secret
         run: go run ./cmd/hookway validate --config examples/config.yaml
 
       - name: Unit tests

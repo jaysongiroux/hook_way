@@ -208,7 +208,28 @@ endpoints:
       secret: "${GITHUB_WEBHOOK_SECRET}"
       signature_header: "X-Hub-Signature-256"
       idempotency_header: "X-GitHub-Delivery"
+
+  revenuecat_billing:
+    enabled: true
+    path: "/webhooks/revenuecat/billing"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "revenuecat-events"
+        create_queue: true
+    replay_protection:
+      enabled: true
+      ttl: "10m"
+      max_entries: 50000
+    auth:
+      type: "header_exact"
+      scheme: "exact"
+      secret: "${REVENUECAT_WEBHOOK_AUTH}"
+      signature_header: "Authorization"
+      # Strip a leading Bearer/bearer prefix before comparing to secret.
+      remove_bearer: true
 ```
+
+Set `REVENUECAT_WEBHOOK_AUTH` to the token value only when `remove_bearer` is true (e.g. `rc-secret`). Omit `remove_bearer` or set it to `false` when the secret must match the full header value exactly (e.g. `Bearer rc-secret`).
 
 Endpoint fields:
 
@@ -242,12 +263,14 @@ Fan-out is at-least-once per destination, not atomic across destinations. If one
 
 Auth fields:
 
-- `type`: signature algorithm family; `hmac_sha256` for MVP.
-- `scheme`: signature *layout*. Optional, defaults to `paddle`. Built-in schemes:
-  - `paddle`: timestamped header shaped like `ts=<unix>;h1=<hex_hmac>` over `ts + ":" + raw_body`; requires `timestamp_tolerance`.
-  - `github`: `X-Hub-Signature-256: sha256=<hex>` HMAC over the exact raw body, with no signed timestamp (so `timestamp_tolerance` is not required).
+- `type`: authentication family; `hmac_sha256` for HMAC body signatures, `header_exact` for static header secrets.
+- `scheme`: header *layout* within the auth type. Optional for `hmac_sha256`, defaults to `paddle`. Built-in schemes:
+  - `paddle` (`hmac_sha256`): timestamped header shaped like `ts=<unix>;h1=<hex_hmac>` over `ts + ":" + raw_body`; requires `timestamp_tolerance`.
+  - `github` (`hmac_sha256`): `X-Hub-Signature-256: sha256=<hex>` HMAC over the exact raw body, with no signed timestamp (so `timestamp_tolerance` is not required).
+  - `exact` (`header_exact`): constant-time equality check between `signature_header` and `secret`; body is not verified. Use `remove_bearer: true` to strip a leading `Bearer`/`bearer` prefix before comparing.
   - New providers are added by registering a scheme in `internal/auth`, without changing the request path or config shape.
 - `secret`: required; reference an environment variable such as `${PADDLE_WEBHOOK_SECRET}`.
-- `signature_header`: required header carrying the signature.
-- `timestamp_tolerance`: positive duration; required only for timestamped schemes (e.g. `paddle`).
-- `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted, Hookway falls back to a hash of the verified signature, which is stable across provider retries of the same event.
+- `signature_header`: required HTTP header Hookway reads for verification (signature or static secret).
+- `remove_bearer`: optional; when `true` on `header_exact` endpoints, strips a leading `Bearer`/`bearer` prefix (case-insensitive) and following whitespace from the header value before comparing to `secret`. Ignored for `hmac_sha256` endpoints (config validation rejects it).
+- `timestamp_tolerance`: positive duration; required only for timestamped HMAC schemes (e.g. `paddle`).
+- `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted on `hmac_sha256` endpoints, Hookway falls back to a hash of the verified signature. When omitted on `header_exact` endpoints, Hookway falls back to a hash of the raw body.

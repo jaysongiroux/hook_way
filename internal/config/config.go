@@ -165,6 +165,7 @@ type AuthConfig struct {
 	SignatureHeader    string
 	TimestampTolerance time.Duration
 	IdempotencyHeader  string
+	RemoveBearer       bool
 }
 
 type rawRabbitMQQueueOptions struct {
@@ -246,6 +247,7 @@ type rawConfig struct {
 			SignatureHeader    string `yaml:"signature_header"`
 			TimestampTolerance string `yaml:"timestamp_tolerance"`
 			IdempotencyHeader  string `yaml:"idempotency_header"`
+			RemoveBearer       bool   `yaml:"remove_bearer"`
 		} `yaml:"auth"`
 	} `yaml:"endpoints"`
 }
@@ -540,12 +542,12 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 		}
 		if endpoint.Auth.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".auth.type", "auth type is required", "set auth.type to \"hmac_sha256\""))
-		} else if endpoint.Auth.Type != "hmac_sha256" {
-			issues = append(issues, validationError(fieldPrefix+".auth.type", fmt.Sprintf("%q is not supported", endpoint.Auth.Type), "supported value for MVP is \"hmac_sha256\""))
+			issues = append(issues, validationError(fieldPrefix+".auth.type", "auth type is required", "set auth.type to \"hmac_sha256\" or \"header_exact\""))
+		} else if endpoint.Auth.Type != auth.AuthTypeHMACSHA256 && endpoint.Auth.Type != auth.AuthTypeHeaderExact {
+			issues = append(issues, validationError(fieldPrefix+".auth.type", fmt.Sprintf("%q is not supported", endpoint.Auth.Type), "supported values are \"hmac_sha256\" and \"header_exact\""))
 		}
-		if !auth.SchemeRegistered(endpoint.Auth.Scheme) {
-			issues = append(issues, validationError(fieldPrefix+".auth.scheme", fmt.Sprintf("%q is not a known signature scheme", endpoint.Auth.Scheme), fmt.Sprintf("use one of %v", auth.Schemes())))
+		if !auth.SchemeAllowedForAuthType(endpoint.Auth.Type, endpoint.Auth.Scheme) {
+			issues = append(issues, validationError(fieldPrefix+".auth.scheme", fmt.Sprintf("%q is not valid for auth.type %q", endpoint.Auth.Scheme, endpoint.Auth.Type), fmt.Sprintf("use one of %v", auth.Schemes())))
 		}
 		if endpoint.Auth.Secret == "" {
 			issues = append(issues, validationError(fieldPrefix+".auth.secret", "secret is required", "reference an environment variable such as ${PADDLE_WEBHOOK_SECRET}"))
@@ -555,6 +557,9 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 		if auth.SchemeRequiresTimestamp(endpoint.Auth.Scheme) && endpoint.Auth.TimestampTolerance <= 0 {
 			issues = append(issues, validationError(fieldPrefix+".auth.timestamp_tolerance", "must be a positive duration for timestamped schemes", "set a value such as \"5m\""))
+		}
+		if endpoint.Auth.RemoveBearer && endpoint.Auth.Type != auth.AuthTypeHeaderExact {
+			issues = append(issues, validationError(fieldPrefix+".auth.remove_bearer", "only supported for header_exact auth", "set auth.type to \"header_exact\" or remove remove_bearer"))
 		}
 	}
 	return issues
@@ -633,7 +638,8 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 			Auth: AuthConfig{Type: endpoint.Auth.Type, Scheme: authScheme(endpoint.Auth.Scheme), Secret: endpoint.Auth.Secret,
 				SignatureHeader:    endpoint.Auth.SignatureHeader,
 				TimestampTolerance: tolerance,
-				IdempotencyHeader:  endpoint.Auth.IdempotencyHeader},
+				IdempotencyHeader:  endpoint.Auth.IdempotencyHeader,
+				RemoveBearer:       endpoint.Auth.RemoveBearer},
 		}
 	}
 	return cfg, issues

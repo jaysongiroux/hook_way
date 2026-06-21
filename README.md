@@ -1,6 +1,6 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies generic `hmac_sha256` signatures, and publishes event envelopes to RabbitMQ. MVP scope is intentionally small: YAML config, RabbitMQ, optional Prometheus metrics, request limits, rate limiting, and tests. Paddle is one example provider, not a hard-coded auth mode.
+Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures or `header_exact` static headers), and publishes event envelopes to RabbitMQ.
 
 ## Quick Start
 
@@ -8,6 +8,8 @@ Hookway receives third-party webhook POST requests, verifies generic `hmac_sha25
 export RABBITMQ_URL='amqp://guest:guest@localhost:5672/'
 export PADDLE_WEBHOOK_SECRET='your_paddle_endpoint_secret'
 export GITHUB_WEBHOOK_SECRET='your_github_endpoint_secret'
+export REVENUECAT_WEBHOOK_AUTH='your_revenue_cat_webhook_secret'
+
 make dev-up
 ```
 
