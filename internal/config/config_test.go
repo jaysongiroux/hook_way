@@ -320,6 +320,7 @@ func TestExampleConfigIsValid(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("PADDLE_WEBHOOK_SECRET", "pdl_secret")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "gh_secret")
+	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "rc_secret")
 
 	cfg, err := Load(filepath.Join("..", "..", "examples", "config.yaml"))
 	if err != nil {
@@ -366,6 +367,94 @@ func writeConfig(t *testing.T, body string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestLoadAcceptsHeaderExactAuth(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "Bearer rc-secret")
+	path := writeConfig(t, validHeaderExactYAML())
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ep := cfg.Endpoints["revenuecat_billing"]
+	if ep.Auth.Type != "header_exact" || ep.Auth.Scheme != "exact" {
+		t.Fatalf("auth = %#v", ep.Auth)
+	}
+}
+
+func TestLoadRejectsExactSchemeWithHMACType(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	yaml := strings.Replace(validYAML(), `type: "hmac_sha256"`, `type: "hmac_sha256"
+      scheme: "exact"`, 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestLoadAcceptsHeaderExactWithoutTimestampRequirement(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "rc-secret")
+	path := writeConfig(t, validHeaderExactYAML())
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+}
+
+func TestLoadAcceptsHeaderExactWithRemoveBearer(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "rc-secret")
+	yaml := strings.Replace(validHeaderExactYAML(), `signature_header: "Authorization"`, `signature_header: "Authorization"
+      remove_bearer: true`, 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Endpoints["revenuecat_billing"].Auth.RemoveBearer {
+		t.Fatal("expected remove_bearer to be enabled")
+	}
+}
+
+func TestLoadRejectsRemoveBearerForHMACAuth(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	yaml := strings.Replace(validYAML(), `signature_header: "Paddle-Signature"`, `signature_header: "Paddle-Signature"
+      remove_bearer: true`, 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func validHeaderExactYAML() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+message_queues:
+  billing:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+endpoints:
+  revenuecat_billing:
+    enabled: true
+    path: "/webhooks/revenuecat/billing"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "revenuecat-events"
+        create_queue: true
+    auth:
+      type: "header_exact"
+      scheme: "exact"
+      secret: "${REVENUECAT_WEBHOOK_AUTH}"
+      signature_header: "Authorization"
+      remove_bearer: true
+`
 }
 
 func validYAML() string {

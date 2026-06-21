@@ -267,3 +267,73 @@ func TestForwardedHeaderAllowlistDropsUnlistedHeaders(t *testing.T) {
 		t.Fatalf("allowlisted header missing from envelope: %#v", pub.published[0].msg.Headers)
 	}
 }
+
+func revenueCatConfig() config.Config {
+	cfg := testConfig()
+	cfg.Endpoints = map[string]config.EndpointConfig{
+		"revenuecat_billing": {
+			Enabled: true,
+			Path:    "/webhooks/revenuecat",
+			Destinations: []config.EndpointDestinationConfig{{
+				DestinationQueueID: "billing", Queue: "revenuecat-events",
+			}},
+			ReplayProtection: config.ReplayProtectionConfig{
+				Enabled: true, TTL: 10 * time.Minute, MaxEntries: 1000,
+			},
+			Auth: config.AuthConfig{
+				Type: "header_exact", Scheme: "exact", Secret: "rc-token",
+				SignatureHeader: "Authorization", RemoveBearer: true,
+			},
+		},
+	}
+	return cfg
+}
+
+func TestHeaderExactAuthAcceptsMatchingAuthorization(t *testing.T) {
+	pub := &fakePublisher{}
+	srv := NewServer(revenueCatConfig(), pub, slog.Default())
+	body := []byte(`{"id":"evt_1","type":"INITIAL_PURCHASE"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer rc-token")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHeaderExactAuthRejectsWrongToken(t *testing.T) {
+	srv := NewServer(revenueCatConfig(), &fakePublisher{}, slog.Default())
+	body := []byte(`{"id":"evt_1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestHeaderExactReplayProtectionUsesBodyHashNotStaticAuthHeader(t *testing.T) {
+	pub := &fakePublisher{}
+	srv := NewServer(revenueCatConfig(), pub, slog.Default())
+	authHeader := "Bearer rc-token"
+
+	send := func(body []byte) int {
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader(body))
+		req.Header.Set("Authorization", authHeader)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if code := send([]byte(`{"id":"evt_1"}`)); code != http.StatusAccepted {
+		t.Fatalf("first event status = %d", code)
+	}
+	if code := send([]byte(`{"id":"evt_2"}`)); code != http.StatusAccepted {
+		t.Fatalf("second distinct event status = %d, replay protection likely keyed on static auth header", code)
+	}
+	if code := send([]byte(`{"id":"evt_1"}`)); code != http.StatusConflict {
+		t.Fatalf("replay status = %d, want 409", code)
+	}
+}

@@ -75,9 +75,11 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 		// scheme defaults to Paddle so configs predating the scheme field keep
 		// working; an unknown scheme fails closed (every request rejected).
 		verifier, err := auth.NewVerifier(auth.Spec{
+			AuthType:           endpoint.Auth.Type,
 			Scheme:             defaultScheme(endpoint.Auth.Scheme),
 			Secret:             endpoint.Auth.Secret,
 			TimestampTolerance: endpoint.Auth.TimestampTolerance,
+			RemoveBearer:       endpoint.Auth.RemoveBearer,
 		})
 		if err != nil {
 			logger.Error("signature scheme unavailable; endpoint will reject all requests", "endpoint", name, "scheme", endpoint.Auth.Scheme, "error", err.Error())
@@ -275,18 +277,18 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.verifiers[endpointName].Verify(r.Header.Get(endpoint.Auth.SignatureHeader), rawBody, time.Now()); err != nil {
 		status = http.StatusUnauthorized
-		s.metrics.AuthFailure(endpointName, "invalid_signature")
+		s.metrics.AuthFailure(endpointName, authFailureReason(endpoint.Auth.Type))
 		writeJSON(w, status, map[string]string{"error": "unauthorized"})
 		return
 	}
-	// Reserve the signature against replays. Release it on publish failure so a
+	// Reserve the replay key against replays. Release it on publish failure so a
 	// sender retry is not permanently rejected as a replay. In fan-out mode that
 	// retry can duplicate destinations already published before a later
 	// destination failed; consumers must keep using idempotency keys.
-	signature := r.Header.Get(endpoint.Auth.SignatureHeader)
+	replayKey := s.replayReservationKey(endpoint, r, rawBody)
 	replayCache := s.replayCaches[endpointName]
 	if replayCache != nil {
-		if !replayCache.Accept(endpointName, signature, time.Now()) {
+		if !replayCache.Accept(endpointName, replayKey, time.Now()) {
 			status = http.StatusConflict
 			for _, route := range routes {
 				s.metrics.ReplayRejected(endpointName, route.DestinationQueueID, route.Queue)
@@ -297,14 +299,14 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	releaseReplay := func() {
 		if replayCache != nil {
-			replayCache.Release(endpointName, signature)
+			replayCache.Release(endpointName, replayKey)
 		}
 	}
 	env, err := webhook.BuildEnvelopeWithOptions(r, webhook.EnvelopeOptions{
 		Endpoint: endpointName, DestinationQueueID: destinationLabel, Queue: queueLabel, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
 		RequestID: requestIDFromContext(r.Context()), TraceID: traceIDFromContext(r.Context()),
 		AuthType: endpoint.Auth.Type, AuthScheme: defaultScheme(endpoint.Auth.Scheme),
-		IdempotencyKey:  s.idempotencyKey(r, endpoint),
+		IdempotencyKey:  s.idempotencyKey(r, endpoint, rawBody),
 		HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
 		HeaderAllowlist: s.cfg.Security.ForwardedHeaderAllowlist,
 	})
@@ -462,13 +464,16 @@ func peerHost(remoteAddr string) string {
 
 // idempotencyKey returns a stable per-event key consumers can dedupe on. It
 // prefers a configured provider delivery-id header and otherwise falls back to
-// a hash of the verified signature, which is stable across provider retries of
-// the same event.
-func (s *Server) idempotencyKey(r *http.Request, endpoint config.EndpointConfig) string {
+// a hash of the verified signature or raw body for static-header auth.
+func (s *Server) idempotencyKey(r *http.Request, endpoint config.EndpointConfig, rawBody []byte) string {
 	if header := endpoint.Auth.IdempotencyHeader; header != "" {
 		if v := strings.TrimSpace(r.Header.Get(header)); v != "" {
 			return v
 		}
+	}
+	if endpoint.Auth.Type == auth.AuthTypeHeaderExact {
+		sum := sha256.Sum256(rawBody)
+		return hex.EncodeToString(sum[:])
 	}
 	sig := r.Header.Get(endpoint.Auth.SignatureHeader)
 	if sig == "" {
@@ -476,6 +481,26 @@ func (s *Server) idempotencyKey(r *http.Request, endpoint config.EndpointConfig)
 	}
 	sum := sha256.Sum256([]byte(endpoint.Auth.SignatureHeader + ":" + sig))
 	return hex.EncodeToString(sum[:])
+}
+
+func (s *Server) replayReservationKey(endpoint config.EndpointConfig, r *http.Request, rawBody []byte) string {
+	if endpoint.Auth.Type == auth.AuthTypeHeaderExact {
+		if header := endpoint.Auth.IdempotencyHeader; header != "" {
+			if v := strings.TrimSpace(r.Header.Get(header)); v != "" {
+				return v
+			}
+		}
+		sum := sha256.Sum256(rawBody)
+		return hex.EncodeToString(sum[:])
+	}
+	return r.Header.Get(endpoint.Auth.SignatureHeader)
+}
+
+func authFailureReason(authType string) string {
+	if authType == auth.AuthTypeHeaderExact {
+		return "invalid_auth"
+	}
+	return "invalid_signature"
 }
 
 func (s *Server) requestID(r *http.Request) string {
