@@ -5,24 +5,24 @@ import (
 	"testing"
 )
 
-func TestGitHubSchemeValidWithoutTimestampTolerance(t *testing.T) {
+func TestHMACSHA256HexSchemeValidWithoutTimestampTolerance(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	body := replace(validYAML(), "      timestamp_tolerance: \"5s\"\n", "")
 	body = replace(body,
 		"signature_header: \"Paddle-Signature\"",
-		"scheme: \"github\"\n      signature_header: \"X-Hub-Signature-256\"")
+		"scheme: \"hmac_sha256_hex\"\n      signature_header: \"X-Hub-Signature-256\"")
 
 	cfg, err := Load(writeConfig(t, body))
 	if err != nil {
-		t.Fatalf("github scheme without timestamp_tolerance should be valid: %v", err)
+		t.Fatalf("prefixed-hex scheme without timestamp_tolerance should be valid: %v", err)
 	}
-	if cfg.Endpoints["paddle_billing"].Auth.Scheme != "github" {
+	if cfg.Endpoints["paddle_billing"].Auth.Scheme != "hmac_sha256_hex" {
 		t.Fatalf("scheme = %q", cfg.Endpoints["paddle_billing"].Auth.Scheme)
 	}
 }
 
-func TestOmittedSchemeDefaultsToPaddle(t *testing.T) {
+func TestOmittedSchemeDefaultsToTSColon(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("PADDLE_SECRET", "pdl_secret")
 
@@ -30,8 +30,8 @@ func TestOmittedSchemeDefaultsToPaddle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if cfg.Endpoints["paddle_billing"].Auth.Scheme != "paddle" {
-		t.Fatalf("default scheme = %q, want paddle", cfg.Endpoints["paddle_billing"].Auth.Scheme)
+	if cfg.Endpoints["paddle_billing"].Auth.Scheme != "hmac_sha256_ts_colon" {
+		t.Fatalf("default scheme = %q, want hmac_sha256_ts_colon", cfg.Endpoints["paddle_billing"].Auth.Scheme)
 	}
 }
 

@@ -16,10 +16,11 @@ import (
 	"github.com/jasongiroux/hookway/internal/auth"
 )
 
-// authScheme defaults the per-endpoint signature scheme to Paddle when omitted.
+// authScheme defaults the per-endpoint signature scheme to the timestamped
+// HMAC-SHA256 colon scheme when omitted.
 func authScheme(scheme string) string {
 	if scheme == "" {
-		return auth.SchemePaddle
+		return auth.SchemeHMACSHA256TSColon
 	}
 	return scheme
 }
@@ -166,6 +167,9 @@ type AuthConfig struct {
 	TimestampTolerance time.Duration
 	IdempotencyHeader  string
 	RemoveBearer       bool
+	ExpectedIssuer     string
+	ExpectedAudience   string
+	BodyHashClaim      string
 }
 
 type rawRabbitMQQueueOptions struct {
@@ -248,6 +252,9 @@ type rawConfig struct {
 			TimestampTolerance string `yaml:"timestamp_tolerance"`
 			IdempotencyHeader  string `yaml:"idempotency_header"`
 			RemoveBearer       bool   `yaml:"remove_bearer"`
+			ExpectedIssuer     string `yaml:"expected_issuer"`
+			ExpectedAudience   string `yaml:"expected_audience"`
+			BodyHashClaim      string `yaml:"body_hash_claim"`
 		} `yaml:"auth"`
 	} `yaml:"endpoints"`
 }
@@ -441,7 +448,7 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 	}
 	if len(c.Endpoints) == 0 {
-		issues = append(issues, validationError("endpoints", "at least one endpoint is required", "add an endpoint such as endpoints.paddle_billing"))
+		issues = append(issues, validationError("endpoints", "at least one endpoint is required", "add an endpoint such as endpoints.billing"))
 	}
 	if c.Metrics.Enabled && (c.Metrics.Path == "" || c.Metrics.Path[0] != '/') {
 		issues = append(issues, validationError("metrics.path", "must start with / when metrics are enabled", "set metrics.path to \"/metrics\""))
@@ -498,15 +505,15 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, queueOptionValidationIssues(field+".queue_options", destination.QueueOptions)...)
 		}
 		if endpoint.Path == "" {
-			issues = append(issues, validationError(fieldPrefix+".path", "path is required for enabled endpoints", "set a path such as \"/webhooks/paddle/billing\""))
+			issues = append(issues, validationError(fieldPrefix+".path", "path is required for enabled endpoints", "set a path such as \"/webhooks/billing/events\""))
 		} else if endpoint.Path[0] != '/' {
-			issues = append(issues, validationError(fieldPrefix+".path", "path must start with /", "set a path such as \"/webhooks/paddle/billing\""))
+			issues = append(issues, validationError(fieldPrefix+".path", "path must start with /", "set a path such as \"/webhooks/billing/events\""))
 		} else if other, ok := paths[endpoint.Path]; ok {
 			issues = append(issues, validationError(fieldPrefix+".path", "path duplicates endpoint "+other, "each enabled endpoint must use a unique path"))
 		} else {
 			for otherPath, otherName := range paths {
 				if endpointPathsOverlap(endpoint.Path, otherPath) {
-					issues = append(issues, validationError(fieldPrefix+".path", "path overlaps endpoint "+otherName, "avoid parent/child paths such as \"/webhooks/paddle\" and \"/webhooks/paddle/billing\""))
+					issues = append(issues, validationError(fieldPrefix+".path", "path overlaps endpoint "+otherName, "avoid parent/child paths such as \"/webhooks/billing\" and \"/webhooks/billing/events\""))
 					break
 				}
 			}
@@ -542,18 +549,22 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 		}
 		if endpoint.Auth.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".auth.type", "auth type is required", "set auth.type to \"hmac_sha256\" or \"header_exact\""))
-		} else if endpoint.Auth.Type != auth.AuthTypeHMACSHA256 && endpoint.Auth.Type != auth.AuthTypeHeaderExact {
-			issues = append(issues, validationError(fieldPrefix+".auth.type", fmt.Sprintf("%q is not supported", endpoint.Auth.Type), "supported values are \"hmac_sha256\" and \"header_exact\""))
+			issues = append(issues, validationError(fieldPrefix+".auth.type", "auth type is required", "set auth.type to \"hmac_sha256\", \"header_exact\", \"no_auth\", or \"jwt\""))
+		} else if endpoint.Auth.Type != auth.AuthTypeHMACSHA256 && endpoint.Auth.Type != auth.AuthTypeHeaderExact && endpoint.Auth.Type != auth.AuthTypeNoAuth && endpoint.Auth.Type != auth.AuthTypeJWT {
+			issues = append(issues, validationError(fieldPrefix+".auth.type", fmt.Sprintf("%q is not supported", endpoint.Auth.Type), "supported values are \"hmac_sha256\", \"header_exact\", \"no_auth\", and \"jwt\""))
 		}
 		if !auth.SchemeAllowedForAuthType(endpoint.Auth.Type, endpoint.Auth.Scheme) {
 			issues = append(issues, validationError(fieldPrefix+".auth.scheme", fmt.Sprintf("%q is not valid for auth.type %q", endpoint.Auth.Scheme, endpoint.Auth.Type), fmt.Sprintf("use one of %v", auth.Schemes())))
 		}
-		if endpoint.Auth.Secret == "" {
-			issues = append(issues, validationError(fieldPrefix+".auth.secret", "secret is required", "reference an environment variable such as ${PADDLE_WEBHOOK_SECRET}"))
-		}
-		if endpoint.Auth.SignatureHeader == "" {
-			issues = append(issues, validationError(fieldPrefix+".auth.signature_header", "signature header is required", "for Paddle, set \"Paddle-Signature\""))
+		// no_auth disables verification entirely, so it requires neither a secret
+		// nor a signature header.
+		if endpoint.Auth.Type != auth.AuthTypeNoAuth {
+			if endpoint.Auth.Secret == "" {
+				issues = append(issues, validationError(fieldPrefix+".auth.secret", "secret is required", "reference an environment variable such as ${WEBHOOK_SECRET}"))
+			}
+			if endpoint.Auth.SignatureHeader == "" {
+				issues = append(issues, validationError(fieldPrefix+".auth.signature_header", "signature header is required", "set the header the provider signs with, such as \"X-Signature\""))
+			}
 		}
 		if auth.SchemeRequiresTimestamp(endpoint.Auth.Scheme) && endpoint.Auth.TimestampTolerance <= 0 {
 			issues = append(issues, validationError(fieldPrefix+".auth.timestamp_tolerance", "must be a positive duration for timestamped schemes", "set a value such as \"5m\""))
@@ -639,7 +650,10 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				SignatureHeader:    endpoint.Auth.SignatureHeader,
 				TimestampTolerance: tolerance,
 				IdempotencyHeader:  endpoint.Auth.IdempotencyHeader,
-				RemoveBearer:       endpoint.Auth.RemoveBearer},
+				RemoveBearer:       endpoint.Auth.RemoveBearer,
+				ExpectedIssuer:     endpoint.Auth.ExpectedIssuer,
+				ExpectedAudience:   endpoint.Auth.ExpectedAudience,
+				BodyHashClaim:      endpoint.Auth.BodyHashClaim},
 		}
 	}
 	return cfg, issues
