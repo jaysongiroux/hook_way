@@ -15,9 +15,20 @@ type Verifier interface {
 const (
 	AuthTypeHMACSHA256  = "hmac_sha256"
 	AuthTypeHeaderExact = "header_exact"
+	AuthTypeNoAuth      = "no_auth"
+	AuthTypeJWT         = "jwt"
 
-	SchemePaddle = "paddle"
-	SchemeGitHub = "github"
+	// HMAC schemes. Names describe the wire format (digest, encoding, and
+	// whether the header carries a signed timestamp), not any provider.
+	SchemeHMACSHA256TSColon = "hmac_sha256_ts_colon" // labeled timestamp header, payload "<ts>:<body>"
+	SchemeHMACSHA256TSDot   = "hmac_sha256_ts_dot"   // labeled timestamp header, payload "<ts>.<body>"
+	SchemeHMACSHA256Hex     = "hmac_sha256_hex"      // prefixed hex digest over the raw body
+	SchemeHMACSHA256Base64  = "hmac_sha256_base64"   // raw base64 digest over the raw body
+	SchemeHMACSHA1Hex       = "hmac_sha1_hex"        // prefixed hex SHA-1 digest over the raw body
+
+	SchemeJWTHS256 = "jwt_hs256"
+	SchemeJWTRS256 = "jwt_rs256"
+	SchemeJWTES256 = "jwt_es256"
 )
 
 // Spec carries the per-endpoint inputs a scheme needs to build a verifier.
@@ -25,8 +36,11 @@ type Spec struct {
 	AuthType           string
 	Scheme             string
 	Secret             string
-	TimestampTolerance time.Duration
+	TimestampTolerance time.Duration // reused as JWT leeway for jwt_* schemes
 	RemoveBearer       bool
+	ExpectedIssuer     string
+	ExpectedAudience   string
+	BodyHashClaim      string
 }
 
 type schemeDef struct {
@@ -43,14 +57,38 @@ func Register(authType, scheme string, requiresTimestamp bool, build func(Spec) 
 }
 
 func init() {
-	Register(AuthTypeHMACSHA256, SchemePaddle, true, func(s Spec) (Verifier, error) {
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256TSColon, true, func(s Spec) (Verifier, error) {
 		return NewHMACSHA256Verifier(s.Secret, s.TimestampTolerance), nil
 	})
-	Register(AuthTypeHMACSHA256, SchemeGitHub, false, func(s Spec) (Verifier, error) {
-		return newGitHubVerifier(s.Secret), nil
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256Hex, false, func(s Spec) (Verifier, error) {
+		return hmacVerifier{secret: s.Secret, scheme: hmacSHA256HexScheme()}, nil
+	})
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256TSDot, true, func(s Spec) (Verifier, error) {
+		return hmacVerifier{secret: s.Secret, tolerance: s.TimestampTolerance, scheme: hmacSHA256TSDotScheme()}, nil
+	})
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256Base64, false, func(s Spec) (Verifier, error) {
+		return hmacVerifier{secret: s.Secret, scheme: hmacSHA256Base64Scheme()}, nil
+	})
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA1Hex, false, func(s Spec) (Verifier, error) {
+		return hmacVerifier{secret: s.Secret, scheme: hmacSHA1HexScheme()}, nil
 	})
 	Register(AuthTypeHeaderExact, SchemeExact, false, func(s Spec) (Verifier, error) {
 		return newExactVerifier(s.Secret, s.RemoveBearer), nil
+	})
+	Register(AuthTypeHeaderExact, SchemeBasic, false, func(s Spec) (Verifier, error) {
+		return newBasicVerifier(s.Secret), nil
+	})
+	Register(AuthTypeNoAuth, SchemeNoAuth, false, func(Spec) (Verifier, error) {
+		return newNoAuthVerifier(), nil
+	})
+	Register(AuthTypeJWT, SchemeJWTHS256, false, func(s Spec) (Verifier, error) {
+		return newJWTHS256Verifier(s.Secret, s.TimestampTolerance, s.ExpectedIssuer, s.ExpectedAudience, s.BodyHashClaim)
+	})
+	Register(AuthTypeJWT, SchemeJWTRS256, false, func(s Spec) (Verifier, error) {
+		return newJWTRS256Verifier(s.Secret, s.TimestampTolerance, s.ExpectedIssuer, s.ExpectedAudience, s.BodyHashClaim)
+	})
+	Register(AuthTypeJWT, SchemeJWTES256, false, func(s Spec) (Verifier, error) {
+		return newJWTES256Verifier(s.Secret, s.TimestampTolerance, s.ExpectedIssuer, s.ExpectedAudience, s.BodyHashClaim)
 	})
 }
 

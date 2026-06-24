@@ -1,6 +1,6 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures or `header_exact` static headers), and publishes event envelopes to RabbitMQ.
+Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to RabbitMQ.
 
 ## Quick Start
 

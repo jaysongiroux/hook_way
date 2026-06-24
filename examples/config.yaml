@@ -135,7 +135,7 @@ endpoints:
       max_entries: 50000
     auth:
       type: "hmac_sha256"
-      scheme: "paddle"
+      scheme: "hmac_sha256_ts_colon"
       secret: "${PADDLE_WEBHOOK_SECRET}"
       signature_header: "Paddle-Signature"
       timestamp_tolerance: "5m"
@@ -162,9 +162,9 @@ endpoints:
       max_entries: 50000
     auth:
       type: "hmac_sha256"
-      # GitHub signs the raw body with no timestamp, so it uses the "github"
-      # scheme rather than Paddle's timestamped ts;h1 layout.
-      scheme: "github"
+      # GitHub signs the raw body with no timestamp, so it uses the
+      # hmac_sha256_hex scheme rather than a timestamped layout.
+      scheme: "hmac_sha256_hex"
       secret: "${GITHUB_WEBHOOK_SECRET}"
       signature_header: "X-Hub-Signature-256"
       # GitHub sends a stable delivery UUID consumers can dedupe on.
@@ -195,4 +195,88 @@ endpoints:
       requests_per_minute: 500
       burst: 1000
       key_by: "ip"
+
+  # Stripe: timestamped HMAC-SHA256 signature in Stripe-Signature header.
+  # Set STRIPE_WEBHOOK_SECRET to the whsec_... value from the Stripe dashboard.
+  # stripe_billing:
+  #   enabled: false
+  #   path: "/webhooks/stripe"
+  #   destinations:
+  #     - destination_queue_id: "primary"
+  #       queue: "stripe-events"
+  #       create_queue: true
+  #   max_body_bytes: 2097152
+  #   auth:
+  #     type: "hmac_sha256"
+  #     scheme: "hmac_sha256_ts_dot"
+  #     secret: "${STRIPE_WEBHOOK_SECRET}"
+  #     signature_header: "Stripe-Signature"
+  #     timestamp_tolerance: "5m"
+  #   replay_protection:
+  #     enabled: true
+  #     ttl: "10m"
+  #     max_entries: 50000
+  #   rate_limit:
+  #     enabled: true
+  #     requests_per_minute: 500
+  #     burst: 1000
+  #     key_by: "ip"
+
+  # Basic auth: HTTP Basic Authorization header (base64-encoded user:pass).
+  # Set BASIC_WEBHOOK_SECRET to "user:pass" matching the provider's credentials.
+  # basic_webhook:
+  #   enabled: false
+  #   path: "/webhooks/basic"
+  #   destinations:
+  #     - destination_queue_id: "primary"
+  #       queue: "basic-events"
+  #       create_queue: true
+  #   max_body_bytes: 2097152
+  #   auth:
+  #     type: "header_exact"
+  #     scheme: "basic"
+  #     secret: "${BASIC_WEBHOOK_SECRET}"
+  #     signature_header: "Authorization"
+  #   replay_protection:
+  #     enabled: true
+  #     ttl: "10m"
+  #     max_entries: 50000
+  #   rate_limit:
+  #     enabled: true
+  #     requests_per_minute: 500
+  #     burst: 1000
+  #     key_by: "ip"
+
+  # JWT RS256: Bearer token signed with an RSA private key; Hookway verifies with
+  # the matching public key. The alg header is pinned to RS256 — algorithm-confusion
+  # attacks (e.g. signing HS256 with the public key bytes) are rejected at startup.
+  # Set JWT_PUBLIC_KEY to the PEM-encoded RSA public key from your identity provider.
+  # Optional: expected_issuer / expected_audience enforce iss/aud claims.
+  # Optional: body_hash_claim binds the token to the exact request body (hex SHA-256).
+  # jwt_webhook:
+  #   enabled: false
+  #   path: "/webhooks/jwt"
+  #   destinations:
+  #     - destination_queue_id: "primary"
+  #       queue: "jwt-events"
+  #       create_queue: true
+  #   max_body_bytes: 2097152
+  #   auth:
+  #     type: "jwt"
+  #     scheme: "jwt_rs256"
+  #     secret: "${JWT_PUBLIC_KEY}"
+  #     signature_header: "Authorization"
+  #     timestamp_tolerance: "1m"
+  #     expected_issuer: "https://your-idp.example.com"
+  #     expected_audience: "hookway"
+  #     body_hash_claim: "body_sha256"
+  #   replay_protection:
+  #     enabled: true
+  #     ttl: "10m"
+  #     max_entries: 50000
+  #   rate_limit:
+  #     enabled: true
+  #     requests_per_minute: 500
+  #     burst: 1000
+  #     key_by: "ip"
 

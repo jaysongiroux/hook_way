@@ -428,6 +428,112 @@ func TestLoadRejectsRemoveBearerForHMACAuth(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsNoAuth(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	cfg, err := Load(writeConfig(t, validNoAuthYAML()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ep := cfg.Endpoints["open_webhook"]
+	if ep.Auth.Type != "no_auth" || ep.Auth.Scheme != "no_auth" {
+		t.Fatalf("auth = %#v", ep.Auth)
+	}
+}
+
+func TestLoadAcceptsHMACSHA256TSDotScheme(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("WEBHOOK_SECRET", "whsec_123")
+	yaml := strings.Replace(validYAML(),
+		`type: "hmac_sha256"`,
+		`type: "hmac_sha256"
+      scheme: "hmac_sha256_ts_dot"`, 1)
+	yaml = strings.Replace(yaml, "${PADDLE_SECRET}", "${WEBHOOK_SECRET}", 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, ep := range cfg.Endpoints {
+		if ep.Auth.Scheme == "hmac_sha256_ts_dot" {
+			return
+		}
+	}
+	t.Fatal("hmac_sha256_ts_dot scheme not present after load")
+}
+
+func TestLoadAcceptsHMACSHA256Base64Scheme(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("WEBHOOK_SECRET", "shpss_123")
+	yaml := strings.Replace(validYAML(),
+		`type: "hmac_sha256"`,
+		`type: "hmac_sha256"
+      scheme: "hmac_sha256_base64"`, 1)
+	yaml = strings.Replace(yaml, "${PADDLE_SECRET}", "${WEBHOOK_SECRET}", 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, ep := range cfg.Endpoints {
+		if ep.Auth.Scheme == "hmac_sha256_base64" {
+			return
+		}
+	}
+	t.Fatal("hmac_sha256_base64 scheme not present after load")
+}
+
+func TestLoadAcceptsHMACSHA1HexScheme(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("WEBHOOK_SECRET", "ghsecret")
+	yaml := strings.Replace(validYAML(),
+		`type: "hmac_sha256"`,
+		`type: "hmac_sha256"
+      scheme: "hmac_sha1_hex"`, 1)
+	yaml = strings.Replace(yaml, "${PADDLE_SECRET}", "${WEBHOOK_SECRET}", 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, ep := range cfg.Endpoints {
+		if ep.Auth.Scheme == "hmac_sha1_hex" {
+			return
+		}
+	}
+	t.Fatal("hmac_sha1_hex scheme not present after load")
+}
+
+func TestLoadRejectsNoAuthSchemeWithHMACType(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	yaml := strings.Replace(validNoAuthYAML(), `type: "no_auth"`, `type: "hmac_sha256"`, 1)
+	if _, err := Load(writeConfig(t, yaml)); err == nil {
+		t.Fatal("expected validation error for no_auth scheme under hmac_sha256")
+	}
+}
+
+func validNoAuthYAML() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+message_queues:
+  billing:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+endpoints:
+  open_webhook:
+    enabled: true
+    path: "/webhooks/open"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "open-events"
+        create_queue: true
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+}
+
 func validHeaderExactYAML() string {
 	return `
 server:
@@ -453,7 +559,6 @@ endpoints:
       scheme: "exact"
       secret: "${REVENUECAT_WEBHOOK_AUTH}"
       signature_header: "Authorization"
-      remove_bearer: true
 `
 }
 
@@ -537,6 +642,88 @@ endpoints:
 `
 }
 
+func TestLoadAcceptsBasicScheme(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "user:pass")
+	yaml := strings.Replace(validHeaderExactYAML(), `scheme: "exact"`, `scheme: "basic"`, 1)
+	// Basic does not use remove_bearer; drop it so validation is exercised cleanly.
+	yaml = strings.Replace(yaml, "\n      remove_bearer: true", "", 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, ep := range cfg.Endpoints {
+		if ep.Auth.Scheme == "basic" {
+			return
+		}
+	}
+	t.Fatal("basic scheme not present after load")
+}
+
 func replace(s, old, new string) string {
 	return strings.ReplaceAll(s, old, new)
+}
+
+func validJWTYAML() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+message_queues:
+  billing:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+endpoints:
+  jwt_webhook:
+    enabled: true
+    path: "/webhooks/jwt"
+    destinations:
+      - destination_queue_id: "billing"
+        queue: "jwt-events"
+        create_queue: true
+    auth:
+      type: "jwt"
+      scheme: "jwt_hs256"
+      secret: "${JWT_SHARED_SECRET}"
+      signature_header: "Authorization"
+      expected_issuer: "https://issuer.example.com"
+      expected_audience: "hookway"
+      body_hash_claim: "body_sha256"
+`
+}
+
+func TestLoadAcceptsJWTAuth(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("JWT_SHARED_SECRET", "shared-secret")
+	cfg, err := Load(writeConfig(t, validJWTYAML()))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ep := cfg.Endpoints["jwt_webhook"]
+	if ep.Auth.Type != "jwt" || ep.Auth.Scheme != "jwt_hs256" {
+		t.Fatalf("auth = %#v", ep.Auth)
+	}
+	if ep.Auth.ExpectedIssuer != "https://issuer.example.com" || ep.Auth.ExpectedAudience != "hookway" || ep.Auth.BodyHashClaim != "body_sha256" {
+		t.Fatalf("jwt fields not plumbed: %#v", ep.Auth)
+	}
+}
+
+func TestLoadRejectsJWTSchemeUnderHMACType(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("JWT_SHARED_SECRET", "shared-secret")
+	yaml := strings.Replace(validJWTYAML(), `type: "jwt"`, `type: "hmac_sha256"`, 1)
+	if _, err := Load(writeConfig(t, yaml)); err == nil {
+		t.Fatal("expected jwt_hs256 under hmac_sha256 to be rejected")
+	}
+}
+
+func TestLoadRejectsJWTWithoutSecret(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	yaml := strings.Replace(validJWTYAML(), "      secret: \"${JWT_SHARED_SECRET}\"\n", "", 1)
+	if _, err := Load(writeConfig(t, yaml)); err == nil {
+		t.Fatal("jwt without a key/secret should be rejected")
+	}
 }

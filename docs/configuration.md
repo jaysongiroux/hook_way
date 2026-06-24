@@ -9,7 +9,7 @@ Example validation output:
 ```txt
 config validation failed
 - server.addr: listen address is required Suggestion: set server.addr to a host:port such as ":8080"
-- endpoints.paddle_billing.auth.secret: secret is required Suggestion: reference an environment variable such as ${PADDLE_WEBHOOK_SECRET}
+- endpoints.paddle_billing.auth.secret: secret is required Suggestion: reference an environment variable such as ${WEBHOOK_SECRET}
 ```
 
 ## Server
@@ -179,8 +179,8 @@ endpoints:
       - "198.51.100.0/24"
     auth:
       type: "hmac_sha256"
-      scheme: "paddle"
-      secret: "${PADDLE_WEBHOOK_SECRET}"
+      scheme: "hmac_sha256_ts_colon"
+      secret: "${WEBHOOK_SECRET}"
       signature_header: "Paddle-Signature"
       timestamp_tolerance: "5m"
 
@@ -204,7 +204,7 @@ endpoints:
       - "143.55.64.0/20"
     auth:
       type: "hmac_sha256"
-      scheme: "github"
+      scheme: "hmac_sha256_hex"
       secret: "${GITHUB_WEBHOOK_SECRET}"
       signature_header: "X-Hub-Signature-256"
       idempotency_header: "X-GitHub-Delivery"
@@ -263,14 +263,23 @@ Fan-out is at-least-once per destination, not atomic across destinations. If one
 
 Auth fields:
 
-- `type`: authentication family; `hmac_sha256` for HMAC body signatures, `header_exact` for static header secrets.
-- `scheme`: header *layout* within the auth type. Optional for `hmac_sha256`, defaults to `paddle`. Built-in schemes:
-  - `paddle` (`hmac_sha256`): timestamped header shaped like `ts=<unix>;h1=<hex_hmac>` over `ts + ":" + raw_body`; requires `timestamp_tolerance`.
-  - `github` (`hmac_sha256`): `X-Hub-Signature-256: sha256=<hex>` HMAC over the exact raw body, with no signed timestamp (so `timestamp_tolerance` is not required).
-  - `exact` (`header_exact`): constant-time equality check between `signature_header` and `secret`; body is not verified. Use `remove_bearer: true` to strip a leading `Bearer`/`bearer` prefix before comparing.
+- `type`: authentication family; `hmac_sha256` for HMAC body signatures (the digest is chosen per-scheme — most use SHA-256, `hmac_sha1_hex` uses SHA-1), `header_exact` for static header secrets, `jwt` for Bearer JSON Web Tokens, `no_auth` to disable verification entirely.
+- `scheme`: the wire format *within* the auth type. Scheme names describe the mechanism (digest, encoding, and whether the header carries a signed timestamp), not any provider. Optional for `hmac_sha256`, defaults to `hmac_sha256_ts_colon`. Built-in schemes:
+  - `hmac_sha256_ts_colon` (`hmac_sha256`): timestamped, labeled header `ts=<unix>;h1=<hex_hmac>` validated over `ts + ":" + raw_body`; requires `timestamp_tolerance`. *Example: Paddle's `Paddle-Signature`.*
+  - `hmac_sha256_ts_dot` (`hmac_sha256`): timestamped, labeled header `t=<unix>,v1=<hex_hmac>` validated over `t + "." + raw_body`; requires `timestamp_tolerance`. Extra comma-separated pairs are ignored. *Example: Stripe's `Stripe-Signature` (its legacy `v0=` pair is ignored).*
+  - `hmac_sha256_hex` (`hmac_sha256`): prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (so `timestamp_tolerance` is not required); the header carries a `<prefix>=<hex>` value. *Example: GitHub's `X-Hub-Signature-256: sha256=<hex>`.*
+  - `hmac_sha256_base64` (`hmac_sha256`): raw **base64** HMAC-SHA256 over the exact raw body (no prefix, no timestamp). *Example: Shopify's `X-Shopify-Hmac-SHA256`.*
+  - `hmac_sha1_hex` (`hmac_sha256`): prefixed hex HMAC-**SHA1** over the exact raw body; for legacy integrations that have not migrated to SHA-256. *Example: GitHub's legacy `X-Hub-Signature: sha1=<hex>`.*
+  - `exact` (`header_exact`): constant-time equality check between `signature_header` and `secret`; body is not verified. Use `remove_bearer: true` to strip a leading `Bearer`/`bearer` prefix before comparing. *Example: a static token such as RevenueCat's `Authorization` header.*
+  - `basic` (`header_exact`): HTTP Basic — `Authorization: Basic <base64(user:pass)>`; constant-time compare against the configured `user:pass` `secret`; body not verified.
+  - `no_auth` (`no_auth`): **accepts every request without verification.** Not recommended — Hookway logs a startup warning for any endpoint using it. Reserve it for trusted internal traffic where authentication is enforced upstream (e.g. a private network or gateway). `secret` and `signature_header` are not required for this scheme.
+  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm — a token whose `alg` does not match (including `alg: none`) is rejected, defeating algorithm-confusion attacks. `secret` holds the key: the shared HMAC secret for `jwt_hs256`, or a PEM-encoded public key for `jwt_rs256` (RSA) / `jwt_es256` (EC P-256). `exp` is required; `timestamp_tolerance` is the clock-skew leeway. Optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. Optional `body_hash_claim` names a claim carrying the hex SHA-256 of the raw body, binding the token to the payload (without it, the JWT authenticates the caller but not the body).
   - New providers are added by registering a scheme in `internal/auth`, without changing the request path or config shape.
-- `secret`: required; reference an environment variable such as `${PADDLE_WEBHOOK_SECRET}`.
-- `signature_header`: required HTTP header Hookway reads for verification (signature or static secret).
+- `secret`: required (except for `no_auth`); reference an environment variable such as `${WEBHOOK_SECRET}`. For `jwt_rs256` and `jwt_es256`, this must be a PEM-encoded public key (e.g. `${JWT_PUBLIC_KEY}`).
+- `signature_header`: required HTTP header Hookway reads for verification (signature or static secret); not required for `no_auth`. For `jwt` schemes, set to `Authorization` (the JWT is read as `Bearer <token>`).
 - `remove_bearer`: optional; when `true` on `header_exact` endpoints, strips a leading `Bearer`/`bearer` prefix (case-insensitive) and following whitespace from the header value before comparing to `secret`. Ignored for `hmac_sha256` endpoints (config validation rejects it).
-- `timestamp_tolerance`: positive duration; required only for timestamped HMAC schemes (e.g. `paddle`).
+- `timestamp_tolerance`: positive duration; required only for timestamped HMAC schemes (e.g. `hmac_sha256_ts_colon`). For `jwt` schemes, used as clock-skew leeway for `exp`/`nbf` validation.
 - `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted on `hmac_sha256` endpoints, Hookway falls back to a hash of the verified signature. When omitted on `header_exact` endpoints, Hookway falls back to a hash of the raw body.
+- `expected_issuer`: optional; for `jwt` schemes, enforces the `iss` claim must match this value.
+- `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
+- `body_hash_claim`: optional; for `jwt` schemes, names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. When set, Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.

@@ -87,13 +87,13 @@ func TestMetricsServedOnSeparatePortWhenAddrSet(t *testing.T) {
 	}
 }
 
-func githubSigned(secret string, body []byte) string {
+func hmacSHA256HexSigned(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func githubConfig() config.Config {
+func hmacSHA256HexConfig() config.Config {
 	cfg := testConfig()
 	cfg.Endpoints["github_events"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/github",
@@ -101,19 +101,19 @@ func githubConfig() config.Config {
 			DestinationQueueID: "activity", Queue: "github-events",
 		}},
 		Auth: config.AuthConfig{
-			Type: "hmac_sha256", Scheme: "github", Secret: "ghsecret",
+			Type: "hmac_sha256", Scheme: "hmac_sha256_hex", Secret: "ghsecret",
 			SignatureHeader: "X-Hub-Signature-256", IdempotencyHeader: "X-GitHub-Delivery",
 		},
 	}
 	return cfg
 }
 
-func TestGitHubSchemeEndpointVerifiesAndUsesDeliveryIdempotencyKey(t *testing.T) {
+func TestHMACSHA256HexSchemeEndpointVerifiesAndUsesDeliveryIdempotencyKey(t *testing.T) {
 	pub := &fakePublisher{}
-	srv := NewServer(githubConfig(), pub, slog.Default())
+	srv := NewServer(hmacSHA256HexConfig(), pub, slog.Default())
 	body := []byte(`{"action":"opened"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
-	req.Header.Set("X-Hub-Signature-256", githubSigned("ghsecret", body))
+	req.Header.Set("X-Hub-Signature-256", hmacSHA256HexSigned("ghsecret", body))
 	req.Header.Set("X-GitHub-Delivery", "delivery-123")
 	rec := httptest.NewRecorder()
 
@@ -130,11 +130,11 @@ func TestGitHubSchemeEndpointVerifiesAndUsesDeliveryIdempotencyKey(t *testing.T)
 	}
 }
 
-func TestGitHubSchemeRejectsBadSignature(t *testing.T) {
-	srv := NewServer(githubConfig(), &fakePublisher{}, slog.Default())
+func TestHMACSHA256HexSchemeRejectsBadSignature(t *testing.T) {
+	srv := NewServer(hmacSHA256HexConfig(), &fakePublisher{}, slog.Default())
 	body := []byte(`{"action":"opened"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
-	req.Header.Set("X-Hub-Signature-256", githubSigned("wrong", body))
+	req.Header.Set("X-Hub-Signature-256", hmacSHA256HexSigned("wrong", body))
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -144,7 +144,7 @@ func TestGitHubSchemeRejectsBadSignature(t *testing.T) {
 	}
 }
 
-func TestPaddleIdempotencyKeyFallsBackToSignatureHashAndIsStable(t *testing.T) {
+func TestIdempotencyKeyFallsBackToSignatureHashAndIsStable(t *testing.T) {
 	pub := &fakePublisher{}
 	srv := NewServer(testConfig(), pub, slog.Default())
 	body := []byte(`{"ok":true}`)

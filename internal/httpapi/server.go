@@ -72,18 +72,25 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 			s.replayCaches[name] = replay.NewCache(endpoint.ReplayProtection.TTL, endpoint.ReplayProtection.MaxEntries)
 		}
 		// Build the per-endpoint signature verifier once at startup. An empty
-		// scheme defaults to Paddle so configs predating the scheme field keep
-		// working; an unknown scheme fails closed (every request rejected).
+		// scheme defaults to the timestamped HMAC-SHA256 colon scheme so configs
+		// predating the scheme field keep working; an unknown scheme fails closed
+		// (every request rejected).
 		verifier, err := auth.NewVerifier(auth.Spec{
 			AuthType:           endpoint.Auth.Type,
 			Scheme:             defaultScheme(endpoint.Auth.Scheme),
 			Secret:             endpoint.Auth.Secret,
 			TimestampTolerance: endpoint.Auth.TimestampTolerance,
 			RemoveBearer:       endpoint.Auth.RemoveBearer,
+			ExpectedIssuer:     endpoint.Auth.ExpectedIssuer,
+			ExpectedAudience:   endpoint.Auth.ExpectedAudience,
+			BodyHashClaim:      endpoint.Auth.BodyHashClaim,
 		})
 		if err != nil {
 			logger.Error("signature scheme unavailable; endpoint will reject all requests", "endpoint", name, "scheme", endpoint.Auth.Scheme, "error", err.Error())
 			verifier = auth.RejectAll{}
+		}
+		if endpoint.Auth.Type == auth.AuthTypeNoAuth {
+			logger.Warn("endpoint has authentication disabled; this is not recommended and accepts every request unverified", "endpoint", name)
 		}
 		s.verifiers[name] = verifier
 	}
@@ -542,7 +549,7 @@ func traceIDFromContext(ctx context.Context) string {
 
 func defaultScheme(scheme string) string {
 	if scheme == "" {
-		return auth.SchemePaddle
+		return auth.SchemeHMACSHA256TSColon
 	}
 	return scheme
 }

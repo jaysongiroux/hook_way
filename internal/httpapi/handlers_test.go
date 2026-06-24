@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/queue"
 )
@@ -70,13 +71,13 @@ func TestWebhookRoutesToEndpointDestination(t *testing.T) {
 		Destinations: []config.EndpointDestinationConfig{{
 			DestinationQueueID: "activity", Queue: "github-events",
 		}},
-		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "github", Secret: "secret", SignatureHeader: "X-Hub-Signature-256"},
+		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "hmac_sha256_hex", Secret: "secret", SignatureHeader: "X-Hub-Signature-256"},
 	}
 	pub := &fakePublisher{}
 	srv := NewServer(cfg, pub, slog.Default())
 	body := []byte(`{"zen":"keep it logically awesome"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
-	req.Header.Set("X-Hub-Signature-256", githubSigned("secret", body))
+	req.Header.Set("X-Hub-Signature-256", hmacSHA256HexSigned("secret", body))
 	rec := httptest.NewRecorder()
 
 	srv.ServeHTTP(rec, req)
@@ -453,6 +454,39 @@ func (f *fakePublisher) Publish(ctx context.Context, destinationID, q string, ms
 func (f *fakePublisher) Ready(ctx context.Context) error { return f.readyErr }
 func (f *fakePublisher) Close() error                    { return nil }
 
+func TestNewServerWarnsWhenEndpointUsesNoAuth(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	cfg := testConfig()
+	cfg.Endpoints["open_webhook"] = config.EndpointConfig{
+		Enabled: true, Path: "/webhooks/open",
+		Destinations: []config.EndpointDestinationConfig{{
+			DestinationQueueID: "billing", Queue: "open-events",
+		}},
+		Auth: config.AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+	}
+
+	NewServer(cfg, &fakePublisher{}, logger)
+
+	if !strings.Contains(logs.String(), `"level":"WARN"`) {
+		t.Fatalf("expected a warning log, got: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"endpoint":"open_webhook"`) {
+		t.Fatalf("warning should name the endpoint, got: %s", logs.String())
+	}
+}
+
+func TestNewServerDoesNotWarnWithoutNoAuth(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	NewServer(testConfig(), &fakePublisher{}, logger)
+
+	if strings.Contains(logs.String(), `"level":"WARN"`) {
+		t.Fatalf("did not expect a warning log, got: %s", logs.String())
+	}
+}
+
 func testConfig() config.Config {
 	return config.Config{
 		Server:    config.ServerConfig{Addr: ":0", MaxBodyBytes: 1024},
@@ -475,9 +509,108 @@ func testConfig() config.Config {
 	}
 }
 
+func TestServerAcceptsValidHMACSHA256TSDotSignatureAndRejectsTampered(t *testing.T) {
+	cfg := testConfig()
+	cfg.Endpoints["stripe_billing"] = config.EndpointConfig{
+		Enabled: true, Path: "/webhooks/stripe/billing",
+		Destinations: []config.EndpointDestinationConfig{{
+			DestinationQueueID: "billing", Queue: "stripe-events",
+		}},
+		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "hmac_sha256_ts_dot", Secret: "whsec", SignatureHeader: "Stripe-Signature", TimestampTolerance: 5 * time.Minute},
+	}
+	pub := &fakePublisher{}
+	srv := NewServer(cfg, pub, slog.Default())
+
+	body := []byte(`{"id":"evt_1"}`)
+	now := time.Now()
+	mac := hmac.New(sha256.New, []byte("whsec"))
+	mac.Write([]byte(fmt.Sprintf("%d.%s", now.Unix(), body)))
+	sig := fmt.Sprintf("t=%d,v1=%s", now.Unix(), hex.EncodeToString(mac.Sum(nil)))
+
+	// Valid signature → accepted.
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/stripe/billing", bytes.NewReader(body))
+	req.Header.Set("Stripe-Signature", sig)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("valid hmac_sha256_ts_dot request status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	// Tampered body → rejected.
+	bad := httptest.NewRequest(http.MethodPost, "/webhooks/stripe/billing", bytes.NewReader([]byte(`{"id":"evt_2"}`)))
+	bad.Header.Set("Stripe-Signature", sig)
+	badRec := httptest.NewRecorder()
+	srv.ServeHTTP(badRec, bad)
+	if badRec.Code != http.StatusUnauthorized {
+		t.Fatalf("tampered hmac_sha256_ts_dot request status = %d, want 401", badRec.Code)
+	}
+}
+
 func signed(secret string, ts time.Time, body []byte) string {
 	payload := fmt.Sprintf("%d:%s", ts.Unix(), body)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(payload))
 	return fmt.Sprintf("ts=%d;h1=%s", ts.Unix(), hex.EncodeToString(mac.Sum(nil)))
+}
+
+func TestServerAuthenticatesJWTAndEnforcesBodyHash(t *testing.T) {
+	cfg := testConfig()
+	cfg.Endpoints["jwt_webhook"] = config.EndpointConfig{
+		Enabled: true, Path: "/webhooks/jwt",
+		Destinations: []config.EndpointDestinationConfig{{
+			DestinationQueueID: "billing", Queue: "jwt-events",
+		}},
+		Auth: config.AuthConfig{
+			Type: "jwt", Scheme: "jwt_hs256", Secret: "shared-secret",
+			SignatureHeader: "Authorization", TimestampTolerance: time.Minute,
+			BodyHashClaim: "body_sha256",
+		},
+	}
+	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+
+	body := []byte(`{"id":"evt_1"}`)
+	sum := sha256.Sum256(body)
+	mkToken := func(bodyHash string) string {
+		claims := jwt.MapClaims{"exp": time.Now().Add(time.Hour).Unix(), "body_sha256": bodyHash}
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		s, err := tok.SignedString([]byte("shared-secret"))
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return s
+	}
+
+	// Correct body hash → 202 Accepted.
+	good := httptest.NewRequest(http.MethodPost, "/webhooks/jwt", bytes.NewReader(body))
+	good.Header.Set("Authorization", "Bearer "+mkToken(hex.EncodeToString(sum[:])))
+	goodRec := httptest.NewRecorder()
+	srv.ServeHTTP(goodRec, good)
+	if goodRec.Code != http.StatusAccepted {
+		t.Fatalf("valid jwt status = %d, body = %s", goodRec.Code, goodRec.Body.String())
+	}
+
+	// Valid token but swapped body (hash no longer matches) → 401.
+	swapped := httptest.NewRequest(http.MethodPost, "/webhooks/jwt", bytes.NewReader([]byte(`{"id":"evt_2"}`)))
+	swapped.Header.Set("Authorization", "Bearer "+mkToken(hex.EncodeToString(sum[:])))
+	swapRec := httptest.NewRecorder()
+	srv.ServeHTTP(swapRec, swapped)
+	if swapRec.Code != http.StatusUnauthorized {
+		t.Fatalf("body-swap status = %d, want 401", swapRec.Code)
+	}
+}
+
+func TestServerRejectsMissingJWT(t *testing.T) {
+	cfg := testConfig()
+	cfg.Endpoints["jwt_webhook"] = config.EndpointConfig{
+		Enabled: true, Path: "/webhooks/jwt",
+		Destinations: []config.EndpointDestinationConfig{{DestinationQueueID: "billing", Queue: "jwt-events"}},
+		Auth:         config.AuthConfig{Type: "jwt", Scheme: "jwt_hs256", Secret: "shared-secret", SignatureHeader: "Authorization"},
+	}
+	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/jwt", bytes.NewReader([]byte(`{}`)))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token status = %d, want 401", rec.Code)
+	}
 }
