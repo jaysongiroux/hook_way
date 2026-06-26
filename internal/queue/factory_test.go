@@ -304,6 +304,33 @@ func TestRoutingPublisherRoutesReadinessAndCloseByDestination(t *testing.T) {
 	}
 }
 
+func TestFactoryPassesConflictPolicyAndDestIDToSQS(t *testing.T) {
+	var got SQSConfig
+	factory := NewFactory(FactoryOptions{
+		SQSConnector: func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error) {
+			got = cfg
+			return &recordingPublisher{}, nil
+		},
+	})
+	_, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"jobs": {Type: "sqs", OnExistingConflict: "warn", SQS: config.SQSConfig{Region: "us-east-1"}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"e": {Enabled: true, Destinations: []config.EndpointDestinationConfig{{Destination: "jobs", Target: "q"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.Policy != ConflictWarn {
+		t.Fatalf("policy = %q, want warn", got.Policy)
+	}
+	if got.DestinationID != "jobs" {
+		t.Fatalf("destID = %q, want jobs", got.DestinationID)
+	}
+}
+
 type recordingPublisher struct {
 	err           error
 	readyErr      error

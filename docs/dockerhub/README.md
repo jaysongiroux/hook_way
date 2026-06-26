@@ -1,16 +1,16 @@
 # Hookway
 
-Hookway is a small webhook intake service for forwarding verified third-party webhook events to RabbitMQ.
+Hookway is a small webhook intake service for forwarding verified third-party webhook events to a message destination (RabbitMQ, AWS SQS, or AWS SNS).
 
-It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes, and hand work off to consumers through a queue.
+It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes, and hand work off to consumers through a queue or topic.
 
 ## Features
 
-- Generic HMAC SHA-256 webhook verification
-- Generic exact match in header
-- Configurable endpoint paths, RabbitMQ destinations, and routing keys
-- RabbitMQ publishing with optional queue declaration
-- Optional dead-letter exchange and queue setup
+- Webhook verification: HMAC (SHA-256/SHA-1, multiple header layouts), static header match, and JWT Bearer tokens
+- Destinations: RabbitMQ, AWS SQS, and AWS SNS, with fan-out to multiple destinations per endpoint
+- Optional auto-provisioning of queues/topics, with a configurable policy for reconciling pre-existing resources
+- SQS/SNS FIFO support (message group id and deduplication)
+- RabbitMQ optional dead-letter exchange and queue setup
 - Request size limits, IP allowlists, replay protection, and rate limiting
 - Health, readiness, and Prometheus metrics endpoints
 - Small scratch-based runtime image

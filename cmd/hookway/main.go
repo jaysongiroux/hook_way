@@ -109,7 +109,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 			logger.Warn("rabbitmq TLS certificate verification is disabled (destinations.<id>.rabbitmq.tls.insecure_skip_verify=true); do not use this in production", "destination_id", id)
 		}
 	}
-	publisher, err := queue.NewFactory(queue.FactoryOptions{Metrics: appMetrics}).Create(context.Background(), cfg)
+	publisher, err := queue.NewFactory(queue.FactoryOptions{Metrics: appMetrics, Logger: logger}).Create(context.Background(), cfg)
 	if err != nil {
 		logger.Error("message queue connection failed", "error", err)
 		return 1

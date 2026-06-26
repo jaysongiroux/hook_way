@@ -2,7 +2,7 @@
 
 Hookway reads one YAML config file. Set it with `HOOKWAY_CONFIG` or pass `--config`; the flag wins. YAML string values support `${ENV_NAME}` expansion.
 
-Startup parses and validates the config before connecting to the message queue or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
+Startup parses and validates the config before connecting to its destinations or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
 
 Example validation output:
 
@@ -73,37 +73,39 @@ config failures still block serving traffic, so config failure metrics are
 recorded in-process before exit and are most useful for tests or future reload
 paths.
 
-## Message Queue
+## Destinations
 
-`message_queues` is a top-level map of queue destinations keyed by stable id. Endpoint `destinations` route to these ids and choose the queue for each destination. Only `rabbitmq` is supported in MVP, but each entry keeps a `type` field so future providers such as SQS or BullMQ can be added without changing endpoint shape.
+`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, and `sns`. See `examples/destinations/` for a complete reference config per type.
 
-RabbitMQ fields live under `message_queues.<id>.rabbitmq`:
+### RabbitMQ
 
-- `message_queues.<id>.type`: required backend type; use `rabbitmq`.
-- `message_queues.<id>.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
-- `message_queues.<id>.rabbitmq.exchange`: required direct exchange name.
-- `message_queues.<id>.rabbitmq.exchange_type`: required, use `direct` for MVP.
-- `message_queues.<id>.rabbitmq.durable`: boolean for exchange/queue durability.
-- `message_queues.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
-- `message_queues.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
-- `message_queues.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
-- `message_queues.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint route queue Hookway declares for that destination. Destination route `queue_options` override these defaults.
+RabbitMQ fields live under `destinations.<id>.rabbitmq`:
+
+- `destinations.<id>.type`: required backend type; use `rabbitmq`.
+- `destinations.<id>.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
+- `destinations.<id>.rabbitmq.exchange`: required direct exchange name.
+- `destinations.<id>.rabbitmq.exchange_type`: required, use `direct` for MVP.
+- `destinations.<id>.rabbitmq.durable`: boolean for exchange/queue durability.
+- `destinations.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
+- `destinations.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
+- `destinations.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
+- `destinations.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint route queue Hookway declares for that destination. Destination route `queue_options` override these defaults.
   - `message_ttl`: optional positive duration mapped to RabbitMQ `x-message-ttl` in milliseconds. Stale messages are expired from the queue.
   - `expires`: optional positive duration mapped to `x-expires` in milliseconds. Useful for temporary/test queues; usually omit for production webhook queues.
   - `max_length`: optional positive integer mapped to `x-max-length` to cap backlog size.
   - `overflow`: optional overflow mode. Supported values are `reject-publish` and `reject-publish-dlx`; `reject-publish` is recommended so providers retry instead of silently losing older webhook messages.
   - `dead_letter_routing_key`: optional default RabbitMQ `x-dead-letter-routing-key` override.
-- `message_queues.<id>.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
+- `destinations.<id>.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
   - `ca_cert`: path to a PEM bundle to trust instead of/in addition to system roots (for private/self-signed CAs).
   - `client_cert` / `client_key`: PEM paths for mutual TLS. Both must be set together.
   - `server_name`: overrides the SNI/verification hostname.
   - `insecure_skip_verify`: disables certificate verification. Dev-only; logs a warning at startup. Do not use in production.
 
   Bad or unreadable CA/cert paths fail fast at startup. Note: the published container image must contain a CA bundle for `amqps://` to work at all — the provided Dockerfile copies `ca-certificates` into the `scratch` image for this reason.
-- `message_queues.<id>.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
+- `destinations.<id>.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
 
 ```yaml
-message_queues:
+destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
@@ -145,6 +147,52 @@ Dead-letter fields:
 - `routing_key`: required when enabled.
 - `durable`: durability for dead-letter exchange/queue declaration.
 - `create_queue`: when true, queue layer can declare the dead-letter queue and bind it to the dead-letter exchange.
+
+### AWS SQS
+
+SQS fields live under `destinations.<id>.sqs`. Credentials are optional: when both `access_key_id` and `secret_access_key` are set they are used as static credentials; otherwise the default AWS credential chain (env, IAM role, shared profile) applies.
+
+- `destinations.<id>.type`: set to `sqs`.
+- `destinations.<id>.sqs.region`: required AWS region, e.g. `us-east-1`.
+- `destinations.<id>.sqs.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
+- `destinations.<id>.sqs.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
+
+Per-endpoint SQS queue settings are configured on the route via `sqs_options` and (for `.fifo` targets) `fifo` — see Destination route fields below.
+
+```yaml
+destinations:
+  jobs:
+    type: "sqs"
+    on_existing_conflict: "reconcile"
+    sqs:
+      region: "us-east-1"
+      endpoint: "${AWS_ENDPOINT:-}"          # http://localhost:4566 for LocalStack
+      access_key_id: "${AWS_ACCESS_KEY_ID:-}"
+      secret_access_key: "${AWS_SECRET_ACCESS_KEY:-}"
+```
+
+### AWS SNS
+
+SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint override, optional static credentials):
+
+- `destinations.<id>.type`: set to `sns`.
+- `destinations.<id>.sns.region`: required AWS region.
+- `destinations.<id>.sns.endpoint`: optional endpoint override (LocalStack).
+- `destinations.<id>.sns.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
+
+Per-endpoint SNS topic settings are configured on the route via `sns_options` and (for `.fifo` targets) `fifo`.
+
+### Resource provisioning and drift (`on_existing_conflict`)
+
+For `sqs` and `sns` destinations, `destinations.<id>.on_existing_conflict` controls what happens when a target queue/topic already exists with attributes that differ from the config. Allowed values are `error`, `warn`, and `reconcile`; the default is `reconcile`.
+
+- `reconcile` (default): edit the existing resource's mutable attributes (SQS `VisibilityTimeout`, `MessageRetentionPeriod`, `ContentBasedDeduplication`; SNS `ContentBasedDeduplication`) to match config, logging each change. Requires `sqs:SetQueueAttributes` / `sns:SetTopicAttributes` IAM permissions.
+- `warn`: log each differing attribute and use the existing resource unchanged.
+- `error`: fail startup on any difference.
+
+Immutable conflicts — the FIFO-vs-standard nature of a queue/topic — always fail startup regardless of the policy, since they cannot be edited and would otherwise cause failed publishes. The field is only valid on `sqs`/`sns` destinations; setting it on a `rabbitmq` destination is a config error.
+
+When `create: true` and the target does not exist, it is created with the configured attributes (no reconcile needed).
 
 ## Endpoints
 
@@ -249,7 +297,13 @@ Destination route fields:
 - `destination`: required target key under `destinations`.
 - `target`: required queue/topic/routing-key target for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`.
 - `create`: when true, queue layer can declare and bind this route target during startup.
-- `queue_options`: optional RabbitMQ queue arguments. Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
+- `queue_options`: optional RabbitMQ queue arguments (only valid when the destination is `rabbitmq`). Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
+- `sqs_options`: optional SQS queue attributes (only valid when the destination is `sqs`). `visibility_timeout` and `message_retention` are durations expressed in whole seconds within the SQS-accepted bounds (visibility `0`–`12h`, retention `60s`–`14d`).
+- `sns_options`: optional SNS settings (only valid when the destination is `sns`). `subject` sets the SNS message Subject (≤100 printable-ASCII characters; not permitted on FIFO topics).
+- `fifo`: required when `target` ends in `.fifo` (and only allowed then). Controls FIFO ordering and deduplication:
+  - `group_id.source`: one of `static` | `endpoint` | `header` | `body` — where the `MessageGroupId` comes from. `static` uses `group_id.value`; `header`/`body` extract `group_id.path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. `group_id.fallback` (a literal, or `endpoint`) is used when extraction yields nothing.
+  - `dedup.use_idempotency_key`: when true, use the envelope `idempotency_key` as the `MessageDeduplicationId` when present.
+  - `dedup.content_based_fallback`: must be `true` for FIFO targets so messages without an idempotency key are still deduplicated via the resource's content-based deduplication.
 
 Delivery failure policies:
 

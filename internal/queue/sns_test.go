@@ -13,18 +13,19 @@ import (
 
 type fakeSNS struct {
 	topics     map[string]string            // name -> arn
+	attrs      map[string]map[string]string // arn -> attributes
 	published  []*sns.PublishInput
 	created    map[string]map[string]string
-	attrErrors map[string]error             // arn -> error returned by GetTopicAttributes
-	topicAttrs map[string]map[string]string // arn -> attributes
+	setCalls   []*sns.SetTopicAttributesInput
+	attrErrors map[string]error // arn -> error returned by GetTopicAttributes
 }
 
 func newFakeSNS() *fakeSNS {
 	return &fakeSNS{
 		topics:     map[string]string{},
+		attrs:      map[string]map[string]string{},
 		created:    map[string]map[string]string{},
 		attrErrors: map[string]error{},
-		topicAttrs: map[string]map[string]string{},
 	}
 }
 
@@ -33,20 +34,26 @@ func (f *fakeSNS) CreateTopic(ctx context.Context, in *sns.CreateTopicInput, _ .
 	arn := "arn:aws:sns:us-east-1:000000000000:" + name
 	f.topics[name] = arn
 	f.created[name] = in.Attributes
+	f.attrs[arn] = in.Attributes
 	return &sns.CreateTopicOutput{TopicArn: aws.String(arn)}, nil
 }
 
 func (f *fakeSNS) GetTopicAttributes(ctx context.Context, in *sns.GetTopicAttributesInput, _ ...func(*sns.Options)) (*sns.GetTopicAttributesOutput, error) {
-	if err, ok := f.attrErrors[aws.ToString(in.TopicArn)]; ok {
+	arn := aws.ToString(in.TopicArn)
+	if err, ok := f.attrErrors[arn]; ok {
 		return nil, err
 	}
-	attrs := map[string]string{}
-	if m, ok := f.topicAttrs[aws.ToString(in.TopicArn)]; ok {
-		for k, v := range m {
-			attrs[k] = v
-		}
+	return &sns.GetTopicAttributesOutput{Attributes: f.attrs[arn]}, nil
+}
+
+func (f *fakeSNS) SetTopicAttributes(ctx context.Context, in *sns.SetTopicAttributesInput, _ ...func(*sns.Options)) (*sns.SetTopicAttributesOutput, error) {
+	f.setCalls = append(f.setCalls, in)
+	arn := aws.ToString(in.TopicArn)
+	if f.attrs[arn] == nil {
+		f.attrs[arn] = map[string]string{}
 	}
-	return &sns.GetTopicAttributesOutput{Attributes: attrs}, nil
+	f.attrs[arn][aws.ToString(in.AttributeName)] = aws.ToString(in.AttributeValue)
+	return &sns.SetTopicAttributesOutput{}, nil
 }
 
 func (f *fakeSNS) ListTopics(ctx context.Context, in *sns.ListTopicsInput, _ ...func(*sns.Options)) (*sns.ListTopicsOutput, error) {
@@ -62,10 +69,19 @@ func (f *fakeSNS) Publish(ctx context.Context, in *sns.PublishInput, _ ...func(*
 	return &sns.PublishOutput{MessageId: aws.String("m-1")}, nil
 }
 
+// seedTopic registers a pre-existing topic with attributes.
+func (f *fakeSNS) seedTopic(name string, attrs map[string]string) string {
+	arn := "arn:aws:sns:us-east-1:000000000000:" + name
+	f.topics[name] = arn
+	f.attrs[arn] = attrs
+	return arn
+}
+
 func TestSNSPublisherCreatesTopicAndPublishes(t *testing.T) {
 	fake := newFakeSNS()
 	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
 		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
 		Targets: []SNSTarget{{Name: "billing-alerts", Create: true, Subject: "billing event"}},
 	})
 	if err != nil {
@@ -92,6 +108,7 @@ func TestSNSPublisherFIFOSetsGroupAndDedup(t *testing.T) {
 	fake := newFakeSNS()
 	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
 		Region: "us-east-1",
+		Policy: ConflictReconcile,
 		Targets: []SNSTarget{{
 			Name: "billing-alerts.fifo", Create: true,
 			FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupUseIdempotencyKey: true},
@@ -138,6 +155,7 @@ func TestSNSPublisherReadyProbesAllTargets(t *testing.T) {
 
 	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
 		Region: "us-east-1",
+		Policy: ConflictReconcile,
 		Targets: []SNSTarget{
 			{Name: "alerts-a"},
 			{Name: "alerts-b"},
@@ -159,14 +177,16 @@ func TestSNSPublisherReadyProbesAllTargets(t *testing.T) {
 	}
 }
 
+// TestSNSPublisherFIFOCreateFalseRequiresContentBasedDedup asserts that when
+// an existing FIFO topic is missing ContentBasedDeduplication and the policy is
+// ConflictError, NewSNSPublisher returns an error mentioning the attribute.
 func TestSNSPublisherFIFOCreateFalseRequiresContentBasedDedup(t *testing.T) {
 	fake := newFakeSNS()
-	arn := "arn:aws:sns:us-east-1:000000000000:orders.fifo"
-	fake.topics["orders.fifo"] = arn
-	// topicAttrs not set
+	fake.seedTopic("orders.fifo", map[string]string{"FifoTopic": "true"}) // CBD absent
 
 	_, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
 		Region: "us-east-1",
+		Policy: ConflictError,
 		Targets: []SNSTarget{{
 			Name:   "orders.fifo",
 			Create: false,
@@ -183,12 +203,14 @@ func TestSNSPublisherFIFOCreateFalseRequiresContentBasedDedup(t *testing.T) {
 
 func TestSNSPublisherFIFOCreateFalseWithContentBasedDedupSucceeds(t *testing.T) {
 	fake := newFakeSNS()
-	arn := "arn:aws:sns:us-east-1:000000000000:orders.fifo"
-	fake.topics["orders.fifo"] = arn
-	fake.topicAttrs[arn] = map[string]string{"ContentBasedDeduplication": "true"}
+	fake.seedTopic("orders.fifo", map[string]string{
+		"FifoTopic":                 "true",
+		"ContentBasedDeduplication": "true",
+	})
 
 	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
 		Region: "us-east-1",
+		Policy: ConflictReconcile,
 		Targets: []SNSTarget{{
 			Name:   "orders.fifo",
 			Create: false,
@@ -200,3 +222,49 @@ func TestSNSPublisherFIFOCreateFalseWithContentBasedDedupSucceeds(t *testing.T) 
 	}
 	_ = pub
 }
+
+func TestSNSReconcileSetsContentBasedDedup(t *testing.T) {
+	fake := newFakeSNS()
+	arn := fake.seedTopic("alerts.fifo", map[string]string{"FifoTopic": "true"}) // CBD absent
+	_, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Policy:  ConflictReconcile,
+		Targets: []SNSTarget{{Name: "alerts.fifo", Create: false, FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupContentBasedFallback: true}}},
+	})
+	if err != nil {
+		t.Fatalf("NewSNSPublisher: %v", err)
+	}
+	if fake.attrs[arn]["ContentBasedDeduplication"] != "true" {
+		t.Fatalf("expected CBD reconciled to true, got %q", fake.attrs[arn]["ContentBasedDeduplication"])
+	}
+}
+
+func TestSNSWarnLeavesTopicUnchanged(t *testing.T) {
+	fake := newFakeSNS()
+	arn := fake.seedTopic("alerts.fifo", map[string]string{"FifoTopic": "true"})
+	_, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Policy:  ConflictWarn,
+		Targets: []SNSTarget{{Name: "alerts.fifo", Create: false, FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupContentBasedFallback: true}}},
+	})
+	if err != nil {
+		t.Fatalf("NewSNSPublisher: %v", err)
+	}
+	if len(fake.setCalls) != 0 {
+		t.Fatal("warn must not call SetTopicAttributes")
+	}
+	if _, ok := fake.attrs[arn]["ContentBasedDeduplication"]; ok {
+		t.Fatal("warn must leave the topic unchanged")
+	}
+}
+
+func TestSNSImmutableFifoMismatchErrors(t *testing.T) {
+	fake := newFakeSNS()
+	fake.seedTopic("alerts.fifo", map[string]string{"FifoTopic": ""}) // existing standard topic
+	_, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Policy:  ConflictReconcile, // immutable still errors
+		Targets: []SNSTarget{{Name: "alerts.fifo", Create: false, FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupContentBasedFallback: true}}},
+	})
+	if err == nil {
+		t.Fatal("expected immutable FifoTopic conflict error")
+	}
+}
+

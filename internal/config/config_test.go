@@ -1118,3 +1118,105 @@ endpoints:
 		t.Fatalf("expected FIFO SNS subject error, got: %v", err)
 	}
 }
+
+func TestLoadOnExistingConflictDefaultsToReconcile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: sqs
+    sqs:
+      region: us-east-1
+endpoints:
+  e:
+    enabled: true
+    path: /p
+    destinations:
+      - destination: jobs
+        target: q
+    auth:
+      type: no_auth
+      scheme: no_auth
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Destinations["jobs"].OnExistingConflict != "reconcile" {
+		t.Fatalf("default = %q, want reconcile", cfg.Destinations["jobs"].OnExistingConflict)
+	}
+}
+
+func TestValidateRejectsInvalidOnExistingConflict(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: sqs
+    on_existing_conflict: nonsense
+    sqs:
+      region: us-east-1
+endpoints:
+  e:
+    enabled: true
+    path: /p
+    destinations:
+      - destination: jobs
+        target: q
+    auth: { type: no_auth, scheme: no_auth }
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid on_existing_conflict")
+	}
+	if !strings.Contains(err.Error(), "on_existing_conflict") {
+		t.Fatalf("error did not mention on_existing_conflict: %v", err)
+	}
+}
+
+func TestValidateRejectsOnExistingConflictOnRabbitMQ(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: rabbitmq
+    on_existing_conflict: warn
+    rabbitmq:
+      url: amqp://x
+      exchange: e
+      exchange_type: direct
+endpoints:
+  e:
+    enabled: true
+    path: /p
+    destinations:
+      - destination: primary
+        target: q
+    auth: { type: no_auth, scheme: no_auth }
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "on_existing_conflict") {
+		t.Fatalf("expected on_existing_conflict-on-rabbitmq error, got %v", err)
+	}
+}
