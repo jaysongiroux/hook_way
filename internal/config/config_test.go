@@ -17,21 +17,21 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if cfg.MessageQueues["billing"].Type != "rabbitmq" {
-		t.Fatalf("message queue type = %q", cfg.MessageQueues["billing"].Type)
+	if cfg.Destinations["billing"].Type != "rabbitmq" {
+		t.Fatalf("message queue type = %q", cfg.Destinations["billing"].Type)
 	}
-	if cfg.MessageQueues["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" {
-		t.Fatalf("RabbitMQ URL not expanded: %q", cfg.MessageQueues["billing"].RabbitMQ.URL)
+	if cfg.Destinations["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" {
+		t.Fatalf("RabbitMQ URL not expanded: %q", cfg.Destinations["billing"].RabbitMQ.URL)
 	}
 	destinations := cfg.Endpoints["paddle_billing"].Destinations
-	if len(destinations) != 1 || destinations[0].DestinationQueueID != "billing" {
+	if len(destinations) != 1 || destinations[0].Destination != "billing" {
 		t.Fatalf("endpoint destinations = %#v", destinations)
 	}
 	if cfg.Endpoints["paddle_billing"].Path != "/webhooks/paddle/billing" {
 		t.Fatalf("endpoint path = %q", cfg.Endpoints["paddle_billing"].Path)
 	}
-	if destinations[0].Queue != "billing-events" {
-		t.Fatalf("endpoint queue = %q", destinations[0].Queue)
+	if destinations[0].Target != "billing-events" {
+		t.Fatalf("endpoint target = %q", destinations[0].Target)
 	}
 	if cfg.Endpoints["paddle_billing"].Auth.Secret != "pdl_secret" {
 		t.Fatalf("Paddle secret not expanded")
@@ -45,17 +45,17 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if got := cfg.Security.RedactedHeaderDenylist; len(got) != 3 || got[0] != "Authorization" || got[2] != "X-Signature" {
 		t.Fatalf("redacted header denylist = %#v", got)
 	}
-	if !cfg.MessageQueues["billing"].RabbitMQ.DeadLetter.Enabled {
+	if !cfg.Destinations["billing"].RabbitMQ.DeadLetter.Enabled {
 		t.Fatal("dead-letter config not parsed")
 	}
-	if cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.MessageTTL != 24*time.Hour {
-		t.Fatalf("queue default message ttl = %s", cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.MessageTTL)
+	if cfg.Destinations["billing"].RabbitMQ.QueueDefaults.MessageTTL != 24*time.Hour {
+		t.Fatalf("queue default message ttl = %s", cfg.Destinations["billing"].RabbitMQ.QueueDefaults.MessageTTL)
 	}
-	if cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.MaxLength != 100000 {
-		t.Fatalf("queue default max length = %d", cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.MaxLength)
+	if cfg.Destinations["billing"].RabbitMQ.QueueDefaults.MaxLength != 100000 {
+		t.Fatalf("queue default max length = %d", cfg.Destinations["billing"].RabbitMQ.QueueDefaults.MaxLength)
 	}
-	if cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.Overflow != "reject-publish" {
-		t.Fatalf("queue default overflow = %q", cfg.MessageQueues["billing"].RabbitMQ.QueueDefaults.Overflow)
+	if cfg.Destinations["billing"].RabbitMQ.QueueDefaults.Overflow != "reject-publish" {
+		t.Fatalf("queue default overflow = %q", cfg.Destinations["billing"].RabbitMQ.QueueDefaults.Overflow)
 	}
 	if destinations[0].QueueOptions.MessageTTL != 72*time.Hour {
 		t.Fatalf("endpoint queue message ttl = %s", destinations[0].QueueOptions.MessageTTL)
@@ -66,11 +66,11 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if destinations[0].QueueOptions.DeadLetterRoutingKey != "paddle.dead" {
 		t.Fatalf("endpoint dead letter routing key = %q", destinations[0].QueueOptions.DeadLetterRoutingKey)
 	}
-	if cfg.MessageQueues["billing"].RabbitMQ.DeadLetter.Exchange != "hookway.webhooks.dlx" {
-		t.Fatalf("dead-letter exchange = %q", cfg.MessageQueues["billing"].RabbitMQ.DeadLetter.Exchange)
+	if cfg.Destinations["billing"].RabbitMQ.DeadLetter.Exchange != "hookway.webhooks.dlx" {
+		t.Fatalf("dead-letter exchange = %q", cfg.Destinations["billing"].RabbitMQ.DeadLetter.Exchange)
 	}
-	if !destinations[0].CreateQueue {
-		t.Fatal("endpoint create_queue not parsed")
+	if !destinations[0].Create {
+		t.Fatal("endpoint create not parsed")
 	}
 	if cfg.Endpoints["paddle_billing"].MaxBodyBytes != 2097152 {
 		t.Fatalf("endpoint max body bytes = %d", cfg.Endpoints["paddle_billing"].MaxBodyBytes)
@@ -96,13 +96,13 @@ func TestLoadParsesEndpointFanoutDestinationObjects(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	body := strings.Replace(validYAML(), `          dead_letter_routing_key: "paddle.dead"`, `          dead_letter_routing_key: "paddle.dead"
-      - destination_queue_id: "archive"
-        queue: "billing-archive-events"
-        create_queue: false
+      - destination: "archive"
+        target: "billing-archive-events"
+        create: false
         queue_options:
           message_ttl: "6h"`, 1)
-	body = strings.Replace(body, `message_queues:
-  billing:`, `message_queues:
+	body = strings.Replace(body, `destinations:
+  billing:`, `destinations:
   archive:
     type: "rabbitmq"
     rabbitmq:
@@ -119,26 +119,25 @@ func TestLoadParsesEndpointFanoutDestinationObjects(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("destinations = %#v", got)
 	}
-	if got[0].DestinationQueueID != "billing" || got[0].Queue != "billing-events" || !got[0].CreateQueue || got[0].QueueOptions.MessageTTL != 72*time.Hour {
+	if got[0].Destination != "billing" || got[0].Target != "billing-events" || !got[0].Create || got[0].QueueOptions.MessageTTL != 72*time.Hour {
 		t.Fatalf("first destination = %#v", got[0])
 	}
-	if got[1].DestinationQueueID != "archive" || got[1].Queue != "billing-archive-events" || got[1].CreateQueue || got[1].QueueOptions.MessageTTL != 6*time.Hour {
+	if got[1].Destination != "archive" || got[1].Target != "billing-archive-events" || got[1].Create || got[1].QueueOptions.MessageTTL != 6*time.Hour {
 		t.Fatalf("second destination = %#v", got[1])
 	}
 }
 
 func TestLoadRejectsInvalidConfig(t *testing.T) {
 	tests := map[string]string{
-		"missing message queue type": replace(validYAML(), "type: \"rabbitmq\"", "type: \"\""),
-		"unsupported queue type":     replace(validYAML(), "type: \"rabbitmq\"", "type: \"sqs\""),
-		"invalid message queue id":   replace(validYAML(), "billing:", "bad queue:"),
-		"missing destinations":       strings.Replace(validYAML(), "    destinations:\n      - destination_queue_id: \"billing\"", "    destinations: []\n    #", 1),
-		"missing destination id":     replace(validYAML(), "destination_queue_id: \"billing\"", "destination_queue_id: \"\""),
-		"unknown fanout destination": replace(validYAML(), "destination_queue_id: \"billing\"", "destination_queue_id: \"missing\""),
+		"missing destination type":   replace(validYAML(), "type: \"rabbitmq\"", "type: \"\""),
+		"invalid destination id":     replace(validYAML(), "billing:", "bad queue:"),
+		"missing destinations":       strings.Replace(validYAML(), "    destinations:\n      - destination: \"billing\"", "    destinations: []\n    #", 1),
+		"missing destination":        replace(validYAML(), "destination: \"billing\"", "destination: \"\""),
+		"unknown fanout destination": replace(validYAML(), "destination: \"billing\"", "destination: \"missing\""),
 		"duplicate fanout destination route": strings.Replace(validYAML(), `          dead_letter_routing_key: "paddle.dead"`, `          dead_letter_routing_key: "paddle.dead"
-      - destination_queue_id: "billing"
-        queue: "billing-events"
-        create_queue: true
+      - destination: "billing"
+        target: "billing-events"
+        create: true
         queue_options:
           message_ttl: "72h"
           max_length: 500000
@@ -147,7 +146,7 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"invalid endpoint":         replace(validYAML(), "paddle_billing:", "bad/endpoint:"),
 		"missing endpoint path":    replace(validYAML(), "path: \"/webhooks/paddle/billing\"", "path: \"\""),
 		"invalid endpoint path":    replace(validYAML(), "path: \"/webhooks/paddle/billing\"", "path: \"webhooks/paddle/billing\""),
-		"invalid queue":            replace(validYAML(), "queue: \"billing-events\"", "queue: \"bad queue\""),
+		"invalid target":           replace(validYAML(), "target: \"billing-events\"", "target: \"bad target\""),
 		"missing secret":           replace(validYAML(), "secret: \"${PADDLE_SECRET}\"", "secret: \"\""),
 		"missing signature header": replace(validYAML(), "signature_header: \"Paddle-Signature\"", "signature_header: \"\""),
 		"unsupported auth":         replace(validYAML(), "auth:\n      type: \"hmac_sha256\"", "auth:\n      type: \"other\""),
@@ -187,8 +186,8 @@ func TestLoadRejectsOverlappingEndpointPaths(t *testing.T) {
     enabled: true
     path: "/webhooks/paddle"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "billing-child-events"
+      - destination: "billing"
+        target: "billing-child-events"
     auth:
       type: "hmac_sha256"
       secret: "${PADDLE_SECRET}"
@@ -213,8 +212,8 @@ func TestLoadAllowsEndpointPathsWithCommonPrefixButDifferentSegment(t *testing.T
     enabled: true
     path: "/webhooks/paddle-archive"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "billing-archive-events"
+      - destination: "billing"
+        target: "billing-archive-events"
     auth:
       type: "hmac_sha256"
       secret: "${PADDLE_SECRET}"
@@ -269,7 +268,7 @@ func TestLoadReturnsHelpfulValidationErrors(t *testing.T) {
 	body = replace(body, "type: \"rabbitmq\"", "type: \"\"")
 	body = replace(body, "path: \"/metrics\"", "path: \"metrics\"")
 	body = replace(body, "path: \"/webhooks/paddle/billing\"", "path: \"webhooks/paddle/billing\"")
-	body = replace(body, "queue: \"billing-events\"", "queue: \"bad queue\"")
+	body = replace(body, "target: \"billing-events\"", "target: \"bad target\"")
 	body = replace(body, "- \"Authorization\"", "- \"\"")
 	body = replace(body, "exchange: \"hookway.webhooks.dlx\"", "exchange: \"bad exchange\"")
 	body = replace(body, "requests_per_minute: 60", "requests_per_minute: 0")
@@ -286,14 +285,14 @@ func TestLoadReturnsHelpfulValidationErrors(t *testing.T) {
 		"config validation failed",
 		"server.addr",
 		"server.max_body_bytes",
-		"message_queues.billing.type",
+		"destinations.billing.type",
 		"metrics.path",
 		"endpoints.paddle_billing.path",
-		"endpoints.paddle_billing.destinations[0].queue",
+		"endpoints.paddle_billing.destinations[0].target",
 		"endpoints.paddle_billing.auth.secret",
 		"endpoints.paddle_billing.auth.signature_header",
 		"security.redacted_header_denylist",
-		"message_queues.billing.rabbitmq.dead_letter.exchange",
+		"destinations.billing.rabbitmq.dead_letter.exchange",
 		"endpoints.paddle_billing.rate_limit.requests_per_minute",
 		"endpoints.paddle_billing.replay_protection.max_entries",
 		"endpoints.paddle_billing.ip_allowlist[0]",
@@ -513,7 +512,7 @@ func validNoAuthYAML() string {
 server:
   addr: ":8080"
   max_body_bytes: 1048576
-message_queues:
+destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
@@ -525,9 +524,9 @@ endpoints:
     enabled: true
     path: "/webhooks/open"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "open-events"
-        create_queue: true
+      - destination: "billing"
+        target: "open-events"
+        create: true
     auth:
       type: "no_auth"
       scheme: "no_auth"
@@ -539,7 +538,7 @@ func validHeaderExactYAML() string {
 server:
   addr: ":8080"
   max_body_bytes: 1048576
-message_queues:
+destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
@@ -551,9 +550,9 @@ endpoints:
     enabled: true
     path: "/webhooks/revenuecat/billing"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "revenuecat-events"
-        create_queue: true
+      - destination: "billing"
+        target: "revenuecat-events"
+        create: true
     auth:
       type: "header_exact"
       scheme: "exact"
@@ -587,7 +586,7 @@ rate_limit:
 metrics:
   enabled: true
   path: "/metrics"
-message_queues:
+destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
@@ -614,9 +613,9 @@ endpoints:
     enabled: true
     path: "/webhooks/paddle/billing"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "billing-events"
-        create_queue: true
+      - destination: "billing"
+        target: "billing-events"
+        create: true
         queue_options:
           message_ttl: "72h"
           max_length: 500000
@@ -664,12 +663,177 @@ func replace(s, old, new string) string {
 	return strings.ReplaceAll(s, old, new)
 }
 
+func hasIssue(issues []ValidationIssue, field string) bool {
+	for _, issue := range issues {
+		if issue.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
+func TestLoadDestinationsBlockWithSQSAndSNS(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: sqs
+    sqs:
+      region: us-east-1
+      endpoint: http://localhost:4566
+      access_key_id: test
+      secret_access_key: test
+  alerts:
+    type: sns
+    sns:
+      region: us-east-1
+      endpoint: http://localhost:4566
+endpoints:
+  billing:
+    enabled: true
+    path: /webhooks/billing
+    destinations:
+      - destination: jobs
+        target: billing-jobs.fifo
+        create: true
+        sqs_options:
+          visibility_timeout: 30s
+          message_retention: 96h
+        fifo:
+          group_id: { source: body, path: customer.id, fallback: endpoint }
+          dedup: { use_idempotency_key: true, content_based_fallback: true }
+      - destination: alerts
+        target: billing-alerts
+        create: true
+        sns_options: { subject: "billing event" }
+    auth:
+      type: no_auth
+      scheme: no_auth
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Destinations["jobs"].Type != "sqs" || cfg.Destinations["jobs"].SQS.Region != "us-east-1" {
+		t.Fatalf("bad sqs destination: %#v", cfg.Destinations["jobs"])
+	}
+	if cfg.Destinations["alerts"].Type != "sns" || cfg.Destinations["alerts"].SNS.Endpoint != "http://localhost:4566" {
+		t.Fatalf("bad sns destination: %#v", cfg.Destinations["alerts"])
+	}
+	billing := cfg.Endpoints["billing"]
+	if billing.Destinations[0].Destination != "jobs" || billing.Destinations[0].Target != "billing-jobs.fifo" || !billing.Destinations[0].Create {
+		t.Fatalf("bad endpoint destination: %#v", billing.Destinations[0])
+	}
+	if billing.Destinations[0].SQSOptions.VisibilityTimeout != 30*time.Second {
+		t.Fatalf("bad sqs options: %#v", billing.Destinations[0].SQSOptions)
+	}
+	if billing.Destinations[0].FIFO == nil || billing.Destinations[0].FIFO.GroupID.Source != "body" || billing.Destinations[0].FIFO.GroupID.Path != "customer.id" {
+		t.Fatalf("bad fifo group id: %#v", billing.Destinations[0].FIFO)
+	}
+	if !billing.Destinations[0].FIFO.Dedup.UseIdempotencyKey {
+		t.Fatalf("bad fifo dedup: %#v", billing.Destinations[0].FIFO)
+	}
+}
+
+func TestValidateRejectsSQSOptionsOnNonSQSDestination(t *testing.T) {
+	cfg := Config{
+		Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: map[string]DestinationConfig{
+			"primary": {Type: "rabbitmq", RabbitMQ: RabbitMQConfig{URL: "amqp://x", Exchange: "e", ExchangeType: "direct"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
+				Destinations: []EndpointDestinationConfig{{
+					Destination: "primary", Target: "q",
+					SQSOptions:  SQSEndpointOptions{VisibilityTimeout: time.Second},
+				}}},
+		},
+	}
+	issues := cfg.ValidationIssues()
+	if !hasIssue(issues, "endpoints.e.destinations[0].sqs_options") {
+		t.Fatalf("expected sqs_options-on-rabbitmq error, got %#v", issues)
+	}
+}
+
+func TestValidateRejectsFIFOBlockOnNonFifoTarget(t *testing.T) {
+	cfg := Config{
+		Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: map[string]DestinationConfig{
+			"jobs": {Type: "sqs", SQS: SQSConfig{Region: "us-east-1"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
+				Destinations: []EndpointDestinationConfig{{
+					Destination: "jobs", Target: "plain-queue",
+					FIFO:        &FIFOConfig{GroupID: FIFOGroupIDConfig{Source: "endpoint"}},
+				}}},
+		},
+	}
+	issues := cfg.ValidationIssues()
+	if !hasIssue(issues, "endpoints.e.destinations[0].fifo") {
+		t.Fatalf("expected fifo-on-non-fifo-target error, got %#v", issues)
+	}
+}
+
+// TestValidateRejectsFIFOWithoutContentBasedFallback asserts that a FIFO target
+// with content_based_fallback: false fails validation, while content_based_fallback: true passes.
+func TestValidateRejectsFIFOWithoutContentBasedFallback(t *testing.T) {
+	base := Config{
+		Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: map[string]DestinationConfig{
+			"jobs": {Type: "sqs", SQS: SQSConfig{Region: "us-east-1"}},
+		},
+	}
+	fifoField := "endpoints.e.destinations[0].fifo.dedup.content_based_fallback"
+
+	// content_based_fallback: false (zero value) — must produce a validation issue.
+	bad := base
+	bad.Endpoints = map[string]EndpointConfig{
+		"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
+			Destinations: []EndpointDestinationConfig{{
+				Destination: "jobs", Target: "billing-jobs.fifo",
+				FIFO: &FIFOConfig{
+					GroupID: FIFOGroupIDConfig{Source: "endpoint"},
+					Dedup:   FIFODedupConfig{ContentBasedFallback: false},
+				},
+			}}},
+	}
+	issues := bad.ValidationIssues()
+	if !hasIssue(issues, fifoField) {
+		t.Fatalf("expected content_based_fallback error, got %#v", issues)
+	}
+
+	// content_based_fallback: true — must not produce that issue.
+	good := base
+	good.Endpoints = map[string]EndpointConfig{
+		"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
+			Destinations: []EndpointDestinationConfig{{
+				Destination: "jobs", Target: "billing-jobs.fifo",
+				FIFO: &FIFOConfig{
+					GroupID: FIFOGroupIDConfig{Source: "endpoint"},
+					Dedup:   FIFODedupConfig{ContentBasedFallback: true},
+				},
+			}}},
+	}
+	issues = good.ValidationIssues()
+	if hasIssue(issues, fifoField) {
+		t.Fatalf("expected no content_based_fallback error with true, got %#v", issues)
+	}
+}
+
 func validJWTYAML() string {
 	return `
 server:
   addr: ":8080"
   max_body_bytes: 1048576
-message_queues:
+destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
@@ -681,9 +845,9 @@ endpoints:
     enabled: true
     path: "/webhooks/jwt"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "jwt-events"
-        create_queue: true
+      - destination: "billing"
+        target: "jwt-events"
+        create: true
     auth:
       type: "jwt"
       scheme: "jwt_hs256"
@@ -725,5 +889,212 @@ func TestLoadRejectsJWTWithoutSecret(t *testing.T) {
 	yaml := strings.Replace(validJWTYAML(), "      secret: \"${JWT_SHARED_SECRET}\"\n", "", 1)
 	if _, err := Load(writeConfig(t, yaml)); err == nil {
 		t.Fatal("jwt without a key/secret should be rejected")
+	}
+}
+
+func validSQSYAML() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: "sqs"
+    sqs:
+      region: "us-east-1"
+endpoints:
+  ep1:
+    enabled: true
+    path: "/webhooks/ep1"
+    destinations:
+      - destination: "jobs"
+        target: "orders-queue"
+        create: true
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+}
+
+func validSNSYAML() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  alerts:
+    type: "sns"
+    sns:
+      region: "us-east-1"
+endpoints:
+  ep1:
+    enabled: true
+    path: "/webhooks/ep1"
+    destinations:
+      - destination: "alerts"
+        target: "orders-topic"
+        create: true
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+}
+
+// FIX 3: cross-endpoint SQS divergence test
+func TestLoadRejectsSQSDivergentSettingsAcrossEndpoints(t *testing.T) {
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: "sqs"
+    sqs:
+      region: "us-east-1"
+endpoints:
+  ep1:
+    enabled: true
+    path: "/webhooks/ep1"
+    destinations:
+      - destination: "jobs"
+        target: "orders-queue"
+        create: true
+        sqs_options:
+          visibility_timeout: "30s"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+  ep2:
+    enabled: true
+    path: "/webhooks/ep2"
+    destinations:
+      - destination: "jobs"
+        target: "orders-queue"
+        create: true
+        sqs_options:
+          visibility_timeout: "60s"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected validation error for divergent SQS settings across endpoints")
+	}
+	if !strings.Contains(err.Error(), "cannot differ between endpoints that share an sqs target") {
+		t.Fatalf("expected sqs divergence error, got: %v", err)
+	}
+}
+
+// FIX 7+8: SQS option range validation
+func TestLoadRejectsSQSSubSecondVisibilityTimeout(t *testing.T) {
+	yaml := strings.Replace(validSQSYAML(), "create: true", "create: true\n        sqs_options:\n          visibility_timeout: \"500ms\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected sub-second visibility_timeout to be rejected")
+	}
+	if !strings.Contains(err.Error(), "visibility_timeout") {
+		t.Fatalf("expected visibility_timeout in error, got: %v", err)
+	}
+}
+
+func TestLoadRejectsSQSRetentionBelowMinimum(t *testing.T) {
+	yaml := strings.Replace(validSQSYAML(), "create: true", "create: true\n        sqs_options:\n          message_retention: \"30s\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected retention below 60s to be rejected")
+	}
+	if !strings.Contains(err.Error(), "message_retention") {
+		t.Fatalf("expected message_retention in error, got: %v", err)
+	}
+}
+
+func TestLoadRejectsSQSVisibilityAboveMaximum(t *testing.T) {
+	yaml := strings.Replace(validSQSYAML(), "create: true", "create: true\n        sqs_options:\n          visibility_timeout: \"13h\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected visibility_timeout above 12h to be rejected")
+	}
+	if !strings.Contains(err.Error(), "visibility_timeout") {
+		t.Fatalf("expected visibility_timeout in error, got: %v", err)
+	}
+}
+
+func TestLoadAcceptsValidSQSOptions(t *testing.T) {
+	yaml := strings.Replace(validSQSYAML(), "create: true", "create: true\n        sqs_options:\n          visibility_timeout: \"30s\"\n          message_retention: \"4h\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("expected valid SQS options to be accepted: %v", err)
+	}
+}
+
+// FIX 9: SNS subject validation
+func TestLoadRejectsSNSSubjectTooLong(t *testing.T) {
+	long := strings.Repeat("a", 101)
+	yaml := strings.Replace(validSNSYAML(), "create: true", "create: true\n        sns_options:\n          subject: \""+long+"\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected subject longer than 100 chars to be rejected")
+	}
+	if !strings.Contains(err.Error(), "subject") {
+		t.Fatalf("expected subject in error, got: %v", err)
+	}
+}
+
+func TestLoadRejectsSNSSubjectWithNewline(t *testing.T) {
+	yaml := strings.Replace(validSNSYAML(), "create: true", "create: true\n        sns_options:\n          subject: \"hello\\nworld\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected subject with newline to be rejected")
+	}
+	if !strings.Contains(err.Error(), "subject") {
+		t.Fatalf("expected subject in error, got: %v", err)
+	}
+}
+
+func TestLoadAcceptsValidSNSSubject(t *testing.T) {
+	yaml := strings.Replace(validSNSYAML(), "create: true", "create: true\n        sns_options:\n          subject: \"Order Confirmed\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("expected valid SNS subject to be accepted: %v", err)
+	}
+}
+
+// FIX 5: SNS FIFO + subject validation
+func TestLoadRejectsSNSFIFOWithSubject(t *testing.T) {
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  alerts:
+    type: "sns"
+    sns:
+      region: "us-east-1"
+endpoints:
+  ep1:
+    enabled: true
+    path: "/webhooks/ep1"
+    destinations:
+      - destination: "alerts"
+        target: "orders.fifo"
+        create: true
+        sns_options:
+          subject: "Order event"
+        fifo:
+          group_id:
+            source: "endpoint"
+          dedup:
+            content_based_fallback: true
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected FIFO SNS target with subject to be rejected")
+	}
+	if !strings.Contains(err.Error(), "subject is not supported on FIFO SNS topics") {
+		t.Fatalf("expected FIFO SNS subject error, got: %v", err)
 	}
 }

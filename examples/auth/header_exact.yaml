@@ -1,0 +1,60 @@
+# examples/auth/header_exact.yaml
+#
+# Reference config demonstrating the header_exact auth strategy.
+# Two schemes are registered under this type:
+#
+#   exact  — constant-time comparison of the header value against secret
+#   basic  — HTTP Basic Authorization: decodes base64(user:pass) and compares
+#
+# Use header_exact for providers that send a static API key or Bearer token
+# in a header (e.g. RevenueCat, Shopify admin webhooks).
+#
+# remove_bearer: true strips the leading "Bearer " prefix before comparison,
+# so secret should be just the token value, not the full header value.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  primary:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+endpoints:
+  # RevenueCat-style: static Bearer token in the Authorization header.
+  # Set REVENUECAT_WEBHOOK_AUTH to the token value (not the full "Bearer <token>" string).
+  revenuecat_billing:
+    enabled: true
+    path: "/webhooks/revenuecat"
+    destinations:
+      - destination: "primary"
+        target: "revenuecat-events"
+        create: true
+    auth:
+      type: "header_exact"
+      scheme: "exact"
+      secret: "${REVENUECAT_WEBHOOK_AUTH}"
+      signature_header: "Authorization"
+      remove_bearer: true
+
+  # HTTP Basic auth: set BASIC_WEBHOOK_SECRET to "user:pass" matching the
+  # provider's credentials. Hookway decodes the Base64 value and compares.
+  basic_webhook:
+    enabled: false
+    path: "/webhooks/basic"
+    destinations:
+      - destination: "primary"
+        target: "basic-events"
+        create: true
+    auth:
+      type: "header_exact"
+      scheme: "basic"
+      secret: "${BASIC_WEBHOOK_SECRET}"
+      signature_header: "Authorization"

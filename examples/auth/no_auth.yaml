@@ -1,0 +1,43 @@
+# examples/auth/no_auth.yaml
+#
+# Reference config demonstrating the no_auth auth strategy.
+# no_auth disables signature verification entirely for an endpoint.
+#
+# Use this only for:
+#   - Internal endpoints reachable only from trusted networks
+#   - Development and testing environments
+#   - Endpoints behind an external authentication layer (e.g. API gateway)
+#
+# IMPORTANT: scheme must be set to "no_auth" explicitly. Omitting scheme
+# causes the default scheme (hmac_sha256_ts_colon) to be applied, which is
+# invalid for the no_auth type and will fail validation.
+#
+# no_auth endpoints do not require secret or signature_header; Hookway logs
+# a warning at startup for every no_auth endpoint it builds.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  primary:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+endpoints:
+  internal_events:
+    enabled: true
+    path: "/webhooks/internal"
+    destinations:
+      - destination: "primary"
+        target: "internal-events"
+        create: true
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"   # required — omitting this causes validation to fail

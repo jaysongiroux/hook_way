@@ -19,7 +19,7 @@ func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
 	})
 
 	pub, err := factory.Create(context.Background(), config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"billing": {
 				Type: "rabbitmq",
 				RabbitMQ: config.RabbitMQConfig{
@@ -40,7 +40,7 @@ func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
 			"paddle_billing": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "billing", Queue: "billing-events", CreateQueue: true,
+					Destination: "billing", Target: "billing-events", Create: true,
 					QueueOptions: config.RabbitMQQueueOptions{
 						MessageTTL: 72 * time.Hour, MaxLength: 500000, Overflow: "reject-publish",
 					},
@@ -49,7 +49,7 @@ func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
 			"github_activity": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "activity", Queue: "activity-events", CreateQueue: true,
+					Destination: "activity", Target: "activity-events", Create: true,
 				}},
 			},
 		},
@@ -86,7 +86,7 @@ func TestFactoryCreatesPublishersAndDeclarationsForFanoutDestinations(t *testing
 	})
 
 	_, err := factory.Create(context.Background(), config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"primary": {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://primary", Exchange: "hookway.primary", ExchangeType: "direct"}},
 			"audit":   {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://audit", Exchange: "hookway.audit", ExchangeType: "direct"}},
 		},
@@ -94,8 +94,8 @@ func TestFactoryCreatesPublishersAndDeclarationsForFanoutDestinations(t *testing
 			"example": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{
-					{DestinationQueueID: "primary", Queue: "example-webhooks", CreateQueue: true, QueueOptions: config.RabbitMQQueueOptions{MessageTTL: time.Hour}},
-					{DestinationQueueID: "audit", Queue: "example-audit-webhooks", CreateQueue: false, QueueOptions: config.RabbitMQQueueOptions{MessageTTL: 2 * time.Hour}},
+					{Destination: "primary", Target: "example-webhooks", Create: true, QueueOptions: config.RabbitMQQueueOptions{MessageTTL: time.Hour}},
+					{Destination: "audit", Target: "example-audit-webhooks", Create: false, QueueOptions: config.RabbitMQQueueOptions{MessageTTL: 2 * time.Hour}},
 				},
 			},
 		},
@@ -163,7 +163,7 @@ func TestFactoryHonorsEndpointCreateQueueAndDeadLetterConfigPerDestination(t *te
 	})
 
 	_, err := factory.Create(context.Background(), config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"billing": {
 				Type: "rabbitmq",
 				RabbitMQ: config.RabbitMQConfig{
@@ -181,13 +181,13 @@ func TestFactoryHonorsEndpointCreateQueueAndDeadLetterConfigPerDestination(t *te
 			"created": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "billing", Queue: "created-events", CreateQueue: true,
+					Destination: "billing", Target: "created-events", Create: true,
 				}},
 			},
 			"external": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "billing", Queue: "external-events", CreateQueue: false,
+					Destination: "billing", Target: "external-events", Create: false,
 					QueueOptions: config.RabbitMQQueueOptions{MessageTTL: 6 * time.Hour, DeadLetterRoutingKey: "external.dead"},
 				}},
 			},
@@ -204,16 +204,78 @@ func TestFactoryHonorsEndpointCreateQueueAndDeadLetterConfigPerDestination(t *te
 func TestFactoryRejectsUnsupportedQueueType(t *testing.T) {
 	factory := NewFactory(FactoryOptions{})
 	_, err := factory.Create(context.Background(), config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{"billing": {Type: "sqs"}},
+		Destinations: map[string]config.DestinationConfig{"billing": {Type: "kafka"}},
 		Endpoints: map[string]config.EndpointConfig{"paddle": {
 			Enabled: true,
 			Destinations: []config.EndpointDestinationConfig{{
-				DestinationQueueID: "billing", Queue: "events",
+				Destination: "billing", Target: "events",
 			}},
 		}},
 	})
 	if err == nil {
 		t.Fatal("expected unsupported type error")
+	}
+}
+
+func TestFactoryCreatesSQSPublisherWithTargets(t *testing.T) {
+	var got SQSConfig
+	factory := NewFactory(FactoryOptions{
+		SQSConnector: func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error) {
+			got = cfg
+			return &recordingPublisher{}, nil
+		},
+	})
+	_, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"jobs": {Type: "sqs", SQS: config.SQSConfig{Region: "us-east-1", Endpoint: "http://localhost:4566"}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"billing": {Enabled: true, Destinations: []config.EndpointDestinationConfig{{
+				Destination: "jobs", Target: "billing-jobs.fifo", Create: true,
+				SQSOptions:  config.SQSEndpointOptions{VisibilityTimeout: 30 * time.Second},
+				FIFO:        &config.FIFOConfig{GroupID: config.FIFOGroupIDConfig{Source: "body", Path: "customer.id", Fallback: "endpoint"}, Dedup: config.FIFODedupConfig{UseIdempotencyKey: true}},
+			}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.Region != "us-east-1" || len(got.Targets) != 1 {
+		t.Fatalf("bad sqs config: %#v", got)
+	}
+	target := got.Targets[0]
+	if target.Name != "billing-jobs.fifo" || !target.Create || target.VisibilityTimeout != 30*time.Second {
+		t.Fatalf("bad target: %#v", target)
+	}
+	if target.FIFO == nil || target.FIFO.GroupIDSource != "body" || target.FIFO.GroupIDPath != "customer.id" || !target.FIFO.DedupUseIdempotencyKey {
+		t.Fatalf("bad fifo settings: %#v", target.FIFO)
+	}
+}
+
+func TestFactoryCreatesSNSPublisherWithTargets(t *testing.T) {
+	var got SNSConfig
+	factory := NewFactory(FactoryOptions{
+		SNSConnector: func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error) {
+			got = cfg
+			return &recordingPublisher{}, nil
+		},
+	})
+	_, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"alerts": {Type: "sns", SNS: config.SNSConfig{Region: "us-east-1"}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"billing": {Enabled: true, Destinations: []config.EndpointDestinationConfig{{
+				Destination: "alerts", Target: "billing-alerts", Create: true,
+				SNSOptions:  config.SNSEndpointOptions{Subject: "billing event"},
+			}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.Region != "us-east-1" || len(got.Targets) != 1 || got.Targets[0].Subject != "billing event" {
+		t.Fatalf("bad sns config: %#v", got)
 	}
 }
 

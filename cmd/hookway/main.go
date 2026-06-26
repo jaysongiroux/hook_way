@@ -104,9 +104,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if cfg.Metrics.RuntimeMetricsEnabled() {
 		appMetrics.EnableRuntimeCollectors()
 	}
-	for id, messageQueue := range cfg.MessageQueues {
-		if messageQueue.RabbitMQ.TLS.InsecureSkipVerify {
-			logger.Warn("rabbitmq TLS certificate verification is disabled (message_queues.<id>.rabbitmq.tls.insecure_skip_verify=true); do not use this in production", "destination_queue_id", id)
+	for id, destination := range cfg.Destinations {
+		if destination.RabbitMQ.TLS.InsecureSkipVerify {
+			logger.Warn("rabbitmq TLS certificate verification is disabled (destinations.<id>.rabbitmq.tls.insecure_skip_verify=true); do not use this in production", "destination_id", id)
 		}
 	}
 	publisher, err := queue.NewFactory(queue.FactoryOptions{Metrics: appMetrics}).Create(context.Background(), cfg)

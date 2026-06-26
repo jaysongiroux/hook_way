@@ -98,7 +98,7 @@ func hmacSHA256HexConfig() config.Config {
 	cfg.Endpoints["github_events"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/github",
 		Destinations: []config.EndpointDestinationConfig{{
-			DestinationQueueID: "activity", Queue: "github-events",
+			Destination: "activity", Target: "github-events",
 		}},
 		Auth: config.AuthConfig{
 			Type: "hmac_sha256", Scheme: "hmac_sha256_hex", Secret: "ghsecret",
@@ -275,7 +275,7 @@ func revenueCatConfig() config.Config {
 			Enabled: true,
 			Path:    "/webhooks/revenuecat",
 			Destinations: []config.EndpointDestinationConfig{{
-				DestinationQueueID: "billing", Queue: "revenuecat-events",
+				Destination: "billing", Target: "revenuecat-events",
 			}},
 			ReplayProtection: config.ReplayProtectionConfig{
 				Enabled: true, TTL: 10 * time.Minute, MaxEntries: 1000,

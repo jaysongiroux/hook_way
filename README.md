@@ -1,14 +1,12 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to RabbitMQ.
+Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, or AWS SNS).
 
 ## Quick Start
 
 ```bash
 export RABBITMQ_URL='amqp://guest:guest@localhost:5672/'
-export PADDLE_WEBHOOK_SECRET='your_paddle_endpoint_secret'
 export GITHUB_WEBHOOK_SECRET='your_github_endpoint_secret'
-export REVENUECAT_WEBHOOK_AUTH='your_revenue_cat_webhook_secret'
 
 make dev-up
 ```
@@ -42,8 +40,8 @@ go run ./cmd/hookway --config examples/config.yaml
 
 - Configured endpoint paths, such as `POST /webhooks/paddle`, accept webhook events.
 - `GET /healthz` confirms the process is alive.
-- `GET /ready` checks every configured message queue destination used by enabled endpoints, including fan-out destinations.
-- `GET /readyz` checks every configured message queue destination used by enabled endpoints, including fan-out destinations.
+- `GET /ready` checks every configured destination used by enabled endpoints, including fan-out destinations.
+- `GET /readyz` checks every configured destination used by enabled endpoints, including fan-out destinations.
 - `GET /health` reports the same readiness state as `/readyz`.
 - `GET /metrics` exposes Prometheus metrics when enabled.
 
@@ -54,8 +52,8 @@ Successful webhook response:
   "status": "accepted",
   "endpoint": "paddle_billing",
   "destinations": [
-    {"destination_queue_id": "primary", "queue": "paddle-webhooks"},
-    {"destination_queue_id": "audit", "queue": "paddle-audit-webhooks"}
+    {"destination": "primary", "target": "paddle-webhooks"},
+    {"destination": "audit", "target": "paddle-audit-webhooks"}
   ],
   "event_id": "018f...",
   "request_id": "req_..."
@@ -64,9 +62,9 @@ Successful webhook response:
 
 ## Consuming Messages
 
-Hookway publishes JSON envelopes to each endpoint `destinations` route. Every route names a `destination_queue_id` under `message_queues` and its own RabbitMQ `queue` routing key. With `declare_queues: true`, route queues are declared and bound automatically.
+Hookway publishes JSON envelopes to each endpoint `destinations` route. Every route names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
 
-Queue backends are configured under top-level `message_queues`, keyed by destination id. MVP supports `type: rabbitmq` for each entry. SQS is the likely next backend. BullMQ may come later if worker ecosystems need Redis-native delivery.
+Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, and `sns`. See `examples/destinations/` for reference configs for each type.
 
 Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind endpoint queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
 
@@ -93,6 +91,7 @@ On non-PR runs, the release workflow publishes the Docker image to Docker Hub. I
 
 See:
 
+- [Examples](examples/README.md)
 - [CLI](docs/cli.md)
 - [Configuration](docs/configuration.md)
 - [Security](docs/security.md)
