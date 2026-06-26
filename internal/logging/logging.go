@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -31,7 +32,13 @@ func Request(logger *slog.Logger, attrs RequestAttrs) {
 	if msg == "" {
 		msg = "request handled"
 	}
-	logger.Info(msg,
+	level := slog.LevelInfo
+	if attrs.Status >= http.StatusInternalServerError {
+		level = slog.LevelError
+	} else if attrs.Status >= http.StatusBadRequest {
+		level = slog.LevelWarn
+	}
+	logger.Log(context.Background(), level, msg,
 		"method", attrs.Method,
 		"path", attrs.Path,
 		"endpoint", attrs.Endpoint,
