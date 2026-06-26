@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -15,10 +16,29 @@ type RabbitMQConnector func(ctx context.Context, destinationID string, cfg Rabbi
 type SQSConnector func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error)
 type SNSConnector func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error)
 
+// RedisConnector creates a Publisher for the given Redis destination. It is
+// called once per redis_* destination in Create. The default connector builds
+// the connection via newRedisClient and dispatches on destType to the correct
+// publisher constructor. Callers can inject a fake in tests.
+type RedisConnector func(ctx context.Context, destinationID, destType string, cfg config.RedisConfig, targets []RedisTarget) (Publisher, error)
+
+// RedisTarget describes a single Redis route target. The factory builds one
+// RedisTarget per unique route.Target in collectRedisTargets and passes the
+// slice to the RedisConnector.
+type RedisTarget struct {
+	Name          string
+	MaxLen        int64
+	ConsumerGroup string
+	TTL           time.Duration
+	KeyTemplate   string
+	Create        bool
+}
+
 type FactoryOptions struct {
 	RabbitMQConnector RabbitMQConnector
 	SQSConnector      SQSConnector
 	SNSConnector      SNSConnector
+	RedisConnector    RedisConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
 }
@@ -27,6 +47,7 @@ type Factory struct {
 	rabbitMQConnector RabbitMQConnector
 	sqsConnector      SQSConnector
 	snsConnector      SNSConnector
+	redisConnector    RedisConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
 }
@@ -58,10 +79,85 @@ func NewFactory(opts FactoryOptions) *Factory {
 			return NewSNSPublisher(ctx, sns.NewFromConfig(awsCfg), cfg)
 		}
 	}
+	redisConnector := opts.RedisConnector
+	if redisConnector == nil {
+		logger := opts.Logger
+		redisConnector = func(ctx context.Context, destinationID, destType string, cfg config.RedisConfig, targets []RedisTarget) (Publisher, error) {
+			ops, err := newRedisClient(cfg)
+			if err != nil {
+				return nil, fmt.Errorf("redis destination %q: connect: %w", destinationID, err)
+			}
+			switch destType {
+			case "redis_stream":
+				streamTargets := make([]RedisStreamTarget, 0, len(targets))
+				for _, t := range targets {
+					streamTargets = append(streamTargets, RedisStreamTarget{
+						Name:          t.Name,
+						MaxLen:        t.MaxLen,
+						ConsumerGroup: t.ConsumerGroup,
+						Create:        t.Create,
+					})
+				}
+				return NewRedisStreamPublisher(ctx, ops, RedisStreamConfig{
+					KeyPrefix:     cfg.KeyPrefix,
+					DestinationID: destinationID,
+					Logger:        logger,
+					Targets:       streamTargets,
+				})
+			case "redis_list":
+				listTargets := make([]RedisListTarget, 0, len(targets))
+				for _, t := range targets {
+					listTargets = append(listTargets, RedisListTarget{
+						Name:   t.Name,
+						MaxLen: t.MaxLen,
+					})
+				}
+				return NewRedisListPublisher(ctx, ops, RedisListConfig{
+					KeyPrefix:     cfg.KeyPrefix,
+					DestinationID: destinationID,
+					Logger:        logger,
+					Targets:       listTargets,
+				})
+			case "redis_pubsub":
+				pubsubTargets := make([]RedisPubSubTarget, 0, len(targets))
+				for _, t := range targets {
+					// Only Name is relevant for pub/sub — channels have no
+					// max_len, TTL, consumer groups, or other options.
+					pubsubTargets = append(pubsubTargets, RedisPubSubTarget{
+						Name: t.Name,
+					})
+				}
+				return NewRedisPubSubPublisher(ctx, ops, RedisPubSubConfig{
+					KeyPrefix:     cfg.KeyPrefix,
+					DestinationID: destinationID,
+					Logger:        logger,
+					Targets:       pubsubTargets,
+				})
+			case "redis_kv":
+				kvTargets := make([]RedisKVTarget, 0, len(targets))
+				for _, t := range targets {
+					kvTargets = append(kvTargets, RedisKVTarget{
+						Name:        t.Name,
+						TTL:         t.TTL,
+						KeyTemplate: t.KeyTemplate,
+					})
+				}
+				return NewRedisKVPublisher(ctx, ops, RedisKVConfig{
+					KeyPrefix:     cfg.KeyPrefix,
+					DestinationID: destinationID,
+					Logger:        logger,
+					Targets:       kvTargets,
+				})
+			default:
+				return nil, fmt.Errorf("unsupported redis destination type %q", destType)
+			}
+		}
+	}
 	return &Factory{
 		rabbitMQConnector: connector,
 		sqsConnector:      sqsConnector,
 		snsConnector:      snsConnector,
+		redisConnector:    redisConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
 	}
@@ -118,6 +214,12 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				Logger:          f.logger,
 				Targets:         collectSNSTargets(cfg, id),
 			})
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "redis_stream", "redis_list", "redis_pubsub", "redis_kv":
+			publisher, err := f.redisConnector(ctx, id, destination.Type, destination.Redis, collectRedisTargets(cfg, id))
 			if err != nil {
 				return nil, err
 			}
@@ -239,6 +341,35 @@ func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
 				Create:  route.Create,
 				Subject: route.SNSOptions.Subject,
 				FIFO:    mapFIFO(route.FIFO),
+			})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+func collectRedisTargets(cfg config.Config, destinationID string) []RedisTarget {
+	seen := map[string]struct{}{}
+	var targets []RedisTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			targets = append(targets, RedisTarget{
+				Name:          route.Target,
+				MaxLen:        route.RedisOptions.MaxLen,
+				ConsumerGroup: route.RedisOptions.ConsumerGroup,
+				TTL:           route.RedisOptions.TTL,
+				KeyTemplate:   route.RedisOptions.KeyTemplate,
+				Create:        route.Create,
 			})
 		}
 	}

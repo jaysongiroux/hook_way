@@ -3,6 +3,7 @@ package queue
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -11,6 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jasongiroux/hookway/internal/config"
 )
 
 func TestBuildTLSConfigEmptyReturnsNil(t *testing.T) {
@@ -73,6 +76,96 @@ func mustWrite(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildRedisTLSConfig tests
+// ---------------------------------------------------------------------------
+
+func TestBuildRedisTLSConfigCACert(t *testing.T) {
+	dir := t.TempDir()
+	caPEM, _, _ := writeTestKeypair(t)
+	caPath := filepath.Join(dir, "redis-ca.pem")
+	mustWrite(t, caPath, caPEM)
+
+	cfg, err := buildRedisTLSConfig(config.RedisTLSConfig{
+		Enabled: true,
+		CACert:  caPath,
+	})
+	if err != nil {
+		t.Fatalf("buildRedisTLSConfig error: %v", err)
+	}
+	if cfg.RootCAs == nil {
+		t.Fatal("expected RootCAs to be non-nil")
+	}
+	if cfg.MinVersion != tls.VersionTLS12 {
+		t.Errorf("MinVersion = %v, want TLS 1.2", cfg.MinVersion)
+	}
+}
+
+func TestBuildRedisTLSConfigClientCert(t *testing.T) {
+	dir := t.TempDir()
+	_, certPEM, keyPEM := writeTestKeypair(t)
+	certPath := filepath.Join(dir, "client.crt")
+	keyPath := filepath.Join(dir, "client.key")
+	mustWrite(t, certPath, certPEM)
+	mustWrite(t, keyPath, keyPEM)
+
+	cfg, err := buildRedisTLSConfig(config.RedisTLSConfig{
+		Enabled:    true,
+		ClientCert: certPath,
+		ClientKey:  keyPath,
+	})
+	if err != nil {
+		t.Fatalf("buildRedisTLSConfig error: %v", err)
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Fatalf("expected 1 client certificate, got %d", len(cfg.Certificates))
+	}
+}
+
+func TestBuildRedisTLSConfigServerNameAndInsecure(t *testing.T) {
+	cfg, err := buildRedisTLSConfig(config.RedisTLSConfig{
+		Enabled:            true,
+		ServerName:         "redis.internal",
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatalf("buildRedisTLSConfig error: %v", err)
+	}
+	if cfg.ServerName != "redis.internal" {
+		t.Errorf("ServerName = %q, want %q", cfg.ServerName, "redis.internal")
+	}
+	if !cfg.InsecureSkipVerify {
+		t.Fatal("expected InsecureSkipVerify to be true")
+	}
+}
+
+func TestBuildRedisTLSConfigBadCACert(t *testing.T) {
+	_, err := buildRedisTLSConfig(config.RedisTLSConfig{
+		Enabled: true,
+		CACert:  "/nope/no-such-ca.pem",
+	})
+	if err == nil {
+		t.Fatal("expected error for unreadable ca_cert, got nil")
+	}
+}
+
+func TestBuildRedisTLSConfigHalfMTLSErrors(t *testing.T) {
+	// client_cert set without client_key → error.
+	if _, err := buildRedisTLSConfig(config.RedisTLSConfig{
+		Enabled:    true,
+		ClientCert: "/some/cert.pem",
+	}); err == nil {
+		t.Fatal("expected error when client_key is missing")
+	}
+	// client_key set without client_cert → error.
+	if _, err := buildRedisTLSConfig(config.RedisTLSConfig{
+		Enabled:   true,
+		ClientKey: "/some/key.pem",
+	}); err == nil {
+		t.Fatal("expected error when client_cert is missing")
 	}
 }
 

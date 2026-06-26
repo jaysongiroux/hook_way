@@ -1,6 +1,6 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, or AWS SNS).
+Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, or Redis / Valkey).
 
 ## Quick Start
 
@@ -66,7 +66,7 @@ Endpoints can set `delivery_failure_policy`. `stop_on_failure` is the default an
 
 Hookway publishes JSON envelopes to each endpoint `destinations` route. Every route names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
 
-Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, and `sns`. See `examples/destinations/` for reference configs for each type.
+Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `redis_stream`, `redis_list`, `redis_pubsub`, and `redis_kv`. See `examples/destinations/` for reference configs for each type.
 
 Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind endpoint queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
 
@@ -93,16 +93,17 @@ make test                  # unit tests only (no Docker)
 make test-race             # unit tests with the race detector
 make integration-test      # RabbitMQ integration tests (testcontainers)
 make aws-integration-test  # SQS/SNS integration tests (LocalStack)
-make test-all              # everything: unit + RabbitMQ + AWS integration
+make redis-integration-test # Redis/Valkey integration tests (testcontainers)
+make test-all              # everything: unit + RabbitMQ + AWS + Redis integration
 make validate-examples     # validate every config under examples/
 make lint
 make docker-build
 make vuln-scan
 ```
 
-`make integration-test`, `make aws-integration-test`, and `make test-all` use testcontainers and require Docker.
+`make integration-test`, `make aws-integration-test`, `make redis-integration-test`, and `make test-all` use testcontainers and require Docker.
 
-Release checks run example-config validation, unit tests, race tests, RabbitMQ and AWS (LocalStack) integration tests, vet, Docker build, and image vulnerability scanning in GitHub Actions.
+Release checks run example-config validation, unit tests, race tests, RabbitMQ, AWS (LocalStack), and Redis integration tests, vet, Docker build, and image vulnerability scanning in GitHub Actions.
 
 On non-PR runs, the release workflow publishes the Docker image to Docker Hub. In GitHub, set Actions repository secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_NAMESPACE`, `DOCKERHUB_IMAGE_NAME`, and `DOCKERHUB_TOKEN`. `DOCKERHUB_USERNAME` is the Docker Hub account that owns the access token; `DOCKERHUB_NAMESPACE` is the user or organization that owns the image repository. Pushes to `main` publish `latest`; Git tags such as `v1.0.0` publish matching Docker tags. The workflow also syncs `docs/dockerhub/README.md` to the Docker Hub repository description. Docker Hub description sync requires `DOCKERHUB_TOKEN` to have read/write/delete scope and admin access to the Docker Hub repository.
 

@@ -41,6 +41,9 @@ jobs:
       - name: AWS integration tests (LocalStack)
         run: make aws-integration-test
 
+      - name: Redis integration tests (testcontainers)
+        run: make redis-integration-test
+
       - name: Vet
         run: make lint
 
