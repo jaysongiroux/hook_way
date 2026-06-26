@@ -327,6 +327,14 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable
+		s.logger.Error("publish failed",
+			"endpoint", endpointName,
+			"destination_queue_id", destinationLabel,
+			"queue", targetLabel,
+			"request_id", requestIDFromContext(r.Context()),
+			"trace_id", traceIDFromContext(r.Context()),
+			"error", err.Error(),
+		)
 		writeJSON(w, status, map[string]string{"error": "service unavailable"})
 		return
 	}

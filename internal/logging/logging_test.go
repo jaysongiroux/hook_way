@@ -54,3 +54,26 @@ func TestStructuredRequestLogDoesNotLeakSecrets(t *testing.T) {
 		t.Fatalf("log leaked secret: %s", got)
 	}
 }
+
+func TestRequestLogLevelFollowsHTTPStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		level  string
+	}{
+		{name: "success", status: http.StatusAccepted, level: `"level":"INFO"`},
+		{name: "client error", status: http.StatusUnauthorized, level: `"level":"WARN"`},
+		{name: "server error", status: http.StatusServiceUnavailable, level: `"level":"ERROR"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+			Request(logger, RequestAttrs{Status: tt.status})
+
+			if got := buf.String(); !strings.Contains(got, tt.level) {
+				t.Fatalf("log level missing %s: %s", tt.level, got)
+			}
+		})
+	}
+}

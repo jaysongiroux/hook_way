@@ -190,6 +190,37 @@ func TestWebhookFanoutFailureReturnsUnavailableAndAllowsRetry(t *testing.T) {
 	}
 }
 
+func TestWebhookPublishFailureLogsUnderlyingError(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	pub := &fakePublisher{err: errors.New("rabbitmq queue declare: PRECONDITION_FAILED")}
+	srv := NewServer(testConfig(), pub, logger)
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	req.Header.Set("X-Request-ID", "req-paddle")
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	logText := logs.String()
+	for _, want := range []string{
+		`"msg":"publish failed"`,
+		`"endpoint":"paddle_billing"`,
+		`"destination_queue_id":"billing"`,
+		`"queue":"billing-events"`,
+		`"request_id":"req-paddle"`,
+		`rabbitmq queue declare: PRECONDITION_FAILED`,
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("log missing %s in %s", want, logText)
+		}
+	}
+}
+
 func TestWebhookFanoutHonorsConcurrencyLimit(t *testing.T) {
 	cfg := testConfig()
 	cfg.Server.FanoutConcurrency = 1
