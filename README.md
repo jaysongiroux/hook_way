@@ -52,13 +52,15 @@ Successful webhook response:
   "status": "accepted",
   "endpoint": "paddle_billing",
   "destinations": [
-    {"destination": "primary", "target": "paddle-webhooks"},
-    {"destination": "audit", "target": "paddle-audit-webhooks"}
+    {"destination_queue_id": "primary", "queue": "paddle-webhooks"},
+    {"destination_queue_id": "audit", "queue": "paddle-audit-webhooks"}
   ],
   "event_id": "018f...",
   "request_id": "req_..."
 }
 ```
+
+Endpoints can set `delivery_failure_policy`. `stop_on_failure` is the default and publishes routes sequentially until one fails. `skip_failed` attempts every route and returns `202` when at least one destination succeeds, with `failed_destinations` listing any skipped failures.
 
 ## Consuming Messages
 

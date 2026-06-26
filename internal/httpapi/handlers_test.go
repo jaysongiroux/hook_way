@@ -190,6 +190,129 @@ func TestWebhookFanoutFailureReturnsUnavailableAndAllowsRetry(t *testing.T) {
 	}
 }
 
+func TestWebhookDefaultStopOnFailureDoesNotAttemptLaterDestinations(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{err: errors.New("billing down"), errDestination: "billing"}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`{"event_type":"subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want only first destination attempted", pub.published)
+	}
+	if pub.published[0].destinationID != "billing" {
+		t.Fatalf("published destination = %q", pub.published[0].destinationID)
+	}
+}
+
+func TestWebhookSkipFailedReturnsAcceptedWithFailures(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.DeliveryFailurePolicy = "skip_failed"
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{err: errors.New("activity down"), errDestination: "activity"}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`{"event_type":"subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		Status       string `json:"status"`
+		Destinations []struct {
+			DestinationQueueID string `json:"destination_queue_id"`
+			Queue              string `json:"queue"`
+		} `json:"destinations"`
+		FailedDestinations []struct {
+			DestinationQueueID string `json:"destination_queue_id"`
+			Queue              string `json:"queue"`
+		} `json:"failed_destinations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "accepted" || len(res.Destinations) != 1 || res.Destinations[0].DestinationQueueID != "billing" {
+		t.Fatalf("bad successful destinations: %#v", res)
+	}
+	if len(res.FailedDestinations) != 1 || res.FailedDestinations[0].DestinationQueueID != "activity" {
+		t.Fatalf("bad failed destinations: %#v", res)
+	}
+}
+
+func TestWebhookSkipFailedReturnsUnavailableWhenAllDestinationsFail(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.DeliveryFailurePolicy = "skip_failed"
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{err: errors.New("all down")}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`{"event_type":"subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 2 {
+		t.Fatalf("published = %#v, want every destination attempted", pub.published)
+	}
+}
+
+func TestWebhookSkipFailedPartialSuccessKeepsReplayReservation(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.DeliveryFailurePolicy = "skip_failed"
+	endpoint.ReplayProtection = config.ReplayProtectionConfig{Enabled: true, TTL: time.Minute, MaxEntries: 10}
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{err: errors.New("activity down"), errDestination: "activity"}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`true`)
+	sig := signed("secret", time.Now(), body)
+
+	for i, want := range []int{http.StatusAccepted, http.StatusConflict} {
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+		req.Header.Set("Paddle-Signature", sig)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatalf("request %d status = %d want %d body = %s", i, rec.Code, want, rec.Body.String())
+		}
+	}
+}
+
 func TestWebhookPublishFailureLogsUnderlyingError(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
@@ -221,10 +344,49 @@ func TestWebhookPublishFailureLogsUnderlyingError(t *testing.T) {
 	}
 }
 
+func TestWebhookFanoutFailureDoesNotMaskRootCauseWithContextCanceled(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &contextCancelPublisher{rootErr: errors.New("rabbitmq queue declare: PRECONDITION_FAILED")}
+	srv := NewServer(cfg, pub, logger)
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	logText := logs.String()
+	var aggregateErr string
+	for _, line := range strings.Split(strings.TrimSpace(logText), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode log line: %v: %s", err, line)
+		}
+		if entry["msg"] == "publish failed" {
+			aggregateErr, _ = entry["error"].(string)
+		}
+	}
+	if aggregateErr != "rabbitmq queue declare: PRECONDITION_FAILED" {
+		t.Fatalf("aggregate error = %q, logs: %s", aggregateErr, logText)
+	}
+}
+
 func TestWebhookFanoutHonorsConcurrencyLimit(t *testing.T) {
 	cfg := testConfig()
 	cfg.Server.FanoutConcurrency = 1
 	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.DeliveryFailurePolicy = "skip_failed"
 	endpoint.Destinations = []config.EndpointDestinationConfig{
 		{Destination: "billing", Target: "billing-events"},
 		{Destination: "activity", Target: "activity-events"},
@@ -484,6 +646,21 @@ func (f *fakePublisher) Publish(ctx context.Context, destinationID, q string, ms
 }
 func (f *fakePublisher) Ready(ctx context.Context) error { return f.readyErr }
 func (f *fakePublisher) Close() error                    { return nil }
+
+type contextCancelPublisher struct {
+	rootErr error
+}
+
+func (p *contextCancelPublisher) Publish(ctx context.Context, destinationID, q string, msg queue.Message) error {
+	if destinationID == "billing" {
+		return p.rootErr
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (p *contextCancelPublisher) Ready(ctx context.Context) error { return nil }
+func (p *contextCancelPublisher) Close() error                    { return nil }
 
 func TestNewServerWarnsWhenEndpointUsesNoAuth(t *testing.T) {
 	var logs bytes.Buffer

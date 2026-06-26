@@ -323,7 +323,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "internal error"})
 		return
 	}
-	published, err := s.publishRoutes(r.Context(), endpointName, env, routes)
+	published, failed, err := s.publishRoutes(r.Context(), endpointName, endpoint, env, routes)
 	if err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable
@@ -343,6 +343,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		"status": "accepted", "endpoint": endpointName, "destinations": published,
 		"event_id": env.ID, "request_id": env.RequestID,
 	}
+	if len(failed) > 0 {
+		body["failed_destinations"] = failed
+	}
 	writeJSON(w, status, body)
 }
 
@@ -354,10 +357,28 @@ type publishRouteResult struct {
 	err           error
 }
 
-func (s *Server) publishRoutes(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+func (s *Server) publishRoutes(ctx context.Context, endpointName string, endpoint config.EndpointConfig, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
+	switch endpoint.EffectiveDeliveryFailurePolicy() {
+	case config.DeliveryFailurePolicySkipFailed:
+		return s.publishRoutesSkipFailed(ctx, endpointName, env, routes)
+	default:
+		return s.publishRoutesStopOnFailure(ctx, endpointName, env, routes)
+	}
+}
 
+func (s *Server) publishRoutesStopOnFailure(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
+	published := make([]map[string]string, 0, len(routes))
+	for _, route := range routes {
+		result := s.publishRoute(ctx, endpointName, env, route, 0)
+		if result.err != nil {
+			return nil, nil, result.err
+		}
+		published = append(published, map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue})
+	}
+	return published, nil, nil
+}
+
+func (s *Server) publishRoutesSkipFailed(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
 	workerCount := s.cfg.Server.FanoutConcurrencyLimit()
 	if workerCount > len(routes) {
 		workerCount = len(routes)
@@ -371,21 +392,7 @@ func (s *Server) publishRoutes(ctx context.Context, endpointName string, env web
 			defer wg.Done()
 			for index := range jobs {
 				route := routes[index]
-				msg := queue.Message{
-					SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
-					Endpoint: env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
-					Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
-					Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
-				}
-				start := time.Now()
-				err := s.publisher.Publish(ctx, route.Destination, route.Target, msg)
-				if err != nil {
-					cancel()
-				}
-				results <- publishRouteResult{
-					index: index, destinationID: route.Destination, queue: route.Target,
-					duration: time.Since(start), err: err,
-				}
+				results <- s.publishRoute(ctx, endpointName, env, route, index)
 			}
 		}()
 	}
@@ -396,24 +403,66 @@ func (s *Server) publishRoutes(ctx context.Context, endpointName string, env web
 	wg.Wait()
 	close(results)
 
-	published := make([]map[string]string, len(routes))
+	publishedByIndex := make([]map[string]string, len(routes))
+	failedByIndex := make([]map[string]string, len(routes))
 	var publishErr error
 	for result := range results {
-		status := "success"
 		if result.err != nil {
-			status = "failure"
-			publishErr = result.err
+			if publishErr == nil || errors.Is(publishErr, context.Canceled) {
+				publishErr = result.err
+			}
+			failedByIndex[result.index] = map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue}
+			continue
 		}
-		s.metrics.Publish(endpointName, result.destinationID, result.queue, status, result.duration)
-		if result.err == nil {
-			s.metrics.MessagePublished(endpointName, result.destinationID, result.queue)
-			published[result.index] = map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue}
+		publishedByIndex[result.index] = map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue}
+	}
+	published := compactRouteResults(publishedByIndex)
+	failed := compactRouteResults(failedByIndex)
+	if len(published) == 0 && publishErr != nil {
+		return nil, failed, publishErr
+	}
+	return published, failed, nil
+}
+
+func compactRouteResults(results []map[string]string) []map[string]string {
+	compacted := make([]map[string]string, 0, len(results))
+	for _, result := range results {
+		if result != nil {
+			compacted = append(compacted, result)
 		}
 	}
-	if publishErr != nil {
-		return nil, publishErr
+	return compacted
+}
+
+func (s *Server) publishRoute(ctx context.Context, endpointName string, env webhook.Envelope, route config.EndpointDestinationConfig, index int) publishRouteResult {
+	msg := queue.Message{
+		SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
+		Endpoint: env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
+		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
+		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
 	}
-	return published, nil
+	start := time.Now()
+	err := s.publisher.Publish(ctx, route.Destination, route.Target, msg)
+	duration := time.Since(start)
+	status := "success"
+	if err != nil {
+		status = "failure"
+		s.logger.Error("publish route failed",
+			"endpoint", endpointName,
+			"destination_queue_id", route.Destination,
+			"queue", route.Target,
+			"request_id", env.RequestID,
+			"trace_id", env.TraceID,
+			"error", err.Error(),
+		)
+	} else {
+		s.metrics.MessagePublished(endpointName, route.Destination, route.Target)
+	}
+	s.metrics.Publish(endpointName, route.Destination, route.Target, status, duration)
+	return publishRouteResult{
+		index: index, destinationID: route.Destination, queue: route.Target,
+		duration: duration, err: err,
+	}
 }
 
 var errBodyTooLarge = errors.New("body too large")

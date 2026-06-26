@@ -30,6 +30,9 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if cfg.Endpoints["paddle_billing"].Path != "/webhooks/paddle/billing" {
 		t.Fatalf("endpoint path = %q", cfg.Endpoints["paddle_billing"].Path)
 	}
+	if cfg.Endpoints["paddle_billing"].DeliveryFailurePolicy != "stop_on_failure" {
+		t.Fatalf("delivery failure policy = %q", cfg.Endpoints["paddle_billing"].DeliveryFailurePolicy)
+	}
 	if destinations[0].Target != "billing-events" {
 		t.Fatalf("endpoint target = %q", destinations[0].Target)
 	}
@@ -127,6 +130,21 @@ func TestLoadParsesEndpointFanoutDestinationObjects(t *testing.T) {
 	}
 }
 
+func TestLoadParsesDeliveryFailurePolicy(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	body := strings.Replace(validYAML(), `    destinations:`, `    delivery_failure_policy: "skip_failed"
+    destinations:`, 1)
+
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got := cfg.Endpoints["paddle_billing"].DeliveryFailurePolicy; got != "skip_failed" {
+		t.Fatalf("delivery failure policy = %q", got)
+	}
+}
+
 func TestLoadRejectsInvalidConfig(t *testing.T) {
 	tests := map[string]string{
 		"missing destination type":   replace(validYAML(), "type: \"rabbitmq\"", "type: \"\""),
@@ -160,11 +178,13 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		"invalid queue overflow":       replace(validYAML(), "overflow: \"reject-publish\"", "overflow: \"drop-head\""),
 		"invalid endpoint queue ttl":   replace(validYAML(), "message_ttl: \"72h\"", "message_ttl: \"later\""),
 		"invalid endpoint body limit":  replace(validYAML(), "max_body_bytes: 2097152", "max_body_bytes: -1"),
-		"invalid endpoint rate limit":  replace(validYAML(), "requests_per_minute: 60", "requests_per_minute: 0"),
-		"invalid replay ttl":           replace(validYAML(), "ttl: \"10m\"", "ttl: \"soon\""),
-		"invalid replay max entries":   replace(validYAML(), "max_entries: 50000", "max_entries: 0"),
-		"invalid ip allowlist":         replace(validYAML(), "- \"203.0.113.10\"", "- \"not an ip\""),
-		"invalid redacted header":      replace(validYAML(), "- \"Authorization\"", "- \"\""),
+		"invalid delivery failure policy": strings.Replace(validYAML(), `    destinations:`, `    delivery_failure_policy: "cancel_pending_on_failure"
+    destinations:`, 1),
+		"invalid endpoint rate limit": replace(validYAML(), "requests_per_minute: 60", "requests_per_minute: 0"),
+		"invalid replay ttl":          replace(validYAML(), "ttl: \"10m\"", "ttl: \"soon\""),
+		"invalid replay max entries":  replace(validYAML(), "max_entries: 50000", "max_entries: 0"),
+		"invalid ip allowlist":        replace(validYAML(), "- \"203.0.113.10\"", "- \"not an ip\""),
+		"invalid redacted header":     replace(validYAML(), "- \"Authorization\"", "- \"\""),
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -752,7 +772,7 @@ func TestValidateRejectsSQSOptionsOnNonSQSDestination(t *testing.T) {
 			"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
 				Destinations: []EndpointDestinationConfig{{
 					Destination: "primary", Target: "q",
-					SQSOptions:  SQSEndpointOptions{VisibilityTimeout: time.Second},
+					SQSOptions: SQSEndpointOptions{VisibilityTimeout: time.Second},
 				}}},
 		},
 	}
@@ -772,7 +792,7 @@ func TestValidateRejectsFIFOBlockOnNonFifoTarget(t *testing.T) {
 			"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
 				Destinations: []EndpointDestinationConfig{{
 					Destination: "jobs", Target: "plain-queue",
-					FIFO:        &FIFOConfig{GroupID: FIFOGroupIDConfig{Source: "endpoint"}},
+					FIFO: &FIFOConfig{GroupID: FIFOGroupIDConfig{Source: "endpoint"}},
 				}}},
 		},
 	}
