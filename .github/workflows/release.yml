@@ -26,13 +26,8 @@ jobs:
           go-version: "1.25.x"
           cache: true
 
-      - name: Validate example config
-        env:
-          RABBITMQ_URL: amqp://guest:guest@localhost:5672/
-          PADDLE_WEBHOOK_SECRET: ci-secret
-          GITHUB_WEBHOOK_SECRET: ci-secret
-          REVENUECAT_WEBHOOK_AUTH: ci-secret
-        run: go run ./cmd/hookway validate --config examples/config.yaml
+      - name: Validate example configs
+        run: make validate-examples
 
       - name: Unit tests
         run: make test
@@ -42,6 +37,9 @@ jobs:
 
       - name: RabbitMQ integration tests
         run: make integration-test
+
+      - name: AWS integration tests (LocalStack)
+        run: make aws-integration-test
 
       - name: Vet
         run: make lint

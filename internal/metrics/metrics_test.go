@@ -119,7 +119,7 @@ func TestMessagesEndpointsAndDestinationsMetricsAreExposed(t *testing.T) {
 	m.RequestDuration("paddle_billing", "billing", "billing-events", 202, 25*time.Millisecond)
 
 	m.RegisterConfig(config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"billing": {Type: "rabbitmq"},
 		},
 		Endpoints: map[string]config.EndpointConfig{
@@ -127,8 +127,8 @@ func TestMessagesEndpointsAndDestinationsMetricsAreExposed(t *testing.T) {
 				Enabled: true,
 				Path:    "/webhooks/paddle/billing",
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "billing",
-					Queue:              "billing-events",
+					Destination: "billing",
+					Target:      "billing-events",
 				}},
 			},
 		},
@@ -184,7 +184,7 @@ hookway_replay_rejected_total{destination_queue_id="billing",endpoint="paddle_bi
 func TestRegisterConfigExposesEndpointAndDestinationInfo(t *testing.T) {
 	m := New()
 	cfg := config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"activity": {Type: "rabbitmq"},
 			"billing":  {Type: "rabbitmq"},
 		},
@@ -193,8 +193,8 @@ func TestRegisterConfigExposesEndpointAndDestinationInfo(t *testing.T) {
 				Enabled: true,
 				Path:    "/webhooks/example",
 				Destinations: []config.EndpointDestinationConfig{
-					{DestinationQueueID: "billing", Queue: "example-webhooks"},
-					{DestinationQueueID: "activity", Queue: "example-audit-webhooks"},
+					{Destination: "billing", Target: "example-webhooks"},
+					{Destination: "activity", Target: "example-audit-webhooks"},
 				},
 			},
 		},

@@ -199,14 +199,14 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	status := http.StatusInternalServerError
-	endpointLabel, destinationLabel, queueLabel := "", "", ""
+	endpointLabel, destinationLabel, targetLabel := "", "", ""
 	defer func() {
-		s.metrics.HTTP(endpointLabel, destinationLabel, queueLabel, status)
+		s.metrics.HTTP(endpointLabel, destinationLabel, targetLabel, status)
 		if endpointLabel != "" {
-			s.metrics.RequestDuration(endpointLabel, destinationLabel, queueLabel, status, time.Since(start))
+			s.metrics.RequestDuration(endpointLabel, destinationLabel, targetLabel, status, time.Since(start))
 		}
 		hooklogging.Request(s.logger, hooklogging.RequestAttrs{
-			Method: r.Method, Path: r.URL.Path, Endpoint: endpointLabel, DestinationQueueID: destinationLabel, Queue: queueLabel,
+			Method: r.Method, Path: r.URL.Path, Endpoint: endpointLabel, DestinationQueueID: destinationLabel, Queue: targetLabel,
 			Status: status, Duration: time.Since(start), RequestID: requestIDFromContext(r.Context()),
 			TraceID: traceIDFromContext(r.Context()), Headers: r.Header,
 			HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
@@ -221,7 +221,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	endpointLabel = endpointName
 	destinationLabel = endpoint.DestinationLabel()
-	queueLabel = endpoint.QueueLabel()
+	targetLabel = endpoint.TargetLabel()
 	routes := endpoint.DestinationRoutes()
 	if r.Method != http.MethodPost {
 		status = http.StatusMethodNotAllowed
@@ -240,7 +240,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusServiceUnavailable
 			w.Header().Set("Retry-After", "1")
 			for _, route := range routes {
-				s.metrics.Saturated(endpointName, route.DestinationQueueID, route.Queue)
+				s.metrics.Saturated(endpointName, route.Destination, route.Target)
 			}
 			writeJSON(w, status, map[string]string{"error": "server busy"})
 			return
@@ -250,7 +250,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if !s.ipAllowed(sourceIP, endpoint.IPAllowlist) {
 		status = http.StatusForbidden
 		for _, route := range routes {
-			s.metrics.Forbidden(endpointName, route.DestinationQueueID, route.Queue)
+			s.metrics.Forbidden(endpointName, route.Destination, route.Target)
 		}
 		writeJSON(w, status, map[string]string{"error": "forbidden"})
 		return
@@ -258,7 +258,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if !s.limiterForEndpoint(endpointName).Allow(sourceIP, time.Now()) {
 		status = http.StatusTooManyRequests
 		for _, route := range routes {
-			s.metrics.RateLimited(endpointName, route.DestinationQueueID, route.Queue)
+			s.metrics.RateLimited(endpointName, route.Destination, route.Target)
 		}
 		writeJSON(w, status, map[string]string{"error": "rate limited"})
 		return
@@ -280,7 +280,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, route := range routes {
-		s.metrics.BodyBytes(endpointName, route.DestinationQueueID, route.Queue, len(rawBody))
+		s.metrics.BodyBytes(endpointName, route.Destination, route.Target, len(rawBody))
 	}
 	if err := s.verifiers[endpointName].Verify(r.Header.Get(endpoint.Auth.SignatureHeader), rawBody, time.Now()); err != nil {
 		status = http.StatusUnauthorized
@@ -298,7 +298,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		if !replayCache.Accept(endpointName, replayKey, time.Now()) {
 			status = http.StatusConflict
 			for _, route := range routes {
-				s.metrics.ReplayRejected(endpointName, route.DestinationQueueID, route.Queue)
+				s.metrics.ReplayRejected(endpointName, route.Destination, route.Target)
 			}
 			writeJSON(w, status, map[string]string{"error": "replay detected"})
 			return
@@ -310,7 +310,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	env, err := webhook.BuildEnvelopeWithOptions(r, webhook.EnvelopeOptions{
-		Endpoint: endpointName, DestinationQueueID: destinationLabel, Queue: queueLabel, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
+		Endpoint: endpointName, DestinationQueueID: destinationLabel, Queue: targetLabel, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
 		RequestID: requestIDFromContext(r.Context()), TraceID: traceIDFromContext(r.Context()),
 		AuthType: endpoint.Auth.Type, AuthScheme: defaultScheme(endpoint.Auth.Scheme),
 		IdempotencyKey:  s.idempotencyKey(r, endpoint, rawBody),
@@ -365,17 +365,17 @@ func (s *Server) publishRoutes(ctx context.Context, endpointName string, env web
 				route := routes[index]
 				msg := queue.Message{
 					SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
-					Endpoint: env.Endpoint, DestinationQueueID: route.DestinationQueueID, Queue: route.Queue, ReceivedAt: env.ReceivedAt,
+					Endpoint: env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
 					Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
 					Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
 				}
 				start := time.Now()
-				err := s.publisher.Publish(ctx, route.DestinationQueueID, route.Queue, msg)
+				err := s.publisher.Publish(ctx, route.Destination, route.Target, msg)
 				if err != nil {
 					cancel()
 				}
 				results <- publishRouteResult{
-					index: index, destinationID: route.DestinationQueueID, queue: route.Queue,
+					index: index, destinationID: route.Destination, queue: route.Target,
 					duration: time.Since(start), err: err,
 				}
 			}

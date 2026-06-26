@@ -265,7 +265,7 @@ func TestRabbitMQFactoryRoutesToMultipleBrokers(t *testing.T) {
 
 func configForRabbitMQIntegration(billingURL, activityURL string) config.Config {
 	return config.Config{
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"billing": {
 				Type: "rabbitmq",
 				RabbitMQ: config.RabbitMQConfig{
@@ -285,13 +285,13 @@ func configForRabbitMQIntegration(billingURL, activityURL string) config.Config 
 			"paddle_billing": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "billing", Queue: "billing-events", CreateQueue: true,
+					Destination: "billing", Target: "billing-events", Create: true,
 				}},
 			},
 			"github_events": {
 				Enabled: true,
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "activity", Queue: "activity-events", CreateQueue: true,
+					Destination: "activity", Target: "activity-events", Create: true,
 				}},
 			},
 		},

@@ -1,0 +1,59 @@
+# examples/auth/jwt.yaml
+#
+# Reference config demonstrating the jwt auth strategy.
+# Three schemes are registered under this type:
+#
+#   jwt_rs256  — RSA-signed JWT (RS256); secret is the PEM-encoded public key
+#   jwt_hs256  — HMAC-signed JWT (HS256); secret is the shared symmetric key
+#   jwt_es256  — ECDSA-signed JWT (ES256); secret is the PEM-encoded public key
+#
+# The alg header is pinned to the declared scheme — algorithm-confusion attacks
+# (e.g. signing HS256 with the RSA public key bytes) are rejected at startup.
+#
+# Optional claims:
+#   expected_issuer   — enforces the `iss` claim
+#   expected_audience — enforces the `aud` claim
+#   body_hash_claim   — claim name whose value must equal the hex SHA-256 of the body;
+#                       binds the token to the exact request body
+#
+# timestamp_tolerance is used as JWT clock leeway (exp/nbf). It is optional
+# for JWT schemes (unlike HMAC timestamped schemes where it is required).
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  primary:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+endpoints:
+  # RS256: Bearer token signed with an RSA private key. Hookway verifies with
+  # the matching PEM-encoded RSA public key.
+  # Set JWT_PUBLIC_KEY to the PEM-encoded RSA public key from your identity provider.
+  jwt_webhook:
+    enabled: true
+    path: "/webhooks/jwt"
+    destinations:
+      - destination: "primary"
+        target: "jwt-events"
+        create: true
+    auth:
+      type: "jwt"
+      scheme: "jwt_rs256"
+      secret: "${JWT_PUBLIC_KEY}"
+      signature_header: "Authorization"
+      # Clock leeway for exp/nbf checks (optional for JWT schemes).
+      timestamp_tolerance: "1m"
+      # Enforce iss and aud claims to prevent token misuse across services.
+      expected_issuer: "https://your-idp.example.com"
+      expected_audience: "hookway"
+      # Bind the token to the request body: the claim must equal hex(SHA-256(body)).
+      body_hash_claim: "body_sha256"

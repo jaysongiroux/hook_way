@@ -1,0 +1,43 @@
+# examples/destinations/sns.yaml
+#
+# Reference config for an AWS SNS destination. Hookway publishes each
+# webhook event envelope to an SNS topic. From there, SNS fan-out delivers
+# to SQS queues, Lambda functions, HTTP endpoints, or any other subscriber.
+#
+# Credentials: omit access_key_id / secret_access_key to use the default
+# AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to
+# http://localhost:4566 to use LocalStack during development.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  alerts:
+    type: sns
+    sns:
+      region: "us-east-1"
+      # Uncomment to override the SNS endpoint, e.g. for LocalStack:
+      # endpoint: "${AWS_ENDPOINT:-}"
+      # Omit both of the following to use the default AWS credential chain:
+      # access_key_id: "${AWS_ACCESS_KEY_ID:-}"
+      # secret_access_key: "${AWS_SECRET_ACCESS_KEY:-}"
+
+endpoints:
+  order_events:
+    enabled: true
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "alerts"
+        # Target is the SNS topic name. Hookway will publish to this topic.
+        target: "order-alerts"
+        create: true                        # auto-create the topic at startup
+        sns_options:
+          # Optional message subject (visible in email subscriptions and console).
+          subject: "order event"
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_ts_colon"
+      secret: "${ORDERS_WEBHOOK_SECRET}"
+      signature_header: "X-Signature"
+      timestamp_tolerance: "5m"

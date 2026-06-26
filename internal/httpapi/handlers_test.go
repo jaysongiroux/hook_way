@@ -69,7 +69,7 @@ func TestWebhookRoutesToEndpointDestination(t *testing.T) {
 	cfg.Endpoints["github_events"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/github",
 		Destinations: []config.EndpointDestinationConfig{{
-			DestinationQueueID: "activity", Queue: "github-events",
+			Destination: "activity", Target: "github-events",
 		}},
 		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "hmac_sha256_hex", Secret: "secret", SignatureHeader: "X-Hub-Signature-256"},
 	}
@@ -97,8 +97,8 @@ func TestWebhookFansOutToEndpointDestinations(t *testing.T) {
 	cfg := testConfig()
 	endpoint := cfg.Endpoints["paddle_billing"]
 	endpoint.Destinations = []config.EndpointDestinationConfig{
-		{DestinationQueueID: "billing", Queue: "billing-events"},
-		{DestinationQueueID: "activity", Queue: "activity-events"},
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
 	}
 	cfg.Endpoints["paddle_billing"] = endpoint
 	pub := &fakePublisher{}
@@ -146,8 +146,8 @@ func TestWebhookFanoutFailureReturnsUnavailableAndAllowsRetry(t *testing.T) {
 	cfg := testConfig()
 	endpoint := cfg.Endpoints["paddle_billing"]
 	endpoint.Destinations = []config.EndpointDestinationConfig{
-		{DestinationQueueID: "billing", Queue: "billing-events"},
-		{DestinationQueueID: "activity", Queue: "activity-events"},
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
 	}
 	endpoint.ReplayProtection = config.ReplayProtectionConfig{Enabled: true, TTL: time.Minute, MaxEntries: 10}
 	cfg.Endpoints["paddle_billing"] = endpoint
@@ -195,8 +195,8 @@ func TestWebhookFanoutHonorsConcurrencyLimit(t *testing.T) {
 	cfg.Server.FanoutConcurrency = 1
 	endpoint := cfg.Endpoints["paddle_billing"]
 	endpoint.Destinations = []config.EndpointDestinationConfig{
-		{DestinationQueueID: "billing", Queue: "billing-events"},
-		{DestinationQueueID: "activity", Queue: "activity-events"},
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
 	}
 	cfg.Endpoints["paddle_billing"] = endpoint
 	pub := &fakePublisher{delay: 10 * time.Millisecond}
@@ -461,7 +461,7 @@ func TestNewServerWarnsWhenEndpointUsesNoAuth(t *testing.T) {
 	cfg.Endpoints["open_webhook"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/open",
 		Destinations: []config.EndpointDestinationConfig{{
-			DestinationQueueID: "billing", Queue: "open-events",
+			Destination: "billing", Target: "open-events",
 		}},
 		Auth: config.AuthConfig{Type: "no_auth", Scheme: "no_auth"},
 	}
@@ -493,7 +493,7 @@ func testConfig() config.Config {
 		Security:  config.SecurityConfig{RequestIDHeader: "X-Request-ID"},
 		RateLimit: config.RateLimitConfig{Enabled: false, RequestsPerMinute: 120, Burst: 20, KeyBy: "ip"},
 		Metrics:   config.MetricsConfig{Enabled: true, Path: "/metrics"},
-		MessageQueues: map[string]config.MessageQueueConfig{
+		Destinations: map[string]config.DestinationConfig{
 			"billing":  {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://guest:guest@localhost:5672/", Exchange: "hookway.billing", ExchangeType: "direct", PublishTimeout: time.Second}},
 			"activity": {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://guest:guest@localhost:5673/", Exchange: "hookway.activity", ExchangeType: "direct", PublishTimeout: time.Second}},
 		},
@@ -501,7 +501,7 @@ func testConfig() config.Config {
 			"paddle_billing": {
 				Enabled: true, Path: "/webhooks/paddle/billing",
 				Destinations: []config.EndpointDestinationConfig{{
-					DestinationQueueID: "billing", Queue: "billing-events",
+					Destination: "billing", Target: "billing-events",
 				}},
 				Auth: config.AuthConfig{Type: "hmac_sha256", Secret: "secret", SignatureHeader: "Paddle-Signature", TimestampTolerance: 5 * time.Minute},
 			},
@@ -514,7 +514,7 @@ func TestServerAcceptsValidHMACSHA256TSDotSignatureAndRejectsTampered(t *testing
 	cfg.Endpoints["stripe_billing"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/stripe/billing",
 		Destinations: []config.EndpointDestinationConfig{{
-			DestinationQueueID: "billing", Queue: "stripe-events",
+			Destination: "billing", Target: "stripe-events",
 		}},
 		Auth: config.AuthConfig{Type: "hmac_sha256", Scheme: "hmac_sha256_ts_dot", Secret: "whsec", SignatureHeader: "Stripe-Signature", TimestampTolerance: 5 * time.Minute},
 	}
@@ -558,7 +558,7 @@ func TestServerAuthenticatesJWTAndEnforcesBodyHash(t *testing.T) {
 	cfg.Endpoints["jwt_webhook"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/jwt",
 		Destinations: []config.EndpointDestinationConfig{{
-			DestinationQueueID: "billing", Queue: "jwt-events",
+			Destination: "billing", Target: "jwt-events",
 		}},
 		Auth: config.AuthConfig{
 			Type: "jwt", Scheme: "jwt_hs256", Secret: "shared-secret",
@@ -603,7 +603,7 @@ func TestServerRejectsMissingJWT(t *testing.T) {
 	cfg := testConfig()
 	cfg.Endpoints["jwt_webhook"] = config.EndpointConfig{
 		Enabled: true, Path: "/webhooks/jwt",
-		Destinations: []config.EndpointDestinationConfig{{DestinationQueueID: "billing", Queue: "jwt-events"}},
+		Destinations: []config.EndpointDestinationConfig{{Destination: "billing", Target: "jwt-events"}},
 		Auth:         config.AuthConfig{Type: "jwt", Scheme: "jwt_hs256", Secret: "shared-secret", SignatureHeader: "Authorization"},
 	}
 	srv := NewServer(cfg, &fakePublisher{}, slog.Default())

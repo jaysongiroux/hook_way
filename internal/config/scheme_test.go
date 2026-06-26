@@ -59,8 +59,8 @@ func TestRabbitMQTLSCABlockIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ca-only tls block should be valid: %v", err)
 	}
-	if cfg.MessageQueues["billing"].RabbitMQ.TLS.CACert != "/etc/hookway/ca.pem" {
-		t.Fatalf("ca_cert = %q", cfg.MessageQueues["billing"].RabbitMQ.TLS.CACert)
+	if cfg.Destinations["billing"].RabbitMQ.TLS.CACert != "/etc/hookway/ca.pem" {
+		t.Fatalf("ca_cert = %q", cfg.Destinations["billing"].RabbitMQ.TLS.CACert)
 	}
 }
 
