@@ -74,20 +74,35 @@ Published envelope compatibility is governed by `schema_version`: consumers may 
 
 RabbitMQ management UI is available at `http://localhost:15672` in the example compose file. Default credentials are `guest` / `guest`.
 
+### AWS Destination Drift Handling
+
+AWS destinations (SQS and SNS) support the `on_existing_conflict` field to handle cases where a queue or topic already exists with attributes that differ from the configuration:
+
+- `reconcile` (default): Hookway will edit the existing resource's mutable attributes to match the configuration. This requires `sqs:SetQueueAttributes` (for SQS) or `sns:SetTopicAttributes` (for SNS) IAM permissions.
+- `warn`: Log the attribute difference and use the existing resource unchanged, without updating it.
+- `error`: Fail startup if any configured attribute differs from the existing resource.
+
+Immutable conflicts (e.g., FIFO vs standard queue type) always fail startup regardless of the `on_existing_conflict` setting.
+
+**IAM Note:** The default `reconcile` mode requires additional IAM permissions (`sqs:SetQueueAttributes` or `sns:SetTopicAttributes`). If operating under least-privilege IAM policies that cannot grant these permissions, set `on_existing_conflict: warn` or `on_existing_conflict: error` instead.
+
 ## Development
 
 ```bash
-make test
-make test-race
-make integration-test
+make test                  # unit tests only (no Docker)
+make test-race             # unit tests with the race detector
+make integration-test      # RabbitMQ integration tests (testcontainers)
+make aws-integration-test  # SQS/SNS integration tests (LocalStack)
+make test-all              # everything: unit + RabbitMQ + AWS integration
+make validate-examples     # validate every config under examples/
 make lint
 make docker-build
 make vuln-scan
 ```
 
-`make integration-test` uses testcontainers and requires Docker.
+`make integration-test`, `make aws-integration-test`, and `make test-all` use testcontainers and require Docker.
 
-Release checks run config validation, unit tests, race tests, RabbitMQ integration tests, vet, Docker build, and image vulnerability scanning in GitHub Actions.
+Release checks run example-config validation, unit tests, race tests, RabbitMQ and AWS (LocalStack) integration tests, vet, Docker build, and image vulnerability scanning in GitHub Actions.
 
 On non-PR runs, the release workflow publishes the Docker image to Docker Hub. In GitHub, set Actions repository secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_NAMESPACE`, `DOCKERHUB_IMAGE_NAME`, and `DOCKERHUB_TOKEN`. `DOCKERHUB_USERNAME` is the Docker Hub account that owns the access token; `DOCKERHUB_NAMESPACE` is the user or organization that owns the image repository. Pushes to `main` publish `latest`; Git tags such as `v1.0.0` publish matching Docker tags. The workflow also syncs `docs/dockerhub/README.md` to the Docker Hub repository description. Docker Hub description sync requires `DOCKERHUB_TOKEN` to have read/write/delete scope and admin access to the Docker Hub repository.
 

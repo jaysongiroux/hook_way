@@ -15,6 +15,12 @@ server:
 destinations:
   alerts:
     type: sns
+    # How to handle an existing topic whose attributes differ from this config:
+    #   reconcile (default): edit the topic's mutable attributes to match (needs sns:SetTopicAttributes)
+    #   warn: log the difference and use the existing topic unchanged
+    #   error: fail startup on any difference
+    # Immutable conflicts (topic type, e.g. FIFO) always fail startup regardless.
+    on_existing_conflict: reconcile
     sns:
       region: "us-east-1"
       # Uncomment to override the SNS endpoint, e.g. for LocalStack:

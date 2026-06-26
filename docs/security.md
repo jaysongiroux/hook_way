@@ -1,18 +1,26 @@
 # Security
 
-Hookway verifies webhook authentication before publishing to RabbitMQ. Auth **type** selects the verifier family (`hmac_sha256` or `header_exact`); **scheme** selects the header layout within that family. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path.
+Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, or SNS). Auth **type** selects the verifier family (`hmac_sha256`, `header_exact`, `jwt`, or `no_auth`); **scheme** selects the header layout within that family. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The full scheme list lives in [Configuration](configuration.md#endpoints).
 
 ## Auth Schemes
 
-Each endpoint builds its verifier once at startup from `auth.type` and `auth.scheme` (HMAC schemes default to `paddle` when omitted). An unknown or mismatched type/scheme pair fails closed — the endpoint rejects every request rather than accepting unverified traffic.
+Each endpoint builds its verifier once at startup from `auth.type` and `auth.scheme` (HMAC schemes default to `hmac_sha256_ts_colon` when omitted). An unknown or mismatched type/scheme pair fails closed — the endpoint rejects every request rather than accepting unverified traffic.
 
-### `paddle` (timestamped, `hmac_sha256`)
+### `hmac_sha256_ts_colon` (timestamped, `hmac_sha256`)
 
-Hookway reads the exact raw request body once, reads the configured `signature_header`, extracts one `ts` value and one `h1` value, builds `ts + ":" + raw_body`, computes HMAC-SHA256 using the configured endpoint secret, hex-encodes it, and compares it to `h1` using `hmac.Equal`. Requests outside `timestamp_tolerance` are rejected with `401 Unauthorized`. Empty secrets, non-positive timestamp tolerances, malformed signatures, duplicate signature keys, and non-SHA256-length HMAC values fail closed.
+The default HMAC scheme (used by Paddle's `Paddle-Signature`). Hookway reads the exact raw request body once, reads the configured `signature_header`, extracts one `ts` value and one `h1` value, builds `ts + ":" + raw_body`, computes HMAC-SHA256 using the configured endpoint secret, hex-encodes it, and compares it to `h1` using `hmac.Equal`. Requests outside `timestamp_tolerance` are rejected with `401 Unauthorized`. Empty secrets, non-positive timestamp tolerances, malformed signatures, duplicate signature keys, and non-SHA256-length HMAC values fail closed.
 
-### `github` (`hmac_sha256`)
+### `hmac_sha256_hex` (`hmac_sha256`)
 
-Hookway reads the `X-Hub-Signature-256` header shaped like `sha256=<hex>`, computes HMAC-SHA256 over the exact raw body with the endpoint secret, and compares using `hmac.Equal`. GitHub does not sign a timestamp, so `timestamp_tolerance` is not used. A missing/short/tampered signature or empty secret fails closed.
+Prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (used by GitHub's `X-Hub-Signature-256: sha256=<hex>`). Hookway computes HMAC-SHA256 over the exact raw body with the endpoint secret and compares using `hmac.Equal`. There is no signed timestamp, so `timestamp_tolerance` is not used. A missing/short/tampered signature or empty secret fails closed.
+
+### `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`)
+
+Verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm, so a token whose `alg` does not match (including `alg: none`) is rejected. `secret` holds the HMAC secret (`jwt_hs256`) or a PEM public key (`jwt_rs256`/`jwt_es256`). `exp` is required and `timestamp_tolerance` is the clock-skew leeway; optional `expected_issuer`/`expected_audience`/`body_hash_claim` enforce `iss`/`aud`/body binding.
+
+### `no_auth` (`no_auth`)
+
+Accepts every request without verification. Hookway logs a startup warning for any endpoint using it. Reserve it for trusted internal traffic where authentication is enforced upstream.
 
 ### `exact` (`header_exact`)
 
@@ -87,10 +95,10 @@ Logs include request method, path, endpoint, destination queue id, queue, status
 
 - Terminate TLS at a trusted load balancer or reverse proxy. Enable `trusted_proxy_headers` only with `trusted_proxies` set to your proxy/ingress CIDRs so forwarded client IPs cannot be spoofed.
 - Keep RabbitMQ durable exchanges/queues enabled for production and configure dead-letter queues for failed consumers.
-- Use `amqps://` for broker connections. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `message_queues.<id>.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
+- Use `amqps://` for broker connections. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `destinations.<id>.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
 - Run at least two replicas, but treat rate limiting and replay protection as process-local until a shared backend is added.
 - Keep `server.max_body_bytes` tight per endpoint and set `server.max_inflight_requests` to bound memory and shed load under flood.
-- Tune `message_queues.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
+- Tune `destinations.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
 - Tune `server.fanout_concurrency` to bound per-request goroutines and concurrent publishes across fan-out routes (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.

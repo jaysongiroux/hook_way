@@ -150,6 +150,112 @@ func TestAWSSNSToSQSFanout(t *testing.T) {
 	t.Fatal("SNS message was not delivered to the subscribed SQS queue")
 }
 
+func TestAWSSQSReconcileUpdatesExistingQueue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	endpoint := startLocalStack(t)
+	ctx := context.Background()
+	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := sqs.NewFromConfig(awsCfg)
+
+	// Pre-create a queue with a visibility timeout that differs from config.
+	if _, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName:  aws.String("drift-queue"),
+		Attributes: map[string]string{"VisibilityTimeout": "60"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// reconcile policy: should update VisibilityTimeout to 30.
+	if _, err := NewSQSPublisher(ctx, client, SQSConfig{
+		Policy:  ConflictReconcile,
+		Targets: []SQSTarget{{Name: "drift-queue", Create: false, VisibilityTimeout: 30 * time.Second}},
+	}); err != nil {
+		t.Fatalf("NewSQSPublisher: %v", err)
+	}
+
+	urlOut, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String("drift-queue")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       urlOut.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameVisibilityTimeout},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attrs.Attributes["VisibilityTimeout"] != "30" {
+		t.Fatalf("reconcile did not update VisibilityTimeout: got %q", attrs.Attributes["VisibilityTimeout"])
+	}
+}
+
+func TestAWSSQSWarnLeavesExistingQueueUnchanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	endpoint := startLocalStack(t)
+	ctx := context.Background()
+	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := sqs.NewFromConfig(awsCfg)
+
+	if _, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName:  aws.String("warn-queue"),
+		Attributes: map[string]string{"VisibilityTimeout": "60"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSQSPublisher(ctx, client, SQSConfig{
+		Policy:  ConflictWarn,
+		Targets: []SQSTarget{{Name: "warn-queue", Create: false, VisibilityTimeout: 30 * time.Second}},
+	}); err != nil {
+		t.Fatalf("NewSQSPublisher: %v", err)
+	}
+	urlOut, _ := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String("warn-queue")})
+	attrs, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       urlOut.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameVisibilityTimeout},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attrs.Attributes["VisibilityTimeout"] != "60" {
+		t.Fatalf("warn must not modify the queue; got VisibilityTimeout=%q", attrs.Attributes["VisibilityTimeout"])
+	}
+}
+
+func TestAWSSQSErrorPolicyFailsOnDrift(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	endpoint := startLocalStack(t)
+	ctx := context.Background()
+	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := sqs.NewFromConfig(awsCfg)
+	if _, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{
+		QueueName:  aws.String("error-queue"),
+		Attributes: map[string]string{"VisibilityTimeout": "60"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSQSPublisher(ctx, client, SQSConfig{
+		Policy:  ConflictError,
+		Targets: []SQSTarget{{Name: "error-queue", Create: false, VisibilityTimeout: 30 * time.Second}},
+	}); err == nil {
+		t.Fatal("error policy should fail on drift against the live queue")
+	}
+}
+
 func snsFromConfig(cfg aws.Config) *snsservice.Client {
 	return snsservice.NewFromConfig(cfg)
 }

@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/service/sns"
@@ -19,6 +20,7 @@ type FactoryOptions struct {
 	SQSConnector      SQSConnector
 	SNSConnector      SNSConnector
 	Metrics           RabbitMQMetrics
+	Logger            *slog.Logger
 }
 
 type Factory struct {
@@ -26,6 +28,7 @@ type Factory struct {
 	sqsConnector      SQSConnector
 	snsConnector      SNSConnector
 	metrics           RabbitMQMetrics
+	logger            *slog.Logger
 }
 
 func NewFactory(opts FactoryOptions) *Factory {
@@ -60,6 +63,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		sqsConnector:      sqsConnector,
 		snsConnector:      snsConnector,
 		metrics:           opts.Metrics,
+		logger:            opts.Logger,
 	}
 }
 
@@ -94,6 +98,9 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				Endpoint:        destination.SQS.Endpoint,
 				AccessKeyID:     destination.SQS.AccessKeyID,
 				SecretAccessKey: destination.SQS.SecretAccessKey,
+				DestinationID:   id,
+				Policy:          toConflictPolicy(destination.OnExistingConflict),
+				Logger:          f.logger,
 				Targets:         collectSQSTargets(cfg, id),
 			})
 			if err != nil {
@@ -106,6 +113,9 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				Endpoint:        destination.SNS.Endpoint,
 				AccessKeyID:     destination.SNS.AccessKeyID,
 				SecretAccessKey: destination.SNS.SecretAccessKey,
+				DestinationID:   id,
+				Policy:          toConflictPolicy(destination.OnExistingConflict),
+				Logger:          f.logger,
 				Targets:         collectSNSTargets(cfg, id),
 			})
 			if err != nil {

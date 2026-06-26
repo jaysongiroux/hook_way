@@ -49,10 +49,11 @@ type RabbitMQQueueOptions struct {
 }
 
 type DestinationConfig struct {
-	Type     string
-	RabbitMQ RabbitMQConfig
-	SQS      SQSConfig
-	SNS      SNSConfig
+	Type               string
+	OnExistingConflict string
+	RabbitMQ           RabbitMQConfig
+	SQS                SQSConfig
+	SNS                SNSConfig
 }
 
 type SQSConfig struct {
@@ -78,7 +79,8 @@ type rawRabbitMQQueueOptions struct {
 }
 
 type rawDestinationConfig struct {
-	Type     string `yaml:"type"`
+	Type               string `yaml:"type"`
+	OnExistingConflict string `yaml:"on_existing_conflict"`
 	RabbitMQ struct {
 		URL               string                  `yaml:"url"`
 		Exchange          string                  `yaml:"exchange"`
@@ -121,6 +123,27 @@ type rawDestinationConfig struct {
 
 func convertDestination(fieldPrefix string, raw rawDestinationConfig) (DestinationConfig, []ValidationIssue) {
 	var issues []ValidationIssue
+	policy := raw.OnExistingConflict
+	switch raw.Type {
+	case "sqs", "sns":
+		switch policy {
+		case "", "error", "warn", "reconcile":
+			// ok
+		default:
+			issues = append(issues, validationError(fieldPrefix+".on_existing_conflict",
+				fmt.Sprintf("%q is not supported", policy),
+				"use \"error\", \"warn\", or \"reconcile\""))
+		}
+		if policy == "" {
+			policy = "reconcile"
+		}
+	default: // rabbitmq and anything else
+		if policy != "" {
+			issues = append(issues, validationError(fieldPrefix+".on_existing_conflict",
+				"only valid for sqs/sns destinations",
+				"remove on_existing_conflict or point the destination at sqs/sns"))
+		}
+	}
 	publish, issue := parseDuration(fieldPrefix+".rabbitmq.publish_timeout", raw.RabbitMQ.PublishTimeout, 5*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
@@ -128,7 +151,8 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	queueDefaults, queueDefaultIssues := convertQueueOptions(fieldPrefix+".rabbitmq.queue_defaults", raw.RabbitMQ.QueueDefaults)
 	issues = append(issues, queueDefaultIssues...)
 	return DestinationConfig{
-		Type: raw.Type,
+		Type:               raw.Type,
+		OnExistingConflict: policy,
 		RabbitMQ: RabbitMQConfig{
 			URL: raw.RabbitMQ.URL, Exchange: raw.RabbitMQ.Exchange,
 			ExchangeType: raw.RabbitMQ.ExchangeType, Durable: raw.RabbitMQ.Durable,

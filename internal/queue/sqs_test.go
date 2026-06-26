@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -13,19 +13,21 @@ import (
 )
 
 type fakeSQS struct {
-	created    map[string]map[string]string // name -> attributes
-	sent       []*sqs.SendMessageInput
-	urls       map[string]string
-	attrErrors map[string]error            // url -> error returned by GetQueueAttributes
-	queueAttrs map[string]map[string]string // url -> attributes
+	created  map[string]map[string]string
+	sent     []*sqs.SendMessageInput
+	urls     map[string]string
+	attrs    map[string]map[string]string // url -> attributes
+	setCalls []*sqs.SetQueueAttributesInput
+	// attrErrors is kept for Ready probe tests
+	attrErrors map[string]error // url -> error returned by GetQueueAttributes
 }
 
 func newFakeSQS() *fakeSQS {
 	return &fakeSQS{
 		created:    map[string]map[string]string{},
 		urls:       map[string]string{},
+		attrs:      map[string]map[string]string{},
 		attrErrors: map[string]error{},
-		queueAttrs: map[string]map[string]string{},
 	}
 }
 
@@ -42,6 +44,7 @@ func (f *fakeSQS) CreateQueue(ctx context.Context, in *sqs.CreateQueueInput, _ .
 	f.created[name] = in.Attributes
 	url := "http://localstack/000000000000/" + name
 	f.urls[name] = url
+	f.attrs[url] = in.Attributes
 	return &sqs.CreateQueueOutput{QueueUrl: aws.String(url)}, nil
 }
 
@@ -49,13 +52,19 @@ func (f *fakeSQS) GetQueueAttributes(ctx context.Context, in *sqs.GetQueueAttrib
 	if err, ok := f.attrErrors[aws.ToString(in.QueueUrl)]; ok {
 		return nil, err
 	}
-	attrs := map[string]string{}
-	if m, ok := f.queueAttrs[aws.ToString(in.QueueUrl)]; ok {
-		for k, v := range m {
-			attrs[k] = v
-		}
+	return &sqs.GetQueueAttributesOutput{Attributes: f.attrs[aws.ToString(in.QueueUrl)]}, nil
+}
+
+func (f *fakeSQS) SetQueueAttributes(ctx context.Context, in *sqs.SetQueueAttributesInput, _ ...func(*sqs.Options)) (*sqs.SetQueueAttributesOutput, error) {
+	f.setCalls = append(f.setCalls, in)
+	url := aws.ToString(in.QueueUrl)
+	if f.attrs[url] == nil {
+		f.attrs[url] = map[string]string{}
 	}
-	return &sqs.GetQueueAttributesOutput{Attributes: attrs}, nil
+	for k, v := range in.Attributes {
+		f.attrs[url][k] = v
+	}
+	return &sqs.SetQueueAttributesOutput{}, nil
 }
 
 func (f *fakeSQS) SendMessage(ctx context.Context, in *sqs.SendMessageInput, _ ...func(*sqs.Options)) (*sqs.SendMessageOutput, error) {
@@ -63,10 +72,19 @@ func (f *fakeSQS) SendMessage(ctx context.Context, in *sqs.SendMessageInput, _ .
 	return &sqs.SendMessageOutput{MessageId: aws.String("m-1")}, nil
 }
 
+// seedQueue registers a pre-existing queue with the given attributes.
+func (f *fakeSQS) seedQueue(name string, attrs map[string]string) string {
+	url := "http://localstack/000000000000/" + name
+	f.urls[name] = url
+	f.attrs[url] = attrs
+	return url
+}
+
 func TestSQSPublisherCreatesQueueAndSends(t *testing.T) {
 	fake := newFakeSQS()
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
 		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
 		Targets: []SQSTarget{{Name: "billing-jobs", Create: true}},
 	})
 	if err != nil {
@@ -96,7 +114,8 @@ func TestSQSPublisherCreatesQueueAndSends(t *testing.T) {
 func TestSQSPublisherFIFOSetsGroupAndDedup(t *testing.T) {
 	fake := newFakeSQS()
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
-		Region: "us-east-1",
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
 		Targets: []SQSTarget{{
 			Name: "billing-jobs.fifo", Create: true,
 			FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupUseIdempotencyKey: true},
@@ -121,7 +140,11 @@ func TestSQSPublisherFIFOSetsGroupAndDedup(t *testing.T) {
 func TestSQSPublisherUnknownTargetErrors(t *testing.T) {
 	fake := newFakeSQS()
 	fake.urls["known"] = "http://localstack/000000000000/known" // seed BEFORE construction
-	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{Region: "us-east-1", Targets: []SQSTarget{{Name: "known"}}})
+	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SQSTarget{{Name: "known"}},
+	})
 	if err != nil {
 		t.Fatalf("NewSQSPublisher: %v", err)
 	}
@@ -136,6 +159,7 @@ func TestSQSPublisherFailsFastOnMissingQueue(t *testing.T) {
 	fake := newFakeSQS() // empty — no URLs seeded
 	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
 		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
 		Targets: []SQSTarget{{Name: "missing", Create: false}},
 	})
 	if err == nil {
@@ -153,7 +177,8 @@ func TestSQSPublisherReadyProbesAllTargets(t *testing.T) {
 	fake.urls["q2"] = "http://localstack/000000000000/q2"
 
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
-		Region: "us-east-1",
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
 		Targets: []SQSTarget{
 			{Name: "q1"},
 			{Name: "q2"},
@@ -175,14 +200,16 @@ func TestSQSPublisherReadyProbesAllTargets(t *testing.T) {
 	}
 }
 
+// TestSQSPublisherFIFOCreateFalseRequiresContentBasedDedup tests that when a
+// pre-existing FIFO queue is missing ContentBasedDeduplication and Policy is
+// ConflictError, NewSQSPublisher fails with a drift error.
 func TestSQSPublisherFIFOCreateFalseRequiresContentBasedDedup(t *testing.T) {
 	fake := newFakeSQS()
-	url := "http://localstack/000000000000/orders.fifo"
-	fake.urls["orders.fifo"] = url
-	// queueAttrs not set — ContentBasedDeduplication absent
+	fake.seedQueue("orders.fifo", map[string]string{"FifoQueue": "true"}) // CBD absent
 
 	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
 		Region: "us-east-1",
+		Policy: ConflictError,
 		Targets: []SQSTarget{{
 			Name:   "orders.fifo",
 			Create: false,
@@ -192,19 +219,21 @@ func TestSQSPublisherFIFOCreateFalseRequiresContentBasedDedup(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected constructor to fail when ContentBasedDeduplication is not enabled")
 	}
-	if !strings.Contains(err.Error(), "ContentBasedDeduplication") {
-		t.Fatalf("expected ContentBasedDeduplication in error, got: %v", err)
+	if !containsAny(err.Error(), "ContentBasedDeduplication", "differs") {
+		t.Fatalf("expected drift error mentioning ContentBasedDeduplication, got: %v", err)
 	}
 }
 
 func TestSQSPublisherFIFOCreateFalseWithContentBasedDedupSucceeds(t *testing.T) {
 	fake := newFakeSQS()
-	url := "http://localstack/000000000000/orders.fifo"
-	fake.urls["orders.fifo"] = url
-	fake.queueAttrs[url] = map[string]string{"ContentBasedDeduplication": "true"}
+	fake.seedQueue("orders.fifo", map[string]string{
+		"FifoQueue":                 "true",
+		"ContentBasedDeduplication": "true",
+	})
 
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
 		Region: "us-east-1",
+		Policy: ConflictReconcile,
 		Targets: []SQSTarget{{
 			Name:   "orders.fifo",
 			Create: false,
@@ -215,4 +244,83 @@ func TestSQSPublisherFIFOCreateFalseWithContentBasedDedupSucceeds(t *testing.T) 
 		t.Fatalf("expected success when ContentBasedDeduplication enabled: %v", err)
 	}
 	_ = pub
+}
+
+// --- New reconcile tests ---
+
+func TestSQSReconcileEditsMutableAttribute(t *testing.T) {
+	fake := newFakeSQS()
+	url := fake.seedQueue("orders", map[string]string{"VisibilityTimeout": "60"})
+	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Policy:  ConflictReconcile,
+		Targets: []SQSTarget{{Name: "orders", Create: false, VisibilityTimeout: 30 * time.Second}},
+	})
+	if err != nil {
+		t.Fatalf("NewSQSPublisher: %v", err)
+	}
+	if len(fake.setCalls) != 1 {
+		t.Fatalf("expected 1 SetQueueAttributes call, got %d", len(fake.setCalls))
+	}
+	if fake.attrs[url]["VisibilityTimeout"] != "30" {
+		t.Fatalf("expected reconciled VisibilityTimeout=30, got %q", fake.attrs[url]["VisibilityTimeout"])
+	}
+}
+
+func TestSQSWarnLeavesAttributesUnchanged(t *testing.T) {
+	fake := newFakeSQS()
+	url := fake.seedQueue("orders", map[string]string{"VisibilityTimeout": "60"})
+	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Policy:  ConflictWarn,
+		Targets: []SQSTarget{{Name: "orders", Create: false, VisibilityTimeout: 30 * time.Second}},
+	})
+	if err != nil {
+		t.Fatalf("NewSQSPublisher: %v", err)
+	}
+	if len(fake.setCalls) != 0 {
+		t.Fatal("warn must not call SetQueueAttributes")
+	}
+	if fake.attrs[url]["VisibilityTimeout"] != "60" {
+		t.Fatal("warn must leave the existing attribute unchanged")
+	}
+}
+
+func TestSQSErrorPolicyFailsOnDrift(t *testing.T) {
+	fake := newFakeSQS()
+	fake.seedQueue("orders", map[string]string{"VisibilityTimeout": "60"})
+	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Policy:  ConflictError,
+		Targets: []SQSTarget{{Name: "orders", Create: false, VisibilityTimeout: 30 * time.Second}},
+	})
+	if err == nil {
+		t.Fatal("error policy should fail on drift")
+	}
+}
+
+func TestSQSFifoMissingContentBasedDedupReconciles(t *testing.T) {
+	fake := newFakeSQS()
+	url := fake.seedQueue("orders.fifo", map[string]string{"FifoQueue": "true"}) // CBD absent
+	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Policy:  ConflictReconcile,
+		Targets: []SQSTarget{{Name: "orders.fifo", Create: false, FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupContentBasedFallback: true}}},
+	})
+	if err != nil {
+		t.Fatalf("NewSQSPublisher: %v", err)
+	}
+	if fake.attrs[url]["ContentBasedDeduplication"] != "true" {
+		t.Fatalf("expected CBD reconciled to true, got %q", fake.attrs[url]["ContentBasedDeduplication"])
+	}
+}
+
+// containsAny returns true if s contains any of the given substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if len(s) >= len(sub) {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

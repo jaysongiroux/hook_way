@@ -13,6 +13,12 @@ server:
 destinations:
   jobs:
     type: sqs
+    # How to handle an existing queue whose attributes differ from this config:
+    #   reconcile (default): edit the queue's mutable attributes to match (needs sqs:SetQueueAttributes)
+    #   warn: log the difference and use the existing queue unchanged
+    #   error: fail startup on any difference
+    # Immutable conflicts (FIFO vs standard) always fail startup regardless.
+    on_existing_conflict: reconcile
     sqs:
       region: "us-east-1"
       # Uncomment to override the SQS endpoint, e.g. for LocalStack:
