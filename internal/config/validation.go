@@ -184,6 +184,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if !endpoint.Enabled {
 			continue
 		}
+		switch endpoint.EffectiveDeliveryFailurePolicy() {
+		case DeliveryFailurePolicyStopOnFailure, DeliveryFailurePolicySkipFailed:
+		default:
+			issues = append(issues, validationError(fieldPrefix+".delivery_failure_policy", fmt.Sprintf("%q is not supported", endpoint.DeliveryFailurePolicy), "use \"stop_on_failure\" or \"skip_failed\""))
+		}
 		if len(endpoint.Destinations) == 0 {
 			issues = append(issues, validationError(fieldPrefix+".destinations", "at least one destination is required for enabled endpoints", "add destination objects that reference destinations entries"))
 		}

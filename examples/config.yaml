@@ -17,6 +17,8 @@ endpoints:
   github_events:
     enabled: true
     path: "/webhooks/github"
+    # Defaults to stop_on_failure. Use skip_failed only when partial delivery is OK.
+    # delivery_failure_policy: "stop_on_failure"
     destinations:
       - destination: "primary"
         target: "github-webhooks"

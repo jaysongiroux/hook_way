@@ -72,6 +72,9 @@ endpoints:
   paddle_billing:
     enabled: true
     path: "/webhooks/paddle"
+    # stop_on_failure publishes routes in order and returns 503 on first failure.
+    # Use skip_failed when audit/secondary destinations should not block intake.
+    delivery_failure_policy: "stop_on_failure"
     destinations:
       - destination: "primary"
         target: "paddle-webhooks"

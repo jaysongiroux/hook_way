@@ -21,7 +21,7 @@ config validation failed
 - `server.shutdown_timeout`: optional duration, default `10s`.
 - `server.max_body_bytes`: required positive integer.
 - `server.max_inflight_requests`: optional non-negative integer. When `> 0`, caps concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. `0` (default) means unlimited. Health, readiness, and metrics endpoints are never subject to this limit.
-- `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request when an endpoint has multiple destination routes. `0` (default) uses `8`.
+- `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for endpoints using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
 
 ## Security
 
@@ -155,15 +155,16 @@ endpoints:
   paddle_billing:
     enabled: true
     path: "/webhooks/paddle/billing"
+    delivery_failure_policy: "stop_on_failure"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "billing-events"
-        create_queue: true
+      - destination: "billing"
+        target: "billing-events"
+        create: true
         queue_options:
           message_ttl: "72h"
-      - destination_queue_id: "audit"
-        queue: "billing-audit-events"
-        create_queue: true
+      - destination: "audit"
+        target: "billing-audit-events"
+        create: true
     max_body_bytes: 2097152
     rate_limit:
       enabled: true
@@ -188,9 +189,9 @@ endpoints:
     enabled: true
     path: "/webhooks/github/events"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "github-events"
-        create_queue: true
+      - destination: "billing"
+        target: "github-events"
+        create: true
     rate_limit:
       enabled: false
     replay_protection:
@@ -213,9 +214,9 @@ endpoints:
     enabled: true
     path: "/webhooks/revenuecat/billing"
     destinations:
-      - destination_queue_id: "billing"
-        queue: "revenuecat-events"
-        create_queue: true
+      - destination: "billing"
+        target: "revenuecat-events"
+        create: true
     replay_protection:
       enabled: true
       ttl: "10m"
@@ -235,7 +236,8 @@ Endpoint fields:
 
 - `enabled`: only enabled endpoints are registered.
 - `path`: public HTTP path; must start with `/` and be unique among enabled endpoints. Parent/child overlaps such as `/webhooks/paddle` and `/webhooks/paddle/billing` are rejected to avoid ambiguous webhook routing.
-- `destinations`: required list of destination route objects. Each route is published once. Multiple routes fan out concurrently up to `server.fanout_concurrency`.
+- `delivery_failure_policy`: optional route failure behavior. Defaults to `stop_on_failure`. Use `skip_failed` when partial delivery is acceptable.
+- `destinations`: required list of destination route objects. Each route is published once. With `skip_failed`, multiple routes fan out concurrently up to `server.fanout_concurrency`; with `stop_on_failure`, routes publish sequentially in config order.
 - `max_body_bytes`: optional positive endpoint override. Omit or set `0` to inherit `server.max_body_bytes`.
 - `rate_limit`: optional endpoint override. Omit to inherit global `rate_limit`; set `enabled: false` to disable endpoint-specific limiting in later HTTP code.
 - `replay_protection`: optional endpoint replay cache settings.
@@ -244,10 +246,15 @@ Endpoint fields:
 
 Destination route fields:
 
-- `destination_queue_id`: required target key under `message_queues`.
-- `queue`: required RabbitMQ routing key/queue name for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`.
-- `create_queue`: when true, queue layer can declare and bind this route queue during startup.
-- `queue_options`: optional RabbitMQ queue arguments. Same fields as `message_queues.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
+- `destination`: required target key under `destinations`.
+- `target`: required queue/topic/routing-key target for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`.
+- `create`: when true, queue layer can declare and bind this route target during startup.
+- `queue_options`: optional RabbitMQ queue arguments. Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
+
+Delivery failure policies:
+
+- `stop_on_failure` (default): publish routes sequentially in config order. The first failed route stops later routes from starting and Hookway returns `503`.
+- `skip_failed`: publish every route. Hookway returns `202` when at least one route succeeds and includes `failed_destinations` in the response. If every route fails, Hookway returns `503`.
 
 Endpoint rate-limit fields match global rate-limit fields. `key_by` must be `ip` for MVP.
 
@@ -259,7 +266,7 @@ Replay protection fields:
 
 Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node. The reservation is only committed after a successful publish, so a transient broker outage does not turn a provider's legitimate retry into a permanent `409 replay detected`.
 
-Fan-out is at-least-once per destination, not atomic across destinations. If one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`.
+Fan-out is at-least-once per destination, not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With `stop_on_failure`, if one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`. With `skip_failed`, partial success is acknowledged with `202` and failed routes are reported in the response.
 
 Auth fields:
 

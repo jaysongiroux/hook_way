@@ -84,12 +84,13 @@ type rawConfig struct {
 	Metrics      MetricsConfig                   `yaml:"metrics"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 	Endpoints    map[string]struct {
-		Enabled          bool                           `yaml:"enabled"`
-		Path             string                         `yaml:"path"`
-		Destinations     []rawEndpointDestinationConfig `yaml:"destinations"`
-		MaxBodyBytes     int64                          `yaml:"max_body_bytes"`
-		RateLimit        EndpointRateLimitConfig        `yaml:"rate_limit"`
-		ReplayProtection struct {
+		Enabled               bool                           `yaml:"enabled"`
+		Path                  string                         `yaml:"path"`
+		DeliveryFailurePolicy string                         `yaml:"delivery_failure_policy"`
+		Destinations          []rawEndpointDestinationConfig `yaml:"destinations"`
+		MaxBodyBytes          int64                          `yaml:"max_body_bytes"`
+		RateLimit             EndpointRateLimitConfig        `yaml:"rate_limit"`
+		ReplayProtection      struct {
 			Enabled    bool   `yaml:"enabled"`
 			TTL        string `yaml:"ttl"`
 			MaxEntries int    `yaml:"max_entries"`
@@ -224,11 +225,12 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		destinations, destinationIssues := convertEndpointDestinations("endpoints."+name+".destinations", endpoint.Destinations)
 		issues = append(issues, destinationIssues...)
 		cfg.Endpoints[name] = EndpointConfig{
-			Enabled:      endpoint.Enabled,
-			Path:         endpoint.Path,
-			Destinations: destinations,
-			MaxBodyBytes: endpoint.MaxBodyBytes,
-			RateLimit:    endpoint.RateLimit,
+			Enabled:               endpoint.Enabled,
+			Path:                  endpoint.Path,
+			DeliveryFailurePolicy: deliveryFailurePolicy(endpoint.DeliveryFailurePolicy),
+			Destinations:          destinations,
+			MaxBodyBytes:          endpoint.MaxBodyBytes,
+			RateLimit:             endpoint.RateLimit,
 			ReplayProtection: ReplayProtectionConfig{
 				Enabled: endpoint.ReplayProtection.Enabled, TTL: replayTTL, MaxEntries: endpoint.ReplayProtection.MaxEntries,
 			},

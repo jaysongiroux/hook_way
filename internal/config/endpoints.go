@@ -8,6 +8,11 @@ import (
 	"github.com/jasongiroux/hookway/internal/auth"
 )
 
+const (
+	DeliveryFailurePolicyStopOnFailure = "stop_on_failure"
+	DeliveryFailurePolicySkipFailed    = "skip_failed"
+)
+
 // authScheme defaults the per-endpoint signature scheme to the timestamped
 // HMAC-SHA256 colon scheme when omitted.
 func authScheme(scheme string) string {
@@ -15,6 +20,13 @@ func authScheme(scheme string) string {
 		return auth.SchemeHMACSHA256TSColon
 	}
 	return scheme
+}
+
+func deliveryFailurePolicy(policy string) string {
+	if policy == "" {
+		return DeliveryFailurePolicyStopOnFailure
+	}
+	return policy
 }
 
 type SQSEndpointOptions struct {
@@ -44,14 +56,15 @@ type FIFODedupConfig struct {
 }
 
 type EndpointConfig struct {
-	Enabled          bool                        `yaml:"enabled"`
-	Path             string                      `yaml:"path"`
-	Destinations     []EndpointDestinationConfig `yaml:"destinations"`
-	MaxBodyBytes     int64                       `yaml:"max_body_bytes"`
-	RateLimit        EndpointRateLimitConfig     `yaml:"rate_limit"`
-	ReplayProtection ReplayProtectionConfig      `yaml:"replay_protection"`
-	IPAllowlist      []string                    `yaml:"ip_allowlist"`
-	Auth             AuthConfig                  `yaml:"auth"`
+	Enabled               bool                        `yaml:"enabled"`
+	Path                  string                      `yaml:"path"`
+	DeliveryFailurePolicy string                      `yaml:"delivery_failure_policy"`
+	Destinations          []EndpointDestinationConfig `yaml:"destinations"`
+	MaxBodyBytes          int64                       `yaml:"max_body_bytes"`
+	RateLimit             EndpointRateLimitConfig     `yaml:"rate_limit"`
+	ReplayProtection      ReplayProtectionConfig      `yaml:"replay_protection"`
+	IPAllowlist           []string                    `yaml:"ip_allowlist"`
+	Auth                  AuthConfig                  `yaml:"auth"`
 }
 
 type EndpointDestinationConfig struct {
@@ -104,9 +117,9 @@ type rawFIFOConfig struct {
 }
 
 type rawEndpointDestinationConfig struct {
-	Destination  string                 `yaml:"destination"`
-	Target       string                 `yaml:"target"`
-	Create       bool                   `yaml:"create"`
+	Destination  string                  `yaml:"destination"`
+	Target       string                  `yaml:"target"`
+	Create       bool                    `yaml:"create"`
 	QueueOptions rawRabbitMQQueueOptions `yaml:"queue_options"`
 	SQSOptions   struct {
 		VisibilityTimeout string `yaml:"visibility_timeout"`
@@ -179,6 +192,13 @@ func (c Config) EndpointForPath(path string) (string, EndpointConfig, bool) {
 
 func (e EndpointConfig) DestinationRoutes() []EndpointDestinationConfig {
 	return append([]EndpointDestinationConfig(nil), e.Destinations...)
+}
+
+func (e EndpointConfig) EffectiveDeliveryFailurePolicy() string {
+	if e.DeliveryFailurePolicy == "" {
+		return DeliveryFailurePolicyStopOnFailure
+	}
+	return e.DeliveryFailurePolicy
 }
 
 func (e EndpointConfig) DestinationIDs() []string {
