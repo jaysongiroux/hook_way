@@ -106,9 +106,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", or \"sns\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", and \"sns\""))
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" &&
+			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" {
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -119,6 +120,9 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			if dest.SNS.Region == "" {
 				issues = append(issues, validationError(fieldPrefix+".sns.region", "region is required for sns destinations", "set region to an AWS region such as \"us-east-1\""))
 			}
+		}
+		if dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv" {
+			issues = append(issues, redisConfigValidationIssues(fieldPrefix+".redis", dest.Redis)...)
 		}
 		if dest.Type == "rabbitmq" || dest.Type == "" {
 			rabbitPrefix := fieldPrefix + ".rabbitmq"
@@ -230,6 +234,13 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				}
 				if dest.Type != "rabbitmq" && (destination.QueueOptions != RabbitMQQueueOptions{}) {
 					issues = append(issues, validationError(field+".queue_options", "only valid for rabbitmq destinations", "remove queue_options or point destination at a rabbitmq destination"))
+				}
+				isRedis := dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv"
+				if !isRedis && (destination.RedisOptions != RedisEndpointOptions{}) {
+					issues = append(issues, validationError(field+".redis_options", "only valid for redis_* destinations", "remove redis_options or point destination at a redis_stream, redis_list, redis_pubsub, or redis_kv destination"))
+				}
+				if isRedis {
+					issues = append(issues, redisOptionsValidationIssues(field+".redis_options", destination.RedisOptions, dest.Type)...)
 				}
 			}
 			// SQS cross-endpoint consistency
@@ -461,4 +472,72 @@ func endpointPathsOverlap(a, b string) bool {
 		shorter, longer = longer, shorter
 	}
 	return strings.HasPrefix(longer, shorter+"/")
+}
+
+// redisConfigValidationIssues validates the shared redis: connection block.
+func redisConfigValidationIssues(fieldPrefix string, r RedisConfig) []ValidationIssue {
+	var issues []ValidationIssue
+	switch r.Mode {
+	case "single", "cluster", "sentinel":
+		// valid
+	default:
+		issues = append(issues, validationError(fieldPrefix+".mode",
+			fmt.Sprintf("%q is not a supported mode", r.Mode),
+			"use \"single\", \"cluster\", or \"sentinel\""))
+	}
+	switch r.Mode {
+	case "single":
+		if r.URL == "" {
+			issues = append(issues, validationError(fieldPrefix+".url",
+				"url is required for single mode",
+				"set url to a redis:// or rediss:// URL, or use ${REDIS_URL}"))
+		}
+	case "cluster", "sentinel":
+		if len(r.Addrs) == 0 {
+			issues = append(issues, validationError(fieldPrefix+".addrs",
+				fmt.Sprintf("addrs must be non-empty for %s mode", r.Mode),
+				"list one or more node addresses such as [\"redis-1:6379\", \"redis-2:6379\"]"))
+		}
+		if r.Mode == "sentinel" && r.MasterName == "" {
+			issues = append(issues, validationError(fieldPrefix+".master_name",
+				"master_name is required for sentinel mode",
+				"set master_name to the sentinel primary name, e.g. \"mymaster\""))
+		}
+	}
+	if (r.TLS.ClientCert == "") != (r.TLS.ClientKey == "") {
+		issues = append(issues, validationError(fieldPrefix+".tls.client_cert",
+			"client_cert and client_key must both be set for mutual TLS",
+			"set both paths, or neither"))
+	}
+	return issues
+}
+
+// redisOptionsValidationIssues validates per-endpoint redis_options field-level coupling.
+func redisOptionsValidationIssues(fieldPrefix string, opts RedisEndpointOptions, destType string) []ValidationIssue {
+	var issues []ValidationIssue
+	// consumer_group is only valid for redis_stream
+	if opts.ConsumerGroup != "" && destType != "redis_stream" {
+		issues = append(issues, validationError(fieldPrefix+".consumer_group",
+			fmt.Sprintf("consumer_group is only valid for redis_stream destinations; got %q", destType),
+			"remove consumer_group or change the destination type to redis_stream"))
+	}
+	// ttl is only valid for redis_kv
+	if opts.TTL != 0 && destType != "redis_kv" {
+		issues = append(issues, validationError(fieldPrefix+".ttl",
+			fmt.Sprintf("ttl is only valid for redis_kv destinations; got %q", destType),
+			"remove ttl or change the destination type to redis_kv"))
+	}
+	// key_template is only valid for redis_kv
+	if opts.KeyTemplate != "" && destType != "redis_kv" {
+		issues = append(issues, validationError(fieldPrefix+".key_template",
+			fmt.Sprintf("key_template is only valid for redis_kv destinations; got %q", destType),
+			"remove key_template or change the destination type to redis_kv"))
+	}
+	// max_len is valid for redis_stream and redis_list
+	if opts.MaxLen != 0 && destType != "redis_stream" && destType != "redis_list" {
+		issues = append(issues, validationError(fieldPrefix+".max_len",
+			fmt.Sprintf("max_len is only valid for redis_stream and redis_list destinations; got %q", destType),
+			"remove max_len or change the destination type to redis_stream or redis_list"))
+	}
+	return issues
 }

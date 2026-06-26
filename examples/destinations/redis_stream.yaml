@@ -1,0 +1,100 @@
+# examples/destinations/redis_stream.yaml
+#
+# Reference config for a Redis / Valkey stream destination (redis_stream).
+#
+# redis_stream is the recommended Redis destination type for webhook handoff:
+# messages are appended via XADD to a durable stream, support consumer groups
+# for competing-consumer fan-out, and can be replayed from any offset.
+#
+# Hookway supports four Redis destination types: redis_stream, redis_list,
+# redis_pubsub, and redis_kv. See the corresponding example files under
+# examples/destinations/ for per-type reference configs.
+#
+# Connection topology (redis.mode):
+#   single   — one node or a proxied endpoint (default)
+#   cluster  — Redis Cluster (multiple nodes)
+#   sentinel — Redis Sentinel high-availability (primary + sentinel addresses)
+#
+# Valkey is fully supported: it speaks the same RESP protocol.
+# Point redis.url at a Valkey node and no other change is needed.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  events:
+    type: redis_stream
+
+    redis:
+      # ── Single-node / proxy mode (default) ────────────────────────────────
+      mode: single          # single | cluster | sentinel
+      url: "${REDIS_URL}"   # redis:// or rediss:// URL; set REDIS_URL in env
+
+      # ── Cluster mode (uncomment and populate addrs; remove url) ───────────
+      # mode: cluster
+      # addrs:
+      #   - "redis-1:6379"
+      #   - "redis-2:6379"
+      #   - "redis-3:6379"
+
+      # ── Sentinel mode (uncomment; remove url; set master_name) ────────────
+      # mode: sentinel
+      # addrs:
+      #   - "sentinel-1:26379"
+      #   - "sentinel-2:26379"
+      # master_name: "mymaster"
+
+      # ── Optional auth ─────────────────────────────────────────────────────
+      # username: "${REDIS_USERNAME:-}"
+      # password: "${REDIS_PASSWORD:-}"
+
+      # ── Optional database index (single/sentinel only; cluster ignores it) ─
+      # db: 0
+
+      # ── Optional key prefix prepended to every stream target ──────────────
+      # key_prefix: "hookway"
+
+      # ── Optional TLS (required for rediss:// or private-CA servers) ───────
+      # tls:
+      #   enabled: false
+      #   # For private / self-signed CAs:
+      #   # ca_cert: "/etc/ssl/certs/redis-ca.pem"
+      #   # Mutual TLS — both must be set together:
+      #   # client_cert: "/etc/ssl/certs/redis-client.pem"
+      #   # client_key:  "/etc/ssl/private/redis-client.key"
+      #   # Override the server's SNI name:
+      #   # server_name: "redis.internal"
+      #   # Dev only — disables certificate verification; never use in production:
+      #   # insecure_skip_verify: false
+
+endpoints:
+  # Webhook events routed to a Redis stream. Consumer groups let multiple
+  # worker processes share the work without duplicating messages.
+  webhook_events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        # Stream key (without the key_prefix, if set). Must match
+        # ^[a-zA-Z0-9._-]{1,128}$
+        target: "webhooks.stream"
+        # When true: at startup Hookway creates the stream and the consumer
+        # group named in redis_options.consumer_group (idempotent — safe to
+        # leave enabled in production).
+        create: true
+        redis_options:
+          # Approximate maximum number of entries in the stream.
+          # XADD uses MAXLEN ~ so the actual length may slightly exceed this
+          # value; that is normal and keeps trimming efficient.
+          # Set to 0 (or omit) for an unbounded stream.
+          max_len: 100000
+          # Name of the consumer group Hookway creates when create: true.
+          # Workers subscribe via XREADGROUP using this group name.
+          # Only valid for redis_stream destinations.
+          consumer_group: "hookway-workers"
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"

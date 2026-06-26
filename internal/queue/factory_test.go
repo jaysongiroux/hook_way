@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -328,6 +329,132 @@ func TestFactoryPassesConflictPolicyAndDestIDToSQS(t *testing.T) {
 	}
 	if got.DestinationID != "jobs" {
 		t.Fatalf("destID = %q, want jobs", got.DestinationID)
+	}
+}
+
+func TestFactoryCreatesRedisStreamPublisherWithTargets(t *testing.T) {
+	type capturedCall struct {
+		destType  string
+		keyPrefix string
+		targets   []RedisTarget
+	}
+	var got capturedCall
+
+	factory := NewFactory(FactoryOptions{
+		RedisConnector: func(ctx context.Context, destinationID, destType string, cfg config.RedisConfig, targets []RedisTarget) (Publisher, error) {
+			got = capturedCall{
+				destType:  destType,
+				keyPrefix: cfg.KeyPrefix,
+				targets:   targets,
+			}
+			return &recordingPublisher{}, nil
+		},
+	})
+
+	_, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"events": {
+				Type: "redis_stream",
+				Redis: config.RedisConfig{
+					Mode:      "single",
+					URL:       "redis://localhost:6379",
+					KeyPrefix: "hookway",
+				},
+			},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"billing": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					Destination: "events",
+					Target:      "webhooks.stream",
+					Create:      true,
+					RedisOptions: config.RedisEndpointOptions{
+						MaxLen:        100000,
+						ConsumerGroup: "workers",
+					},
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if got.destType != "redis_stream" {
+		t.Fatalf("destType = %q, want redis_stream", got.destType)
+	}
+	if got.keyPrefix != "hookway" {
+		t.Fatalf("keyPrefix = %q, want hookway", got.keyPrefix)
+	}
+	if len(got.targets) != 1 {
+		t.Fatalf("targets len = %d, want 1", len(got.targets))
+	}
+	target := got.targets[0]
+	if target.Name != "webhooks.stream" {
+		t.Fatalf("target.Name = %q, want webhooks.stream", target.Name)
+	}
+	if target.MaxLen != 100000 {
+		t.Fatalf("target.MaxLen = %d, want 100000", target.MaxLen)
+	}
+	if target.ConsumerGroup != "workers" {
+		t.Fatalf("target.ConsumerGroup = %q, want workers", target.ConsumerGroup)
+	}
+	if !target.Create {
+		t.Fatalf("target.Create = false, want true")
+	}
+}
+
+func TestFactoryDefaultRedisConnectorRedisListIsImplemented(t *testing.T) {
+	// redis_list is now fully implemented; the factory must succeed (not return
+	// "not yet implemented"). We use a custom RedisConnector that never dials a
+	// real server so this test stays Docker-free.
+	called := false
+	factory := NewFactory(FactoryOptions{
+		RedisConnector: func(_ context.Context, _, destType string, _ config.RedisConfig, targets []RedisTarget) (Publisher, error) {
+			called = true
+			if destType != "redis_list" {
+				return nil, fmt.Errorf("unexpected destType %q", destType)
+			}
+			// Build a real RedisListPublisher against a fake ops — no network needed.
+			listTargets := make([]RedisListTarget, 0, len(targets))
+			for _, tgt := range targets {
+				listTargets = append(listTargets, RedisListTarget{Name: tgt.Name, MaxLen: tgt.MaxLen})
+			}
+			return NewRedisListPublisher(context.Background(), &fakeRedisOps{}, RedisListConfig{
+				DestinationID: "lists",
+				Targets:       listTargets,
+			})
+		},
+	})
+
+	pub, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"lists": {
+				Type: "redis_list",
+				Redis: config.RedisConfig{
+					Mode: "single",
+					URL:  "redis://localhost:6379",
+				},
+			},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"billing": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					Destination: "lists",
+					Target:      "billing-list",
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected redis_list to be implemented, got error: %v", err)
+	}
+	if !called {
+		t.Fatal("RedisConnector was not called")
+	}
+	if pub == nil {
+		t.Fatal("expected non-nil publisher")
 	}
 }
 

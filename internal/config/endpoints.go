@@ -38,6 +38,15 @@ type SNSEndpointOptions struct {
 	Subject string
 }
 
+// RedisEndpointOptions are per-route options for redis_* destinations.
+// Not all fields apply to all redis types — validation enforces the coupling.
+type RedisEndpointOptions struct {
+	MaxLen        int64
+	ConsumerGroup string
+	TTL           time.Duration
+	KeyTemplate   string
+}
+
 type FIFOConfig struct {
 	GroupID FIFOGroupIDConfig
 	Dedup   FIFODedupConfig
@@ -74,6 +83,7 @@ type EndpointDestinationConfig struct {
 	QueueOptions RabbitMQQueueOptions `yaml:"queue_options"`
 	SQSOptions   SQSEndpointOptions   `yaml:"sqs_options"`
 	SNSOptions   SNSEndpointOptions   `yaml:"sns_options"`
+	RedisOptions RedisEndpointOptions `yaml:"redis_options"`
 	FIFO         *FIFOConfig          `yaml:"fifo"`
 }
 
@@ -128,6 +138,12 @@ type rawEndpointDestinationConfig struct {
 	SNSOptions struct {
 		Subject string `yaml:"subject"`
 	} `yaml:"sns_options"`
+	RedisOptions struct {
+		MaxLen        int64  `yaml:"max_len"`
+		ConsumerGroup string `yaml:"consumer_group"`
+		TTL           string `yaml:"ttl"`
+		KeyTemplate   string `yaml:"key_template"`
+	} `yaml:"redis_options"`
 	FIFO *rawFIFOConfig `yaml:"fifo"`
 }
 
@@ -147,6 +163,11 @@ func convertEndpointDestinations(fieldPrefix string, raw []rawEndpointDestinatio
 			issues = append(issues, issue)
 		}
 
+		redisTTL, issue := parsePositiveDuration(fmt.Sprintf("%s[%d].redis_options.ttl", fieldPrefix, i), destination.RedisOptions.TTL)
+		if issue.Field != "" {
+			issues = append(issues, issue)
+		}
+
 		destinations = append(destinations, EndpointDestinationConfig{
 			Destination:  destination.Destination,
 			Target:       destination.Target,
@@ -158,6 +179,12 @@ func convertEndpointDestinations(fieldPrefix string, raw []rawEndpointDestinatio
 			},
 			SNSOptions: SNSEndpointOptions{
 				Subject: destination.SNSOptions.Subject,
+			},
+			RedisOptions: RedisEndpointOptions{
+				MaxLen:        destination.RedisOptions.MaxLen,
+				ConsumerGroup: destination.RedisOptions.ConsumerGroup,
+				TTL:           redisTTL,
+				KeyTemplate:   destination.RedisOptions.KeyTemplate,
 			},
 			FIFO: convertFIFO(destination.FIFO),
 		})

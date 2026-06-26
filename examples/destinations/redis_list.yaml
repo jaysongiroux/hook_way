@@ -1,0 +1,95 @@
+# examples/destinations/redis_list.yaml
+#
+# Reference config for a Redis / Valkey list destination (redis_list).
+#
+# redis_list stores webhook payloads as JSON-encoded strings pushed to the
+# HEAD of a Redis list via LPUSH. Consumers read with BRPOP (blocking right-pop)
+# or RPOP for a simple, FIFO work-queue pattern.
+#
+# Bounding the list length (LPUSH + LTRIM-cap best practice):
+#   Set redis_options.max_len to a positive integer. Hookway appends the message
+#   with LPUSH and then issues LTRIM to keep the list within max_len entries
+#   (dropping the oldest entries from the tail). This bounds memory usage
+#   without a separate background job. Set to 0 (or omit) for an unbounded list,
+#   but be aware that an unbounded list can grow without limit if consumers fall
+#   behind.
+#
+# Valkey is fully supported; point redis.url at a Valkey node.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  events:
+    type: redis_list
+
+    redis:
+      # ── Single-node / proxy mode (default) ────────────────────────────────
+      mode: single          # single | cluster | sentinel
+      url: "${REDIS_URL}"   # redis:// or rediss:// URL; set REDIS_URL in env
+
+      # ── Cluster mode (uncomment and populate addrs; remove url) ───────────
+      # mode: cluster
+      # addrs:
+      #   - "redis-1:6379"
+      #   - "redis-2:6379"
+      #   - "redis-3:6379"
+
+      # ── Sentinel mode (uncomment; remove url; set master_name) ────────────
+      # mode: sentinel
+      # addrs:
+      #   - "sentinel-1:26379"
+      #   - "sentinel-2:26379"
+      # master_name: "mymaster"
+
+      # ── Optional auth ─────────────────────────────────────────────────────
+      # username: "${REDIS_USERNAME:-}"
+      # password: "${REDIS_PASSWORD:-}"
+
+      # ── Optional database index (single/sentinel only; cluster ignores it) ─
+      # db: 0
+
+      # ── Optional key prefix prepended to every list target ────────────────
+      # key_prefix: "hookway"
+
+      # ── Optional TLS (required for rediss:// or private-CA servers) ───────
+      # tls:
+      #   enabled: false
+      #   # For private / self-signed CAs:
+      #   # ca_cert: "/etc/ssl/certs/redis-ca.pem"
+      #   # Mutual TLS — both must be set together:
+      #   # client_cert: "/etc/ssl/certs/redis-client.pem"
+      #   # client_key:  "/etc/ssl/private/redis-client.key"
+      #   # Override the server's SNI name:
+      #   # server_name: "redis.internal"
+      #   # Dev only — disables certificate verification; never use in production:
+      #   # insecure_skip_verify: false
+
+endpoints:
+  # Webhook events routed to a Redis list. Consumers use BRPOP/RPOP on the
+  # list key to dequeue and process messages in FIFO order.
+  webhook_events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        # List key (without the key_prefix, if set). Must match
+        # ^[a-zA-Z0-9._-]{1,128}$
+        target: "webhooks.list"
+        # When true: at startup Hookway ensures the list exists (idempotent).
+        create: true
+        redis_options:
+          # Approximate maximum number of entries to retain in the list.
+          # After each LPUSH, Hookway trims the list to max_len entries via
+          # LTRIM, dropping the oldest entries from the tail. This caps memory
+          # usage without a separate background job. Set to 0 (or omit) for
+          # an unbounded list.
+          # NOTE: consumer_group, ttl, and key_template are NOT valid for
+          # redis_list — validation will reject them.
+          max_len: 50000
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"
