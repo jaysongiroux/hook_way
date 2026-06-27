@@ -2,7 +2,7 @@
 
 Hookway reads one YAML config file. Set it with `HOOKWAY_CONFIG` or pass `--config`; the flag wins. YAML string values support `${ENV_NAME}` expansion.
 
-Startup parses and validates the config before connecting to the message queue or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
+Startup parses and validates the config before connecting to its destinations or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
 
 Example validation output:
 
@@ -73,37 +73,39 @@ config failures still block serving traffic, so config failure metrics are
 recorded in-process before exit and are most useful for tests or future reload
 paths.
 
-## Message Queue
+## Destinations
 
-`message_queues` is a top-level map of queue destinations keyed by stable id. Endpoint `destinations` route to these ids and choose the queue for each destination. Only `rabbitmq` is supported in MVP, but each entry keeps a `type` field so future providers such as SQS or BullMQ can be added without changing endpoint shape.
+`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, `sns`, `redis_stream`, `redis_list`, `redis_pubsub`, and `redis_kv`. See `examples/destinations/` for a complete reference config per type.
 
-RabbitMQ fields live under `message_queues.<id>.rabbitmq`:
+### RabbitMQ
 
-- `message_queues.<id>.type`: required backend type; use `rabbitmq`.
-- `message_queues.<id>.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
-- `message_queues.<id>.rabbitmq.exchange`: required direct exchange name.
-- `message_queues.<id>.rabbitmq.exchange_type`: required, use `direct` for MVP.
-- `message_queues.<id>.rabbitmq.durable`: boolean for exchange/queue durability.
-- `message_queues.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
-- `message_queues.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
-- `message_queues.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
-- `message_queues.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint route queue Hookway declares for that destination. Destination route `queue_options` override these defaults.
+RabbitMQ fields live under `destinations.<id>.rabbitmq`:
+
+- `destinations.<id>.type`: required backend type; use `rabbitmq`.
+- `destinations.<id>.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
+- `destinations.<id>.rabbitmq.exchange`: required direct exchange name.
+- `destinations.<id>.rabbitmq.exchange_type`: required, use `direct` for MVP.
+- `destinations.<id>.rabbitmq.durable`: boolean for exchange/queue durability.
+- `destinations.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
+- `destinations.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
+- `destinations.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
+- `destinations.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint route queue Hookway declares for that destination. Destination route `queue_options` override these defaults.
   - `message_ttl`: optional positive duration mapped to RabbitMQ `x-message-ttl` in milliseconds. Stale messages are expired from the queue.
   - `expires`: optional positive duration mapped to `x-expires` in milliseconds. Useful for temporary/test queues; usually omit for production webhook queues.
   - `max_length`: optional positive integer mapped to `x-max-length` to cap backlog size.
   - `overflow`: optional overflow mode. Supported values are `reject-publish` and `reject-publish-dlx`; `reject-publish` is recommended so providers retry instead of silently losing older webhook messages.
   - `dead_letter_routing_key`: optional default RabbitMQ `x-dead-letter-routing-key` override.
-- `message_queues.<id>.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
+- `destinations.<id>.rabbitmq.tls`: optional TLS settings for `amqps://` URLs. All fields are optional — with no `tls` block, `amqps://` still works against brokers whose certificates chain to the system trust store (e.g. CloudAMQP). Configure these only for private CAs, mutual TLS, or a non-default server name.
   - `ca_cert`: path to a PEM bundle to trust instead of/in addition to system roots (for private/self-signed CAs).
   - `client_cert` / `client_key`: PEM paths for mutual TLS. Both must be set together.
   - `server_name`: overrides the SNI/verification hostname.
   - `insecure_skip_verify`: disables certificate verification. Dev-only; logs a warning at startup. Do not use in production.
 
   Bad or unreadable CA/cert paths fail fast at startup. Note: the published container image must contain a CA bundle for `amqps://` to work at all — the provided Dockerfile copies `ca-certificates` into the `scratch` image for this reason.
-- `message_queues.<id>.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
+- `destinations.<id>.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
 
 ```yaml
-message_queues:
+destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
@@ -145,6 +147,111 @@ Dead-letter fields:
 - `routing_key`: required when enabled.
 - `durable`: durability for dead-letter exchange/queue declaration.
 - `create_queue`: when true, queue layer can declare the dead-letter queue and bind it to the dead-letter exchange.
+
+### AWS SQS
+
+SQS fields live under `destinations.<id>.sqs`. Credentials are optional: when both `access_key_id` and `secret_access_key` are set they are used as static credentials; otherwise the default AWS credential chain (env, IAM role, shared profile) applies.
+
+- `destinations.<id>.type`: set to `sqs`.
+- `destinations.<id>.sqs.region`: required AWS region, e.g. `us-east-1`.
+- `destinations.<id>.sqs.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
+- `destinations.<id>.sqs.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
+
+Per-endpoint SQS queue settings are configured on the route via `sqs_options` and (for `.fifo` targets) `fifo` — see Destination route fields below.
+
+```yaml
+destinations:
+  jobs:
+    type: "sqs"
+    on_existing_conflict: "reconcile"
+    sqs:
+      region: "us-east-1"
+      endpoint: "${AWS_ENDPOINT:-}"          # http://localhost:4566 for LocalStack
+      access_key_id: "${AWS_ACCESS_KEY_ID:-}"
+      secret_access_key: "${AWS_SECRET_ACCESS_KEY:-}"
+```
+
+### AWS SNS
+
+SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint override, optional static credentials):
+
+- `destinations.<id>.type`: set to `sns`.
+- `destinations.<id>.sns.region`: required AWS region.
+- `destinations.<id>.sns.endpoint`: optional endpoint override (LocalStack).
+- `destinations.<id>.sns.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
+
+Per-endpoint SNS topic settings are configured on the route via `sns_options` and (for `.fifo` targets) `fifo`.
+
+### Redis / Valkey
+
+Hookway supports four Redis destination types. All share a common `redis:` connection block on the destination, and per-route settings under `redis_options` on each endpoint route.
+
+**Available types:**
+
+| Type | Primitive | Notes |
+|------|-----------|-------|
+| `redis_stream` | XADD to a Stream — durable, consumer groups, replay, bounded trim | Recommended for at-least-once delivery |
+| `redis_list` | LPUSH to a List — FIFO work queue; LTRIM cap bounds memory | Simple competing-consumer queue |
+| `redis_pubsub` | PUBLISH to a channel — live broadcast; lossy, not durable | Fire-and-forget; subscribers offline at delivery time miss the message |
+| `redis_kv` | SET a key per webhook with TTL — storage/lookup, not a queue | Latest-event overwrite; keys expire automatically |
+
+`redis_stream` is the recommended type for at-least-once webhook handoff. `redis_pubsub` is intentionally lossy — if no subscriber is connected at publish time, the message is silently dropped; use it only for live broadcast scenarios where occasional loss is acceptable.
+
+[Valkey](https://valkey.io/) is fully supported: it speaks the RESP protocol and behaves identically to Redis.
+
+**Shared `redis:` connection block** — configure once on the destination, reused by every endpoint route that targets it:
+
+- `mode`: deployment topology. `single` (default) for one node or a proxied endpoint; `cluster` for Redis Cluster; `sentinel` for Redis Sentinel.
+- `url`: redis:// or rediss:// URL. Required for `single` mode. Usually `${REDIS_URL}`.
+- `addrs`: list of node addresses. Required for `cluster` and `sentinel` modes (e.g. `["redis-1:6379", "redis-2:6379"]`).
+- `master_name`: sentinel primary name. Required for `sentinel` mode (e.g. `"mymaster"`).
+- `username` / `password`: optional auth credentials.
+- `db`: optional database index. Applies to `single` and `sentinel`; Redis Cluster ignores it.
+- `key_prefix`: optional string automatically prepended to stream/list/channel targets for `redis_stream`, `redis_list`, and `redis_pubsub` (formatted as `<prefix>:<target>`). For `redis_kv`, the prefix is available via the `{prefix}` token in `key_template` but is not automatically prepended.
+- `tls`: optional TLS settings — mirror of the RabbitMQ TLS block.
+  - `enabled`: boolean.
+  - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
+  - `client_cert` / `client_key`: paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: dev-only; disables certificate verification.
+
+```yaml
+destinations:
+  events:
+    type: redis_stream
+    redis:
+      mode: single
+      url: "${REDIS_URL}"   # redis:// or rediss://
+      # Cluster example:
+      # mode: cluster
+      # addrs: ["redis-1:6379", "redis-2:6379", "redis-3:6379"]
+      # Sentinel example:
+      # mode: sentinel
+      # addrs: ["sentinel-1:26379", "sentinel-2:26379"]
+      # master_name: "mymaster"
+      key_prefix: "hookway"   # optional
+```
+
+See `examples/destinations/redis_stream.yaml` for a full annotated reference with TLS and cluster/sentinel comments.
+
+**Best practices for `redis_stream`:**
+
+- Use `max_len` with approximate trimming (`XADD MAXLEN ~`): the actual stream length may slightly exceed the configured cap, which is intentional — approximate trimming is far more efficient than exact trimming in Redis.
+- Set `consumer_group` when multiple workers compete for messages. Hookway creates the group at startup when `create: true` and `consumer_group` is set (idempotent: safe in production).
+- Delivery is at-least-once: a message appended via XADD is acknowledged to the webhook provider before the consumer confirms processing, so consumers must tolerate duplicates (deduplicate on `idempotency_key`).
+- Redis connectivity for a `redis_stream` destination is **not** verified at process startup unless a consumer group is being created (`create: true` with `consumer_group` set, which dials Redis immediately). Otherwise, the connection is established lazily — verified at the `/ready` (`/readyz`) probe and on the first publish.
+
+### Resource provisioning and drift (`on_existing_conflict`)
+
+For `sqs` and `sns` destinations, `destinations.<id>.on_existing_conflict` controls what happens when a target queue/topic already exists with attributes that differ from the config. Allowed values are `error`, `warn`, and `reconcile`; the default is `reconcile`.
+
+- `reconcile` (default): edit the existing resource's mutable attributes (SQS `VisibilityTimeout`, `MessageRetentionPeriod`, `ContentBasedDeduplication`; SNS `ContentBasedDeduplication`) to match config, logging each change. Requires `sqs:SetQueueAttributes` / `sns:SetTopicAttributes` IAM permissions.
+- `warn`: log each differing attribute and use the existing resource unchanged.
+- `error`: fail startup on any difference.
+
+Immutable conflicts — the FIFO-vs-standard nature of a queue/topic — always fail startup regardless of the policy, since they cannot be edited and would otherwise cause failed publishes. The field is only valid on `sqs`/`sns` destinations; setting it on a `rabbitmq` destination is a config error.
+
+When `create: true` and the target does not exist, it is created with the configured attributes (no reconcile needed).
 
 ## Endpoints
 
@@ -249,7 +356,18 @@ Destination route fields:
 - `destination`: required target key under `destinations`.
 - `target`: required queue/topic/routing-key target for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`.
 - `create`: when true, queue layer can declare and bind this route target during startup.
-- `queue_options`: optional RabbitMQ queue arguments. Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
+- `queue_options`: optional RabbitMQ queue arguments (only valid when the destination is `rabbitmq`). Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
+- `sqs_options`: optional SQS queue attributes (only valid when the destination is `sqs`). `visibility_timeout` and `message_retention` are durations expressed in whole seconds within the SQS-accepted bounds (visibility `0`–`12h`, retention `60s`–`14d`).
+- `sns_options`: optional SNS settings (only valid when the destination is `sns`). `subject` sets the SNS message Subject (≤100 printable-ASCII characters; not permitted on FIFO topics).
+- `redis_options`: optional per-route Redis settings (only valid when the destination is a `redis_*` type). Not all fields apply to all Redis types — validation enforces the coupling:
+  - `max_len`: approximate maximum number of entries in the stream or list. Hookway uses `XADD MAXLEN ~` (stream) for efficient approximate trimming. `0` or omit for unbounded. Valid for `redis_stream` and `redis_list`.
+  - `consumer_group`: name of the consumer group Hookway creates at startup when `create: true`. Valid for `redis_stream` only.
+  - `ttl`: key expiry duration (e.g. `"168h"`). Valid for `redis_kv` only.
+  - `key_template`: key naming template for `redis_kv`. Tokens `{prefix}`, `{target}`, `{endpoint}`, `{id}`, and `{idempotency_key}` are substituted at publish time. Valid for `redis_kv` only.
+- `fifo`: required when `target` ends in `.fifo` (and only allowed then). Controls FIFO ordering and deduplication:
+  - `group_id.source`: one of `static` | `endpoint` | `header` | `body` — where the `MessageGroupId` comes from. `static` uses `group_id.value`; `header`/`body` extract `group_id.path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. `group_id.fallback` (a literal, or `endpoint`) is used when extraction yields nothing.
+  - `dedup.use_idempotency_key`: when true, use the envelope `idempotency_key` as the `MessageDeduplicationId` when present.
+  - `dedup.content_based_fallback`: must be `true` for FIFO targets so messages without an idempotency key are still deduplicated via the resource's content-based deduplication.
 
 Delivery failure policies:
 

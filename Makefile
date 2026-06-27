@@ -1,14 +1,14 @@
-.PHONY: test test-all test-race integration-test aws-integration-test lint validate validate-examples run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test lint validate validate-examples run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
 IMAGE ?= hookway:local
 
 test:
-	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS'
+	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis'
 
 test-race:
-	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS'
+	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis'
 
 integration-test:
 	$(GO) test ./internal/queue -run TestRabbitMQ -count=1
@@ -16,7 +16,10 @@ integration-test:
 aws-integration-test:
 	$(GO) test ./internal/queue -run 'TestAWS' -count=1
 
-# test-all runs every test once: unit + RabbitMQ + AWS integration suites.
+redis-integration-test:
+	$(GO) test ./internal/queue -run 'TestRedis' -count=1
+
+# test-all runs every test once: unit + RabbitMQ + AWS + Redis integration suites.
 # Integration tests self-skip when Docker is unavailable. -count=1 disables the
 # test cache so the container-backed suites actually run.
 test-all:
@@ -37,7 +40,9 @@ validate-examples:
 		NOTIFY_WEBHOOK_SECRET=dummy \
 		REVENUECAT_WEBHOOK_AUTH=dummy \
 		BASIC_WEBHOOK_SECRET=dummy \
-		JWT_PUBLIC_KEY=dummy; \
+		JWT_PUBLIC_KEY=dummy \
+		REDIS_URL=redis://localhost:6379 \
+		WEBHOOK_SECRET=dummy; \
 	for f in examples/config.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
@@ -52,7 +57,7 @@ docker-build:
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test test-race integration-test aws-integration-test lint docker-build vuln-scan
+release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test lint docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build

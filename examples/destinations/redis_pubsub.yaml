@@ -1,0 +1,93 @@
+# examples/destinations/redis_pubsub.yaml
+#
+# Reference config for a Redis / Valkey Pub/Sub destination (redis_pubsub).
+#
+# redis_pubsub delivers webhook payloads to a named channel via PUBLISH.
+# Subscribers listening on the channel with SUBSCRIBE or PSUBSCRIBE receive
+# the message in real time.
+#
+# IMPORTANT — fire-and-forget / lossy delivery:
+#   Redis Pub/Sub is NOT durable. If no subscriber is connected at the moment
+#   PUBLISH is called, the message is silently dropped. Messages are not stored
+#   or replayed; a subscriber that reconnects will not receive missed events.
+#   Use redis_pubsub for live broadcast scenarios (dashboards, real-time
+#   notifications) where occasional loss is acceptable, NOT for at-least-once
+#   delivery. For durable, replayable delivery use redis_stream instead.
+#
+# NOTE — no redis_options block:
+#   All redis_options fields (max_len, consumer_group, ttl, key_template) are
+#   invalid for redis_pubsub and will be rejected by validation. Do NOT add a
+#   redis_options block to a redis_pubsub route.
+#
+# Valkey is fully supported; point redis.url at a Valkey node.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  events:
+    type: redis_pubsub
+
+    redis:
+      # ── Single-node / proxy mode (default) ────────────────────────────────
+      mode: single          # single | cluster | sentinel
+      url: "${REDIS_URL}"   # redis:// or rediss:// URL; set REDIS_URL in env
+
+      # ── Cluster mode (uncomment and populate addrs; remove url) ───────────
+      # mode: cluster
+      # addrs:
+      #   - "redis-1:6379"
+      #   - "redis-2:6379"
+      #   - "redis-3:6379"
+
+      # ── Sentinel mode (uncomment; remove url; set master_name) ────────────
+      # mode: sentinel
+      # addrs:
+      #   - "sentinel-1:26379"
+      #   - "sentinel-2:26379"
+      # master_name: "mymaster"
+
+      # ── Optional auth ─────────────────────────────────────────────────────
+      # username: "${REDIS_USERNAME:-}"
+      # password: "${REDIS_PASSWORD:-}"
+
+      # ── Optional database index (single/sentinel only; cluster ignores it) ─
+      # db: 0
+
+      # ── Optional key prefix prepended to every channel target ─────────────
+      # key_prefix: "hookway"
+
+      # ── Optional TLS (required for rediss:// or private-CA servers) ───────
+      # tls:
+      #   enabled: false
+      #   # For private / self-signed CAs:
+      #   # ca_cert: "/etc/ssl/certs/redis-ca.pem"
+      #   # Mutual TLS — both must be set together:
+      #   # client_cert: "/etc/ssl/certs/redis-client.pem"
+      #   # client_key:  "/etc/ssl/private/redis-client.key"
+      #   # Override the server's SNI name:
+      #   # server_name: "redis.internal"
+      #   # Dev only — disables certificate verification; never use in production:
+      #   # insecure_skip_verify: false
+
+endpoints:
+  # Webhook events broadcast to a Redis Pub/Sub channel. Any subscriber
+  # connected to the channel at delivery time receives the message instantly.
+  # Subscribers that are offline at delivery time will NOT receive the message.
+  webhook_events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        # Channel name (without the key_prefix, if set). Must match
+        # ^[a-zA-Z0-9._-]{1,128}$
+        target: "webhooks.channel"
+        # NOTE: redis_options must NOT be set for redis_pubsub — all
+        # redis_options fields are invalid for this destination type and will
+        # be rejected by validation.
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"

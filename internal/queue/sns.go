@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +15,7 @@ import (
 type snsAPI interface {
 	CreateTopic(ctx context.Context, in *sns.CreateTopicInput, optFns ...func(*sns.Options)) (*sns.CreateTopicOutput, error)
 	GetTopicAttributes(ctx context.Context, in *sns.GetTopicAttributesInput, optFns ...func(*sns.Options)) (*sns.GetTopicAttributesOutput, error)
+	SetTopicAttributes(ctx context.Context, in *sns.SetTopicAttributesInput, optFns ...func(*sns.Options)) (*sns.SetTopicAttributesOutput, error)
 	ListTopics(ctx context.Context, in *sns.ListTopicsInput, optFns ...func(*sns.Options)) (*sns.ListTopicsOutput, error)
 	Publish(ctx context.Context, in *sns.PublishInput, optFns ...func(*sns.Options)) (*sns.PublishOutput, error)
 }
@@ -30,7 +32,17 @@ type SNSConfig struct {
 	Endpoint        string
 	AccessKeyID     string
 	SecretAccessKey string
+	DestinationID   string
+	Policy          ConflictPolicy
+	Logger          *slog.Logger
 	Targets         []SNSTarget
+}
+
+// snsMutableAttrs is the set of SNS topic attributes managed by hook_way.
+// true = mutable (can be changed on an existing topic), false = immutable.
+var snsMutableAttrs = map[string]bool{
+	"ContentBasedDeduplication": true,
+	"FifoTopic":                 false,
 }
 
 type snsTargetState struct {
@@ -51,10 +63,19 @@ type SNSPublisher struct {
 func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPublisher, error) {
 	p := &SNSPublisher{client: client, targets: map[string]snsTargetState{}}
 
-	// Collect which targets need create vs. lookup.
-	var needLookup []SNSTarget
+	arnByName, err := p.listTopicARNs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, target := range cfg.Targets {
-		if target.Create {
+		arn, existed := arnByName[target.Name]
+		switch {
+		case existed:
+			if err := p.reconcileTopic(ctx, cfg, target, arn); err != nil {
+				return nil, err
+			}
+		case target.Create:
 			out, err := client.CreateTopic(ctx, &sns.CreateTopicInput{
 				Name:       aws.String(target.Name),
 				Attributes: snsCreateAttributes(target),
@@ -62,61 +83,68 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 			if err != nil {
 				return nil, fmt.Errorf("sns target %q: %w", target.Name, err)
 			}
-			arn := aws.ToString(out.TopicArn)
-			p.targets[target.Name] = snsTargetState{arn: arn, subject: target.Subject, fifo: target.FIFO}
-			p.probes = append(p.probes, arn)
-		} else {
-			needLookup = append(needLookup, target)
+			arn = aws.ToString(out.TopicArn)
+		default:
+			return nil, fmt.Errorf("sns target %q: topic %q not found", target.Name, target.Name)
 		}
+		p.targets[target.Name] = snsTargetState{arn: arn, subject: target.Subject, fifo: target.FIFO}
+		p.probes = append(p.probes, arn)
 	}
-
-	// If there are any create:false targets, page ListTopics once and build a map.
-	if len(needLookup) > 0 {
-		arnByName := map[string]string{} // topic name (after last ":") -> full ARN
-		var token *string
-		for {
-			out, err := client.ListTopics(ctx, &sns.ListTopicsInput{NextToken: token})
-			if err != nil {
-				return nil, fmt.Errorf("sns ListTopics: %w", err)
-			}
-			for _, topic := range out.Topics {
-				arn := aws.ToString(topic.TopicArn)
-				if idx := strings.LastIndex(arn, ":"); idx >= 0 {
-					arnByName[arn[idx+1:]] = arn
-				}
-			}
-			if out.NextToken == nil {
-				break
-			}
-			token = out.NextToken
-		}
-		for _, target := range needLookup {
-			arn, ok := arnByName[target.Name]
-			if !ok {
-				return nil, fmt.Errorf("sns target %q: topic %q not found", target.Name, target.Name)
-			}
-			if strings.HasSuffix(target.Name, ".fifo") {
-				if err := p.verifyTopicContentBasedDedup(ctx, arn); err != nil {
-					return nil, fmt.Errorf("sns target %q: %w", target.Name, err)
-				}
-			}
-			p.targets[target.Name] = snsTargetState{arn: arn, subject: target.Subject, fifo: target.FIFO}
-			p.probes = append(p.probes, arn)
-		}
-	}
-
 	return p, nil
 }
 
-func (p *SNSPublisher) verifyTopicContentBasedDedup(ctx context.Context, topicARN string) error {
-	out, err := p.client.GetTopicAttributes(ctx, &sns.GetTopicAttributesInput{TopicArn: aws.String(topicARN)})
+// listTopicARNs pages ListTopics once and maps topic name (the part after the
+// final ":") to its full ARN.
+func (p *SNSPublisher) listTopicARNs(ctx context.Context) (map[string]string, error) {
+	arnByName := map[string]string{}
+	var token *string
+	for {
+		out, err := p.client.ListTopics(ctx, &sns.ListTopicsInput{NextToken: token})
+		if err != nil {
+			return nil, fmt.Errorf("sns ListTopics: %w", err)
+		}
+		for _, topic := range out.Topics {
+			arn := aws.ToString(topic.TopicArn)
+			if idx := strings.LastIndex(arn, ":"); idx >= 0 {
+				arnByName[arn[idx+1:]] = arn
+			}
+		}
+		if out.NextToken == nil {
+			return arnByName, nil
+		}
+		token = out.NextToken
+	}
+}
+
+// reconcileTopic fetches the existing topic's attributes and applies the
+// configured conflict policy. SNS SetTopicAttributes sets one attribute per
+// call, so the setAttrs closure loops over the mutable differences.
+func (p *SNSPublisher) reconcileTopic(ctx context.Context, cfg SNSConfig, target SNSTarget, arn string) error {
+	out, err := p.client.GetTopicAttributes(ctx, &sns.GetTopicAttributesInput{TopicArn: aws.String(arn)})
 	if err != nil {
-		return fmt.Errorf("GetTopicAttributes: %w", err)
+		return fmt.Errorf("sns target %q: GetTopicAttributes: %w", target.Name, err)
 	}
-	if out.Attributes["ContentBasedDeduplication"] != "true" {
-		return fmt.Errorf("topic does not have ContentBasedDeduplication enabled; set it on the topic or use create:true")
-	}
-	return nil
+	return applyConflictPolicy(ctx, reconcileParams{
+		policy:  cfg.Policy,
+		logger:  cfg.Logger,
+		destID:  cfg.DestinationID,
+		target:  target.Name,
+		want:    snsCreateAttributes(target),
+		got:     out.Attributes,
+		mutable: snsMutableAttrs,
+		setAttrs: func(ctx context.Context, mutableWant map[string]string) error {
+			for name, value := range mutableWant {
+				if _, err := p.client.SetTopicAttributes(ctx, &sns.SetTopicAttributesInput{
+					TopicArn:       aws.String(arn),
+					AttributeName:  aws.String(name),
+					AttributeValue: aws.String(value),
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
 }
 
 func snsCreateAttributes(target SNSTarget) map[string]string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ type sqsAPI interface {
 	GetQueueUrl(ctx context.Context, in *sqs.GetQueueUrlInput, optFns ...func(*sqs.Options)) (*sqs.GetQueueUrlOutput, error)
 	CreateQueue(ctx context.Context, in *sqs.CreateQueueInput, optFns ...func(*sqs.Options)) (*sqs.CreateQueueOutput, error)
 	GetQueueAttributes(ctx context.Context, in *sqs.GetQueueAttributesInput, optFns ...func(*sqs.Options)) (*sqs.GetQueueAttributesOutput, error)
+	SetQueueAttributes(ctx context.Context, in *sqs.SetQueueAttributesInput, optFns ...func(*sqs.Options)) (*sqs.SetQueueAttributesOutput, error)
 	SendMessage(ctx context.Context, in *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error)
 }
 
@@ -34,7 +36,17 @@ type SQSConfig struct {
 	Endpoint        string
 	AccessKeyID     string
 	SecretAccessKey string
+	DestinationID   string
+	Policy          ConflictPolicy
+	Logger          *slog.Logger
 	Targets         []SQSTarget
+}
+
+var sqsMutableAttrs = map[string]bool{
+	"VisibilityTimeout":         true,
+	"MessageRetentionPeriod":    true,
+	"ContentBasedDeduplication": true,
+	"FifoQueue":                 false,
 }
 
 type sqsTargetState struct {
@@ -53,13 +65,13 @@ type SQSPublisher struct {
 func NewSQSPublisher(ctx context.Context, client sqsAPI, cfg SQSConfig) (*SQSPublisher, error) {
 	p := &SQSPublisher{client: client, targets: map[string]sqsTargetState{}}
 	for _, target := range cfg.Targets {
-		url, err := p.resolveQueueURL(ctx, target)
+		url, existed, err := p.resolveQueueURL(ctx, target)
 		if err != nil {
 			return nil, fmt.Errorf("sqs target %q: %w", target.Name, err)
 		}
-		if !target.Create && strings.HasSuffix(target.Name, ".fifo") {
-			if err := p.verifyContentBasedDedup(ctx, url); err != nil {
-				return nil, fmt.Errorf("sqs target %q: %w", target.Name, err)
+		if existed {
+			if err := p.reconcileQueue(ctx, cfg, target, url); err != nil {
+				return nil, err
 			}
 		}
 		p.targets[target.Name] = sqsTargetState{url: url, fifo: target.FIFO}
@@ -68,41 +80,58 @@ func NewSQSPublisher(ctx context.Context, client sqsAPI, cfg SQSConfig) (*SQSPub
 	return p, nil
 }
 
-func (p *SQSPublisher) verifyContentBasedDedup(ctx context.Context, queueURL string) error {
-	out, err := p.client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
-		QueueUrl:       aws.String(queueURL),
-		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameContentBasedDeduplication},
-	})
-	if err != nil {
-		return fmt.Errorf("GetQueueAttributes: %w", err)
-	}
-	if out.Attributes["ContentBasedDeduplication"] != "true" {
-		return fmt.Errorf("queue does not have ContentBasedDeduplication enabled; set it on the queue or use create:true")
-	}
-	return nil
-}
-
-// resolveQueueURL looks up the queue URL, creating the queue when it does not
-// exist and Create is true. When the queue does not exist and Create is false
-// it returns the error so NewSQSPublisher fails fast on a misconfigured target
-// rather than deferring the failure to the first publish.
-func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (string, error) {
+// resolveQueueURL returns the queue URL and whether it already existed. When the
+// queue is absent and Create is false it errors (fail-fast on misconfiguration).
+func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (url string, existed bool, err error) {
 	out, err := p.client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(target.Name)})
 	if err == nil {
-		return aws.ToString(out.QueueUrl), nil
+		return aws.ToString(out.QueueUrl), true, nil
 	}
 	var notFound *sqstypes.QueueDoesNotExist
 	if !errors.As(err, &notFound) || !target.Create {
-		return "", err
+		return "", false, err
 	}
 	created, err := p.client.CreateQueue(ctx, &sqs.CreateQueueInput{
 		QueueName:  aws.String(target.Name),
 		Attributes: sqsCreateAttributes(target),
 	})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return aws.ToString(created.QueueUrl), nil
+	return aws.ToString(created.QueueUrl), false, nil
+}
+
+// reconcileQueue compares the existing queue's managed attributes against the
+// configured ones and applies cfg.Policy.
+func (p *SQSPublisher) reconcileQueue(ctx context.Context, cfg SQSConfig, target SQSTarget, url string) error {
+	out, err := p.client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl: aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{
+			sqstypes.QueueAttributeNameVisibilityTimeout,
+			sqstypes.QueueAttributeNameMessageRetentionPeriod,
+			sqstypes.QueueAttributeNameFifoQueue,
+			sqstypes.QueueAttributeNameContentBasedDeduplication,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("sqs target %q: GetQueueAttributes: %w", target.Name, err)
+	}
+	return applyConflictPolicy(ctx, reconcileParams{
+		policy:  cfg.Policy,
+		logger:  cfg.Logger,
+		destID:  cfg.DestinationID,
+		target:  target.Name,
+		want:    sqsCreateAttributes(target),
+		got:     out.Attributes,
+		mutable: sqsMutableAttrs,
+		setAttrs: func(ctx context.Context, mutableWant map[string]string) error {
+			_, err := p.client.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+				QueueUrl:   aws.String(url),
+				Attributes: mutableWant,
+			})
+			return err
+		},
+	})
 }
 
 func sqsCreateAttributes(target SQSTarget) map[string]string {

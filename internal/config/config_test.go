@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1116,5 +1117,320 @@ endpoints:
 	}
 	if !strings.Contains(err.Error(), "subject is not supported on FIFO SNS topics") {
 		t.Fatalf("expected FIFO SNS subject error, got: %v", err)
+	}
+}
+
+func TestLoadOnExistingConflictDefaultsToReconcile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: sqs
+    sqs:
+      region: us-east-1
+endpoints:
+  e:
+    enabled: true
+    path: /p
+    destinations:
+      - destination: jobs
+        target: q
+    auth:
+      type: no_auth
+      scheme: no_auth
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Destinations["jobs"].OnExistingConflict != "reconcile" {
+		t.Fatalf("default = %q, want reconcile", cfg.Destinations["jobs"].OnExistingConflict)
+	}
+}
+
+func TestValidateRejectsInvalidOnExistingConflict(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  jobs:
+    type: sqs
+    on_existing_conflict: nonsense
+    sqs:
+      region: us-east-1
+endpoints:
+  e:
+    enabled: true
+    path: /p
+    destinations:
+      - destination: jobs
+        target: q
+    auth: { type: no_auth, scheme: no_auth }
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid on_existing_conflict")
+	}
+	if !strings.Contains(err.Error(), "on_existing_conflict") {
+		t.Fatalf("error did not mention on_existing_conflict: %v", err)
+	}
+}
+
+func TestValidateRejectsOnExistingConflictOnRabbitMQ(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: rabbitmq
+    on_existing_conflict: warn
+    rabbitmq:
+      url: amqp://x
+      exchange: e
+      exchange_type: direct
+endpoints:
+  e:
+    enabled: true
+    path: /p
+    destinations:
+      - destination: primary
+        target: q
+    auth: { type: no_auth, scheme: no_auth }
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "on_existing_conflict") {
+		t.Fatalf("expected on_existing_conflict-on-rabbitmq error, got %v", err)
+	}
+}
+
+// ---- Redis config tests ----
+
+func validRedisStreamYAML() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: redis_stream
+    redis:
+      mode: single
+      url: "redis://localhost:6379"
+      username: "redisuser"
+      password: "redispass"
+      db: 1
+      key_prefix: "hookway"
+      tls:
+        enabled: true
+        ca_cert: ""
+        client_cert: ""
+        client_key: ""
+        server_name: ""
+        insecure_skip_verify: false
+endpoints:
+  ep1:
+    enabled: true
+    path: "/webhooks/ep1"
+    destinations:
+      - destination: events
+        target: webhooks-stream
+        create: true
+        redis_options:
+          max_len: 100000
+          consumer_group: "workers"
+    auth:
+      type: no_auth
+      scheme: no_auth
+`
+}
+
+// TestRedisStreamSingleModeLoadsCorrectly verifies a valid redis_stream single-mode config round-trips.
+func TestRedisStreamSingleModeLoadsCorrectly(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validRedisStreamYAML()))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	dest := cfg.Destinations["events"]
+	if dest.Type != "redis_stream" {
+		t.Fatalf("type = %q, want redis_stream", dest.Type)
+	}
+	r := dest.Redis
+	if r.Mode != "single" {
+		t.Fatalf("mode = %q, want single", r.Mode)
+	}
+	if r.URL != "redis://localhost:6379" {
+		t.Fatalf("url = %q", r.URL)
+	}
+	if r.Username != "redisuser" {
+		t.Fatalf("username = %q", r.Username)
+	}
+	if r.Password != "redispass" {
+		t.Fatalf("password = %q", r.Password)
+	}
+	if r.DB != 1 {
+		t.Fatalf("db = %d, want 1", r.DB)
+	}
+	if r.KeyPrefix != "hookway" {
+		t.Fatalf("key_prefix = %q", r.KeyPrefix)
+	}
+	if !r.TLS.Enabled {
+		t.Fatalf("tls.enabled = %v, want true", r.TLS.Enabled)
+	}
+
+	ep := cfg.Endpoints["ep1"]
+	d := ep.Destinations[0]
+	if d.RedisOptions.MaxLen != 100000 {
+		t.Fatalf("max_len = %d, want 100000", d.RedisOptions.MaxLen)
+	}
+	if d.RedisOptions.ConsumerGroup != "workers" {
+		t.Fatalf("consumer_group = %q, want workers", d.RedisOptions.ConsumerGroup)
+	}
+}
+
+// TestRedisModeDefaultsToSingle verifies that omitting mode entirely defaults to "single".
+func TestRedisModeDefaultsToSingle(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(), "      mode: single\n", "", 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got := cfg.Destinations["events"].Redis.Mode; got != "single" {
+		t.Fatalf("mode = %q, want single (defaulted)", got)
+	}
+}
+
+// TestRedisModeNotDefaultedForNonRedisDestination verifies a non-redis destination
+// keeps a zero RedisConfig (empty Mode) and is not defaulted to "single".
+func TestRedisModeNotDefaultedForNonRedisDestination(t *testing.T) {
+	cfg, err := Load(writeConfig(t, validSQSYAML()))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got := cfg.Destinations["jobs"].Redis.Mode; got != "" {
+		t.Fatalf("non-redis destination Redis.Mode = %q, want empty", got)
+	}
+	if !reflect.DeepEqual(cfg.Destinations["jobs"].Redis, RedisConfig{}) {
+		t.Fatalf("non-redis destination has non-zero RedisConfig: %#v", cfg.Destinations["jobs"].Redis)
+	}
+}
+
+// TestRedisInvalidModeRejected verifies that an unsupported mode is rejected.
+func TestRedisInvalidModeRejected(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(), "mode: single", "mode: replication", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for invalid redis mode")
+	}
+	if !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("expected mode in error, got: %v", err)
+	}
+}
+
+// TestRedisSingleWithoutURLRejected verifies that single mode without url is rejected.
+func TestRedisSingleWithoutURLRejected(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(), "url: \"redis://localhost:6379\"", "url: \"\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for single mode without url")
+	}
+	if !strings.Contains(err.Error(), "url") {
+		t.Fatalf("expected url in error, got: %v", err)
+	}
+}
+
+// TestRedisClusterWithoutAddrsRejected verifies that cluster mode without addrs is rejected.
+func TestRedisClusterWithoutAddrsRejected(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(), "mode: single\n      url: \"redis://localhost:6379\"", "mode: cluster", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for cluster mode without addrs")
+	}
+	if !strings.Contains(err.Error(), "addrs") {
+		t.Fatalf("expected addrs in error, got: %v", err)
+	}
+}
+
+// TestRedisSentinelWithoutMasterNameRejected verifies sentinel mode without master_name is rejected.
+func TestRedisSentinelWithoutMasterNameRejected(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(),
+		"mode: single\n      url: \"redis://localhost:6379\"",
+		"mode: sentinel\n      addrs:\n        - \"sentinel1:26379\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for sentinel mode without master_name")
+	}
+	if !strings.Contains(err.Error(), "master_name") {
+		t.Fatalf("expected master_name in error, got: %v", err)
+	}
+}
+
+// TestRedisConsumerGroupOnKVRejected verifies that consumer_group is only valid for redis_stream.
+func TestRedisConsumerGroupOnKVRejected(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(), "type: redis_stream", "type: redis_kv", 1)
+	// add ttl since redis_kv requires it conceptually but we're testing consumer_group rejection
+	yaml = strings.Replace(yaml,
+		"redis_options:\n          max_len: 100000\n          consumer_group: \"workers\"",
+		"redis_options:\n          consumer_group: \"workers\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for consumer_group on redis_kv")
+	}
+	if !strings.Contains(err.Error(), "consumer_group") {
+		t.Fatalf("expected consumer_group in error, got: %v", err)
+	}
+}
+
+// TestRedisTTLOnStreamRejected verifies that ttl is not valid for redis_stream.
+func TestRedisTTLOnStreamRejected(t *testing.T) {
+	yaml := strings.Replace(validRedisStreamYAML(),
+		"redis_options:\n          max_len: 100000\n          consumer_group: \"workers\"",
+		"redis_options:\n          max_len: 100000\n          ttl: \"24h\"", 1)
+	_, err := Load(writeConfig(t, yaml))
+	if err == nil {
+		t.Fatal("expected error for ttl on redis_stream")
+	}
+	if !strings.Contains(err.Error(), "ttl") {
+		t.Fatalf("expected ttl in error, got: %v", err)
+	}
+}
+
+// TestRedisOptionsOnSQSRejected verifies that redis_options is not valid for sqs destinations.
+func TestRedisOptionsOnSQSRejected(t *testing.T) {
+	cfg := Config{
+		Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: map[string]DestinationConfig{
+			"jobs": {Type: "sqs", SQS: SQSConfig{Region: "us-east-1"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth"},
+				Destinations: []EndpointDestinationConfig{{
+					Destination:  "jobs",
+					Target:       "orders-queue",
+					RedisOptions: RedisEndpointOptions{MaxLen: 1000},
+				}}},
+		},
+	}
+	issues := cfg.ValidationIssues()
+	if !hasIssue(issues, "endpoints.e.destinations[0].redis_options") {
+		t.Fatalf("expected redis_options-on-sqs error, got %#v", issues)
 	}
 }

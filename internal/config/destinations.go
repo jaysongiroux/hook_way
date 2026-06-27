@@ -48,11 +48,39 @@ type RabbitMQQueueOptions struct {
 	DeadLetterRoutingKey string
 }
 
+// RedisTLSConfig configures TLS for Redis/Valkey connections. Mirror of RabbitMQTLSConfig.
+// All fields are optional: set these only for private CAs, mutual TLS, or a non-default
+// server name.
+type RedisTLSConfig struct {
+	Enabled            bool
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+// RedisConfig holds the shared connection block for all redis_* destination types.
+// Mode selects the deployment topology: "single" (default), "cluster", or "sentinel".
+type RedisConfig struct {
+	Mode       string
+	URL        string
+	Addrs      []string
+	MasterName string
+	Username   string
+	Password   string
+	DB         int
+	KeyPrefix  string
+	TLS        RedisTLSConfig
+}
+
 type DestinationConfig struct {
-	Type     string
-	RabbitMQ RabbitMQConfig
-	SQS      SQSConfig
-	SNS      SNSConfig
+	Type               string
+	OnExistingConflict string
+	RabbitMQ           RabbitMQConfig
+	SQS                SQSConfig
+	SNS                SNSConfig
+	Redis              RedisConfig
 }
 
 type SQSConfig struct {
@@ -78,7 +106,8 @@ type rawRabbitMQQueueOptions struct {
 }
 
 type rawDestinationConfig struct {
-	Type     string `yaml:"type"`
+	Type               string `yaml:"type"`
+	OnExistingConflict string `yaml:"on_existing_conflict"`
 	RabbitMQ struct {
 		URL               string                  `yaml:"url"`
 		Exchange          string                  `yaml:"exchange"`
@@ -117,10 +146,49 @@ type rawDestinationConfig struct {
 		AccessKeyID     string `yaml:"access_key_id"`
 		SecretAccessKey string `yaml:"secret_access_key"`
 	} `yaml:"sns"`
+	Redis struct {
+		Mode       string   `yaml:"mode"`
+		URL        string   `yaml:"url"`
+		Addrs      []string `yaml:"addrs"`
+		MasterName string   `yaml:"master_name"`
+		Username   string   `yaml:"username"`
+		Password   string   `yaml:"password"`
+		DB         int      `yaml:"db"`
+		KeyPrefix  string   `yaml:"key_prefix"`
+		TLS        struct {
+			Enabled            bool   `yaml:"enabled"`
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+	} `yaml:"redis"`
 }
 
 func convertDestination(fieldPrefix string, raw rawDestinationConfig) (DestinationConfig, []ValidationIssue) {
 	var issues []ValidationIssue
+	policy := raw.OnExistingConflict
+	switch raw.Type {
+	case "sqs", "sns":
+		switch policy {
+		case "", "error", "warn", "reconcile":
+			// ok
+		default:
+			issues = append(issues, validationError(fieldPrefix+".on_existing_conflict",
+				fmt.Sprintf("%q is not supported", policy),
+				"use \"error\", \"warn\", or \"reconcile\""))
+		}
+		if policy == "" {
+			policy = "reconcile"
+		}
+	default: // rabbitmq and anything else
+		if policy != "" {
+			issues = append(issues, validationError(fieldPrefix+".on_existing_conflict",
+				"only valid for sqs/sns destinations",
+				"remove on_existing_conflict or point the destination at sqs/sns"))
+		}
+	}
 	publish, issue := parseDuration(fieldPrefix+".rabbitmq.publish_timeout", raw.RabbitMQ.PublishTimeout, 5*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
@@ -128,7 +196,8 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	queueDefaults, queueDefaultIssues := convertQueueOptions(fieldPrefix+".rabbitmq.queue_defaults", raw.RabbitMQ.QueueDefaults)
 	issues = append(issues, queueDefaultIssues...)
 	return DestinationConfig{
-		Type: raw.Type,
+		Type:               raw.Type,
+		OnExistingConflict: policy,
 		RabbitMQ: RabbitMQConfig{
 			URL: raw.RabbitMQ.URL, Exchange: raw.RabbitMQ.Exchange,
 			ExchangeType: raw.RabbitMQ.ExchangeType, Durable: raw.RabbitMQ.Durable,
@@ -159,7 +228,38 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			AccessKeyID:     raw.SNS.AccessKeyID,
 			SecretAccessKey: raw.SNS.SecretAccessKey,
 		},
+		Redis: RedisConfig{
+			Mode:       redisMode(raw.Type, raw.Redis.Mode),
+			URL:        raw.Redis.URL,
+			Addrs:      raw.Redis.Addrs,
+			MasterName: raw.Redis.MasterName,
+			Username:   raw.Redis.Username,
+			Password:   raw.Redis.Password,
+			DB:         raw.Redis.DB,
+			KeyPrefix:  raw.Redis.KeyPrefix,
+			TLS: RedisTLSConfig{
+				Enabled:            raw.Redis.TLS.Enabled,
+				CACert:             raw.Redis.TLS.CACert,
+				ClientCert:         raw.Redis.TLS.ClientCert,
+				ClientKey:          raw.Redis.TLS.ClientKey,
+				ServerName:         raw.Redis.TLS.ServerName,
+				InsecureSkipVerify: raw.Redis.TLS.InsecureSkipVerify,
+			},
+		},
 	}, issues
+}
+
+// redisMode returns the configured mode for redis_* destinations, defaulting to
+// "single" when empty. For non-redis destination types it leaves the raw value
+// untouched so a non-redis destination keeps a zero RedisConfig{}.
+func redisMode(destType, mode string) string {
+	switch destType {
+	case "redis_stream", "redis_list", "redis_pubsub", "redis_kv":
+		if mode == "" {
+			return "single"
+		}
+	}
+	return mode
 }
 
 func convertQueueOptions(fieldPrefix string, raw rawRabbitMQQueueOptions) (RabbitMQQueueOptions, []ValidationIssue) {
