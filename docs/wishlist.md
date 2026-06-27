@@ -4,7 +4,6 @@
 This is a net-new feature but allows basic routing from endpoint after auth to specific destinations based on simple logic based on the content of the webhook's body.
 
 ## Destinations
-- AWS Kinesis
 - BullMQ
 - Redis
 - Postgres

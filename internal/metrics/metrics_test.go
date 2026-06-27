@@ -209,7 +209,8 @@ hookway_destination_info{destination_queue_id="activity",type="rabbitmq"} 1
 hookway_destination_info{destination_queue_id="billing",type="rabbitmq"} 1
 # HELP hookway_endpoint_info Enabled webhook endpoint (value is always 1).
 # TYPE hookway_endpoint_info gauge
-hookway_endpoint_info{destination_queue_id="billing,activity",endpoint="example_fanout",path="/webhooks/example",queue="example-webhooks,example-audit-webhooks"} 1
+hookway_endpoint_info{destination_queue_id="activity",endpoint="example_fanout",path="/webhooks/example",queue="example-audit-webhooks"} 1
+hookway_endpoint_info{destination_queue_id="billing",endpoint="example_fanout",path="/webhooks/example",queue="example-webhooks"} 1
 `),
 		"hookway_endpoint_info",
 		"hookway_destination_info",
