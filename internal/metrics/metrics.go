@@ -191,7 +191,9 @@ func (m *Metrics) RegisterConfig(cfg config.Config) {
 		if !endpoint.Enabled {
 			continue
 		}
-		m.endpointInfo.WithLabelValues(name, endpoint.DestinationLabel(), endpoint.TargetLabel(), endpoint.Path).Set(1)
+		for _, route := range endpoint.DestinationRoutes() {
+			m.endpointInfo.WithLabelValues(name, route.Destination, route.Target, endpoint.Path).Set(1)
+		}
 	}
 	for id, destination := range cfg.Destinations {
 		queueType := destination.Type
