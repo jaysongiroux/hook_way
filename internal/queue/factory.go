@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/jasongiroux/hookway/internal/config"
@@ -15,6 +16,7 @@ import (
 type RabbitMQConnector func(ctx context.Context, destinationID string, cfg RabbitMQConfig) (Publisher, error)
 type SQSConnector func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error)
 type SNSConnector func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error)
+type S3Connector func(ctx context.Context, destinationID string, cfg S3Config) (Publisher, error)
 
 // RedisConnector creates a Publisher for the given Redis destination. It is
 // called once per redis_* destination in Create. The default connector builds
@@ -39,6 +41,7 @@ type FactoryOptions struct {
 	SQSConnector      SQSConnector
 	SNSConnector      SNSConnector
 	RedisConnector    RedisConnector
+	S3Connector       S3Connector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
 }
@@ -48,6 +51,7 @@ type Factory struct {
 	sqsConnector      SQSConnector
 	snsConnector      SNSConnector
 	redisConnector    RedisConnector
+	s3Connector       S3Connector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
 }
@@ -77,6 +81,22 @@ func NewFactory(opts FactoryOptions) *Factory {
 				return nil, err
 			}
 			return NewSNSPublisher(ctx, sns.NewFromConfig(awsCfg), cfg)
+		}
+	}
+	s3Connector := opts.S3Connector
+	if s3Connector == nil {
+		s3Connector = func(ctx context.Context, destinationID string, cfg S3Config) (Publisher, error) {
+			awsCfg, err := newAWSConfig(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
+			if err != nil {
+				return nil, err
+			}
+			client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+				// LocalStack/dev custom endpoints require path-style addressing.
+				if cfg.Endpoint != "" {
+					o.UsePathStyle = true
+				}
+			})
+			return NewS3Publisher(ctx, client, cfg)
 		}
 	}
 	redisConnector := opts.RedisConnector
@@ -158,6 +178,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		sqsConnector:      sqsConnector,
 		snsConnector:      snsConnector,
 		redisConnector:    redisConnector,
+		s3Connector:       s3Connector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
 	}
@@ -213,6 +234,24 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				Policy:          toConflictPolicy(destination.OnExistingConflict),
 				Logger:          f.logger,
 				Targets:         collectSNSTargets(cfg, id),
+			})
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "s3":
+			publisher, err := f.s3Connector(ctx, id, S3Config{
+				Region:          destination.S3.Region,
+				Endpoint:        destination.S3.Endpoint,
+				AccessKeyID:     destination.S3.AccessKeyID,
+				SecretAccessKey: destination.S3.SecretAccessKey,
+				Bucket:          destination.S3.Bucket,
+				Create:          destination.S3.Create,
+				SSE:             destination.S3.SSE,
+				SSEKMSKeyID:     destination.S3.SSEKMSKeyID,
+				DestinationID:   id,
+				Logger:          f.logger,
+				Targets:         collectS3Targets(cfg, id),
 			})
 			if err != nil {
 				return nil, err
@@ -342,6 +381,28 @@ func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
 				Subject: route.SNSOptions.Subject,
 				FIFO:    mapFIFO(route.FIFO),
 			})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+func collectS3Targets(cfg config.Config, destinationID string) []S3Target {
+	seen := map[string]struct{}{}
+	var targets []S3Target
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			targets = append(targets, S3Target{Name: route.Target})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })

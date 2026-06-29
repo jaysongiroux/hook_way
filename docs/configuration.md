@@ -182,6 +182,49 @@ SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint o
 
 Per-endpoint SNS topic settings are configured on the route via `sns_options` and (for `.fifo` targets) `fifo`.
 
+### AWS S3
+
+S3 fields live under `destinations.<id>.s3`. Hookway writes each webhook event as a single JSON object (`Content-Type: application/json`). Credentials are optional: when both `access_key_id` and `secret_access_key` are set they are used as static credentials; otherwise the default AWS credential chain (env, IAM role, shared profile) applies.
+
+- `destinations.<id>.type`: set to `s3`.
+- `destinations.<id>.s3.region`: required AWS region, e.g. `us-east-1`.
+- `destinations.<id>.s3.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
+- `destinations.<id>.s3.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
+- `destinations.<id>.s3.bucket`: required S3 bucket name.
+- `destinations.<id>.s3.create`: when `true`, auto-create the bucket at startup if it does not exist. `us-east-1` uses no `LocationConstraint`; all other regions set it automatically. The bucket is verified via `HeadBucket` at startup regardless of this setting.
+- `destinations.<id>.s3.sse`: server-side encryption mode. Leave empty (default) to rely on the bucket's or account's default encryption. Use `"AES256"` for SSE-S3 managed keys or `"aws:kms"` for SSE-KMS.
+- `destinations.<id>.s3.sse_kms_key_id`: KMS key ARN or alias. Only used when `sse` is `"aws:kms"`. Omit to use the default `aws/s3` KMS key.
+
+**Object key layout:** the per-route `target` is the base folder (key prefix). Each event is stored at:
+
+```
+<target>/yyyy/mm/dd/<timestamp>-<id>.json
+```
+
+The date partition and timestamp are derived from the event's `ReceivedAt` in UTC. The timestamp is colon-free so the key is usable in all contexts. Example with `target: "orders"`:
+
+```
+orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
+```
+
+**`on_existing_conflict`:** accepted for config parity but is a NO-OP for S3. S3 has no mutable per-target attributes to reconcile; the bucket is verified at startup via `HeadBucket` but is never mutated by this policy.
+
+```yaml
+destinations:
+  events:
+    type: "s3"
+    on_existing_conflict: "reconcile"     # accepted but no-op for S3
+    s3:
+      region: "us-east-1"
+      endpoint: "${AWS_ENDPOINT:-}"       # http://localhost:4566 for LocalStack
+      access_key_id: "${AWS_ACCESS_KEY_ID:-}"
+      secret_access_key: "${AWS_SECRET_ACCESS_KEY:-}"
+      bucket: "my-webhook-events"
+      create: true
+      sse: "AES256"                       # or "aws:kms"; omit for default encryption
+      # sse_kms_key_id: "${S3_KMS_KEY_ID:-}"
+```
+
 ### Redis / Valkey
 
 Hookway supports four Redis destination types. All share a common `redis:` connection block on the destination, and per-route settings under `redis_options` on each endpoint route.

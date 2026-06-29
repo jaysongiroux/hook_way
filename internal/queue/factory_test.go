@@ -458,6 +458,48 @@ func TestFactoryDefaultRedisConnectorRedisListIsImplemented(t *testing.T) {
 	}
 }
 
+func TestFactoryCreatesS3Publisher(t *testing.T) {
+	var gotCfg S3Config
+	cfg := config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"archive": {
+				Type: "s3",
+				S3:   config.S3Config{Region: "us-east-1", Bucket: "events", Create: true},
+			},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"orders": {
+				Enabled: true,
+				Path:    "/orders",
+				Destinations: []config.EndpointDestinationConfig{
+					{Destination: "archive", Target: "orders"},
+					{Destination: "archive", Target: "orders"}, // duplicate -> deduped
+					{Destination: "archive", Target: "refunds"},
+				},
+			},
+		},
+	}
+	f := NewFactory(FactoryOptions{
+		S3Connector: func(ctx context.Context, destinationID string, c S3Config) (Publisher, error) {
+			gotCfg = c
+			return &recordingPublisher{}, nil
+		},
+	})
+	if _, err := f.Create(context.Background(), cfg); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if gotCfg.Bucket != "events" || gotCfg.Region != "us-east-1" || !gotCfg.Create {
+		t.Fatalf("s3 cfg not passed through: %#v", gotCfg)
+	}
+	if len(gotCfg.Targets) != 2 {
+		t.Fatalf("expected 2 deduped targets, got %#v", gotCfg.Targets)
+	}
+	// collectS3Targets sorts by name: orders, refunds.
+	if gotCfg.Targets[0].Name != "orders" || gotCfg.Targets[1].Name != "refunds" {
+		t.Fatalf("unexpected targets: %#v", gotCfg.Targets)
+	}
+}
+
 type recordingPublisher struct {
 	err           error
 	readyErr      error

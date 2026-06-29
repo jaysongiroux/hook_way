@@ -80,6 +80,7 @@ type DestinationConfig struct {
 	RabbitMQ           RabbitMQConfig
 	SQS                SQSConfig
 	SNS                SNSConfig
+	S3                 S3Config
 	Redis              RedisConfig
 }
 
@@ -95,6 +96,17 @@ type SNSConfig struct {
 	Endpoint        string
 	AccessKeyID     string
 	SecretAccessKey string
+}
+
+type S3Config struct {
+	Region          string
+	Endpoint        string
+	AccessKeyID     string
+	SecretAccessKey string
+	Bucket          string
+	Create          bool
+	SSE             string
+	SSEKMSKeyID     string
 }
 
 type rawRabbitMQQueueOptions struct {
@@ -146,6 +158,16 @@ type rawDestinationConfig struct {
 		AccessKeyID     string `yaml:"access_key_id"`
 		SecretAccessKey string `yaml:"secret_access_key"`
 	} `yaml:"sns"`
+	S3 struct {
+		Region          string `yaml:"region"`
+		Endpoint        string `yaml:"endpoint"`
+		AccessKeyID     string `yaml:"access_key_id"`
+		SecretAccessKey string `yaml:"secret_access_key"`
+		Bucket          string `yaml:"bucket"`
+		Create          bool   `yaml:"create"`
+		SSE             string `yaml:"sse"`
+		SSEKMSKeyID     string `yaml:"sse_kms_key_id"`
+	} `yaml:"s3"`
 	Redis struct {
 		Mode       string   `yaml:"mode"`
 		URL        string   `yaml:"url"`
@@ -170,7 +192,7 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	var issues []ValidationIssue
 	policy := raw.OnExistingConflict
 	switch raw.Type {
-	case "sqs", "sns":
+	case "sqs", "sns", "s3":
 		switch policy {
 		case "", "error", "warn", "reconcile":
 			// ok
@@ -227,6 +249,16 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			Endpoint:        raw.SNS.Endpoint,
 			AccessKeyID:     raw.SNS.AccessKeyID,
 			SecretAccessKey: raw.SNS.SecretAccessKey,
+		},
+		S3: S3Config{
+			Region:          raw.S3.Region,
+			Endpoint:        raw.S3.Endpoint,
+			AccessKeyID:     raw.S3.AccessKeyID,
+			SecretAccessKey: raw.S3.SecretAccessKey,
+			Bucket:          raw.S3.Bucket,
+			Create:          raw.S3.Create,
+			SSE:             raw.S3.SSE,
+			SSEKMSKeyID:     raw.S3.SSEKMSKeyID,
 		},
 		Redis: RedisConfig{
 			Mode:       redisMode(raw.Type, raw.Redis.Mode),

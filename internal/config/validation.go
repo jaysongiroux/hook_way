@@ -106,10 +106,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" &&
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" &&
 			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -119,6 +119,20 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if dest.Type == "sns" {
 			if dest.SNS.Region == "" {
 				issues = append(issues, validationError(fieldPrefix+".sns.region", "region is required for sns destinations", "set region to an AWS region such as \"us-east-1\""))
+			}
+		}
+		if dest.Type == "s3" {
+			if dest.S3.Region == "" {
+				issues = append(issues, validationError(fieldPrefix+".s3.region", "region is required for s3 destinations", "set region to an AWS region such as \"us-east-1\""))
+			}
+			if dest.S3.Bucket == "" {
+				issues = append(issues, validationError(fieldPrefix+".s3.bucket", "bucket is required for s3 destinations", "set bucket to the target S3 bucket name"))
+			}
+			switch dest.S3.SSE {
+			case "", "AES256", "aws:kms":
+				// ok
+			default:
+				issues = append(issues, validationError(fieldPrefix+".s3.sse", fmt.Sprintf("%q is not supported", dest.S3.SSE), "use \"AES256\" or \"aws:kms\", or omit for no server-side encryption"))
 			}
 		}
 		if dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv" {
