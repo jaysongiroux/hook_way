@@ -210,7 +210,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Webhook request rate by HTTP status.",
+      "description": "Webhook request count per adaptive time interval, by HTTP status.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -221,8 +221,8 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 20,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
             "insertNulls": false,
@@ -235,7 +235,8 @@
             "stacking": { "group": "A", "mode": "normal" },
             "thresholdsStyle": { "mode": "off" }
           },
-          "unit": "reqps"
+          "min": 0,
+          "unit": "short"
         },
         "overrides": [
           {
@@ -261,12 +262,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (status)",
+          "expr": "sum(increase(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
-      "title": "HTTP Request Rate",
+      "title": "HTTP Requests",
       "type": "timeseries"
     },
     {
@@ -327,7 +328,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Successfully published webhook messages per second.",
+      "description": "Successfully published webhook messages per adaptive time interval.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -338,8 +339,8 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 20,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
             "insertNulls": false,
@@ -352,7 +353,8 @@
             "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
-          "unit": "ops"
+          "min": 0,
+          "unit": "short"
         },
         "overrides": []
       },
@@ -365,7 +367,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_messages_published_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (endpoint, destination_queue_id, queue)",
+          "expr": "sum(increase(hookway_messages_published_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (endpoint, destination_queue_id, queue)",
           "legendFormat": "{{endpoint}} → {{destination_queue_id}}/{{queue}}",
           "refId": "A"
         }
@@ -413,13 +415,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum(rate(hookway_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(hookway_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(hookway_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(hookway_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         }
@@ -652,7 +654,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Successful and failed RabbitMQ publish attempts.",
+      "description": "Successful and failed publish attempts per adaptive time interval.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -663,8 +665,8 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 20,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
             "insertNulls": false,
@@ -677,7 +679,8 @@
             "stacking": { "group": "A", "mode": "normal" },
             "thresholdsStyle": { "mode": "off" }
           },
-          "unit": "ops"
+          "min": 0,
+          "unit": "short"
         },
         "overrides": [
           {
@@ -697,12 +700,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_publish_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[5m])) by (status)",
+          "expr": "sum(increase(hookway_publish_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (status)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
       ],
-      "title": "Publish Rate",
+      "title": "Publish Attempts",
       "type": "timeseries"
     },
     {
@@ -905,7 +908,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "definition": "label_values(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\"}, destination_queue_id)",
+        "definition": "label_values(hookway_endpoint_info{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}, destination_queue_id)",
         "hide": 0,
         "includeAll": true,
         "label": "Destination",
@@ -913,7 +916,7 @@
         "name": "destination",
         "options": [],
         "query": {
-          "query": "label_values(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\"}, destination_queue_id)",
+          "query": "label_values(hookway_endpoint_info{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}, destination_queue_id)",
           "refId": "PrometheusVariableQuery"
         },
         "refresh": 2,
@@ -929,7 +932,7 @@
           "value": "$__all"
         },
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "definition": "label_values(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\"}, queue)",
+        "definition": "label_values(hookway_endpoint_info{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\"}, queue)",
         "hide": 0,
         "includeAll": true,
         "label": "Queue",
@@ -937,7 +940,7 @@
         "name": "queue",
         "options": [],
         "query": {
-          "query": "label_values(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\"}, queue)",
+          "query": "label_values(hookway_endpoint_info{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\"}, queue)",
           "refId": "PrometheusVariableQuery"
         },
         "refresh": 2,
