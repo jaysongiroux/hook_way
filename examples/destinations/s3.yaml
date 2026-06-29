@@ -1,0 +1,70 @@
+# examples/destinations/s3.yaml
+#
+# Reference config for an AWS S3 destination. Hookway writes each webhook
+# event as a single JSON object to S3. The object key is derived from the
+# event's ReceivedAt timestamp (UTC) and its id:
+#
+#   <base_folder>/yyyy/mm/dd/<timestamp>-<id>.json
+#
+# For example, with target "orders":
+#   orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
+#
+# The per-route `target` is the base folder (key prefix). All objects for
+# that route are stored under that prefix with the date/time partition above.
+#
+# Credentials: omit access_key_id / secret_access_key to use the default
+# AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to
+# http://localhost:4566 to use LocalStack during development.
+
+server:
+  addr: ":8087"
+  max_body_bytes: 1048576
+
+destinations:
+  events:
+    type: s3
+    # on_existing_conflict is accepted for config parity but is a NO-OP for S3.
+    # S3 has no mutable per-target attributes to reconcile; the bucket is
+    # verified at startup (via HeadBucket) but never mutated by this policy.
+    on_existing_conflict: reconcile
+    s3:
+      region: "us-east-1"
+      # Uncomment to override the S3 endpoint, e.g. for LocalStack:
+      # endpoint: "http://localhost:4566"
+      # Omit both of the following to use the default AWS credential chain:
+      # access_key_id: "${AWS_ACCESS_KEY_ID:test}"
+      # secret_access_key: "${AWS_SECRET_ACCESS_KEY:test}"
+
+      # bucket: required — the S3 bucket to write objects into.
+      bucket: "my-webhook-events"
+
+      # create: when true, auto-create the bucket at startup if it does not
+      # exist. us-east-1 uses no LocationConstraint; all other regions set it
+      # automatically. Default: false.
+      create: true
+
+      # sse: server-side encryption mode. Options:
+      #   ""         — no SSE (default, uses bucket/account default encryption)
+      #   "AES256"   — SSE-S3 managed keys
+      #   "aws:kms"  — SSE-KMS; pair with sse_kms_key_id or leave blank for
+      #                the default aws/s3 KMS key.
+      # sse: "AES256"
+
+      # sse_kms_key_id: KMS key ARN or alias. Only used when sse is "aws:kms".
+      # sse_kms_key_id: "${S3_KMS_KEY_ID:-}"
+
+endpoints:
+  order_events:
+    enabled: true
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "events"
+        # target is the S3 key prefix (base folder). Objects are written under:
+        #   <target>/yyyy/mm/dd/<timestamp>-<id>.json
+        # e.g. orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
+        target: "orders"
+        # Note: bucket auto-creation is a destination-level setting (s3.create
+        # above), not a per-route option. S3 has no per-target "create".
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"

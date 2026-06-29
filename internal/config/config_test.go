@@ -693,6 +693,57 @@ func hasIssue(issues []ValidationIssue, field string) bool {
 	return false
 }
 
+func TestConvertDestinationS3(t *testing.T) {
+	raw := rawDestinationConfig{Type: "s3", OnExistingConflict: "warn"}
+	raw.S3.Region = "us-east-1"
+	raw.S3.Bucket = "my-events-bucket"
+	raw.S3.Create = true
+	raw.S3.SSE = "aws:kms"
+	raw.S3.SSEKMSKeyID = "key-123"
+
+	dest, issues := convertDestination("destinations.archive", raw)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+	if dest.Type != "s3" {
+		t.Fatalf("type = %q", dest.Type)
+	}
+	if dest.S3.Bucket != "my-events-bucket" || dest.S3.Region != "us-east-1" {
+		t.Fatalf("s3 config not mapped: %#v", dest.S3)
+	}
+	if !dest.S3.Create || dest.S3.SSE != "aws:kms" || dest.S3.SSEKMSKeyID != "key-123" {
+		t.Fatalf("s3 fields not mapped: %#v", dest.S3)
+	}
+	// on_existing_conflict accepted for s3 (no-op), defaults applied like sqs/sns.
+	if dest.OnExistingConflict == "" {
+		t.Fatalf("expected on_existing_conflict to be accepted/defaulted")
+	}
+}
+
+func TestValidateS3RequiresRegionAndBucket(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"archive": {Type: "s3", S3: S3Config{SSE: "bogus"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "archive", Target: "orders"},
+			}},
+		},
+	}
+	issues := c.ValidationIssues()
+	wantFields := []string{
+		"destinations.archive.s3.region",
+		"destinations.archive.s3.bucket",
+		"destinations.archive.s3.sse",
+	}
+	for _, f := range wantFields {
+		if !hasIssue(issues, f) {
+			t.Fatalf("missing validation issue for %q; got %#v", f, issues)
+		}
+	}
+}
+
 func TestLoadDestinationsBlockWithSQSAndSNS(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

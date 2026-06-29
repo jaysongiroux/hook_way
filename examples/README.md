@@ -18,6 +18,7 @@ Each file showcases one destination type with all available options documented v
 | `destinations/rabbitmq.yaml` | Full RabbitMQ option surface: exchange, dead-letter exchange/queue, queue_defaults, TLS, publisher_channels, and per-route queue_options. |
 | `destinations/sqs.yaml` | AWS SQS destination: FIFO queue (with `fifo.group_id` and dedup options) and a standard queue, both routing via `hmac_sha256`. |
 | `destinations/sns.yaml` | AWS SNS destination: single topic with `sns_options.subject`, auto-created at startup. |
+| `destinations/s3.yaml` | AWS S3 destination: one object per event under a date-partitioned key prefix, with SSE options and auto-bucket creation. |
 | `destinations/redis_stream.yaml` | Redis / Valkey stream destination: single-node mode with `redis_options.max_len` and `consumer_group`; annotated comments for cluster, sentinel, and TLS topology. |
 | `destinations/redis_list.yaml` | Redis / Valkey list destination: LPUSH work-queue with `redis_options.max_len` LTRIM cap. |
 | `destinations/redis_pubsub.yaml` | Redis / Valkey Pub/Sub destination: fire-and-forget channel broadcast; no `redis_options` block (all fields invalid for pubsub). Lossy — subscribers offline at publish time miss the message. |
