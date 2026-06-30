@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/auth"
 )
+
+// pgIdentifier matches a safe, unquoted-style SQL identifier for schema/table
+// names. They are also quoted via pgx.Identifier.Sanitize at use, but we reject
+// anything outside this character set at config time as defense in depth.
+var pgIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type ValidationIssue struct {
 	Field      string
@@ -106,10 +112,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" &&
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" &&
 			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -133,6 +139,26 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				// ok
 			default:
 				issues = append(issues, validationError(fieldPrefix+".s3.sse", fmt.Sprintf("%q is not supported", dest.S3.SSE), "use \"AES256\" or \"aws:kms\", or omit for no server-side encryption"))
+			}
+		}
+		if dest.Type == "postgres" {
+			pg := dest.Postgres
+			if pg.URL == "" {
+				issues = append(issues, validationError(fieldPrefix+".postgres.url", "url is required for postgres destinations", "set url to a libpq DSN such as \"postgres://user:pass@host:5432/db?sslmode=require\""))
+			}
+			if pg.Table == "" {
+				issues = append(issues, validationError(fieldPrefix+".postgres.table", "table is required for postgres destinations", "set table to the destination table name, e.g. \"webhook_events\""))
+			} else if !pgIdentifier.MatchString(pg.Table) {
+				issues = append(issues, validationError(fieldPrefix+".postgres.table", "table name contains unsupported characters", "use only letters, digits, and underscores, starting with a letter or underscore"))
+			}
+			if pg.Schema != "" && !pgIdentifier.MatchString(pg.Schema) {
+				issues = append(issues, validationError(fieldPrefix+".postgres.schema", "schema name contains unsupported characters", "use only letters, digits, and underscores, starting with a letter or underscore"))
+			}
+			if pg.MaxConns < 0 {
+				issues = append(issues, validationError(fieldPrefix+".postgres.max_conns", "must be zero (default) or a positive integer", "set a pool cap such as 10, or omit for the default"))
+			}
+			if (pg.TLS.ClientCert == "") != (pg.TLS.ClientKey == "") {
+				issues = append(issues, validationError(fieldPrefix+".postgres.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
 			}
 		}
 		if dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv" {

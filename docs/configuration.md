@@ -75,7 +75,7 @@ paths.
 
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, `sns`, `redis_stream`, `redis_list`, `redis_pubsub`, and `redis_kv`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, and `postgres`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 
@@ -223,6 +223,64 @@ destinations:
       create: true
       sse: "AES256"                       # or "aws:kms"; omit for default encryption
       # sse_kms_key_id: "${S3_KMS_KEY_ID:-}"
+```
+
+### Postgres
+
+Postgres fields live under `destinations.<id>.postgres`. Hookway inserts each webhook event as one row into a single shared table using [jackc/pgx/v5](https://github.com/jackc/pgx) (pgxpool). The table is created unconditionally at startup with `CREATE TABLE IF NOT EXISTS`; no per-route `create` flag is used.
+
+- `destinations.<id>.type`: set to `postgres`.
+- `destinations.<id>.postgres.url`: required libpq DSN. `sslmode` is honored inline (e.g. `postgres://user:pass@host:5432/db?sslmode=require`). Usually `${POSTGRES_URL}`.
+- `destinations.<id>.postgres.schema`: optional Postgres schema name, default `"public"`.
+- `destinations.<id>.postgres.table`: required table name. Only letters, digits, and underscores; must start with a letter or underscore. The table is quoted via `pgx.Identifier.Sanitize()` before use.
+- `destinations.<id>.postgres.max_conns`: optional pool size cap. `0` (default) uses the pgx pool default.
+- `destinations.<id>.postgres.tls`: optional TLS block. Only needed for a custom/private CA or mutual TLS (client certificate); `sslmode` in the `url` controls whether TLS is used. Fields mirror the RabbitMQ/Redis TLS block:
+  - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
+  - `client_cert` / `client_key`: paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: dev-only; disables certificate verification.
+
+**`on_existing_conflict` is not valid for Postgres destinations** — the field is rejected at config validation time. Do not set it on `postgres` entries.
+
+**Table schema:** at startup Hookway runs `CREATE TABLE IF NOT EXISTS` with fixed columns for the Message envelope:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | `text` | Event id; PRIMARY KEY |
+| `target` | `text` | Per-route `target` value (not a table name) |
+| `idempotency_key` | `text` | Provider delivery id (nullable) |
+| `source_ip` | `text` | Client IP (nullable) |
+| `method` | `text` | HTTP method |
+| `path` | `text` | Request path |
+| `received_at` | `timestamptz` | UTC receive time |
+| `headers` | `jsonb` | HTTP headers (nullable) |
+| `query` | `jsonb` | Query parameters (nullable) |
+| `body` | `jsonb` | Request body (nullable) |
+| `auth` | `jsonb` | Auth metadata (nullable) |
+
+Two indexes are also created `IF NOT EXISTS`: one on `target` and one on `received_at`.
+
+**`target` as a column:** the per-route `target` field is stored in the `target` column rather than selecting a different table. Use it to distinguish event sources when multiple endpoints share the same destination.
+
+**Deduplication:** inserts use `INSERT ... ON CONFLICT (id) DO NOTHING`. At-least-once retries from a provider are safe — duplicate event ids are silently ignored.
+
+**Pre-existing table caveat:** `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table. If the table already exists with an incompatible schema, inserts will fail at runtime. Hookway does not reconcile or migrate columns in v1 — ensure the table matches the expected schema or drop and recreate it before starting.
+
+```yaml
+destinations:
+  warehouse:
+    type: "postgres"
+    postgres:
+      url: "${POSTGRES_URL}"           # libpq DSN; sslmode honored inline
+      schema: "public"                 # optional, default "public"
+      table: "webhook_events"          # required
+      max_conns: 0                     # optional; 0 = pgx default
+      # tls:
+      #   ca_cert: "/etc/ssl/certs/pg-ca.pem"
+      #   client_cert: "/etc/ssl/certs/pg-client.pem"
+      #   client_key: "/etc/ssl/private/pg-client.key"
+      #   server_name: "pg.internal"
+      #   insecure_skip_verify: false
 ```
 
 ### Redis / Valkey

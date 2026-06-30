@@ -24,6 +24,12 @@ type S3Connector func(ctx context.Context, destinationID string, cfg S3Config) (
 // publisher constructor. Callers can inject a fake in tests.
 type RedisConnector func(ctx context.Context, destinationID, destType string, cfg config.RedisConfig, targets []RedisTarget) (Publisher, error)
 
+// PostgresConnector creates a Publisher for the given Postgres destination. It
+// is called once per postgres destination in Create. The default connector
+// builds the connection via newPostgresClient then calls NewPostgresPublisher.
+// Callers can inject a fake in tests.
+type PostgresConnector func(ctx context.Context, destinationID string, cfg config.PostgresConfig, targets []PostgresTarget) (Publisher, error)
+
 // RedisTarget describes a single Redis route target. The factory builds one
 // RedisTarget per unique route.Target in collectRedisTargets and passes the
 // slice to the RedisConnector.
@@ -42,6 +48,7 @@ type FactoryOptions struct {
 	SNSConnector      SNSConnector
 	RedisConnector    RedisConnector
 	S3Connector       S3Connector
+	PostgresConnector PostgresConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
 }
@@ -52,6 +59,7 @@ type Factory struct {
 	snsConnector      SNSConnector
 	redisConnector    RedisConnector
 	s3Connector       S3Connector
+	postgresConnector PostgresConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
 }
@@ -173,12 +181,30 @@ func NewFactory(opts FactoryOptions) *Factory {
 			}
 		}
 	}
+	postgresConnector := opts.PostgresConnector
+	if postgresConnector == nil {
+		logger := opts.Logger
+		postgresConnector = func(ctx context.Context, destinationID string, cfg config.PostgresConfig, targets []PostgresTarget) (Publisher, error) {
+			ops, err := newPostgresClient(ctx, cfg)
+			if err != nil {
+				return nil, fmt.Errorf("postgres destination %q: connect: %w", destinationID, err)
+			}
+			return NewPostgresPublisher(ctx, ops, PostgresConfig{
+				Schema:        cfg.Schema,
+				Table:         cfg.Table,
+				DestinationID: destinationID,
+				Logger:        logger,
+				Targets:       targets,
+			})
+		}
+	}
 	return &Factory{
 		rabbitMQConnector: connector,
 		sqsConnector:      sqsConnector,
 		snsConnector:      snsConnector,
 		redisConnector:    redisConnector,
 		s3Connector:       s3Connector,
+		postgresConnector: postgresConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
 	}
@@ -253,6 +279,12 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				Logger:          f.logger,
 				Targets:         collectS3Targets(cfg, id),
 			})
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "postgres":
+			publisher, err := f.postgresConnector(ctx, id, destination.Postgres, collectPostgresTargets(cfg, id))
 			if err != nil {
 				return nil, err
 			}
@@ -403,6 +435,28 @@ func collectS3Targets(cfg config.Config, destinationID string) []S3Target {
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, S3Target{Name: route.Target})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+func collectPostgresTargets(cfg config.Config, destinationID string) []PostgresTarget {
+	seen := map[string]struct{}{}
+	var targets []PostgresTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			targets = append(targets, PostgresTarget{Name: route.Target})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })

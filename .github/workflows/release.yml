@@ -44,6 +44,9 @@ jobs:
       - name: Redis integration tests (testcontainers)
         run: make redis-integration-test
 
+      - name: Postgres integration tests (testcontainers)
+        run: make postgres-integration-test
+
       - name: Vet
         run: make lint
 

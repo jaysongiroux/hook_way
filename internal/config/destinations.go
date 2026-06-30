@@ -81,6 +81,7 @@ type DestinationConfig struct {
 	SQS                SQSConfig
 	SNS                SNSConfig
 	S3                 S3Config
+	Postgres           PostgresConfig
 	Redis              RedisConfig
 }
 
@@ -107,6 +108,22 @@ type S3Config struct {
 	Create          bool
 	SSE             string
 	SSEKMSKeyID     string
+}
+
+type PostgresTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+type PostgresConfig struct {
+	URL      string
+	Schema   string // defaults to "public" when empty
+	Table    string
+	MaxConns int32
+	TLS      PostgresTLSConfig
 }
 
 type rawRabbitMQQueueOptions struct {
@@ -168,6 +185,19 @@ type rawDestinationConfig struct {
 		SSE             string `yaml:"sse"`
 		SSEKMSKeyID     string `yaml:"sse_kms_key_id"`
 	} `yaml:"s3"`
+	Postgres struct {
+		URL      string `yaml:"url"`
+		Schema   string `yaml:"schema"`
+		Table    string `yaml:"table"`
+		MaxConns int32  `yaml:"max_conns"`
+		TLS      struct {
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+	} `yaml:"postgres"`
 	Redis struct {
 		Mode       string   `yaml:"mode"`
 		URL        string   `yaml:"url"`
@@ -260,6 +290,19 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			SSE:             raw.S3.SSE,
 			SSEKMSKeyID:     raw.S3.SSEKMSKeyID,
 		},
+		Postgres: PostgresConfig{
+			URL:      raw.Postgres.URL,
+			Schema:   postgresSchema(raw.Postgres.Schema),
+			Table:    raw.Postgres.Table,
+			MaxConns: raw.Postgres.MaxConns,
+			TLS: PostgresTLSConfig{
+				CACert:             raw.Postgres.TLS.CACert,
+				ClientCert:         raw.Postgres.TLS.ClientCert,
+				ClientKey:          raw.Postgres.TLS.ClientKey,
+				ServerName:         raw.Postgres.TLS.ServerName,
+				InsecureSkipVerify: raw.Postgres.TLS.InsecureSkipVerify,
+			},
+		},
 		Redis: RedisConfig{
 			Mode:       redisMode(raw.Type, raw.Redis.Mode),
 			URL:        raw.Redis.URL,
@@ -279,6 +322,14 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			},
 		},
 	}, issues
+}
+
+// postgresSchema returns the configured schema, defaulting to "public".
+func postgresSchema(schema string) string {
+	if schema == "" {
+		return "public"
+	}
+	return schema
 }
 
 // redisMode returns the configured mode for redis_* destinations, defaulting to

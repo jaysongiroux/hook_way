@@ -1464,6 +1464,83 @@ func TestRedisTTLOnStreamRejected(t *testing.T) {
 	}
 }
 
+func TestConvertDestinationPostgres(t *testing.T) {
+	raw := rawDestinationConfig{Type: "postgres"}
+	raw.Postgres.URL = "postgres://u:p@localhost:5432/db?sslmode=disable"
+	raw.Postgres.Table = "webhook_events"
+	raw.Postgres.MaxConns = 8
+	// schema omitted -> should default to "public"
+
+	dest, issues := convertDestination("destinations.warehouse", raw)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+	if dest.Type != "postgres" {
+		t.Fatalf("type = %q", dest.Type)
+	}
+	if dest.Postgres.URL == "" || dest.Postgres.Table != "webhook_events" {
+		t.Fatalf("postgres config not mapped: %#v", dest.Postgres)
+	}
+	if dest.Postgres.Schema != "public" {
+		t.Fatalf("schema default = %q, want \"public\"", dest.Postgres.Schema)
+	}
+	if dest.Postgres.MaxConns != 8 {
+		t.Fatalf("max_conns = %d", dest.Postgres.MaxConns)
+	}
+}
+
+func TestConvertDestinationPostgresRejectsOnExistingConflict(t *testing.T) {
+	raw := rawDestinationConfig{Type: "postgres", OnExistingConflict: "reconcile"}
+	raw.Postgres.URL = "postgres://localhost/db"
+	raw.Postgres.Table = "events"
+	_, issues := convertDestination("destinations.warehouse", raw)
+	if !hasIssue(issues, "destinations.warehouse.on_existing_conflict") {
+		t.Fatalf("expected on_existing_conflict to be rejected for postgres; got %#v", issues)
+	}
+}
+
+func TestValidatePostgresRequiresURLAndTable(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"warehouse": {Type: "postgres", Postgres: PostgresConfig{Schema: "bad-schema!", Table: "", MaxConns: -1}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "warehouse", Target: "orders"},
+			}},
+		},
+	}
+	issues := c.ValidationIssues()
+	for _, f := range []string{
+		"destinations.warehouse.postgres.url",
+		"destinations.warehouse.postgres.table",
+		"destinations.warehouse.postgres.schema",
+		"destinations.warehouse.postgres.max_conns",
+	} {
+		if !hasIssue(issues, f) {
+			t.Fatalf("missing validation issue for %q; got %#v", f, issues)
+		}
+	}
+}
+
+func TestValidatePostgresValidTablePasses(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"warehouse": {Type: "postgres", Postgres: PostgresConfig{URL: "postgres://localhost/db", Schema: "public", Table: "webhook_events"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "warehouse", Target: "orders"},
+			}},
+		},
+	}
+	for _, iss := range c.ValidationIssues() {
+		if strings.HasPrefix(iss.Field, "destinations.warehouse.postgres") {
+			t.Fatalf("unexpected postgres validation issue: %#v", iss)
+		}
+	}
+}
+
 // TestRedisOptionsOnSQSRejected verifies that redis_options is not valid for sqs destinations.
 func TestRedisOptionsOnSQSRejected(t *testing.T) {
 	cfg := Config{
