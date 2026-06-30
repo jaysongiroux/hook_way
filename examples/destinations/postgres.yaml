@@ -1,0 +1,57 @@
+# examples/destinations/postgres.yaml
+#
+# Reference config for a Postgres destination. Hookway inserts each webhook
+# event as one row into a single shared table. The Message envelope maps to
+# fixed columns; nested objects (headers, query, body, auth) are stored as
+# jsonb. The per-route `target` is stored in the `target` column.
+#
+# The table is created at startup with CREATE TABLE IF NOT EXISTS (no per-route
+# `create` flag is used for Postgres). Inserts dedupe on the event id
+# (INSERT ... ON CONFLICT (id) DO NOTHING), so at-least-once retries are no-ops.
+#
+# LIMITATION: CREATE TABLE IF NOT EXISTS is a no-op against an existing table,
+# so if the table already exists with an incompatible schema, inserts will fail
+# at runtime. There is no column reconciliation in v1.
+#
+# Connection driver: jackc/pgx/v5 (pgxpool). The DSN is a libpq connection
+# string; sslmode is honored inline. Use the tls block below for a custom CA
+# or client certificate.
+#
+# `on_existing_conflict` is NOT valid for postgres destinations — the field is
+# rejected at config validation time. Do not set it on postgres entries.
+
+server:
+  addr: ":8088"
+  max_body_bytes: 1048576
+
+destinations:
+  warehouse:
+    type: postgres
+    postgres:
+      # libpq DSN. sslmode is honored; use the tls block below for a custom CA
+      # or client cert. Example: postgres://user:pass@host:5432/db?sslmode=require
+      url: "${POSTGRES_URL}"
+      schema: "public"                 # optional, default "public"
+      table: "webhook_events"          # required; letters/digits/underscore only,
+                                       # must start with a letter or underscore
+      max_conns: 0                     # optional pool cap (0 = pgx default)
+      # tls:                           # optional; only needed for a custom CA / mTLS
+      #   ca_cert: ""                  # path to PEM bundle for private/self-signed CAs
+      #   client_cert: ""              # path to PEM cert for mutual TLS
+      #   client_key: ""               # path to PEM key for mutual TLS (must pair with client_cert)
+      #   server_name: ""              # override SNI/verification hostname
+      #   insecure_skip_verify: false  # dev-only; disables cert verification; never use in production
+
+endpoints:
+  order_events:
+    enabled: true
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "warehouse"
+        # target is stored in the row's `target` column (not a table name).
+        # Use it to distinguish event sources when multiple endpoints share
+        # the same table.
+        target: "orders"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"

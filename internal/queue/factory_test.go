@@ -500,6 +500,48 @@ func TestFactoryCreatesS3Publisher(t *testing.T) {
 	}
 }
 
+func TestFactoryCreatesPostgresPublisher(t *testing.T) {
+	var gotCfg config.PostgresConfig
+	var gotTargets []PostgresTarget
+	cfg := config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"warehouse": {Type: "postgres", Postgres: config.PostgresConfig{
+				URL: "postgres://localhost/db", Schema: "public", Table: "webhook_events",
+			}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"orders": {Enabled: true, Path: "/orders", Destinations: []config.EndpointDestinationConfig{
+				{Destination: "warehouse", Target: "orders"},
+				{Destination: "warehouse", Target: "orders"}, // dup -> deduped
+				{Destination: "warehouse", Target: "refunds"},
+			}},
+		},
+	}
+	f := NewFactory(FactoryOptions{
+		PostgresConnector: func(ctx context.Context, id string, c config.PostgresConfig, targets []PostgresTarget) (Publisher, error) {
+			gotCfg = c
+			gotTargets = targets
+			return &recordingPublisher{}, nil
+		},
+	})
+	if _, err := f.Create(context.Background(), cfg); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if gotCfg.Table != "webhook_events" || gotCfg.URL != "postgres://localhost/db" {
+		t.Fatalf("postgres cfg not passed through: %#v", gotCfg)
+	}
+	if gotCfg.Schema != "public" {
+		t.Fatalf("schema not passed through: %q", gotCfg.Schema)
+	}
+	if len(gotTargets) != 2 {
+		t.Fatalf("expected 2 deduped targets, got %#v", gotTargets)
+	}
+	// collectPostgresTargets sorts ascending: "orders" < "refunds".
+	if gotTargets[0].Name != "orders" || gotTargets[1].Name != "refunds" {
+		t.Fatalf("unexpected targets/order: %#v", gotTargets)
+	}
+}
+
 type recordingPublisher struct {
 	err           error
 	readyErr      error
