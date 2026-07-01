@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -50,6 +51,8 @@ type RabbitMQConfig struct {
 	QueueDeclarations []QueueDeclaration
 	Retry             RetryPolicy
 	Metrics           RabbitMQMetrics
+	DestinationID     string
+	Logger            *slog.Logger
 }
 
 // RabbitMQTLSConfig mirrors the config-package TLS options for amqps:// dialing.
@@ -97,4 +100,10 @@ type RabbitMQMetrics interface {
 	RabbitMQPublishConfirm()
 	RabbitMQPublishRetry()
 	RabbitMQDeadLetterPublish()
+}
+
+// RedisPubSubMetrics records redis_pubsub delivery observability. Implemented by
+// *metrics.Metrics; passed via RedisPubSubConfig. May be nil.
+type RedisPubSubMetrics interface {
+	RedisPubSubNoSubscriber(destination, target string)
 }

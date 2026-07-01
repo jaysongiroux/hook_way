@@ -45,6 +45,7 @@ type S3Publisher struct {
 	bucket  string
 	sse     string
 	kmsKey  string
+	logger  *slog.Logger
 	folders map[string]struct{} // known base folders (route targets)
 }
 
@@ -73,11 +74,15 @@ func s3ObjectKey(folder string, msg Message) string {
 // Create is set), and records the configured base folders. S3 prefixes are
 // implicit, so nothing per-folder is provisioned.
 func NewS3Publisher(ctx context.Context, client s3API, cfg S3Config) (*S3Publisher, error) {
-	if err := ensureS3Bucket(ctx, client, cfg); err != nil {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if err := ensureS3Bucket(ctx, client, cfg, logger); err != nil {
 		return nil, err
 	}
-	if cfg.SSE == "aws:kms" && cfg.SSEKMSKeyID == "" && cfg.Logger != nil {
-		cfg.Logger.Warn("s3 destination uses aws:kms without sse_kms_key_id; falling back to the bucket default KMS key",
+	if cfg.SSE == "aws:kms" && cfg.SSEKMSKeyID == "" {
+		logger.Warn("s3 destination uses aws:kms without sse_kms_key_id; falling back to the bucket default KMS key",
 			"destination", cfg.DestinationID, "bucket", cfg.Bucket)
 	}
 	folders := make(map[string]struct{}, len(cfg.Targets))
@@ -89,13 +94,15 @@ func NewS3Publisher(ctx context.Context, client s3API, cfg S3Config) (*S3Publish
 		bucket:  cfg.Bucket,
 		sse:     cfg.SSE,
 		kmsKey:  cfg.SSEKMSKeyID,
+		logger:  logger,
 		folders: folders,
 	}, nil
 }
 
-func ensureS3Bucket(ctx context.Context, client s3API, cfg S3Config) error {
+func ensureS3Bucket(ctx context.Context, client s3API, cfg S3Config, logger *slog.Logger) error {
 	_, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(cfg.Bucket)})
 	if err == nil {
+		logger.Debug("bucket verified", slog.String("destination", cfg.DestinationID), slog.String("target", cfg.Bucket))
 		return nil
 	}
 	var notFound *s3types.NotFound
@@ -115,6 +122,7 @@ func ensureS3Bucket(ctx context.Context, client s3API, cfg S3Config) error {
 	if _, err := client.CreateBucket(ctx, in); err != nil {
 		return fmt.Errorf("s3 bucket %q: create: %w", cfg.Bucket, err)
 	}
+	logger.Info("created bucket", slog.String("destination", cfg.DestinationID), slog.String("target", cfg.Bucket))
 	return nil
 }
 

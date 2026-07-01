@@ -4,8 +4,9 @@
 This is a net-new feature but allows basic routing from endpoint after auth to specific destinations based on simple logic based on the content of the webhook's body.
 
 ## Destinations
-- kafka
 - Webhook (will need auth strat for this, i am thinking a simple API Key)
+    - can be configured to be a reverse proxy and forward both body and headers
+- kafka
 
 ## Config
 - Allowing database connector in place of a yaml file to allow for live editing/ changes

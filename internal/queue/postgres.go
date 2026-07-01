@@ -41,6 +41,7 @@ var pgJSONColumns = map[string]bool{"headers": true, "query": true, "body": true
 type PostgresPublisher struct {
 	ops       pgOps
 	destID    string
+	logger    *slog.Logger
 	tableExpr string // sanitized "schema"."table"
 	insertSQL string
 	targets   map[string]struct{}
@@ -49,6 +50,10 @@ type PostgresPublisher struct {
 // NewPostgresPublisher ensures the destination table (and its indexes) exist via
 // CREATE TABLE/INDEX IF NOT EXISTS, then records the configured target names.
 func NewPostgresPublisher(ctx context.Context, ops pgOps, cfg PostgresConfig) (*PostgresPublisher, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	schema := cfg.Schema
 	if schema == "" {
 		schema = "public"
@@ -87,6 +92,8 @@ func NewPostgresPublisher(ctx context.Context, ops pgOps, cfg PostgresConfig) (*
 		return nil, fmt.Errorf("postgres %q: create received_at index: %w", cfg.DestinationID, err)
 	}
 
+	logger.Info("ensured table", slog.String("destination", cfg.DestinationID), slog.String("target", cfg.Table))
+
 	targets := make(map[string]struct{}, len(cfg.Targets))
 	for _, t := range cfg.Targets {
 		targets[t.Name] = struct{}{}
@@ -95,6 +102,7 @@ func NewPostgresPublisher(ctx context.Context, ops pgOps, cfg PostgresConfig) (*
 	return &PostgresPublisher{
 		ops:       ops,
 		destID:    cfg.DestinationID,
+		logger:    logger,
 		tableExpr: tableExpr,
 		insertSQL: buildInsertSQL(tableExpr),
 		targets:   targets,

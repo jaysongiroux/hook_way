@@ -1,8 +1,10 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -268,3 +270,41 @@ func TestSNSImmutableFifoMismatchErrors(t *testing.T) {
 	}
 }
 
+// TestSNSLogsCreatedTopic asserts that NewSNSPublisher emits an Info
+// "created topic" log when the topic is absent and Create=true.
+func TestSNSLogsCreatedTopic(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeSNS() // no topics seeded → will create
+	_, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		DestinationID: "alerts", Logger: logger,
+		Targets: []SNSTarget{{Name: "billing-events", Create: true}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "created topic")
+	if line == nil || line["level"] != "INFO" || line["destination"] != "alerts" || line["target"] != "billing-events" {
+		t.Fatalf("missing created-topic info log: %v", line)
+	}
+}
+
+// TestSNSLogsTopicExists asserts that NewSNSPublisher emits a Debug
+// "topic exists" log when the topic already exists.
+func TestSNSLogsTopicExists(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeSNS()
+	fake.seedTopic("payments", map[string]string{})
+	_, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		DestinationID: "billing", Logger: logger,
+		Targets: []SNSTarget{{Name: "payments"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "topic exists")
+	if line == nil || line["level"] != "DEBUG" || line["destination"] != "billing" || line["target"] != "payments" {
+		t.Fatalf("missing topic-exists debug log: %v", line)
+	}
+}

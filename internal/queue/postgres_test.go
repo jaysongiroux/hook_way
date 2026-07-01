@@ -1,8 +1,10 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -136,6 +138,26 @@ func TestPostgresPublisherRejectsUnknownTarget(t *testing.T) {
 	err := pub.Publish(context.Background(), "warehouse", "not-configured", Message{ID: "x", ReceivedAt: time.Now()})
 	if err == nil {
 		t.Fatal("expected error for unknown target")
+	}
+}
+
+// TestPostgresLogsEnsuredTable asserts that NewPostgresPublisher emits an Info
+// "ensured table" log after the DDL succeeds.
+func TestPostgresLogsEnsuredTable(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := &fakePG{}
+	_, err := NewPostgresPublisher(context.Background(), fake, PostgresConfig{
+		Schema: "public", Table: "webhook_events", DestinationID: "warehouse",
+		Logger:  logger,
+		Targets: []PostgresTarget{{Name: "orders"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "ensured table")
+	if line == nil || line["level"] != "INFO" || line["destination"] != "warehouse" || line["target"] != "webhook_events" {
+		t.Fatalf("missing ensured-table info log: %v", line)
 	}
 }
 

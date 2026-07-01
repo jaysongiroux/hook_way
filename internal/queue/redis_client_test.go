@@ -154,15 +154,27 @@ type fakeRedisOps struct {
 	xgroupErr              error
 	lpushTrimCalls         []lpushTrimCall
 	publishCalls           []publishCall
-	setCalls               []setCall
-	pingErr                error
-	closeErr               error
+	publishErr             error
+	// publishReceivers controls how many subscribers Publish reports. Defaults to
+	// 1 (normal delivery) when constructed via newFakeRedisOps. Set to 0 in tests
+	// that simulate no-subscriber drops.
+	publishReceivers int64
+	setCalls         []setCall
+	pingErr          error
+	closeErr         error
+}
+
+// newFakeRedisOps returns a fakeRedisOps with sensible defaults:
+// publishReceivers is 1 (normal delivery) so existing pubsub tests keep
+// representing successful delivery without change.
+func newFakeRedisOps() *fakeRedisOps {
+	return &fakeRedisOps{publishReceivers: 1}
 }
 
 type xaddCall struct {
-	stream      string
+	stream       string
 	approxMaxLen int64
-	values      map[string]any
+	values       map[string]any
 }
 
 type lpushTrimCall struct {
@@ -196,9 +208,12 @@ func (f *fakeRedisOps) LPushTrim(_ context.Context, key, value string, approxMax
 	return nil
 }
 
-func (f *fakeRedisOps) Publish(_ context.Context, channel, payload string) error {
+func (f *fakeRedisOps) Publish(_ context.Context, channel, payload string) (int64, error) {
 	f.publishCalls = append(f.publishCalls, publishCall{channel: channel, payload: payload})
-	return nil
+	if f.publishErr != nil {
+		return 0, f.publishErr
+	}
+	return f.publishReceivers, nil
 }
 
 func (f *fakeRedisOps) Set(_ context.Context, key, value string, ttl time.Duration) error {
@@ -207,4 +222,4 @@ func (f *fakeRedisOps) Set(_ context.Context, key, value string, ttl time.Durati
 }
 
 func (f *fakeRedisOps) Ping(_ context.Context) error { return f.pingErr }
-func (f *fakeRedisOps) Close() error                  { return f.closeErr }
+func (f *fakeRedisOps) Close() error                 { return f.closeErr }

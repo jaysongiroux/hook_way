@@ -29,6 +29,7 @@ type MongoPublisher struct {
 	ops     mongoOps
 	destID  string
 	targets map[string]struct{}
+	logger  *slog.Logger
 }
 
 // NewMongoPublisher records the configured target (collection) names. There is
@@ -38,7 +39,11 @@ func NewMongoPublisher(ctx context.Context, ops mongoOps, cfg MongoConfig) (*Mon
 	for _, t := range cfg.Targets {
 		targets[t.Name] = struct{}{}
 	}
-	return &MongoPublisher{ops: ops, destID: cfg.DestinationID, targets: targets}, nil
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &MongoPublisher{ops: ops, destID: cfg.DestinationID, targets: targets, logger: logger}, nil
 }
 
 // messageToDocument renders the Message as its JSON-envelope shape (Message has
@@ -72,6 +77,11 @@ func (p *MongoPublisher) Publish(ctx context.Context, destinationQueueID, target
 	}
 	if err := p.ops.InsertOne(ctx, target, doc); err != nil {
 		if errors.Is(err, errMongoDuplicateKey) {
+			p.logger.Debug("skipped duplicate event",
+				slog.String("destination", p.destID),
+				slog.String("target", target),
+				slog.String("event_id", msg.ID),
+			)
 			return nil
 		}
 		return fmt.Errorf("mongodb %q: insert: %w", p.destID, err)

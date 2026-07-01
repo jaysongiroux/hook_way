@@ -11,27 +11,28 @@ import (
 )
 
 type Metrics struct {
-	registry             *prometheus.Registry
-	httpRequests         *prometheus.CounterVec
-	authFailures         *prometheus.CounterVec
-	rateLimited          *prometheus.CounterVec
-	saturated            *prometheus.CounterVec
-	forbidden            *prometheus.CounterVec
-	replayRejected       *prometheus.CounterVec
-	publishTotal         *prometheus.CounterVec
-	publishDuration      *prometheus.HistogramVec
-	messagesPublished    *prometheus.CounterVec
-	requestDuration      *prometheus.HistogramVec
-	bodyBytes            *prometheus.HistogramVec
-	endpointInfo         *prometheus.GaugeVec
-	destinationInfo      *prometheus.GaugeVec
-	inflight             prometheus.Gauge
-	configLoadFailures   *prometheus.CounterVec
-	rabbitMQReconnects   prometheus.Counter
-	rabbitMQConfirms     prometheus.Counter
-	rabbitMQRetries      prometheus.Counter
-	rabbitMQDLQPublishes prometheus.Counter
-	runtimeRegistered    bool
+	registry                 *prometheus.Registry
+	httpRequests             *prometheus.CounterVec
+	authFailures             *prometheus.CounterVec
+	rateLimited              *prometheus.CounterVec
+	saturated                *prometheus.CounterVec
+	forbidden                *prometheus.CounterVec
+	replayRejected           *prometheus.CounterVec
+	publishTotal             *prometheus.CounterVec
+	publishDuration          *prometheus.HistogramVec
+	messagesPublished        *prometheus.CounterVec
+	requestDuration          *prometheus.HistogramVec
+	bodyBytes                *prometheus.HistogramVec
+	endpointInfo             *prometheus.GaugeVec
+	destinationInfo          *prometheus.GaugeVec
+	inflight                 prometheus.Gauge
+	configLoadFailures       *prometheus.CounterVec
+	rabbitMQReconnects       prometheus.Counter
+	rabbitMQConfirms         prometheus.Counter
+	rabbitMQRetries          prometheus.Counter
+	rabbitMQDLQPublishes     prometheus.Counter
+	redisPubSubNoSubscribers *prometheus.CounterVec
+	runtimeRegistered        bool
 }
 
 func New() *Metrics {
@@ -114,11 +115,15 @@ func New() *Metrics {
 		Name: "hookway_rabbitmq_dead_letter_publish_total",
 		Help: "RabbitMQ dead-letter publish attempts.",
 	})
+	m.redisPubSubNoSubscribers = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_redis_pubsub_dropped_no_subscriber_total",
+		Help: "Redis pub/sub messages dropped because no subscriber was listening.",
+	}, []string{"destination_queue_id", "queue"})
 	m.registry.MustRegister(
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
-		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes,
+		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.redisPubSubNoSubscribers,
 	)
 	return m
 }
@@ -222,4 +227,8 @@ func (m *Metrics) RabbitMQPublishRetry() {
 
 func (m *Metrics) RabbitMQDeadLetterPublish() {
 	m.rabbitMQDLQPublishes.Inc()
+}
+
+func (m *Metrics) RedisPubSubNoSubscriber(destination, target string) {
+	m.redisPubSubNoSubscribers.WithLabelValues(destination, target).Inc()
 }

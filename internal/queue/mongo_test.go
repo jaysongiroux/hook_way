@@ -1,8 +1,10 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -107,6 +109,25 @@ func TestMongoPublisherRejectsUnknownTarget(t *testing.T) {
 	}
 	if len(fake.inserts) != 0 {
 		t.Fatalf("must not insert for unknown target")
+	}
+}
+
+func TestMongoPublisherLogsDuplicateSkip(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := &fakeMongo{insertErr: errMongoDuplicateKey}
+	pub, err := NewMongoPublisher(context.Background(), fake, MongoConfig{
+		DestinationID: "archive", Logger: logger, Targets: []MongoTarget{{Name: "events"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	if err := pub.Publish(context.Background(), "archive", "events", Message{ID: "evt_1", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("dup key should be a no-op, got %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "skipped duplicate event")
+	if line == nil || line["level"] != "DEBUG" || line["event_id"] != "evt_1" || line["destination"] != "archive" || line["target"] != "events" {
+		t.Fatalf("missing/incorrect duplicate-skip debug log: %v", line)
 	}
 }
 

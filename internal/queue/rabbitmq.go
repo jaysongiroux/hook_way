@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -21,7 +22,8 @@ const defaultPublisherChannels = 8
 // through a single channel. A dropped connection is recovered proactively in
 // the background (NotifyClose) as well as lazily on the next publish.
 type RabbitMQPublisher struct {
-	cfg RabbitMQConfig
+	cfg    RabbitMQConfig
+	logger *slog.Logger
 
 	tlsConfig *tls.Config
 
@@ -53,8 +55,13 @@ func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPub
 	if err != nil {
 		return nil, err
 	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	pub := &RabbitMQPublisher{
 		cfg:       cfg,
+		logger:    logger,
 		tlsConfig: tlsConfig,
 		pool:      make(chan *publishChannel, size),
 		closed:    make(chan struct{}),
@@ -66,7 +73,12 @@ func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPub
 	}
 	// Best-effort eager connect so the first request is fast; failures are fine
 	// because publish and readiness both reconnect on demand.
-	_, _ = pub.connection(ctx)
+	if _, err := pub.connection(ctx); err != nil {
+		pub.logger.Warn("rabbitmq initial connect failed; will retry on publish",
+			slog.String("destination", cfg.DestinationID),
+			slog.String("error", err.Error()),
+		)
+	}
 	return pub, nil
 }
 
@@ -86,13 +98,28 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, destinationQueueID, que
 	attempts := p.retryAttempts()
 	delay := p.initialBackoff()
 	for attempt := 1; attempt <= attempts; attempt++ {
-		if attempt > 1 && p.cfg.Metrics != nil {
-			p.cfg.Metrics.RabbitMQPublishRetry()
+		if attempt > 1 {
+			if p.cfg.Metrics != nil {
+				p.cfg.Metrics.RabbitMQPublishRetry()
+			}
+			p.logger.Debug("rabbitmq publish retry",
+				slog.String("destination", p.cfg.DestinationID),
+				slog.String("target", queueName),
+				slog.String("event_id", msg.ID),
+				slog.Int("attempt", attempt),
+			)
 		}
 		last = p.publishOnce(ctx, queueName, msg, body)
 		if last == nil {
-			if p.isDeadLetterRoute(queueName) && p.cfg.Metrics != nil {
-				p.cfg.Metrics.RabbitMQDeadLetterPublish()
+			if p.isDeadLetterRoute(queueName) {
+				if p.cfg.Metrics != nil {
+					p.cfg.Metrics.RabbitMQDeadLetterPublish()
+				}
+				p.logger.Warn("rabbitmq routed message to dead-letter",
+					slog.String("destination", p.cfg.DestinationID),
+					slog.String("target", queueName),
+					slog.String("event_id", msg.ID),
+				)
 			}
 			return nil
 		}
@@ -267,6 +294,7 @@ func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, e
 	if p.cfg.Metrics != nil {
 		p.cfg.Metrics.RabbitMQReconnect()
 	}
+	p.logger.Info("rabbitmq reconnected", slog.String("destination", p.cfg.DestinationID))
 	go p.watchClose(dialed)
 	return dialed, nil
 }
@@ -331,6 +359,7 @@ func (p *RabbitMQPublisher) watchClose(conn *amqp.Connection) {
 			return
 		}
 	}
+	p.logger.Warn("rabbitmq connection lost; reconnecting", slog.String("destination", p.cfg.DestinationID))
 	delay := p.initialBackoff()
 	for {
 		select {

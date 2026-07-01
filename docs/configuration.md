@@ -549,3 +549,36 @@ Auth fields:
 - `expected_issuer`: optional; for `jwt` schemes, enforces the `iss` claim must match this value.
 - `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
 - `body_hash_claim`: optional; for `jwt` schemes, names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. When set, Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.
+
+## Logging & observability
+
+Hookway emits structured `slog` JSON logs. Each log record carries a consistent set of field keys so log queries and alerts are stable across destinations.
+
+### Canonical log fields
+
+| Key | Present on | Description |
+|-----|-----------|-------------|
+| `destination` | publish path, startup | Stable destination id from the config map (e.g. `billing`). |
+| `target` | publish path, startup | Queue/topic/routing-key/stream name (e.g. `stripe-events`). |
+| `event_id` | publish path | Envelope event id; correlates with the `idempotency_key` in the published message. |
+| `endpoint` | publish path | Webhook endpoint name (e.g. `stripe_billing`). |
+| `request_id` | publish path | Value of the configured `request_id_header`, when present. |
+| `trace_id` | publish path | Trace id propagated from the inbound request, when present. |
+| `error` | error/warn records | Go error string. |
+| `subscribers` | `redis_pubsub` | Integer subscriber count at publish time; `0` triggers a drop warning. |
+| `attempt` | `rabbitmq` retry | Publish attempt number. `attempt=1` is the initial try (not logged); the first logged retry is `attempt=2`. |
+| `group` | `redis_stream` | Consumer group name used or created at startup. |
+| `attr` / `want` / `got` / `policy` | `sqs`, `sns` reconcile | Attribute name, expected value, actual value, and policy action during queue/topic attribute reconciliation at startup. |
+
+> **Breaking change (log keys only):** publish logs previously used `destination_queue_id` and `queue` as field keys. They are now `destination` and `target`. Prometheus metric label names and the JSON response/envelope body are unchanged — only the structured log field names changed.
+
+### Log levels by event
+
+| Level | Event |
+|-------|-------|
+| **Error** | Publish failure — logged once centrally at the request handler, not per-publisher. |
+| **Info** | Startup resource creation: "created queue", "created topic", "created bucket", "ensured table", "created consumer group". |
+| **Debug** | Startup verify/exists checks; `redis_list` and `redis_kv` per-target registration; RabbitMQ publish retry (with `attempt`); MongoDB duplicate-key skip ("skipped duplicate event"). |
+| **Warn** | `redis_pubsub` no-subscriber drop ("published to channel with no subscribers; message dropped") — also increments `hookway_redis_pubsub_dropped_no_subscriber_total`. |
+| **Warn** | RabbitMQ connection lost; initial-connect failure; dead-letter delivery. |
+| **Info** | RabbitMQ reconnected. |

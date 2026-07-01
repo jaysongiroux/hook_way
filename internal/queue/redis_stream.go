@@ -59,6 +59,7 @@ type resolvedTarget struct {
 type RedisStreamPublisher struct {
 	ops    redisOps
 	destID string
+	logger *slog.Logger
 	// targets maps the unprefixed target Name to its resolved state.
 	// Written once in the constructor; read-only during Publish.
 	targets map[string]resolvedTarget
@@ -75,9 +76,14 @@ type RedisStreamPublisher struct {
 // messages after group creation). BUSYGROUP errors (group already exists) are
 // treated as success by the goRedisOps implementation.
 func NewRedisStreamPublisher(ctx context.Context, ops redisOps, cfg RedisStreamConfig) (*RedisStreamPublisher, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	p := &RedisStreamPublisher{
 		ops:     ops,
 		destID:  cfg.DestinationID,
+		logger:  logger,
 		targets: make(map[string]resolvedTarget, len(cfg.Targets)),
 	}
 
@@ -94,6 +100,11 @@ func NewRedisStreamPublisher(ctx context.Context, ops redisOps, cfg RedisStreamC
 				return nil, fmt.Errorf("redis_stream %q: create consumer group %q on stream %q: %w",
 					cfg.DestinationID, t.ConsumerGroup, streamKey, err)
 			}
+			p.logger.Info("created consumer group",
+				slog.String("destination", cfg.DestinationID),
+				slog.String("target", t.Name),
+				slog.String("group", t.ConsumerGroup),
+			)
 		}
 
 		// Store the resolved target — written only here, read-only in Publish.

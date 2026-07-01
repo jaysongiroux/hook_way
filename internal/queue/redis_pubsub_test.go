@@ -1,20 +1,102 @@
 package queue
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
+
+// lastQueueLogLine parses newline-delimited JSON log output from buf and
+// returns the first map whose "msg" field equals msg. Returns nil if not found.
+// Other queue test files in this package can reuse this helper.
+func lastQueueLogLine(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
+	t.Helper()
+	scanner := bufio.NewScanner(buf)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		if m["msg"] == msg {
+			return m
+		}
+	}
+	return nil
+}
+
+// --- no-subscriber observability tests ---
+
+type fakePubSubMetrics struct{ noSub int }
+
+func (f *fakePubSubMetrics) RedisPubSubNoSubscriber(destination, target string) { f.noSub++ }
+
+func TestRedisPubSubNoSubscriberLogsAndCounts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeRedisOps() // existing fake
+	fake.publishReceivers = 0 // simulate no subscriber
+	m := &fakePubSubMetrics{}
+	pub, err := NewRedisPubSubPublisher(context.Background(), fake, RedisPubSubConfig{
+		DestinationID: "archive", Logger: logger, Metrics: m,
+		Targets: []RedisPubSubTarget{{Name: "events"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	if err := pub.Publish(context.Background(), "archive", "events", Message{ID: "evt_1", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if m.noSub != 1 {
+		t.Fatalf("expected no-subscriber metric to increment once, got %d", m.noSub)
+	}
+	line := lastQueueLogLine(t, &buf, "published to channel with no subscribers; message dropped")
+	if line == nil || line["level"] != "WARN" || line["subscribers"] == nil || line["event_id"] != "evt_1" {
+		t.Fatalf("missing/incorrect no-subscriber warn: %v", line)
+	}
+	if line["destination"] != "archive" {
+		t.Fatalf("expected destination=archive; got %v", line["destination"])
+	}
+	if line["target"] != "events" {
+		t.Fatalf("expected target=events; got %v", line["target"])
+	}
+}
+
+func TestRedisPubSubWithSubscriberNoWarn(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeRedisOps()
+	fake.publishReceivers = 2
+	m := &fakePubSubMetrics{}
+	pub, _ := NewRedisPubSubPublisher(context.Background(), fake, RedisPubSubConfig{
+		DestinationID: "archive", Logger: logger, Metrics: m, Targets: []RedisPubSubTarget{{Name: "events"}},
+	})
+	if err := pub.Publish(context.Background(), "archive", "events", Message{ID: "evt_2", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if m.noSub != 0 {
+		t.Fatalf("expected no no-subscriber increments, got %d", m.noSub)
+	}
+	if strings.Contains(buf.String(), "no subscribers") {
+		t.Fatalf("unexpected no-subscriber warn when subscribers present")
+	}
+}
 
 // TestRedisPubSubPublisher_Publish verifies that ops.Publish is called with the
 // resolved (prefixed) channel name and a JSON envelope that round-trips to the
 // original Message.
 func TestRedisPubSubPublisher_Publish(t *testing.T) {
-	fake := &fakeRedisOps{}
+	fake := newFakeRedisOps()
 	cfg := RedisPubSubConfig{
 		KeyPrefix:     "hw",
 		DestinationID: "events",
@@ -91,7 +173,7 @@ func TestRedisPubSubPublisher_UnknownTarget(t *testing.T) {
 // applied exactly once in the constructor — Publish looks up by the UNPREFIXED
 // target name and the resolved channel contains the prefix exactly once.
 func TestRedisPubSubPublisher_KeyPrefixAppliedOnce(t *testing.T) {
-	fake := &fakeRedisOps{}
+	fake := newFakeRedisOps()
 	cfg := RedisPubSubConfig{
 		KeyPrefix:     "pre",
 		DestinationID: "events",
@@ -121,7 +203,7 @@ func TestRedisPubSubPublisher_KeyPrefixAppliedOnce(t *testing.T) {
 // TestRedisPubSubPublisher_NoKeyPrefix verifies that when KeyPrefix is empty,
 // no colon prefix is added to the channel name.
 func TestRedisPubSubPublisher_NoKeyPrefix(t *testing.T) {
-	fake := &fakeRedisOps{}
+	fake := newFakeRedisOps()
 	cfg := RedisPubSubConfig{
 		DestinationID: "events",
 		Targets:       []RedisPubSubTarget{{Name: "bare-channel"}},
@@ -190,7 +272,7 @@ func TestRedisPubSubPublisher_Close(t *testing.T) {
 // TestRedisPubSubPublisher_MultipleTargets verifies that multiple targets are
 // resolved independently and Publish routes to the correct channel.
 func TestRedisPubSubPublisher_MultipleTargets(t *testing.T) {
-	fake := &fakeRedisOps{}
+	fake := newFakeRedisOps()
 	cfg := RedisPubSubConfig{
 		KeyPrefix:     "app",
 		DestinationID: "events",
@@ -230,7 +312,7 @@ func TestRedisPubSubPublisher_MultipleTargets(t *testing.T) {
 // TestRedisPubSubPublisher_LoggerUsed verifies that a non-nil logger is exercised
 // during construction (smoke-test: no panic, no dead-code elimination).
 func TestRedisPubSubPublisher_LoggerUsed(t *testing.T) {
-	fake := &fakeRedisOps{}
+	fake := newFakeRedisOps()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	cfg := RedisPubSubConfig{
 		KeyPrefix:     "pfx",
@@ -252,10 +334,8 @@ func TestRedisPubSubPublisher_LoggerUsed(t *testing.T) {
 // propagated back to the caller.
 func TestRedisPubSubPublisher_PublishError(t *testing.T) {
 	wantErr := errors.New("PUBLISH failed")
-	fake := &fakeRedisOpsWithPublishError{
-		fakeRedisOps: &fakeRedisOps{},
-		publishErr:   wantErr,
-	}
+	fake := newFakeRedisOps()
+	fake.publishErr = wantErr
 	cfg := RedisPubSubConfig{
 		DestinationID: "events",
 		Targets:       []RedisPubSubTarget{{Name: "chan"}},
@@ -269,16 +349,4 @@ func TestRedisPubSubPublisher_PublishError(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Errorf("Publish: got %v, want %v", err, wantErr)
 	}
-}
-
-// fakeRedisOpsWithPublishError wraps fakeRedisOps and injects an error into
-// every Publish call.
-type fakeRedisOpsWithPublishError struct {
-	*fakeRedisOps
-	publishErr error
-}
-
-func (f *fakeRedisOpsWithPublishError) Publish(_ context.Context, channel, payload string) error {
-	f.fakeRedisOps.publishCalls = append(f.fakeRedisOps.publishCalls, publishCall{channel: channel, payload: payload})
-	return f.publishErr
 }
