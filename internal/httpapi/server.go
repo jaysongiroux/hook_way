@@ -327,13 +327,11 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable
-		s.logger.Error("publish failed",
+		s.logger.Warn("request publish failed; returning 503",
 			"endpoint", endpointName,
-			"destination_queue_id", destinationLabel,
-			"queue", targetLabel,
+			"event_id", env.ID,
 			"request_id", requestIDFromContext(r.Context()),
 			"trace_id", traceIDFromContext(r.Context()),
-			"error", err.Error(),
 		)
 		writeJSON(w, status, map[string]string{"error": "service unavailable"})
 		return
@@ -449,8 +447,9 @@ func (s *Server) publishRoute(ctx context.Context, endpointName string, env webh
 		status = "failure"
 		s.logger.Error("publish route failed",
 			"endpoint", endpointName,
-			"destination_queue_id", route.Destination,
-			"queue", route.Target,
+			"destination", route.Destination,
+			"target", route.Target,
+			"event_id", msg.ID,
 			"request_id", env.RequestID,
 			"trace_id", env.TraceID,
 			"error", err.Error(),

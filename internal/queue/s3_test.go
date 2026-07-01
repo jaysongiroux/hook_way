@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -212,10 +213,10 @@ func TestS3CreateBucketLocationConstraint(t *testing.T) {
 	fixedTime := time.Date(2026, 6, 29, 14, 30, 0, 0, time.UTC)
 
 	cases := []struct {
-		name            string
-		region          string
-		wantConstraint  s3types.BucketLocationConstraint
-		wantNilConfig   bool
+		name           string
+		region         string
+		wantConstraint s3types.BucketLocationConstraint
+		wantNilConfig  bool
 	}{
 		{
 			name:          "us-east-1 must not set LocationConstraint",
@@ -271,6 +272,45 @@ func TestS3CreateBucketLocationConstraint(t *testing.T) {
 				t.Fatalf("Publish: %v", err)
 			}
 		})
+	}
+}
+
+// TestS3LogsCreatedBucket asserts that NewS3Publisher emits an Info
+// "created bucket" log when the bucket is absent and Create=true.
+func TestS3LogsCreatedBucket(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeS3() // HeadBucket → NotFound; CreateBucket → ok
+	_, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "my-bucket", Create: true, DestinationID: "archive", Logger: logger,
+		Targets: []S3Target{{Name: "orders"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "created bucket")
+	if line == nil || line["level"] != "INFO" || line["destination"] != "archive" || line["target"] != "my-bucket" {
+		t.Fatalf("missing created-bucket info log: %v", line)
+	}
+}
+
+// TestS3LogsBucketVerified asserts that NewS3Publisher emits a Debug
+// "bucket verified" log when the bucket already exists.
+func TestS3LogsBucketVerified(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeS3()
+	fake.seedBucket("existing-bucket")
+	_, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "existing-bucket", DestinationID: "archive", Logger: logger,
+		Targets: []S3Target{{Name: "orders"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "bucket verified")
+	if line == nil || line["level"] != "DEBUG" || line["destination"] != "archive" || line["target"] != "existing-bucket" {
+		t.Fatalf("missing bucket-verified debug log: %v", line)
 	}
 }
 

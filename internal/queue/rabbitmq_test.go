@@ -1,9 +1,11 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -456,4 +458,28 @@ func runRabbitMQ(ctx context.Context) (container *tcrabbitmq.RabbitMQContainer, 
 		}
 	}()
 	return tcrabbitmq.Run(ctx, "rabbitmq:3-management")
+}
+
+func TestRabbitMQEagerConnectFailureLogs(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	// Port 1 is not a valid AMQP broker — dial will fail immediately.
+	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
+		URL:           "amqp://guest:guest@127.0.0.1:1/",
+		Exchange:      "hookway.test",
+		ExchangeType:  "direct",
+		DestinationID: "test-dest",
+		Logger:        logger,
+	})
+	if err != nil {
+		t.Fatalf("constructor should tolerate unavailable startup: %v", err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+
+	line := lastQueueLogLine(t, &buf, "rabbitmq initial connect failed; will retry on publish")
+	if line == nil || line["level"] != "WARN" || line["destination"] == nil {
+		t.Fatalf("missing eager-connect warn: %v", line)
+	}
 }

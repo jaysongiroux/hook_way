@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -276,5 +277,32 @@ func TestRedisListPublisher_LoggerUsed(t *testing.T) {
 	}
 	if p == nil {
 		t.Fatal("expected non-nil publisher")
+	}
+}
+
+// TestRedisListLogsTarget asserts that the "registered target" Debug log uses
+// the canonical "target" key (not "name").
+func TestRedisListLogsTarget(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := &fakeRedisOps{}
+	_, err := NewRedisListPublisher(context.Background(), fake, RedisListConfig{
+		KeyPrefix:     "pfx",
+		DestinationID: "events",
+		Logger:        logger,
+		Targets:       []RedisListTarget{{Name: "orders", MaxLen: 100}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "redis_list: registered target")
+	if line == nil {
+		t.Fatal("missing registered-target debug log")
+	}
+	if line["target"] != "orders" {
+		t.Fatalf("expected target=orders, got: %v", line)
+	}
+	if _, hasName := line["name"]; hasName {
+		t.Fatalf("log must not use key 'name', got: %v", line)
 	}
 }

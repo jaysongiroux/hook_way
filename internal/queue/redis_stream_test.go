@@ -1,9 +1,11 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -259,6 +261,35 @@ func TestRedisStreamPublisher_MaxLenZeroUnbounded(t *testing.T) {
 	}
 	if fake.xaddCalls[0].approxMaxLen != 0 {
 		t.Errorf("expected approxMaxLen=0 for unbounded, got %d", fake.xaddCalls[0].approxMaxLen)
+	}
+}
+
+// TestRedisStreamLogsCreatedConsumerGroup asserts that NewRedisStreamPublisher
+// emits an Info "created consumer group" log when Create=true and ConsumerGroup
+// is non-empty.
+func TestRedisStreamLogsCreatedConsumerGroup(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	fake := &fakeRedisOpsWithGroupTracking{
+		fakeRedisOps:   &fakeRedisOps{},
+		onXGroupCreate: func(_, _, _ string) {},
+	}
+
+	_, err := NewRedisStreamPublisher(context.Background(), fake, RedisStreamConfig{
+		KeyPrefix:     "hw",
+		DestinationID: "events",
+		Logger:        logger,
+		Targets: []RedisStreamTarget{
+			{Name: "orders", ConsumerGroup: "workers", Create: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "created consumer group")
+	if line == nil || line["level"] != "INFO" || line["destination"] != "events" || line["target"] != "orders" || line["group"] != "workers" {
+		t.Fatalf("missing created-consumer-group info log: %v", line)
 	}
 }
 

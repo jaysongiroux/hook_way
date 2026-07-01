@@ -68,6 +68,7 @@ type resolvedKVTarget struct {
 type RedisKVPublisher struct {
 	ops    redisOps
 	destID string
+	logger *slog.Logger
 	// targets maps the unprefixed target Name to its resolved state.
 	// Written once in the constructor; read-only during Publish.
 	targets map[string]resolvedKVTarget
@@ -88,9 +89,14 @@ const defaultKVKeyTemplate = "{prefix}:{endpoint}:{id}"
 // No Redis commands are issued at startup beyond what Ready() calls. There is no
 // create concept for KV keys — they are created implicitly by SET.
 func NewRedisKVPublisher(_ context.Context, ops redisOps, cfg RedisKVConfig) (*RedisKVPublisher, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	p := &RedisKVPublisher{
 		ops:     ops,
 		destID:  cfg.DestinationID,
+		logger:  logger,
 		targets: make(map[string]resolvedKVTarget, len(cfg.Targets)),
 	}
 
@@ -100,14 +106,12 @@ func NewRedisKVPublisher(_ context.Context, ops redisOps, cfg RedisKVConfig) (*R
 			tmpl = defaultKVKeyTemplate
 		}
 
-		if cfg.Logger != nil {
-			cfg.Logger.Debug("redis_kv: registered target",
-				slog.String("destination", cfg.DestinationID),
-				slog.String("name", t.Name),
-				slog.String("key_template", tmpl),
-				slog.Duration("ttl", t.TTL),
-			)
-		}
+		p.logger.Debug("redis_kv: registered target",
+			slog.String("destination", cfg.DestinationID),
+			slog.String("target", t.Name),
+			slog.String("key_template", tmpl),
+			slog.Duration("ttl", t.TTL),
+		)
 
 		// Store the resolved target — written only here, read-only in Publish.
 		p.targets[t.Name] = resolvedKVTarget{

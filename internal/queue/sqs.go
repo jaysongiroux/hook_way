@@ -56,6 +56,8 @@ type sqsTargetState struct {
 
 type SQSPublisher struct {
 	client  sqsAPI
+	destID  string
+	logger  *slog.Logger
 	targets map[string]sqsTargetState
 	probes  []string // resolved queue URLs used by Ready
 }
@@ -63,7 +65,11 @@ type SQSPublisher struct {
 // NewSQSPublisher resolves (and optionally creates) every target queue up
 // front, caching the queue URLs so publishing does no extra lookups.
 func NewSQSPublisher(ctx context.Context, client sqsAPI, cfg SQSConfig) (*SQSPublisher, error) {
-	p := &SQSPublisher{client: client, targets: map[string]sqsTargetState{}}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	p := &SQSPublisher{client: client, destID: cfg.DestinationID, logger: logger, targets: map[string]sqsTargetState{}}
 	for _, target := range cfg.Targets {
 		url, existed, err := p.resolveQueueURL(ctx, target)
 		if err != nil {
@@ -85,6 +91,7 @@ func NewSQSPublisher(ctx context.Context, client sqsAPI, cfg SQSConfig) (*SQSPub
 func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (url string, existed bool, err error) {
 	out, err := p.client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(target.Name)})
 	if err == nil {
+		p.logger.Debug("queue exists", slog.String("destination", p.destID), slog.String("target", target.Name))
 		return aws.ToString(out.QueueUrl), true, nil
 	}
 	var notFound *sqstypes.QueueDoesNotExist
@@ -98,6 +105,7 @@ func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (u
 	if err != nil {
 		return "", false, err
 	}
+	p.logger.Info("created queue", slog.String("destination", p.destID), slog.String("target", target.Name))
 	return aws.ToString(created.QueueUrl), false, nil
 }
 
@@ -118,7 +126,7 @@ func (p *SQSPublisher) reconcileQueue(ctx context.Context, cfg SQSConfig, target
 	}
 	return applyConflictPolicy(ctx, reconcileParams{
 		policy:  cfg.Policy,
-		logger:  cfg.Logger,
+		logger:  p.logger,
 		destID:  cfg.DestinationID,
 		target:  target.Name,
 		want:    sqsCreateAttributes(target),

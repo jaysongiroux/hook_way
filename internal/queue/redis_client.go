@@ -31,9 +31,10 @@ type redisOps interface {
 	// list is trimmed to the newest approxMaxLen elements after the push.
 	LPushTrim(ctx context.Context, key, value string, approxMaxLen int64) error
 
-	// Publish sends payload to channel (Redis Pub/Sub). This is lossy; messages
-	// are not persisted.
-	Publish(ctx context.Context, channel, payload string) error
+	// Publish sends payload to channel (Redis Pub/Sub) and returns the number of
+	// clients that received the message. A count of 0 means no subscriber was
+	// listening and the message was dropped (Redis pub/sub is at-most-once).
+	Publish(ctx context.Context, channel, payload string) (int64, error)
 
 	// Set stores value at key. When ttl > 0 the key expires after ttl; when
 	// ttl == 0 the key has no expiry.
@@ -81,8 +82,8 @@ func (r *goRedisOps) LPushTrim(ctx context.Context, key, value string, approxMax
 	return nil
 }
 
-func (r *goRedisOps) Publish(ctx context.Context, channel, payload string) error {
-	return r.client.Publish(ctx, channel, payload).Err()
+func (r *goRedisOps) Publish(ctx context.Context, channel, payload string) (int64, error) {
+	return r.client.Publish(ctx, channel, payload).Result()
 }
 
 func (r *goRedisOps) Set(ctx context.Context, key, value string, ttl time.Duration) error {

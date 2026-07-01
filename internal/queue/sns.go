@@ -53,6 +53,8 @@ type snsTargetState struct {
 
 type SNSPublisher struct {
 	client  snsAPI
+	destID  string
+	logger  *slog.Logger
 	targets map[string]snsTargetState
 	probes  []string // resolved topic ARNs used by Ready
 }
@@ -61,7 +63,11 @@ type SNSPublisher struct {
 // The targets map is written once here and is read-only in Publish, making
 // concurrent fan-out publishes safe without locking.
 func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPublisher, error) {
-	p := &SNSPublisher{client: client, targets: map[string]snsTargetState{}}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	p := &SNSPublisher{client: client, destID: cfg.DestinationID, logger: logger, targets: map[string]snsTargetState{}}
 
 	arnByName, err := p.listTopicARNs(ctx)
 	if err != nil {
@@ -72,6 +78,7 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 		arn, existed := arnByName[target.Name]
 		switch {
 		case existed:
+			p.logger.Debug("topic exists", slog.String("destination", p.destID), slog.String("target", target.Name))
 			if err := p.reconcileTopic(ctx, cfg, target, arn); err != nil {
 				return nil, err
 			}
@@ -84,6 +91,7 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 				return nil, fmt.Errorf("sns target %q: %w", target.Name, err)
 			}
 			arn = aws.ToString(out.TopicArn)
+			p.logger.Info("created topic", slog.String("destination", p.destID), slog.String("target", target.Name))
 		default:
 			return nil, fmt.Errorf("sns target %q: topic %q not found", target.Name, target.Name)
 		}
@@ -126,7 +134,7 @@ func (p *SNSPublisher) reconcileTopic(ctx context.Context, cfg SNSConfig, target
 	}
 	return applyConflictPolicy(ctx, reconcileParams{
 		policy:  cfg.Policy,
-		logger:  cfg.Logger,
+		logger:  p.logger,
 		destID:  cfg.DestinationID,
 		target:  target.Name,
 		want:    snsCreateAttributes(target),

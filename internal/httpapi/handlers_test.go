@@ -330,11 +330,12 @@ func TestWebhookPublishFailureLogsUnderlyingError(t *testing.T) {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 	logText := logs.String()
+	// Per-route log uses canonical keys and carries the error.
 	for _, want := range []string{
-		`"msg":"publish failed"`,
+		`"msg":"publish route failed"`,
 		`"endpoint":"paddle_billing"`,
-		`"destination_queue_id":"billing"`,
-		`"queue":"billing-events"`,
+		`"destination":"billing"`,
+		`"target":"billing-events"`,
 		`"request_id":"req-paddle"`,
 		`rabbitmq queue declare: PRECONDITION_FAILED`,
 	} {
@@ -366,19 +367,21 @@ func TestWebhookFanoutFailureDoesNotMaskRootCauseWithContextCanceled(t *testing.
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
+	// The root-cause error is logged in the per-route "publish route failed" line,
+	// not in the aggregate "request publish failed; returning 503" line.
 	logText := logs.String()
-	var aggregateErr string
+	var perRouteErr string
 	for _, line := range strings.Split(strings.TrimSpace(logText), "\n") {
 		var entry map[string]any
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			t.Fatalf("decode log line: %v: %s", err, line)
 		}
-		if entry["msg"] == "publish failed" {
-			aggregateErr, _ = entry["error"].(string)
+		if entry["msg"] == "publish route failed" && entry["destination"] == "billing" {
+			perRouteErr, _ = entry["error"].(string)
 		}
 	}
-	if aggregateErr != "rabbitmq queue declare: PRECONDITION_FAILED" {
-		t.Fatalf("aggregate error = %q, logs: %s", aggregateErr, logText)
+	if perRouteErr != "rabbitmq queue declare: PRECONDITION_FAILED" {
+		t.Fatalf("per-route billing error = %q, logs: %s", perRouteErr, logText)
 	}
 }
 
@@ -661,6 +664,62 @@ func (p *contextCancelPublisher) Publish(ctx context.Context, destinationID, q s
 
 func (p *contextCancelPublisher) Ready(ctx context.Context) error { return nil }
 func (p *contextCancelPublisher) Close() error                    { return nil }
+
+// failingPublisher always returns an error from Publish.
+type failingPublisher struct{ err error }
+
+func (f failingPublisher) Publish(_ context.Context, _, _ string, _ queue.Message) error {
+	return f.err
+}
+func (f failingPublisher) Ready(_ context.Context) error { return nil }
+func (f failingPublisher) Close() error                  { return nil }
+
+// findLogLine scans buf for a JSON log line whose "msg" field equals msgKey
+// and returns it as map[string]any. Fatals if not found.
+func findLogLine(t *testing.T, buf *bytes.Buffer, msgKey string) map[string]any {
+	t.Helper()
+	for _, raw := range strings.Split(buf.String(), "\n") {
+		if raw == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			continue
+		}
+		if m["msg"] == msgKey {
+			return m
+		}
+	}
+	t.Fatalf("log line with msg=%q not found in:\n%s", msgKey, buf.String())
+	return nil
+}
+
+func TestPublishFailureLogUsesCanonicalKeys(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	pub := failingPublisher{err: errors.New("boom")}
+	srv := NewServer(testConfig(), pub, logger)
+
+	body := []byte(`{"event_type":"subscription.created"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	line := findLogLine(t, &buf, "publish route failed")
+	if line["destination"] == nil || line["target"] == nil || line["event_id"] == nil {
+		t.Fatalf("missing canonical keys; got %v", line)
+	}
+	if _, ok := line["destination_queue_id"]; ok {
+		t.Fatalf("legacy key destination_queue_id must be gone; got %v", line)
+	}
+	if _, ok := line["queue"]; ok {
+		t.Fatalf("legacy key queue must be gone; got %v", line)
+	}
+	if line["error"] == nil {
+		t.Fatalf("error field missing; got %v", line)
+	}
+}
 
 func TestNewServerWarnsWhenEndpointUsesNoAuth(t *testing.T) {
 	var logs bytes.Buffer

@@ -118,6 +118,10 @@ func NewFactory(opts FactoryOptions) *Factory {
 	redisConnector := opts.RedisConnector
 	if redisConnector == nil {
 		logger := opts.Logger
+		var redisPubSubMetrics RedisPubSubMetrics
+		if m, ok := opts.Metrics.(RedisPubSubMetrics); ok {
+			redisPubSubMetrics = m
+		}
 		redisConnector = func(ctx context.Context, destinationID, destType string, cfg config.RedisConfig, targets []RedisTarget) (Publisher, error) {
 			ops, err := newRedisClient(cfg)
 			if err != nil {
@@ -167,6 +171,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 					KeyPrefix:     cfg.KeyPrefix,
 					DestinationID: destinationID,
 					Logger:        logger,
+					Metrics:       redisPubSubMetrics,
 					Targets:       pubsubTargets,
 				})
 			case "redis_kv":
@@ -254,6 +259,8 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				Queues:            collectQueues(cfg, id),
 				QueueDeclarations: collectQueueDeclarations(cfg, id),
 				Metrics:           f.metrics,
+				DestinationID:     id,
+				Logger:            f.logger,
 			})
 			if err != nil {
 				return nil, err

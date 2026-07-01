@@ -51,6 +51,7 @@ type resolvedListTarget struct {
 type RedisListPublisher struct {
 	ops    redisOps
 	destID string
+	logger *slog.Logger
 	// targets maps the unprefixed target Name to its resolved state.
 	// Written once in the constructor; read-only during Publish.
 	targets map[string]resolvedListTarget
@@ -65,9 +66,14 @@ type RedisListPublisher struct {
 // Lists are implicit in Redis — there is no create concept. No commands are
 // issued at startup beyond populating the targets map.
 func NewRedisListPublisher(_ context.Context, ops redisOps, cfg RedisListConfig) (*RedisListPublisher, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	p := &RedisListPublisher{
 		ops:     ops,
 		destID:  cfg.DestinationID,
+		logger:  logger,
 		targets: make(map[string]resolvedListTarget, len(cfg.Targets)),
 	}
 
@@ -78,14 +84,12 @@ func NewRedisListPublisher(_ context.Context, ops redisOps, cfg RedisListConfig)
 			listKey = cfg.KeyPrefix + ":" + t.Name
 		}
 
-		if cfg.Logger != nil {
-			cfg.Logger.Debug("redis_list: registered target",
-				slog.String("destination", cfg.DestinationID),
-				slog.String("name", t.Name),
-				slog.String("list_key", listKey),
-				slog.Int64("max_len", t.MaxLen),
-			)
-		}
+		p.logger.Debug("redis_list: registered target",
+			slog.String("destination", cfg.DestinationID),
+			slog.String("target", t.Name),
+			slog.String("list_key", listKey),
+			slog.Int64("max_len", t.MaxLen),
+		)
 
 		// Store the resolved target — written only here, read-only in Publish.
 		p.targets[t.Name] = resolvedListTarget{

@@ -1,9 +1,11 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -114,8 +116,8 @@ func TestSQSPublisherCreatesQueueAndSends(t *testing.T) {
 func TestSQSPublisherFIFOSetsGroupAndDedup(t *testing.T) {
 	fake := newFakeSQS()
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
-		Region:  "us-east-1",
-		Policy:  ConflictReconcile,
+		Region: "us-east-1",
+		Policy: ConflictReconcile,
 		Targets: []SQSTarget{{
 			Name: "billing-jobs.fifo", Create: true,
 			FIFO: &FIFOSettings{GroupIDSource: "endpoint", DedupUseIdempotencyKey: true},
@@ -177,8 +179,8 @@ func TestSQSPublisherReadyProbesAllTargets(t *testing.T) {
 	fake.urls["q2"] = "http://localstack/000000000000/q2"
 
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
-		Region:  "us-east-1",
-		Policy:  ConflictReconcile,
+		Region: "us-east-1",
+		Policy: ConflictReconcile,
 		Targets: []SQSTarget{
 			{Name: "q1"},
 			{Name: "q2"},
@@ -308,6 +310,45 @@ func TestSQSFifoMissingContentBasedDedupReconciles(t *testing.T) {
 	}
 	if fake.attrs[url]["ContentBasedDeduplication"] != "true" {
 		t.Fatalf("expected CBD reconciled to true, got %q", fake.attrs[url]["ContentBasedDeduplication"])
+	}
+}
+
+// TestSQSLogsCreatedQueue asserts that NewSQSPublisher emits an Info
+// "created queue" log when the queue is absent and Create=true.
+func TestSQSLogsCreatedQueue(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeSQS() // GetQueueUrl → QueueDoesNotExist; CreateQueue → ok
+	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		DestinationID: "jobs", Logger: logger,
+		Targets: []SQSTarget{{Name: "orders", Create: true}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "created queue")
+	if line == nil || line["level"] != "INFO" || line["destination"] != "jobs" || line["target"] != "orders" {
+		t.Fatalf("missing created-queue info log: %v", line)
+	}
+}
+
+// TestSQSLogsQueueExists asserts that NewSQSPublisher emits a Debug
+// "queue exists" log when the queue already exists.
+func TestSQSLogsQueueExists(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fake := newFakeSQS()
+	fake.seedQueue("payments", map[string]string{})
+	_, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		DestinationID: "billing", Logger: logger,
+		Targets: []SQSTarget{{Name: "payments"}},
+	})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	line := lastQueueLogLine(t, &buf, "queue exists")
+	if line == nil || line["level"] != "DEBUG" || line["destination"] != "billing" || line["target"] != "payments" {
+		t.Fatalf("missing queue-exists debug log: %v", line)
 	}
 }
 

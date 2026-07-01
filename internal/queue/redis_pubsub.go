@@ -27,8 +27,10 @@ type RedisPubSubConfig struct {
 	KeyPrefix string
 	// DestinationID is the destination identifier used in error messages.
 	DestinationID string
-	// Logger is an optional structured logger. May be nil.
+	// Logger is an optional structured logger. May be nil (defaults to slog.Default()).
 	Logger *slog.Logger
+	// Metrics is an optional observability hook for no-subscriber drops. May be nil.
+	Metrics RedisPubSubMetrics
 	// Targets enumerates the channels this publisher routes messages to.
 	Targets []RedisPubSubTarget
 }
@@ -55,8 +57,10 @@ type RedisPubSubConfig struct {
 // The targets map is written only in NewRedisPubSubPublisher and is read-only
 // during Publish, which makes concurrent fan-out reads safe without locking.
 type RedisPubSubPublisher struct {
-	ops    redisOps
-	destID string
+	ops     redisOps
+	destID  string
+	logger  *slog.Logger
+	metrics RedisPubSubMetrics
 	// targets maps the unprefixed target Name to its resolved channel name.
 	// Written once in the constructor; read-only during Publish.
 	targets map[string]string
@@ -72,9 +76,15 @@ type RedisPubSubPublisher struct {
 // Pub/Sub channels are implicit in Redis — there is no create or declare
 // concept. No commands are issued at startup beyond populating the targets map.
 func NewRedisPubSubPublisher(_ context.Context, ops redisOps, cfg RedisPubSubConfig) (*RedisPubSubPublisher, error) {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	p := &RedisPubSubPublisher{
 		ops:     ops,
 		destID:  cfg.DestinationID,
+		logger:  logger,
+		metrics: cfg.Metrics,
 		targets: make(map[string]string, len(cfg.Targets)),
 	}
 
@@ -85,13 +95,11 @@ func NewRedisPubSubPublisher(_ context.Context, ops redisOps, cfg RedisPubSubCon
 			channel = cfg.KeyPrefix + ":" + t.Name
 		}
 
-		if cfg.Logger != nil {
-			cfg.Logger.Debug("redis_pubsub: registered target",
-				slog.String("destination", cfg.DestinationID),
-				slog.String("name", t.Name),
-				slog.String("channel", channel),
-			)
-		}
+		logger.Debug("redis_pubsub: registered target",
+			slog.String("destination", cfg.DestinationID),
+			slog.String("target", t.Name),
+			slog.String("channel", channel),
+		)
 
 		// Store the resolved channel — written only here, read-only in Publish.
 		p.targets[t.Name] = channel
@@ -102,7 +110,8 @@ func NewRedisPubSubPublisher(_ context.Context, ops redisOps, cfg RedisPubSubCon
 
 // Publish marshals msg to JSON and sends it to the configured Redis Pub/Sub
 // channel via PUBLISH. Delivery is fire-and-forget: if no subscriber is
-// listening the message is lost.
+// listening the message is lost. When no subscriber receives the message, a
+// Warn is logged and the no-subscriber metric is incremented (if wired).
 //
 // target is the UNPREFIXED target Name; the publisher resolves the channel name.
 func (p *RedisPubSubPublisher) Publish(ctx context.Context, _, target string, msg Message) error {
@@ -119,7 +128,22 @@ func (p *RedisPubSubPublisher) Publish(ctx context.Context, _, target string, ms
 		return fmt.Errorf("redis_pubsub %q: marshal message: %w", p.destID, err)
 	}
 
-	return p.ops.Publish(ctx, channel, string(payload))
+	receivers, err := p.ops.Publish(ctx, channel, string(payload))
+	if err != nil {
+		return fmt.Errorf("redis_pubsub %q: publish: %w", p.destID, err)
+	}
+	if receivers == 0 {
+		p.logger.Warn("published to channel with no subscribers; message dropped",
+			slog.String("destination", p.destID),
+			slog.String("target", target),
+			slog.String("event_id", msg.ID),
+			slog.Int64("subscribers", receivers),
+		)
+		if p.metrics != nil {
+			p.metrics.RedisPubSubNoSubscriber(p.destID, target)
+		}
+	}
+	return nil
 }
 
 // Ready pings the Redis server to confirm the connection is live.
