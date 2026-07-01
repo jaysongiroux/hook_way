@@ -112,10 +112,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" &&
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" &&
 			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -159,6 +159,20 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			if (pg.TLS.ClientCert == "") != (pg.TLS.ClientKey == "") {
 				issues = append(issues, validationError(fieldPrefix+".postgres.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+			}
+		}
+		if dest.Type == "mongodb" {
+			m := dest.Mongo
+			if m.URI == "" {
+				issues = append(issues, validationError(fieldPrefix+".mongodb.uri", "uri is required for mongodb destinations", "set uri to a mongodb connection string such as \"mongodb://host:27017\""))
+			}
+			if m.Database == "" {
+				issues = append(issues, validationError(fieldPrefix+".mongodb.database", "database is required for mongodb destinations", "set database to the target Mongo database name"))
+			} else if strings.ContainsAny(m.Database, "/\\.\"$*<>:|? ") {
+				issues = append(issues, validationError(fieldPrefix+".mongodb.database", "database name contains characters not allowed by MongoDB", "remove any of / \\ . \" $ * < > : | ? or spaces"))
+			}
+			if (m.TLS.ClientCert == "") != (m.TLS.ClientKey == "") {
+				issues = append(issues, validationError(fieldPrefix+".mongodb.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
 			}
 		}
 		if dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv" {

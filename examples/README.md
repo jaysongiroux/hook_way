@@ -24,6 +24,7 @@ Each file showcases one destination type with all available options documented v
 | `destinations/redis_pubsub.yaml` | Redis / Valkey Pub/Sub destination: fire-and-forget channel broadcast; no `redis_options` block (all fields invalid for pubsub). Lossy — subscribers offline at publish time miss the message. |
 | `destinations/redis_kv.yaml` | Redis / Valkey key-value destination: SET with TTL using `redis_options.ttl` and `key_template`; not a queue — latest-event overwrite semantics. |
 | `destinations/postgres.yaml` | Postgres destination: one row per event into a shared table with fixed envelope columns + jsonb (headers/query/body/auth); `target` stored as a column; CREATE TABLE IF NOT EXISTS at startup; id dedup via ON CONFLICT DO NOTHING. |
+| `destinations/mongodb.yaml` | MongoDB destination: one BSON document per event into a collection named by the route `target`; full event envelope with `_id` = event id; nested body/headers/query/auth; id dedup via duplicate-key no-op; no DDL (collections auto-create). |
 
 ## Auth strategy reference configs
 

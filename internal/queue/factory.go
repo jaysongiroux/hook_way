@@ -30,6 +30,12 @@ type RedisConnector func(ctx context.Context, destinationID, destType string, cf
 // Callers can inject a fake in tests.
 type PostgresConnector func(ctx context.Context, destinationID string, cfg config.PostgresConfig, targets []PostgresTarget) (Publisher, error)
 
+// MongoConnector creates a Publisher for the given MongoDB destination. It is
+// called once per mongodb destination in Create. The default connector builds
+// the connection via newMongoClient then calls NewMongoPublisher. Callers can
+// inject a fake in tests.
+type MongoConnector func(ctx context.Context, destinationID string, cfg config.MongoConfig, targets []MongoTarget) (Publisher, error)
+
 // RedisTarget describes a single Redis route target. The factory builds one
 // RedisTarget per unique route.Target in collectRedisTargets and passes the
 // slice to the RedisConnector.
@@ -49,6 +55,7 @@ type FactoryOptions struct {
 	RedisConnector    RedisConnector
 	S3Connector       S3Connector
 	PostgresConnector PostgresConnector
+	MongoConnector    MongoConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
 }
@@ -60,6 +67,7 @@ type Factory struct {
 	redisConnector    RedisConnector
 	s3Connector       S3Connector
 	postgresConnector PostgresConnector
+	mongoConnector    MongoConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
 }
@@ -198,6 +206,21 @@ func NewFactory(opts FactoryOptions) *Factory {
 			})
 		}
 	}
+	mongoConnector := opts.MongoConnector
+	if mongoConnector == nil {
+		logger := opts.Logger
+		mongoConnector = func(ctx context.Context, destinationID string, cfg config.MongoConfig, targets []MongoTarget) (Publisher, error) {
+			ops, err := newMongoClient(ctx, cfg)
+			if err != nil {
+				return nil, fmt.Errorf("mongodb destination %q: connect: %w", destinationID, err)
+			}
+			return NewMongoPublisher(ctx, ops, MongoConfig{
+				DestinationID: destinationID,
+				Logger:        logger,
+				Targets:       targets,
+			})
+		}
+	}
 	return &Factory{
 		rabbitMQConnector: connector,
 		sqsConnector:      sqsConnector,
@@ -205,6 +228,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		redisConnector:    redisConnector,
 		s3Connector:       s3Connector,
 		postgresConnector: postgresConnector,
+		mongoConnector:    mongoConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
 	}
@@ -285,6 +309,12 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "postgres":
 			publisher, err := f.postgresConnector(ctx, id, destination.Postgres, collectPostgresTargets(cfg, id))
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "mongodb":
+			publisher, err := f.mongoConnector(ctx, id, destination.Mongo, collectMongoTargets(cfg, id))
 			if err != nil {
 				return nil, err
 			}
@@ -457,6 +487,28 @@ func collectPostgresTargets(cfg config.Config, destinationID string) []PostgresT
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, PostgresTarget{Name: route.Target})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+func collectMongoTargets(cfg config.Config, destinationID string) []MongoTarget {
+	seen := map[string]struct{}{}
+	var targets []MongoTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			targets = append(targets, MongoTarget{Name: route.Target})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
