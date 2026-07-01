@@ -1562,3 +1562,109 @@ func TestRedisOptionsOnSQSRejected(t *testing.T) {
 		t.Fatalf("expected redis_options-on-sqs error, got %#v", issues)
 	}
 }
+
+func TestConvertDestinationMongo(t *testing.T) {
+	raw := rawDestinationConfig{Type: "mongodb"}
+	raw.Mongo.URI = "mongodb://localhost:27017"
+	raw.Mongo.Database = "webhooks"
+	raw.Mongo.MaxPoolSize = 20
+
+	dest, issues := convertDestination("destinations.archive", raw)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+	if dest.Type != "mongodb" {
+		t.Fatalf("type = %q", dest.Type)
+	}
+	if dest.Mongo.URI == "" || dest.Mongo.Database != "webhooks" || dest.Mongo.MaxPoolSize != 20 {
+		t.Fatalf("mongo config not mapped: %#v", dest.Mongo)
+	}
+}
+
+func TestConvertDestinationMongoRejectsOnExistingConflict(t *testing.T) {
+	raw := rawDestinationConfig{Type: "mongodb", OnExistingConflict: "reconcile"}
+	raw.Mongo.URI = "mongodb://localhost:27017"
+	raw.Mongo.Database = "webhooks"
+	_, issues := convertDestination("destinations.archive", raw)
+	if !hasIssue(issues, "destinations.archive.on_existing_conflict") {
+		t.Fatalf("expected on_existing_conflict rejected for mongodb; got %#v", issues)
+	}
+}
+
+func TestValidateMongoRequiresURIAndDatabase(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"archive": {Type: "mongodb", Mongo: MongoConfig{URI: "", Database: "bad/name"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "archive", Target: "events"},
+			}},
+		},
+	}
+	issues := c.ValidationIssues()
+	for _, f := range []string{
+		"destinations.archive.mongodb.uri",
+		"destinations.archive.mongodb.database",
+	} {
+		if !hasIssue(issues, f) {
+			t.Fatalf("missing validation issue for %q; got %#v", f, issues)
+		}
+	}
+}
+
+func TestValidateMongoValidPasses(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"archive": {Type: "mongodb", Mongo: MongoConfig{URI: "mongodb://localhost:27017", Database: "webhooks"}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "archive", Target: "events"},
+			}},
+		},
+	}
+	for _, iss := range c.ValidationIssues() {
+		if strings.HasPrefix(iss.Field, "destinations.archive.mongodb") {
+			t.Fatalf("unexpected mongodb validation issue: %#v", iss)
+		}
+	}
+}
+
+func TestValidateMongoRequiresDatabase(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"archive": {Type: "mongodb", Mongo: MongoConfig{URI: "mongodb://localhost:27017", Database: ""}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "archive", Target: "events"},
+			}},
+		},
+	}
+	issues := c.ValidationIssues()
+	if !hasIssue(issues, "destinations.archive.mongodb.database") {
+		t.Fatalf("missing validation issue for destinations.archive.mongodb.database; got %#v", issues)
+	}
+}
+
+func TestValidateMongoMTLSBothOrNeither(t *testing.T) {
+	c := Config{
+		Destinations: map[string]DestinationConfig{
+			"archive": {Type: "mongodb", Mongo: MongoConfig{
+				URI:      "mongodb://localhost:27017",
+				Database: "webhooks",
+				TLS:      MongoTLSConfig{ClientCert: "/path/to/cert.pem", ClientKey: ""},
+			}},
+		},
+		Endpoints: map[string]EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
+				{Destination: "archive", Target: "events"},
+			}},
+		},
+	}
+	issues := c.ValidationIssues()
+	if !hasIssue(issues, "destinations.archive.mongodb.tls.client_cert") {
+		t.Fatalf("missing validation issue for destinations.archive.mongodb.tls.client_cert; got %#v", issues)
+	}
+}

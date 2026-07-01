@@ -1,0 +1,47 @@
+# examples/destinations/mongodb.yaml
+#
+# Reference config for a MongoDB destination. Hookway inserts each webhook
+# event as one BSON document into a collection named by the route `target`,
+# within the configured database. The document is the full event envelope with
+# its _id set to the event id; nested objects (headers, query, body, auth) are
+# stored as nested documents.
+#
+# Collections auto-create on first insert and _id is auto-indexed, so there is
+# no schema/DDL step. Inserts dedupe on _id: a duplicate (E11000) is a no-op,
+# so at-least-once retries keep a single document (first-write-wins).
+#
+# `on_existing_conflict` is NOT valid for mongodb destinations — the field is
+# rejected at config validation time. Do not set it on mongodb entries.
+
+server:
+  addr: ":8089"
+  max_body_bytes: 1048576
+
+destinations:
+  archive:
+    type: mongodb
+    mongodb:
+      # Standard MongoDB connection URI (hosts, auth, replica set, pool, tls).
+      uri: "${MONGODB_URI}"
+      # Required: the database to write into. The collection is the route target.
+      database: "webhooks"
+      # Optional connection pool cap (0 = driver default).
+      max_pool_size: 0
+      # tls:                           # optional; only needed for a custom CA / mTLS
+      #   ca_cert: ""                  # path to PEM bundle for private/self-signed CAs
+      #   client_cert: ""              # path to PEM cert for mutual TLS
+      #   client_key: ""               # path to PEM key for mutual TLS (must pair with client_cert)
+      #   server_name: ""              # override SNI/verification hostname
+      #   insecure_skip_verify: false  # dev-only; disables cert verification; never use in production
+
+endpoints:
+  order_events:
+    enabled: true
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "archive"
+        # target is the Mongo COLLECTION name (within database "webhooks" above).
+        target: "events"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"

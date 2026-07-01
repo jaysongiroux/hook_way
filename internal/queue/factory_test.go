@@ -542,6 +542,43 @@ func TestFactoryCreatesPostgresPublisher(t *testing.T) {
 	}
 }
 
+func TestFactoryCreatesMongoPublisher(t *testing.T) {
+	var gotCfg config.MongoConfig
+	var gotTargets []MongoTarget
+	cfg := config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"archive": {Type: "mongodb", Mongo: config.MongoConfig{URI: "mongodb://localhost:27017", Database: "webhooks"}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"orders": {Enabled: true, Path: "/orders", Destinations: []config.EndpointDestinationConfig{
+				{Destination: "archive", Target: "events"},
+				{Destination: "archive", Target: "events"}, // dup -> deduped
+				{Destination: "archive", Target: "refunds"},
+			}},
+		},
+	}
+	f := NewFactory(FactoryOptions{
+		MongoConnector: func(ctx context.Context, id string, c config.MongoConfig, targets []MongoTarget) (Publisher, error) {
+			gotCfg = c
+			gotTargets = targets
+			return &recordingPublisher{}, nil
+		},
+	})
+	if _, err := f.Create(context.Background(), cfg); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if gotCfg.Database != "webhooks" || gotCfg.URI != "mongodb://localhost:27017" {
+		t.Fatalf("mongo cfg not passed through: %#v", gotCfg)
+	}
+	if len(gotTargets) != 2 {
+		t.Fatalf("expected 2 deduped targets, got %#v", gotTargets)
+	}
+	// collectMongoTargets sorts ascending: "events" < "refunds".
+	if gotTargets[0].Name != "events" || gotTargets[1].Name != "refunds" {
+		t.Fatalf("unexpected targets/order: %#v", gotTargets)
+	}
+}
+
 type recordingPublisher struct {
 	err           error
 	readyErr      error

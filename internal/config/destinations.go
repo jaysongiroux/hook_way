@@ -82,6 +82,7 @@ type DestinationConfig struct {
 	SNS                SNSConfig
 	S3                 S3Config
 	Postgres           PostgresConfig
+	Mongo              MongoConfig
 	Redis              RedisConfig
 }
 
@@ -124,6 +125,21 @@ type PostgresConfig struct {
 	Table    string
 	MaxConns int32
 	TLS      PostgresTLSConfig
+}
+
+type MongoTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+type MongoConfig struct {
+	URI         string
+	Database    string
+	MaxPoolSize uint64
+	TLS         MongoTLSConfig
 }
 
 type rawRabbitMQQueueOptions struct {
@@ -198,6 +214,18 @@ type rawDestinationConfig struct {
 			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 		} `yaml:"tls"`
 	} `yaml:"postgres"`
+	Mongo struct {
+		URI         string `yaml:"uri"`
+		Database    string `yaml:"database"`
+		MaxPoolSize uint64 `yaml:"max_pool_size"`
+		TLS         struct {
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+	} `yaml:"mongodb"`
 	Redis struct {
 		Mode       string   `yaml:"mode"`
 		URL        string   `yaml:"url"`
@@ -301,6 +329,18 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 				ClientKey:          raw.Postgres.TLS.ClientKey,
 				ServerName:         raw.Postgres.TLS.ServerName,
 				InsecureSkipVerify: raw.Postgres.TLS.InsecureSkipVerify,
+			},
+		},
+		Mongo: MongoConfig{
+			URI:         raw.Mongo.URI,
+			Database:    raw.Mongo.Database,
+			MaxPoolSize: raw.Mongo.MaxPoolSize,
+			TLS: MongoTLSConfig{
+				CACert:             raw.Mongo.TLS.CACert,
+				ClientCert:         raw.Mongo.TLS.ClientCert,
+				ClientKey:          raw.Mongo.TLS.ClientKey,
+				ServerName:         raw.Mongo.TLS.ServerName,
+				InsecureSkipVerify: raw.Mongo.TLS.InsecureSkipVerify,
 			},
 		},
 		Redis: RedisConfig{

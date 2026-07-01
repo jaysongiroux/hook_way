@@ -283,6 +283,46 @@ destinations:
       #   insecure_skip_verify: false
 ```
 
+### MongoDB
+
+MongoDB fields live under `destinations.<id>.mongodb`. Hookway inserts each webhook event as one BSON document into a collection within the configured database using [go.mongodb.org/mongo-driver/v2](https://www.mongodb.com/docs/drivers/go/current/).
+
+- `destinations.<id>.type`: set to `mongodb`.
+- `destinations.<id>.mongodb.uri`: required MongoDB connection URI (e.g. `mongodb://user:pass@host:27017/?replicaSet=rs0`). Usually `${MONGODB_URI}`.
+- `destinations.<id>.mongodb.database`: required database name to write into. The collection is determined by the per-route `target`.
+- `destinations.<id>.mongodb.max_pool_size`: optional connection pool cap. `0` (default) uses the driver default.
+- `destinations.<id>.mongodb.tls`: optional TLS block. Only needed for a custom/private CA or mutual TLS (client certificate). Fields mirror the RabbitMQ/Redis TLS block:
+  - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
+  - `client_cert` / `client_key`: paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: dev-only; disables certificate verification.
+
+**`on_existing_conflict` is not valid for MongoDB destinations** — the field is rejected at config validation time. Do not set it on `mongodb` entries.
+
+**Collection-per-target:** the per-route `target` field names the MongoDB collection within `database`. Use different targets to send events from different endpoints into separate collections.
+
+**Document shape:** each event is stored as one BSON document. The stored document carries the same envelope fields (`_id`, `endpoint`, `received_at`, `headers`, `query`, `body`, `auth`) that other destinations emit, stored as native BSON — top-level scalars map to BSON string/datetime types and nested objects (`headers`, `query`, `body`, `auth`) become nested BSON documents.
+
+**No DDL:** Hookway does not create collections or indexes at startup. Collections auto-create on first insert; `_id` is automatically indexed by MongoDB, so deduplication works with no setup required.
+
+**Deduplication:** inserts use `InsertOne`. A duplicate `_id` (MongoDB E11000 duplicate key error) is treated as a no-op success (first-write-wins). At-least-once retries from a provider are safe — only the first write for a given event id is persisted.
+
+```yaml
+destinations:
+  archive:
+    type: "mongodb"
+    mongodb:
+      uri: "${MONGODB_URI}"         # mongodb:// connection string
+      database: "webhooks"          # required; collection comes from route target
+      max_pool_size: 0              # optional; 0 = driver default
+      # tls:
+      #   ca_cert: "/etc/ssl/certs/mongo-ca.pem"
+      #   client_cert: "/etc/ssl/certs/mongo-client.pem"
+      #   client_key: "/etc/ssl/private/mongo-client.key"
+      #   server_name: "mongo.internal"
+      #   insecure_skip_verify: false
+```
+
 ### Redis / Valkey
 
 Hookway supports four Redis destination types. All share a common `redis:` connection block on the destination, and per-route settings under `redis_options` on each endpoint route.
