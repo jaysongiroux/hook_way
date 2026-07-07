@@ -6,7 +6,11 @@ This is a net-new feature but allows basic routing from endpoint after auth to s
 ## Destinations
 - Webhook (will need auth strat for this, i am thinking a simple API Key)
     - can be configured to be a reverse proxy and forward both body and headers
-- kafka
+    - auth strats
+        - simple api key
+        - signature + protection for reply attacks
+    - should support retries with backoff
+    - should be supported in metrics
 
 ## Config
 - Allowing database connector in place of a yaml file to allow for live editing/ changes
@@ -17,3 +21,8 @@ This is a net-new feature but allows basic routing from endpoint after auth to s
 # Filtering
 - build a way to filter based on body and header string, number and boolean evaluations
 - chain filters together before they reach the destination
+
+
+# Edge cases
+- Loops
+    - webhook -> hookway (webhook destination points to hookway) -> hookway

@@ -205,7 +205,7 @@ func TestFactoryHonorsEndpointCreateQueueAndDeadLetterConfigPerDestination(t *te
 func TestFactoryRejectsUnsupportedQueueType(t *testing.T) {
 	factory := NewFactory(FactoryOptions{})
 	_, err := factory.Create(context.Background(), config.Config{
-		Destinations: map[string]config.DestinationConfig{"billing": {Type: "kafka"}},
+		Destinations: map[string]config.DestinationConfig{"billing": {Type: "carrier-pigeon"}},
 		Endpoints: map[string]config.EndpointConfig{"paddle": {
 			Enabled: true,
 			Destinations: []config.EndpointDestinationConfig{{
@@ -233,8 +233,8 @@ func TestFactoryCreatesSQSPublisherWithTargets(t *testing.T) {
 		Endpoints: map[string]config.EndpointConfig{
 			"billing": {Enabled: true, Destinations: []config.EndpointDestinationConfig{{
 				Destination: "jobs", Target: "billing-jobs.fifo", Create: true,
-				SQSOptions:  config.SQSEndpointOptions{VisibilityTimeout: 30 * time.Second},
-				FIFO:        &config.FIFOConfig{GroupID: config.FIFOGroupIDConfig{Source: "body", Path: "customer.id", Fallback: "endpoint"}, Dedup: config.FIFODedupConfig{UseIdempotencyKey: true}},
+				SQSOptions: config.SQSEndpointOptions{VisibilityTimeout: 30 * time.Second},
+				FIFO:       &config.FIFOConfig{GroupID: config.FIFOGroupIDConfig{Source: "body", Path: "customer.id", Fallback: "endpoint"}, Dedup: config.FIFODedupConfig{UseIdempotencyKey: true}},
 			}}},
 		},
 	})
@@ -268,7 +268,7 @@ func TestFactoryCreatesSNSPublisherWithTargets(t *testing.T) {
 		Endpoints: map[string]config.EndpointConfig{
 			"billing": {Enabled: true, Destinations: []config.EndpointDestinationConfig{{
 				Destination: "alerts", Target: "billing-alerts", Create: true,
-				SNSOptions:  config.SNSEndpointOptions{Subject: "billing event"},
+				SNSOptions: config.SNSEndpointOptions{Subject: "billing event"},
 			}}},
 		},
 	})
@@ -576,6 +576,61 @@ func TestFactoryCreatesMongoPublisher(t *testing.T) {
 	// collectMongoTargets sorts ascending: "events" < "refunds".
 	if gotTargets[0].Name != "events" || gotTargets[1].Name != "refunds" {
 		t.Fatalf("unexpected targets/order: %#v", gotTargets)
+	}
+}
+
+func TestFactoryCreatesKafkaPublisherWithTargets(t *testing.T) {
+	var gotID string
+	var gotCfg config.KafkaConfig
+	var gotTargets []KafkaTarget
+	factory := NewFactory(FactoryOptions{
+		KafkaConnector: func(ctx context.Context, destinationID string, cfg config.KafkaConfig, targets []KafkaTarget) (Publisher, error) {
+			gotID = destinationID
+			gotCfg = cfg
+			gotTargets = targets
+			return &recordingPublisher{}, nil
+		},
+	})
+	pub, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"events": {
+				Type:  "kafka",
+				Kafka: config.KafkaConfig{Brokers: []string{"b:9092"}, Acks: "all"},
+			},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"ep": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{
+					{
+						Destination: "events", Target: "billing-events", Create: true,
+						KafkaOptions: config.KafkaEndpointOptions{
+							PartitionKey: config.KafkaPartitionKeyConfig{Source: "body", Path: "account.id"},
+						},
+					},
+					{Destination: "events", Target: "audit-events"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if pub == nil || gotID != "events" || gotCfg.Brokers[0] != "b:9092" {
+		t.Fatalf("connector not wired: id=%q cfg=%#v", gotID, gotCfg)
+	}
+	if len(gotTargets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(gotTargets))
+	}
+	// Targets are sorted by topic: audit-events, billing-events.
+	if gotTargets[0].Topic != "audit-events" || gotTargets[0].PartitionKey != nil {
+		t.Fatalf("bad target[0]: %#v", gotTargets[0])
+	}
+	if gotTargets[1].Topic != "billing-events" || !gotTargets[1].Create {
+		t.Fatalf("bad target[1]: %#v", gotTargets[1])
+	}
+	if gotTargets[1].PartitionKey == nil || gotTargets[1].PartitionKey.GroupIDSource != "body" || gotTargets[1].PartitionKey.GroupIDPath != "account.id" {
+		t.Fatalf("partition key not mapped: %#v", gotTargets[1].PartitionKey)
 	}
 }
 

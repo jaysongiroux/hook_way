@@ -47,6 +47,9 @@ jobs:
       - name: Postgres integration tests (testcontainers)
         run: make postgres-integration-test
 
+      - name: Kafka integration tests (testcontainers)
+        run: make kafka-integration-test
+
       - name: Vet
         run: make lint
 

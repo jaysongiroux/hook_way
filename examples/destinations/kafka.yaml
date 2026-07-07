@@ -1,0 +1,77 @@
+# examples/destinations/kafka.yaml
+#
+# Reference config for a Kafka destination.
+#
+# The route `target` is the Kafka topic. Delivery is at-least-once via
+# acks=all. An optional per-route partition_key derives the Kafka message key
+# (which selects the partition) — reuse the same source model as FIFO group ids:
+# static | endpoint | header | body, with an optional fallback.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  events:
+    type: kafka
+    kafka:
+      # One or more bootstrap brokers.
+      brokers:
+        - "${KAFKA_BROKER_1}"
+        - "${KAFKA_BROKER_2}"
+      # Producer acknowledgement level: all (default, durable) | one | none.
+      acks: "all"
+      # none (default) | gzip | snappy | lz4 | zstd
+      compression: "snappy"
+      publish_timeout: "5s"
+      # SASL auth. Omit the whole block for no SASL. Mechanisms:
+      # plain | scram-sha-256 | scram-sha-512.
+      sasl:
+        mechanism: "scram-sha-256"
+        username: "${KAFKA_USERNAME}"
+        password: "${KAFKA_PASSWORD}"
+      # TLS. Omit or set enabled: false for plaintext. Ship the system CA
+      # bundle for publicly trusted brokers; set ca_cert for private CAs.
+      tls:
+        enabled: true
+        # ca_cert: "/etc/hookway/kafka-ca.pem"
+        # client_cert: "/etc/hookway/kafka-client.crt"   # mutual TLS
+        # client_key:  "/etc/hookway/kafka-client.key"   # both or neither
+        # server_name: "kafka.internal"
+        # insecure_skip_verify: false
+      # Producer retry/backoff (maps onto the kafka-go writer).
+      retry:
+        max_attempts: 3
+        initial_backoff: "100ms"
+        max_backoff: "2s"
+
+endpoints:
+  webhook_events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        # Kafka topic name.
+        target: "billing-events"
+        # Pre-creates the topic via an admin CreateTopics call at startup
+        # (idempotent). Omit if topics are pre-provisioned.
+        create: true
+        kafka_options:
+          # Keyed messages preserve per-key ordering within the topic.
+          # Omit partition_key entirely for round-robin distribution.
+          partition_key:
+            source: "body"        # static | endpoint | header | body
+            path: "account.id"    # for header/body
+            fallback: "endpoint"  # literal value, or "endpoint"
+          # Optional topic settings used when Hookway pre-creates this topic
+          # (create: true). Omit either to use the broker default.
+          # partitions: 6
+          # replication_factor: 3
+      - destination: "events"
+        target: "audit-events"
+        # No partition_key → round-robin across partitions.
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"

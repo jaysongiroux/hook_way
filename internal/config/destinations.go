@@ -84,6 +84,7 @@ type DestinationConfig struct {
 	Postgres           PostgresConfig
 	Mongo              MongoConfig
 	Redis              RedisConfig
+	Kafka              KafkaConfig
 }
 
 type SQSConfig struct {
@@ -142,6 +143,37 @@ type MongoConfig struct {
 	TLS         MongoTLSConfig
 }
 
+type KafkaConfig struct {
+	Brokers        []string
+	Acks           string
+	Compression    string
+	PublishTimeout time.Duration
+	SASL           KafkaSASLConfig
+	TLS            KafkaTLSConfig
+	Retry          KafkaRetryConfig
+}
+
+type KafkaSASLConfig struct {
+	Mechanism string
+	Username  string
+	Password  string
+}
+
+type KafkaTLSConfig struct {
+	Enabled            bool
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+type KafkaRetryConfig struct {
+	MaxAttempts    int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+}
+
 type rawRabbitMQQueueOptions struct {
 	MessageTTL           string `yaml:"message_ttl"`
 	Expires              string `yaml:"expires"`
@@ -153,7 +185,7 @@ type rawRabbitMQQueueOptions struct {
 type rawDestinationConfig struct {
 	Type               string `yaml:"type"`
 	OnExistingConflict string `yaml:"on_existing_conflict"`
-	RabbitMQ struct {
+	RabbitMQ           struct {
 		URL               string                  `yaml:"url"`
 		Exchange          string                  `yaml:"exchange"`
 		ExchangeType      string                  `yaml:"exchange_type"`
@@ -244,6 +276,30 @@ type rawDestinationConfig struct {
 			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 		} `yaml:"tls"`
 	} `yaml:"redis"`
+	Kafka struct {
+		Brokers        []string `yaml:"brokers"`
+		Acks           string   `yaml:"acks"`
+		Compression    string   `yaml:"compression"`
+		PublishTimeout string   `yaml:"publish_timeout"`
+		SASL           struct {
+			Mechanism string `yaml:"mechanism"`
+			Username  string `yaml:"username"`
+			Password  string `yaml:"password"`
+		} `yaml:"sasl"`
+		TLS struct {
+			Enabled            bool   `yaml:"enabled"`
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+		Retry struct {
+			MaxAttempts    int    `yaml:"max_attempts"`
+			InitialBackoff string `yaml:"initial_backoff"`
+			MaxBackoff     string `yaml:"max_backoff"`
+		} `yaml:"retry"`
+	} `yaml:"kafka"`
 }
 
 func convertDestination(fieldPrefix string, raw rawDestinationConfig) (DestinationConfig, []ValidationIssue) {
@@ -275,6 +331,18 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	}
 	queueDefaults, queueDefaultIssues := convertQueueOptions(fieldPrefix+".rabbitmq.queue_defaults", raw.RabbitMQ.QueueDefaults)
 	issues = append(issues, queueDefaultIssues...)
+	kafkaPublishTimeout, issue := parseDuration(fieldPrefix+".kafka.publish_timeout", raw.Kafka.PublishTimeout, 5*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	kafkaInitialBackoff, issue := parsePositiveDuration(fieldPrefix+".kafka.retry.initial_backoff", raw.Kafka.Retry.InitialBackoff)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	kafkaMaxBackoff, issue := parsePositiveDuration(fieldPrefix+".kafka.retry.max_backoff", raw.Kafka.Retry.MaxBackoff)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
 	return DestinationConfig{
 		Type:               raw.Type,
 		OnExistingConflict: policy,
@@ -361,6 +429,30 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 				InsecureSkipVerify: raw.Redis.TLS.InsecureSkipVerify,
 			},
 		},
+		Kafka: KafkaConfig{
+			Brokers:        raw.Kafka.Brokers,
+			Acks:           kafkaAcks(raw.Kafka.Acks),
+			Compression:    kafkaCompression(raw.Kafka.Compression),
+			PublishTimeout: kafkaPublishTimeout,
+			SASL: KafkaSASLConfig{
+				Mechanism: raw.Kafka.SASL.Mechanism,
+				Username:  raw.Kafka.SASL.Username,
+				Password:  raw.Kafka.SASL.Password,
+			},
+			TLS: KafkaTLSConfig{
+				Enabled:            raw.Kafka.TLS.Enabled,
+				CACert:             raw.Kafka.TLS.CACert,
+				ClientCert:         raw.Kafka.TLS.ClientCert,
+				ClientKey:          raw.Kafka.TLS.ClientKey,
+				ServerName:         raw.Kafka.TLS.ServerName,
+				InsecureSkipVerify: raw.Kafka.TLS.InsecureSkipVerify,
+			},
+			Retry: KafkaRetryConfig{
+				MaxAttempts:    raw.Kafka.Retry.MaxAttempts,
+				InitialBackoff: kafkaInitialBackoff,
+				MaxBackoff:     kafkaMaxBackoff,
+			},
+		},
 	}, issues
 }
 
@@ -370,6 +462,23 @@ func postgresSchema(schema string) string {
 		return "public"
 	}
 	return schema
+}
+
+// kafkaAcks defaults the producer acknowledgement level to "all" (RequireAll)
+// when omitted, so durability is the safe default.
+func kafkaAcks(a string) string {
+	if a == "" {
+		return "all"
+	}
+	return a
+}
+
+// kafkaCompression defaults to "none" when omitted.
+func kafkaCompression(c string) string {
+	if c == "" {
+		return "none"
+	}
+	return c
 }
 
 // redisMode returns the configured mode for redis_* destinations, defaulting to

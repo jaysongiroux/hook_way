@@ -36,6 +36,11 @@ type PostgresConnector func(ctx context.Context, destinationID string, cfg confi
 // inject a fake in tests.
 type MongoConnector func(ctx context.Context, destinationID string, cfg config.MongoConfig, targets []MongoTarget) (Publisher, error)
 
+// KafkaConnector creates a Publisher for the given Kafka destination. The
+// default connector builds a kafka-go Writer/Client via newKafkaOps then calls
+// NewKafkaPublisher. Callers can inject a fake in tests.
+type KafkaConnector func(ctx context.Context, destinationID string, cfg config.KafkaConfig, targets []KafkaTarget) (Publisher, error)
+
 // RedisTarget describes a single Redis route target. The factory builds one
 // RedisTarget per unique route.Target in collectRedisTargets and passes the
 // slice to the RedisConnector.
@@ -56,6 +61,7 @@ type FactoryOptions struct {
 	S3Connector       S3Connector
 	PostgresConnector PostgresConnector
 	MongoConnector    MongoConnector
+	KafkaConnector    KafkaConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
 }
@@ -68,6 +74,7 @@ type Factory struct {
 	s3Connector       S3Connector
 	postgresConnector PostgresConnector
 	mongoConnector    MongoConnector
+	kafkaConnector    KafkaConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
 }
@@ -226,6 +233,22 @@ func NewFactory(opts FactoryOptions) *Factory {
 			})
 		}
 	}
+	kafkaConnector := opts.KafkaConnector
+	if kafkaConnector == nil {
+		logger := opts.Logger
+		kafkaConnector = func(ctx context.Context, destinationID string, cfg config.KafkaConfig, targets []KafkaTarget) (Publisher, error) {
+			ops, err := newKafkaOps(ctx, destinationID, cfg, targets, logger)
+			if err != nil {
+				return nil, fmt.Errorf("kafka destination %q: %w", destinationID, err)
+			}
+			return NewKafkaPublisher(ops, KafkaPublisherConfig{
+				DestinationID:  destinationID,
+				PublishTimeout: cfg.PublishTimeout,
+				Logger:         logger,
+				Targets:        targets,
+			}), nil
+		}
+	}
 	return &Factory{
 		rabbitMQConnector: connector,
 		sqsConnector:      sqsConnector,
@@ -234,6 +257,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		s3Connector:       s3Connector,
 		postgresConnector: postgresConnector,
 		mongoConnector:    mongoConnector,
+		kafkaConnector:    kafkaConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
 	}
@@ -322,6 +346,12 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "mongodb":
 			publisher, err := f.mongoConnector(ctx, id, destination.Mongo, collectMongoTargets(cfg, id))
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "kafka":
+			publisher, err := f.kafkaConnector(ctx, id, destination.Kafka, collectKafkaTargets(cfg, id))
 			if err != nil {
 				return nil, err
 			}
@@ -519,6 +549,43 @@ func collectMongoTargets(cfg config.Config, destinationID string) []MongoTarget 
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget {
+	seen := map[string]struct{}{}
+	var targets []KafkaTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			var partitionKey *FIFOSettings
+			if pk := route.KafkaOptions.PartitionKey; pk.Source != "" {
+				partitionKey = &FIFOSettings{
+					GroupIDSource:   pk.Source,
+					GroupIDValue:    pk.Value,
+					GroupIDPath:     pk.Path,
+					GroupIDFallback: pk.Fallback,
+				}
+			}
+			targets = append(targets, KafkaTarget{
+				Topic:             route.Target,
+				Create:            route.Create,
+				PartitionKey:      partitionKey,
+				Partitions:        route.KafkaOptions.Partitions,
+				ReplicationFactor: route.KafkaOptions.ReplicationFactor,
+			})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Topic < targets[j].Topic })
 	return targets
 }
 
