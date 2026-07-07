@@ -29,6 +29,10 @@ type Envelope struct {
 	RawBodyBase64      *string        `json:"raw_body_base64"`
 	SourceIP           string         `json:"source_ip"`
 	Auth               AuthInfo       `json:"auth"`
+	// In-memory only (never serialized). Populated at intake for reverse-proxy
+	// (webhook proxy mode) so the exact original bytes/headers can be forwarded.
+	RawBody     []byte      `json:"-"`
+	OrigHeaders http.Header `json:"-"`
 }
 
 type AuthInfo struct {
@@ -96,5 +100,7 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 		encoded := base64.StdEncoding.EncodeToString(opts.RawBody)
 		env.RawBodyBase64 = &encoded
 	}
+	env.RawBody = opts.RawBody
+	env.OrigHeaders = req.Header.Clone()
 	return env, nil
 }

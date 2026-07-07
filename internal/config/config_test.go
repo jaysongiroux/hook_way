@@ -1972,3 +1972,72 @@ endpoints:
       type: "no_auth"
 `
 }
+
+func TestConvertDestinationWebhook(t *testing.T) {
+	raw := rawDestinationConfig{Type: "webhook"}
+	raw.Webhook.URL = "https://api.example.com/hooks"
+	raw.Webhook.Timeout = "10s"
+	raw.Webhook.MaxQueue = 500
+	raw.Webhook.Retry.MaxAttempts = 3
+	raw.Webhook.Retry.InitialBackoff = "200ms"
+	raw.Webhook.Retry.MaxBackoff = "5s"
+	raw.Webhook.Auth.Type = "hmac"
+	raw.Webhook.Auth.Secret = "s3cr3t"
+
+	dest, issues := convertDestination("destinations.notify", raw)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+	if dest.Type != "webhook" || dest.Webhook.URL != "https://api.example.com/hooks" {
+		t.Fatalf("webhook not mapped: %#v", dest.Webhook)
+	}
+	if dest.Webhook.Timeout != 10*time.Second || dest.Webhook.MaxQueue != 500 {
+		t.Fatalf("scalar fields not mapped: %#v", dest.Webhook)
+	}
+	if dest.Webhook.Retry.MaxAttempts != 3 || dest.Webhook.Retry.InitialBackoff != 200*time.Millisecond {
+		t.Fatalf("retry not mapped: %#v", dest.Webhook.Retry)
+	}
+	if dest.Webhook.Auth.Type != "hmac" || dest.Webhook.Auth.Secret != "s3cr3t" {
+		t.Fatalf("auth not mapped: %#v", dest.Webhook.Auth)
+	}
+}
+
+func TestValidateWebhook(t *testing.T) {
+	mk := func(w WebhookConfig) Config {
+		return Config{
+			Destinations: map[string]DestinationConfig{"notify": {Type: "webhook", Webhook: w}},
+			Endpoints: map[string]EndpointConfig{"e": {Enabled: true, Path: "/e",
+				Destinations: []EndpointDestinationConfig{{Destination: "notify", Target: "orders"}}}},
+		}
+	}
+	// missing url + bad auth type
+	iss := mk(WebhookConfig{Auth: WebhookAuthConfig{Type: "bogus"}}).ValidationIssues()
+	for _, f := range []string{"destinations.notify.webhook.url", "destinations.notify.webhook.auth.type"} {
+		if !hasIssue(iss, f) {
+			t.Fatalf("missing issue %q; got %#v", f, iss)
+		}
+	}
+	// api_key requires header+value
+	iss = mk(WebhookConfig{URL: "https://x", Auth: WebhookAuthConfig{Type: "api_key"}}).ValidationIssues()
+	if !hasIssue(iss, "destinations.notify.webhook.auth.header") || !hasIssue(iss, "destinations.notify.webhook.auth.value") {
+		t.Fatalf("api_key required fields not enforced; got %#v", iss)
+	}
+	// hmac requires secret
+	iss = mk(WebhookConfig{URL: "https://x", Auth: WebhookAuthConfig{Type: "hmac"}}).ValidationIssues()
+	if !hasIssue(iss, "destinations.notify.webhook.auth.secret") {
+		t.Fatalf("hmac secret not enforced; got %#v", iss)
+	}
+	// valid none passes
+	iss = mk(WebhookConfig{URL: "https://x", Auth: WebhookAuthConfig{Type: "none"}}).ValidationIssues()
+	for _, i := range iss {
+		if strings.HasPrefix(i.Field, "destinations.notify.webhook") {
+			t.Fatalf("unexpected webhook issue: %#v", i)
+		}
+	}
+
+	// bad hmac scheme (e.g. "sha1") must produce a scheme validation issue
+	iss = mk(WebhookConfig{URL: "https://x", Auth: WebhookAuthConfig{Type: "hmac", Secret: "s3cr3t", Scheme: "sha1"}}).ValidationIssues()
+	if !hasIssue(iss, "destinations.notify.webhook.auth.scheme") {
+		t.Fatalf("bad hmac scheme not rejected; got %#v", iss)
+	}
+}

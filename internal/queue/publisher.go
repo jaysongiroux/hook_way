@@ -31,6 +31,10 @@ type Message struct {
 	RawBodyBase64      *string        `json:"raw_body_base64,omitempty"`
 	SourceIP           string         `json:"source_ip,omitempty"`
 	Auth               any            `json:"auth,omitempty"`
+	// In-memory only (never serialized); carries the original request for
+	// webhook proxy mode. Other destinations ignore these.
+	RawBody     []byte      `json:"-"`
+	OrigHeaders http.Header `json:"-"`
 }
 
 type RabbitMQConfig struct {
@@ -106,4 +110,11 @@ type RabbitMQMetrics interface {
 // *metrics.Metrics; passed via RedisPubSubConfig. May be nil.
 type RedisPubSubMetrics interface {
 	RedisPubSubNoSubscriber(destination, target string)
+}
+
+// WebhookMetrics records webhook delivery observability (implemented by *metrics.Metrics; may be nil).
+type WebhookMetrics interface {
+	WebhookDelivery(destination, target, outcome string)
+	WebhookRetry(destination, target string)
+	WebhookDropped(destination, target string)
 }

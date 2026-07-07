@@ -18,6 +18,10 @@ type SQSConnector func(ctx context.Context, destinationID string, cfg SQSConfig)
 type SNSConnector func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error)
 type S3Connector func(ctx context.Context, destinationID string, cfg S3Config) (Publisher, error)
 
+// WebhookConnector is an optional test seam: when set on FactoryOptions, Create
+// calls it instead of NewWebhookPublisher for each webhook destination.
+type WebhookConnector func(ctx context.Context, destinationID string, cfg config.WebhookConfig, targets []WebhookTarget) (Publisher, error)
+
 // RedisConnector creates a Publisher for the given Redis destination. It is
 // called once per redis_* destination in Create. The default connector builds
 // the connection via newRedisClient and dispatches on destType to the correct
@@ -62,6 +66,7 @@ type FactoryOptions struct {
 	PostgresConnector PostgresConnector
 	MongoConnector    MongoConnector
 	KafkaConnector    KafkaConnector
+	WebhookConnector  WebhookConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
 }
@@ -75,6 +80,7 @@ type Factory struct {
 	postgresConnector PostgresConnector
 	mongoConnector    MongoConnector
 	kafkaConnector    KafkaConnector
+	webhookConnector  WebhookConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
 }
@@ -258,6 +264,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		postgresConnector: postgresConnector,
 		mongoConnector:    mongoConnector,
 		kafkaConnector:    kafkaConnector,
+		webhookConnector:  opts.WebhookConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
 	}
@@ -265,6 +272,21 @@ func NewFactory(opts FactoryOptions) *Factory {
 
 func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, error) {
 	publishers := map[string]Publisher{}
+
+	var webhookEngine *webhookDeliveryEngine
+	getWebhookEngine := func() *webhookDeliveryEngine {
+		if webhookEngine == nil {
+			workers := cfg.Server.FanoutConcurrency
+			queueSize, drain := webhookEngineSizing(cfg)
+			var wm WebhookMetrics
+			if m, ok := f.metrics.(WebhookMetrics); ok {
+				wm = m
+			}
+			webhookEngine = newWebhookDeliveryEngine(workers, queueSize, drain, wm, f.logger)
+		}
+		return webhookEngine
+	}
+
 	for id, destination := range cfg.Destinations {
 		if !destinationUsed(cfg, id) {
 			continue
@@ -358,6 +380,24 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "redis_stream", "redis_list", "redis_pubsub", "redis_kv":
 			publisher, err := f.redisConnector(ctx, id, destination.Type, destination.Redis, collectRedisTargets(cfg, id))
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "webhook":
+			var publisher Publisher
+			var err error
+			if f.webhookConnector != nil {
+				publisher, err = f.webhookConnector(ctx, id, destination.Webhook, collectWebhookTargets(cfg, id))
+			} else {
+				// The publisher needs its own metrics ref for the drop counter; the
+				// engine got its copy in getWebhookEngine() above.
+				var wm WebhookMetrics
+				if m, ok := f.metrics.(WebhookMetrics); ok {
+					wm = m
+				}
+				publisher, err = NewWebhookPublisher(getWebhookEngine(), destination.Webhook, id, collectWebhookTargets(cfg, id), wm, f.logger)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -630,6 +670,54 @@ func mapFIFO(c *config.FIFOConfig) *FIFOSettings {
 		DedupUseIdempotencyKey:    c.Dedup.UseIdempotencyKey,
 		DedupContentBasedFallback: c.Dedup.ContentBasedFallback,
 	}
+}
+
+func collectWebhookTargets(cfg config.Config, destinationID string) []WebhookTarget {
+	seen := map[string]struct{}{}
+	var targets []WebhookTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			targets = append(targets, WebhookTarget{Name: route.Target})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+// webhookEngineSizing derives the shared queue size (max max_queue among webhook
+// destinations, default 1000) and drain timeout (max drain_timeout, else
+// server.shutdown_timeout).
+func webhookEngineSizing(cfg config.Config) (queueSize int, drain time.Duration) {
+	queueSize = 0
+	drain = 0
+	for _, d := range cfg.Destinations {
+		if d.Type != "webhook" {
+			continue
+		}
+		if d.Webhook.MaxQueue > queueSize {
+			queueSize = d.Webhook.MaxQueue
+		}
+		if d.Webhook.DrainTimeout > drain {
+			drain = d.Webhook.DrainTimeout
+		}
+	}
+	if queueSize <= 0 {
+		queueSize = 1000
+	}
+	if drain <= 0 {
+		drain = cfg.Server.ShutdownTimeout
+	}
+	return queueSize, drain
 }
 
 func mergeQueueOptions(defaults, override config.RabbitMQQueueOptions) QueueOptions {

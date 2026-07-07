@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -631,6 +634,33 @@ func TestFactoryCreatesKafkaPublisherWithTargets(t *testing.T) {
 	}
 	if gotTargets[1].PartitionKey == nil || gotTargets[1].PartitionKey.GroupIDSource != "body" || gotTargets[1].PartitionKey.GroupIDPath != "account.id" {
 		t.Fatalf("partition key not mapped: %#v", gotTargets[1].PartitionKey)
+	}
+}
+
+func TestFactoryCreatesWebhookPublisher(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { atomic.AddInt32(&hits, 1); w.WriteHeader(200) }))
+	defer srv.Close()
+	cfg := config.Config{
+		Server: config.ServerConfig{FanoutConcurrency: 2, ShutdownTimeout: 2 * time.Second},
+		Destinations: map[string]config.DestinationConfig{
+			"notify": {Type: "webhook", Webhook: config.WebhookConfig{URL: srv.URL, Timeout: time.Second, Auth: config.WebhookAuthConfig{Type: "none"}}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"e": {Enabled: true, Path: "/e", Destinations: []config.EndpointDestinationConfig{{Destination: "notify", Target: "orders"}}},
+		},
+	}
+	f := NewFactory(FactoryOptions{})
+	pub, err := f.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	_ = pub.Close()
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("expected 1 delivery via factory, got %d", hits)
 	}
 }
 

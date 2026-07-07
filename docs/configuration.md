@@ -445,6 +445,177 @@ See `examples/destinations/redis_stream.yaml` for a full annotated reference wit
 - Delivery is at-least-once: a message appended via XADD is acknowledged to the webhook provider before the consumer confirms processing, so consumers must tolerate duplicates (deduplicate on `idempotency_key`).
 - Redis connectivity for a `redis_stream` destination is **not** verified at process startup unless a consumer group is being created (`create: true` with `consumer_group` set, which dials Redis immediately). Otherwise, the connection is established lazily — verified at the `/ready` (`/readyz`) probe and on the first publish.
 
+### Webhook
+
+Webhook fields live under `destinations.<id>.webhook`. Hookway delivers each inbound webhook event to a configured HTTP/HTTPS endpoint as an outbound HTTP POST.
+
+**Async store-and-forward:** `Publish()` enqueues the delivery job and returns immediately with `nil` (success). The inbound sender receives Hookway's own `202 Accepted` — this means the event was _accepted for delivery_, NOT that it was delivered. Actual delivery outcome is observable only via logs and the `hookway_webhook_*` Prometheus metrics. Publishers MUST NOT block on delivery.
+
+**Shared delivery engine and worker pool:** a single delivery engine (goroutine pool) is shared across _all_ webhook destinations configured in the same server. The number of concurrent delivery workers is controlled by `server.fanout_concurrency`. The engine's job queue is bounded by `max_queue` (largest value across all webhook destinations; default 1000). When the queue is full, `Publish()` returns an error and the upstream inbound request receives a non-2xx response — the upstream sender is expected to retry, which creates natural backpressure.
+
+**Graceful drain on shutdown:** on SIGTERM / shutdown, Hookway drains the in-flight and queued deliveries within `drain_timeout` (defaults to `server.shutdown_timeout`) before the process exits. Graceful deploys and restarts do not lose in-flight events. A hard crash (kill -9, OOM, host failure) loses any events that were queued or in-flight but not yet confirmed.
+
+**NON-DURABLE:** the delivery queue is in-memory only. There is no write-ahead log or persistent queue. Do not use the webhook destination when durability across crashes is required; use a durable queue destination (RabbitMQ, SQS, Kafka, etc.) instead.
+
+**Not a transparent proxy:** Hookway does not return the downstream HTTP response to the inbound sender. The inbound sender always sees Hookway's own `202 Accepted` (queue-accept) or error.
+
+#### Fields
+
+- `destinations.<id>.type`: set to `webhook`.
+- `destinations.<id>.webhook.url`: required. The target endpoint URL. Must be `http://` or `https://`.
+- `destinations.<id>.webhook.timeout`: optional per-request HTTP timeout. Default `10s`.
+- `destinations.<id>.webhook.max_queue`: optional bound on the in-memory delivery queue. Default `1000`. When the queue fills, inbound `Publish` calls fail (backpressure).
+- `destinations.<id>.webhook.drain_timeout`: optional graceful-drain deadline on shutdown. Defaults to `server.shutdown_timeout`.
+- `destinations.<id>.webhook.retry`: optional retry/backoff settings.
+  - `max_attempts`: total attempts (including the first). Default `3`.
+  - `initial_backoff`: first retry wait. Default `500ms`.
+  - `max_backoff`: maximum retry wait. Default `30s`.
+- `destinations.<id>.webhook.auth`: outbound authentication. See [Auth types](#outbound-auth-types) below.
+- `destinations.<id>.webhook.tls`: optional TLS block for a custom CA or mutual TLS. Fields mirror the RabbitMQ TLS block:
+  - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
+  - `client_cert` / `client_key`: paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: dev-only; disables certificate verification. Never use in production.
+
+**`on_existing_conflict` is not valid for webhook destinations** — the field is rejected at config validation time. Do not set it on `webhook` entries.
+
+#### Retry classification
+
+| HTTP status / error | Behavior |
+|---------------------|----------|
+| `2xx` | Success — delivery complete |
+| `429` | Retry with backoff |
+| `5xx` | Retry with backoff |
+| Network error / timeout | Retry with backoff |
+| Other `4xx` (400, 401, 403, 404, …) | Terminal — no retry; event dropped |
+
+Retries use exponential backoff (doubling, capped at `retry.max_backoff`). After `retry.max_attempts` the delivery is abandoned; the final outcome is observable via `hookway_webhook_delivery_total{outcome=...}` and an Error log entry.
+
+#### Payload modes
+
+**Envelope mode (default):** the outbound POST body is the Hookway JSON `Message` envelope (`Content-Type: application/json`) containing the normalized event fields (`id`, `endpoint`, `received_at`, `headers`, `query`, `body`, `auth`). Used for all auth types except `proxy`.
+
+**Proxy mode (`auth.type: proxy`):** Hookway forwards the _original raw inbound body_ verbatim, preserving the original `Content-Type`, and copies the original inbound headers (minus hop-by-hop headers: `Connection`, `Transfer-Encoding`, `Upgrade`, etc.) to the outbound request. No hook_way auth headers are added — the vendor's original auth headers (e.g. `X-Stripe-Signature`) pass through as-is. Use proxy mode when the downstream endpoint expects to verify the vendor's original signature.
+
+#### Outbound auth types
+
+**`none`**: no authentication headers are added. Suitable for internal/trusted networks only.
+
+**`api_key`**: sets a static header on every outbound request. Configure `auth.header` (the header name) and `auth.value` (the value, usually `${WEBHOOK_API_KEY}`).
+
+**`hmac`** (default): signs each outbound request with HMAC-SHA256. Configure `auth.secret` (the signing secret). Three signing schemes are supported via `auth.scheme`:
+
+| Scheme | Signature header format | Signing string |
+|--------|------------------------|----------------|
+| `hmac_sha256_ts_dot` (default) | `t=<unix_ts>,v1=<hex>` | `<unix_ts>.<raw_body>` |
+| `hmac_sha256_ts_colon` | `ts=<unix_ts>;h1=<hex>` | `<unix_ts>:<raw_body>` |
+| `hmac_sha256_hex` | `sha256=<hex>` | `<raw_body>` (no timestamp) |
+
+The signature header name defaults to `X-Hookway-Signature` (override with `auth.header`). For `hmac_sha256_ts_dot` and `hmac_sha256_ts_colon`, Hookway also sends an event-id header (default `X-Hookway-Event-Id`, override with `auth.event_id_header`) to enable replay detection.
+
+**`proxy`**: forwards the original inbound request's raw body and headers (minus hop-by-hop) to the downstream endpoint unchanged. No hook_way auth is added. See [Payload modes](#payload-modes) above.
+
+#### Consumer-side auth verification
+
+Your downstream endpoint (the receiver) should verify incoming requests from Hookway. The verification recipe differs by auth type.
+
+**api_key**: read the configured header from the incoming request and compare it to the expected value using a constant-time comparison function to prevent timing attacks.
+
+```
+expected = config.auth.value
+received = request.headers[config.auth.header]
+assert constant_time_equal(received, expected)
+```
+
+**hmac (hmac_sha256_ts_dot / hmac_sha256_ts_colon)**: parse the signature header, recompute the HMAC, compare, and reject stale or replayed requests.
+
+```
+# Step 1: parse the signature header
+# hmac_sha256_ts_dot:   "t=<ts>,v1=<hex>"
+# hmac_sha256_ts_colon: "ts=<ts>;h1=<hex>"
+ts, received_hex = parse_signature_header(request.headers["X-Hookway-Signature"])
+
+# Step 2: reject stale timestamps (replay window, e.g. 5 minutes)
+now = current_unix_timestamp()
+assert abs(now - ts) <= 300   # seconds; tune to your tolerance
+
+# Step 3: recompute HMAC over the RAW received bytes
+# IMPORTANT: use the raw request body bytes, not a re-serialised struct
+# signing_string is a BYTE sequence: ASCII-encode the timestamp integer,
+# then the separator byte, then the raw body bytes — concatenated as bytes.
+if scheme == "hmac_sha256_ts_dot":
+    signing_string = ascii_bytes(ts) + b"." + raw_body_bytes
+else:  # hmac_sha256_ts_colon
+    signing_string = ascii_bytes(ts) + b":" + raw_body_bytes
+expected_hex = hex(HMAC_SHA256(secret, signing_string))
+
+# Step 4: constant-time compare — never use == on HMAC hex strings
+assert constant_time_equal(received_hex, expected_hex)
+
+# Step 5: deduplicate replayed requests (optional but recommended)
+event_id = request.headers["X-Hookway-Event-Id"]
+assert not seen_event_ids.contains(event_id)
+seen_event_ids.add(event_id, ttl=300)
+```
+
+Key points:
+- Always compare over the **raw** received bytes, not a parsed/re-serialised body — any whitespace change invalidates the signature.
+- Use a constant-time comparison (`hmac.Equal` in Go, `hmac.compare_digest` in Python, `crypto.timingSafeEqual` in Node.js) to prevent timing attacks.
+- Reject any request whose timestamp is outside your replay window (e.g. ±5 minutes).
+- Optionally track `X-Hookway-Event-Id` in a short-lived store (TTL = replay window) to detect duplicate deliveries from retries.
+
+**hmac_sha256_hex**: no timestamp is included in this scheme. Verify as above but the signing string is the raw body alone and there is no `ts` to check. Replay protection must rely on `X-Hookway-Event-Id` deduplication only.
+
+```
+received_hex = parse "sha256=<hex>" from request.headers["X-Hookway-Signature"]
+expected_hex = hex(HMAC_SHA256(secret, raw_body_bytes))
+assert constant_time_equal(received_hex, expected_hex)
+# No timestamp — rely on X-Hookway-Event-Id dedup for replay protection
+```
+
+**proxy**: Hookway does not add any hook_way auth headers in proxy mode. The original vendor auth headers are forwarded verbatim. Verify using the vendor's own webhook verification procedure (e.g. validate `X-Stripe-Signature` using Stripe's SDK).
+
+#### Metrics
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `hookway_webhook_delivery_total` | `destination_queue_id`, `queue`, `outcome` | Delivery attempts by outcome. `outcome` values: `2xx`, `4xx`, `5xx`, `429`, `timeout`, `error`. |
+| `hookway_webhook_retries_total` | `destination_queue_id`, `queue` | Incremented per retry attempt. |
+| `hookway_webhook_dropped_total` | `destination_queue_id`, `queue` | Incremented ONLY when the delivery queue is full at enqueue time (backpressure). NOT incremented on retry exhaustion or terminal 4xx. |
+
+Retry-exhausted or terminal-4xx deliveries are observable via `hookway_webhook_delivery_total{outcome="5xx"|"4xx"|"timeout"|"error"}` and an Error log entry — they do NOT increment `hookway_webhook_dropped_total`.
+
+The generic `Publish` metric (`hookway_publish_total{status}`) reflects queue-accept (`accepted`) or queue-full drop (`dropped`) at the point where the inbound event is enqueued, before any delivery attempt.
+
+```yaml
+destinations:
+  forward:
+    type: "webhook"
+    webhook:
+      url: "${WEBHOOK_URL}"
+      timeout: "10s"
+      max_queue: 1000
+      drain_timeout: "30s"
+      retry:
+        max_attempts: 5
+        initial_backoff: "500ms"
+        max_backoff: "30s"
+      auth:
+        type: "hmac"
+        secret: "${WEBHOOK_SECRET}"
+        # scheme: "hmac_sha256_ts_dot"    # default
+        # header: "X-Hookway-Signature"   # default
+        # event_id_header: "X-Hookway-Event-Id"  # default
+      # tls:
+      #   ca_cert: "/etc/ssl/certs/ca-bundle.pem"
+      #   client_cert: "/etc/ssl/certs/client.pem"
+      #   client_key: "/etc/ssl/private/client.key"
+      #   server_name: "internal.example.com"
+      #   insecure_skip_verify: false
+```
+
+See `examples/destinations/webhook.yaml` for the full annotated reference config with all four auth types shown.
+
 ### Resource provisioning and drift (`on_existing_conflict`)
 
 For `sqs` and `sns` destinations, `destinations.<id>.on_existing_conflict` controls what happens when a target queue/topic already exists with attributes that differ from the config. Allowed values are `error`, `warn`, and `reconcile`; the default is `reconcile`.

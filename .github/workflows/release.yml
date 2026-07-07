@@ -50,6 +50,9 @@ jobs:
       - name: Kafka integration tests (testcontainers)
         run: make kafka-integration-test
 
+      - name: Webhook integration tests (testcontainers)
+        run: make webhook-integration-test
+
       - name: Vet
         run: make lint
 

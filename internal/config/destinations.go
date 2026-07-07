@@ -85,6 +85,40 @@ type DestinationConfig struct {
 	Mongo              MongoConfig
 	Redis              RedisConfig
 	Kafka              KafkaConfig
+	Webhook            WebhookConfig
+}
+
+type RetryPolicyConfig struct {
+	MaxAttempts    int
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+}
+
+type WebhookTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+type WebhookAuthConfig struct {
+	Type          string // none | api_key | hmac | proxy
+	Header        string // api_key: header name
+	Value         string // api_key: header value
+	Secret        string // hmac: shared secret
+	Scheme        string // hmac: signature scheme (default hmac_sha256_ts_dot)
+	EventIDHeader string // hmac: event-id header (default X-Hookway-Event-Id)
+}
+
+type WebhookConfig struct {
+	URL          string
+	Timeout      time.Duration
+	MaxQueue     int
+	DrainTimeout time.Duration
+	Retry        RetryPolicyConfig
+	Auth         WebhookAuthConfig
+	TLS          WebhookTLSConfig
 }
 
 type SQSConfig struct {
@@ -258,6 +292,32 @@ type rawDestinationConfig struct {
 			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
 		} `yaml:"tls"`
 	} `yaml:"mongodb"`
+	Webhook struct {
+		URL          string `yaml:"url"`
+		Timeout      string `yaml:"timeout"`
+		MaxQueue     int    `yaml:"max_queue"`
+		DrainTimeout string `yaml:"drain_timeout"`
+		Retry        struct {
+			MaxAttempts    int    `yaml:"max_attempts"`
+			InitialBackoff string `yaml:"initial_backoff"`
+			MaxBackoff     string `yaml:"max_backoff"`
+		} `yaml:"retry"`
+		Auth struct {
+			Type          string `yaml:"type"`
+			Header        string `yaml:"header"`
+			Value         string `yaml:"value"`
+			Secret        string `yaml:"secret"`
+			Scheme        string `yaml:"scheme"`
+			EventIDHeader string `yaml:"event_id_header"`
+		} `yaml:"auth"`
+		TLS struct {
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+	} `yaml:"webhook"`
 	Redis struct {
 		Mode       string   `yaml:"mode"`
 		URL        string   `yaml:"url"`
@@ -340,6 +400,22 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 		issues = append(issues, issue)
 	}
 	kafkaMaxBackoff, issue := parsePositiveDuration(fieldPrefix+".kafka.retry.max_backoff", raw.Kafka.Retry.MaxBackoff)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	webhookTimeout, issue := parseDuration(fieldPrefix+".webhook.timeout", raw.Webhook.Timeout, 10*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	webhookDrain, issue := parseDuration(fieldPrefix+".webhook.drain_timeout", raw.Webhook.DrainTimeout, 0)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	webhookInitBackoff, issue := parseDuration(fieldPrefix+".webhook.retry.initial_backoff", raw.Webhook.Retry.InitialBackoff, 0)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	webhookMaxBackoff, issue := parseDuration(fieldPrefix+".webhook.retry.max_backoff", raw.Webhook.Retry.MaxBackoff, 0)
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
@@ -451,6 +527,25 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 				MaxAttempts:    raw.Kafka.Retry.MaxAttempts,
 				InitialBackoff: kafkaInitialBackoff,
 				MaxBackoff:     kafkaMaxBackoff,
+			},
+		},
+		Webhook: WebhookConfig{
+			URL:          raw.Webhook.URL,
+			Timeout:      webhookTimeout,
+			MaxQueue:     raw.Webhook.MaxQueue,
+			DrainTimeout: webhookDrain,
+			Retry: RetryPolicyConfig{
+				MaxAttempts:    raw.Webhook.Retry.MaxAttempts,
+				InitialBackoff: webhookInitBackoff,
+				MaxBackoff:     webhookMaxBackoff,
+			},
+			Auth: WebhookAuthConfig{
+				Type: raw.Webhook.Auth.Type, Header: raw.Webhook.Auth.Header, Value: raw.Webhook.Auth.Value,
+				Secret: raw.Webhook.Auth.Secret, Scheme: raw.Webhook.Auth.Scheme, EventIDHeader: raw.Webhook.Auth.EventIDHeader,
+			},
+			TLS: WebhookTLSConfig{
+				CACert: raw.Webhook.TLS.CACert, ClientCert: raw.Webhook.TLS.ClientCert, ClientKey: raw.Webhook.TLS.ClientKey,
+				ServerName: raw.Webhook.TLS.ServerName, InsecureSkipVerify: raw.Webhook.TLS.InsecureSkipVerify,
 			},
 		},
 	}, issues

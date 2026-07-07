@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test lint validate validate-examples run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test lint validate validate-examples run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -27,6 +27,9 @@ mongodb-integration-test:
 
 kafka-integration-test:
 	$(GO) test ./internal/queue -run 'TestKafka' -count=1
+
+webhook-integration-test:
+	$(GO) test ./internal/queue -run 'TestWebhookIntegration' -count=1
 
 # test-all runs every test once: unit + RabbitMQ + AWS + Redis integration suites.
 # Integration tests self-skip when Docker is unavailable. -count=1 disables the
@@ -57,7 +60,9 @@ validate-examples:
 		KAFKA_BROKER_2=localhost:9092 \
 		KAFKA_USERNAME=dummy \
 		KAFKA_PASSWORD=dummy \
-		WEBHOOK_SECRET=dummy; \
+		WEBHOOK_SECRET=dummy \
+		WEBHOOK_URL=https://example.com/hooks \
+		WEBHOOK_API_KEY=dummy; \
 	for f in examples/config.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
@@ -72,7 +77,7 @@ docker-build:
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test lint docker-build vuln-scan
+release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test lint docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build

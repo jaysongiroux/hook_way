@@ -112,10 +112,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", or \"webhook\""))
 		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
-			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
+			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" {
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", and \"webhook\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -173,6 +173,43 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			if (m.TLS.ClientCert == "") != (m.TLS.ClientKey == "") {
 				issues = append(issues, validationError(fieldPrefix+".mongodb.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+			}
+		}
+		if dest.Type == "webhook" {
+			w := dest.Webhook
+			if w.URL == "" {
+				issues = append(issues, validationError(fieldPrefix+".webhook.url", "url is required for webhook destinations", "set url to an http(s) endpoint such as \"https://api.example.com/hooks\""))
+			} else if !strings.HasPrefix(w.URL, "http://") && !strings.HasPrefix(w.URL, "https://") {
+				issues = append(issues, validationError(fieldPrefix+".webhook.url", "url must be http or https", "use a URL beginning with http:// or https://"))
+			}
+			switch w.Auth.Type {
+			case "", "none", "proxy":
+				// ok, no extra fields
+			case "api_key":
+				if w.Auth.Header == "" {
+					issues = append(issues, validationError(fieldPrefix+".webhook.auth.header", "header is required for api_key auth", "set auth.header, e.g. \"Authorization\""))
+				}
+				if w.Auth.Value == "" {
+					issues = append(issues, validationError(fieldPrefix+".webhook.auth.value", "value is required for api_key auth", "set auth.value, e.g. \"Bearer ${TOKEN}\""))
+				}
+			case "hmac":
+				if w.Auth.Secret == "" {
+					issues = append(issues, validationError(fieldPrefix+".webhook.auth.secret", "secret is required for hmac auth", "set auth.secret to a shared signing secret"))
+				}
+				switch w.Auth.Scheme {
+				case "", "hmac_sha256_ts_dot", "hmac_sha256_ts_colon", "hmac_sha256_hex":
+					// ok
+				default:
+					issues = append(issues, validationError(fieldPrefix+".webhook.auth.scheme", fmt.Sprintf("%q is not supported", w.Auth.Scheme), "use \"hmac_sha256_ts_dot\" (default), \"hmac_sha256_ts_colon\", or \"hmac_sha256_hex\""))
+				}
+			default:
+				issues = append(issues, validationError(fieldPrefix+".webhook.auth.type", fmt.Sprintf("%q is not supported", w.Auth.Type), "use \"none\", \"api_key\", \"hmac\", or \"proxy\""))
+			}
+			if w.MaxQueue < 0 {
+				issues = append(issues, validationError(fieldPrefix+".webhook.max_queue", "must be zero (default) or a positive integer", "set a buffer size such as 1000"))
+			}
+			if (w.TLS.ClientCert == "") != (w.TLS.ClientKey == "") {
+				issues = append(issues, validationError(fieldPrefix+".webhook.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
 			}
 		}
 		if dest.Type == "kafka" {

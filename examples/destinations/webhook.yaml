@@ -1,0 +1,114 @@
+# examples/destinations/webhook.yaml
+#
+# Reference config for a Webhook destination. Hookway delivers each inbound
+# webhook event to a configured HTTPS endpoint using async store-and-forward:
+# Publish() enqueues the job and returns immediately (the caller's inbound
+# request receives hook_way's own 202 Accepted — NOT the downstream response).
+# Actual delivery outcome is observable only via logs and metrics.
+#
+# A single shared delivery engine (worker pool) is created per server. The pool
+# size is controlled by server.fanout_concurrency. The engine's job queue is
+# bounded by max_queue (largest value across all webhook destinations, default
+# 1000). When the queue is full, Publish fails and the upstream sender receives
+# a non-2xx response, creating backpressure so that it retries.
+#
+# On shutdown, hook_way drains the queue within drain_timeout (defaults to
+# server.shutdown_timeout) before exiting, so in-flight deliveries are not lost
+# across graceful restarts / deploys.
+#
+# NON-DURABLE: a hard crash (kill -9, OOM, host failure) loses any events that
+# were queued or in-flight but not yet delivered. hook_way is not a transparent
+# proxy — the downstream response is not returned to the inbound sender.
+#
+# `on_existing_conflict` is NOT valid for webhook destinations — the field is
+# rejected at config validation time. Do not set it on webhook entries.
+
+server:
+  addr: ":8088"
+  max_body_bytes: 1048576
+  # fanout_concurrency controls the webhook delivery worker-pool size (shared
+  # across ALL webhook destinations in this server).
+  fanout_concurrency: 8
+
+destinations:
+  forward:
+    type: webhook
+    webhook:
+      # Required: the target endpoint URL. Must be http:// or https://.
+      url: "${WEBHOOK_URL}"
+
+      # Optional: per-request HTTP timeout (default 10s).
+      timeout: "10s"
+
+      # Optional: max number of pending deliveries in the queue (default 1000).
+      # When the queue is full, inbound Publish calls fail (backpressure).
+      max_queue: 1000
+
+      # Optional: how long to drain queued deliveries on shutdown (defaults to
+      # server.shutdown_timeout).
+      drain_timeout: "30s"
+
+      # Optional retry policy. Retries are attempted on HTTP 429, 5xx, and
+      # network-level errors (connection refused, timeout). Other 4xx responses
+      # are terminal — no retry is attempted. 2xx is success.
+      retry:
+        max_attempts: 5
+        initial_backoff: "500ms"
+        max_backoff: "30s"
+
+      # --- Auth: choose ONE type; comment out the others ---
+
+      # auth.type: hmac  (default)
+      # Signs each request with HMAC-SHA256. The default scheme
+      # (hmac_sha256_ts_dot) sends:
+      #   X-Hookway-Signature: t=<unix_ts>,v1=<hex_HMAC_SHA256>
+      # where the signing string is "<unix_ts>.<raw_body>".
+      # hook_way also sends an X-Hookway-Event-Id header (the event id) so the
+      # receiver can deduplicate replayed requests.
+      auth:
+        type: "hmac"
+        secret: "${WEBHOOK_SECRET}"   # signing secret; never log or expose
+        # scheme: "hmac_sha256_ts_dot"  # default; see docs for other schemes
+        # header: "X-Hookway-Signature"  # default signature header
+        # event_id_header: "X-Hookway-Event-Id"  # default event-id header
+
+      # auth.type: api_key
+      # Sets a static header on every outbound request.
+      # auth:
+      #   type: "api_key"
+      #   header: "X-Api-Key"
+      #   value: "${WEBHOOK_API_KEY}"
+
+      # auth.type: none
+      # No authentication headers are added. Suitable for internal/trusted
+      # networks only.
+      # auth:
+      #   type: "none"
+
+      # auth.type: proxy
+      # Forwards the ORIGINAL inbound raw body and headers (minus hop-by-hop
+      # headers) without adding any hook_way auth. The vendor's original auth
+      # headers (e.g. X-Stripe-Signature) pass through to the downstream
+      # endpoint. The event envelope is NOT used; the raw body is forwarded.
+      # auth:
+      #   type: "proxy"
+
+      # tls:                           # optional; only needed for a custom CA / mTLS
+      #   ca_cert: ""                  # path to PEM bundle for private/self-signed CAs
+      #   client_cert: ""              # path to PEM cert for mutual TLS
+      #   client_key: ""               # path to PEM key for mutual TLS (must pair with client_cert)
+      #   server_name: ""              # override SNI/verification hostname
+      #   insecure_skip_verify: false  # dev-only; disables cert verification; never use in production
+
+endpoints:
+  order_events:
+    enabled: true
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "forward"
+        # target is passed in the X-Hookway-Target header on envelope deliveries
+        # and is used in log fields / metrics labels.
+        target: "orders"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"

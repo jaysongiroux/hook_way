@@ -32,6 +32,9 @@ type Metrics struct {
 	rabbitMQRetries          prometheus.Counter
 	rabbitMQDLQPublishes     prometheus.Counter
 	redisPubSubNoSubscribers *prometheus.CounterVec
+	webhookDelivery          *prometheus.CounterVec
+	webhookRetries           *prometheus.CounterVec
+	webhookDropped           *prometheus.CounterVec
 	runtimeRegistered        bool
 }
 
@@ -119,11 +122,21 @@ func New() *Metrics {
 		Name: "hookway_redis_pubsub_dropped_no_subscriber_total",
 		Help: "Redis pub/sub messages dropped because no subscriber was listening.",
 	}, []string{"destination_queue_id", "queue"})
+	m.webhookDelivery = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_webhook_delivery_total", Help: "Webhook delivery attempts by outcome.",
+	}, []string{"destination_queue_id", "queue", "outcome"})
+	m.webhookRetries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_webhook_retries_total", Help: "Webhook delivery retries.",
+	}, []string{"destination_queue_id", "queue"})
+	m.webhookDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_webhook_dropped_total", Help: "Webhook deliveries dropped because the queue was full.",
+	}, []string{"destination_queue_id", "queue"})
 	m.registry.MustRegister(
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.redisPubSubNoSubscribers,
+		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 	)
 	return m
 }
@@ -231,4 +244,16 @@ func (m *Metrics) RabbitMQDeadLetterPublish() {
 
 func (m *Metrics) RedisPubSubNoSubscriber(destination, target string) {
 	m.redisPubSubNoSubscribers.WithLabelValues(destination, target).Inc()
+}
+
+func (m *Metrics) WebhookDelivery(destination, target, outcome string) {
+	m.webhookDelivery.WithLabelValues(destination, target, outcome).Inc()
+}
+
+func (m *Metrics) WebhookRetry(destination, target string) {
+	m.webhookRetries.WithLabelValues(destination, target).Inc()
+}
+
+func (m *Metrics) WebhookDropped(destination, target string) {
+	m.webhookDropped.WithLabelValues(destination, target).Inc()
 }
