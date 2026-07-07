@@ -1,9 +1,11 @@
 package webhook
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,29 @@ func TestBuildEnvelopeEncodesNonJSONBody(t *testing.T) {
 	}
 	if env.RawBodyBase64 == nil || *env.RawBodyBase64 != base64.StdEncoding.EncodeToString(raw) {
 		t.Fatalf("raw body not encoded: %#v", env.RawBodyBase64)
+	}
+}
+
+func TestEnvelopeCarriesRawBodyAndOrigHeadersInMemoryOnly(t *testing.T) {
+	body := []byte(`{"a":1}`)
+	req := httptest.NewRequest("POST", "/x", bytes.NewReader(body))
+	req.Header.Set("X-Vendor-Signature", "sig123")
+	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{Endpoint: "e", Queue: "orders", RawBody: body, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if string(env.RawBody) != string(body) {
+		t.Fatalf("RawBody not retained: %q", env.RawBody)
+	}
+	if env.OrigHeaders.Get("X-Vendor-Signature") != "sig123" {
+		t.Fatalf("OrigHeaders not retained (unredacted): %v", env.OrigHeaders)
+	}
+	// json.Marshal MUST NOT include raw body / orig headers
+	j, _ := json.Marshal(env)
+	if bytes.Contains(j, []byte("X-Vendor-Signature")) || bytes.Contains(j, []byte("raw_body")) && bytes.Contains(j, []byte("YQ==")) {
+		t.Fatalf("in-memory fields leaked into JSON: %s", j)
+	}
+	if bytes.Contains(j, []byte("OrigHeaders")) || bytes.Contains(j, []byte("RawBody")) {
+		t.Fatalf("json:\"-\" not honored: %s", j)
 	}
 }

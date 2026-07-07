@@ -438,6 +438,7 @@ func (s *Server) publishRoute(ctx context.Context, endpointName string, env webh
 		Endpoint: env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
 		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
 		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
+		RawBody: env.RawBody, OrigHeaders: env.OrigHeaders,
 	}
 	start := time.Now()
 	err := s.publisher.Publish(ctx, route.Destination, route.Target, msg)
