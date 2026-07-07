@@ -1668,3 +1668,307 @@ func TestValidateMongoMTLSBothOrNeither(t *testing.T) {
 		t.Fatalf("missing validation issue for destinations.archive.mongodb.tls.client_cert; got %#v", issues)
 	}
 }
+
+func TestLoadParsesKafkaDestination(t *testing.T) {
+	body := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: kafka
+    kafka:
+      brokers: ["broker-1:9092", "broker-2:9092"]
+      acks: "all"
+      compression: "snappy"
+      publish_timeout: "7s"
+      sasl:
+        mechanism: "scram-sha-256"
+        username: "user"
+        password: "pass"
+      tls:
+        enabled: true
+        ca_cert: "/etc/hookway/ca.pem"
+      retry:
+        max_attempts: 5
+        initial_backoff: "200ms"
+        max_backoff: "3s"
+endpoints:
+  events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        target: "billing-events"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	k := cfg.Destinations["events"].Kafka
+	if len(k.Brokers) != 2 || k.Brokers[0] != "broker-1:9092" {
+		t.Fatalf("bad brokers: %#v", k.Brokers)
+	}
+	if k.Acks != "all" || k.Compression != "snappy" {
+		t.Fatalf("bad acks/compression: %q %q", k.Acks, k.Compression)
+	}
+	if k.PublishTimeout != 7*time.Second {
+		t.Fatalf("bad publish_timeout: %v", k.PublishTimeout)
+	}
+	if k.SASL.Mechanism != "scram-sha-256" || k.SASL.Username != "user" || k.SASL.Password != "pass" {
+		t.Fatalf("bad sasl: %#v", k.SASL)
+	}
+	if !k.TLS.Enabled || k.TLS.CACert != "/etc/hookway/ca.pem" {
+		t.Fatalf("bad tls: %#v", k.TLS)
+	}
+	if k.Retry.MaxAttempts != 5 || k.Retry.InitialBackoff != 200*time.Millisecond || k.Retry.MaxBackoff != 3*time.Second {
+		t.Fatalf("bad retry: %#v", k.Retry)
+	}
+}
+
+func TestLoadDefaultsKafkaAcksAndCompression(t *testing.T) {
+	body := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: kafka
+    kafka:
+      brokers: ["broker-1:9092"]
+endpoints:
+  events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        target: "t1"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	k := cfg.Destinations["events"].Kafka
+	if k.Acks != "all" {
+		t.Fatalf("acks default: got %q want \"all\"", k.Acks)
+	}
+	if k.Compression != "none" {
+		t.Fatalf("compression default: got %q want \"none\"", k.Compression)
+	}
+	if k.PublishTimeout != 5*time.Second {
+		t.Fatalf("publish_timeout default: got %v want 5s", k.PublishTimeout)
+	}
+}
+
+func TestLoadParsesKafkaPartitionKey(t *testing.T) {
+	body := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: kafka
+    kafka:
+      brokers: ["broker-1:9092"]
+endpoints:
+  events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        target: "billing-events"
+        kafka_options:
+          partition_key:
+            source: "body"
+            path: "account.id"
+            fallback: "endpoint"
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	route := cfg.Endpoints["events"].Destinations[0]
+	pk := route.KafkaOptions.PartitionKey
+	if pk.Source != "body" || pk.Path != "account.id" || pk.Fallback != "endpoint" {
+		t.Fatalf("bad partition_key: %#v", pk)
+	}
+}
+
+func TestLoadParsesKafkaTopicOptions(t *testing.T) {
+	body := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: kafka
+    kafka:
+      brokers: ["broker-1:9092"]
+endpoints:
+  events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        target: "billing-events"
+        kafka_options:
+          partitions: 6
+          replication_factor: 3
+    auth:
+      type: "no_auth"
+      scheme: "no_auth"
+`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	opts := cfg.Endpoints["events"].Destinations[0].KafkaOptions
+	if opts.Partitions != 6 {
+		t.Fatalf("partitions: got %d want 6", opts.Partitions)
+	}
+	if opts.ReplicationFactor != 3 {
+		t.Fatalf("replication_factor: got %d want 3", opts.ReplicationFactor)
+	}
+}
+
+func TestLoadRejectsInvalidKafka(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string // substring of the field path in the error
+	}{
+		{
+			name: "no brokers",
+			body: kafkaConfigBody(`      acks: "all"`, ``),
+			want: "destinations.events.kafka.brokers",
+		},
+		{
+			name: "bad acks",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]\n      acks: \"maybe\"", ``),
+			want: "destinations.events.kafka.acks",
+		},
+		{
+			name: "bad compression",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]\n      compression: \"brotli\"", ``),
+			want: "destinations.events.kafka.compression",
+		},
+		{
+			name: "sasl missing credentials",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]\n      sasl:\n        mechanism: \"plain\"", ``),
+			want: "destinations.events.kafka.sasl",
+		},
+		{
+			name: "bad sasl mechanism",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]\n      sasl:\n        mechanism: \"kerberos\"", ``),
+			want: "destinations.events.kafka.sasl.mechanism",
+		},
+		{
+			name: "half mTLS",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]\n      tls:\n        enabled: true\n        client_cert: \"/c.pem\"", ``),
+			want: "destinations.events.kafka.tls.client_cert",
+		},
+		{
+			name: "kafka_options on non-kafka dest",
+			body: rabbitWithKafkaOptionsBody(),
+			want: "kafka_options",
+		},
+		{
+			name: "partition_key static without value",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]", "        kafka_options:\n          partition_key:\n            source: \"static\""),
+			want: "kafka_options.partition_key.value",
+		},
+		{
+			name: "partition_key body without path",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]", "        kafka_options:\n          partition_key:\n            source: \"body\""),
+			want: "kafka_options.partition_key.path",
+		},
+		{
+			name: "partition_key bad source",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]", "        kafka_options:\n          partition_key:\n            source: \"random\""),
+			want: "kafka_options.partition_key.source",
+		},
+		{
+			name: "negative partitions",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]", "        kafka_options:\n          partitions: -1"),
+			want: "kafka_options.partitions",
+		},
+		{
+			name: "negative replication_factor",
+			body: kafkaConfigBody("      brokers: [\"b:9092\"]", "        kafka_options:\n          replication_factor: -1"),
+			want: "kafka_options.replication_factor",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, tc.body))
+			if err == nil {
+				t.Fatalf("expected validation error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// kafkaConfigBody builds a config with one kafka destination. destLines are
+// extra indented lines under `kafka:`; routeLines are extra indented lines
+// under the endpoint's destination route (may be empty).
+func kafkaConfigBody(destLines, routeLines string) string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: kafka
+    kafka:
+` + destLines + `
+endpoints:
+  events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        target: "billing-events"
+` + routeLines + `
+    auth:
+      type: "no_auth"
+`
+}
+
+func rabbitWithKafkaOptionsBody() string {
+	return `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  events:
+    type: rabbitmq
+    rabbitmq:
+      url: "amqp://x"
+      exchange: "e"
+      exchange_type: "direct"
+endpoints:
+  events:
+    enabled: true
+    path: "/webhooks/events"
+    destinations:
+      - destination: "events"
+        target: "billing-events"
+        kafka_options:
+          partition_key:
+            source: "endpoint"
+    auth:
+      type: "no_auth"
+`
+}

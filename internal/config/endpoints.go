@@ -47,6 +47,23 @@ type RedisEndpointOptions struct {
 	KeyTemplate   string
 }
 
+// KafkaEndpointOptions are per-route options for kafka destinations.
+type KafkaEndpointOptions struct {
+	PartitionKey      KafkaPartitionKeyConfig
+	Partitions        int
+	ReplicationFactor int
+}
+
+// KafkaPartitionKeyConfig derives the Kafka message key (which selects the
+// partition). Mirrors the FIFO group_id shape: source is static | endpoint |
+// header | body, with an optional fallback ("endpoint" or a literal).
+type KafkaPartitionKeyConfig struct {
+	Source   string
+	Value    string
+	Path     string
+	Fallback string
+}
+
 type FIFOConfig struct {
 	GroupID FIFOGroupIDConfig
 	Dedup   FIFODedupConfig
@@ -84,6 +101,7 @@ type EndpointDestinationConfig struct {
 	SQSOptions   SQSEndpointOptions   `yaml:"sqs_options"`
 	SNSOptions   SNSEndpointOptions   `yaml:"sns_options"`
 	RedisOptions RedisEndpointOptions `yaml:"redis_options"`
+	KafkaOptions KafkaEndpointOptions `yaml:"kafka_options"`
 	FIFO         *FIFOConfig          `yaml:"fifo"`
 }
 
@@ -144,6 +162,16 @@ type rawEndpointDestinationConfig struct {
 		TTL           string `yaml:"ttl"`
 		KeyTemplate   string `yaml:"key_template"`
 	} `yaml:"redis_options"`
+	KafkaOptions struct {
+		PartitionKey struct {
+			Source   string `yaml:"source"`
+			Value    string `yaml:"value"`
+			Path     string `yaml:"path"`
+			Fallback string `yaml:"fallback"`
+		} `yaml:"partition_key"`
+		Partitions        int `yaml:"partitions"`
+		ReplicationFactor int `yaml:"replication_factor"`
+	} `yaml:"kafka_options"`
 	FIFO *rawFIFOConfig `yaml:"fifo"`
 }
 
@@ -185,6 +213,16 @@ func convertEndpointDestinations(fieldPrefix string, raw []rawEndpointDestinatio
 				ConsumerGroup: destination.RedisOptions.ConsumerGroup,
 				TTL:           redisTTL,
 				KeyTemplate:   destination.RedisOptions.KeyTemplate,
+			},
+			KafkaOptions: KafkaEndpointOptions{
+				PartitionKey: KafkaPartitionKeyConfig{
+					Source:   destination.KafkaOptions.PartitionKey.Source,
+					Value:    destination.KafkaOptions.PartitionKey.Value,
+					Path:     destination.KafkaOptions.PartitionKey.Path,
+					Fallback: destination.KafkaOptions.PartitionKey.Fallback,
+				},
+				Partitions:        destination.KafkaOptions.Partitions,
+				ReplicationFactor: destination.KafkaOptions.ReplicationFactor,
 			},
 			FIFO: convertFIFO(destination.FIFO),
 		})

@@ -112,10 +112,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" &&
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", or \"redis_kv\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
 			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", and \"redis_kv\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -173,6 +173,37 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			if (m.TLS.ClientCert == "") != (m.TLS.ClientKey == "") {
 				issues = append(issues, validationError(fieldPrefix+".mongodb.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+			}
+		}
+		if dest.Type == "kafka" {
+			k := dest.Kafka
+			if len(k.Brokers) == 0 {
+				issues = append(issues, validationError(fieldPrefix+".kafka.brokers", "at least one broker is required for kafka destinations", "set brokers to a list such as [\"broker-1:9092\"]"))
+			}
+			switch k.Acks {
+			case "", "all", "one", "none":
+			default:
+				issues = append(issues, validationError(fieldPrefix+".kafka.acks", fmt.Sprintf("%q is not supported", k.Acks), "use \"all\", \"one\", or \"none\""))
+			}
+			switch k.Compression {
+			case "", "none", "gzip", "snappy", "lz4", "zstd":
+			default:
+				issues = append(issues, validationError(fieldPrefix+".kafka.compression", fmt.Sprintf("%q is not supported", k.Compression), "use \"none\", \"gzip\", \"snappy\", \"lz4\", or \"zstd\""))
+			}
+			switch k.SASL.Mechanism {
+			case "", "none":
+			case "plain", "scram-sha-256", "scram-sha-512":
+				if k.SASL.Username == "" || k.SASL.Password == "" {
+					issues = append(issues, validationError(fieldPrefix+".kafka.sasl", "username and password are required when a sasl mechanism is set", "set kafka.sasl.username and kafka.sasl.password, e.g. from ${KAFKA_USERNAME}/${KAFKA_PASSWORD}"))
+				}
+			default:
+				issues = append(issues, validationError(fieldPrefix+".kafka.sasl.mechanism", fmt.Sprintf("%q is not supported", k.SASL.Mechanism), "use \"plain\", \"scram-sha-256\", or \"scram-sha-512\", or omit for no SASL"))
+			}
+			if (k.TLS.ClientCert == "") != (k.TLS.ClientKey == "") {
+				issues = append(issues, validationError(fieldPrefix+".kafka.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+			}
+			if k.Retry.MaxAttempts < 0 {
+				issues = append(issues, validationError(fieldPrefix+".kafka.retry.max_attempts", "must be zero (default) or a positive integer", "set a value such as 3"))
 			}
 		}
 		if dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv" {
@@ -295,6 +326,18 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				}
 				if isRedis {
 					issues = append(issues, redisOptionsValidationIssues(field+".redis_options", destination.RedisOptions, dest.Type)...)
+				}
+				if dest.Type != "kafka" && (destination.KafkaOptions != KafkaEndpointOptions{}) {
+					issues = append(issues, validationError(field+".kafka_options", "only valid for kafka destinations", "remove kafka_options or point destination at a kafka destination"))
+				}
+				if dest.Type == "kafka" {
+					issues = append(issues, kafkaPartitionKeyValidationIssues(field+".kafka_options.partition_key", destination.KafkaOptions.PartitionKey)...)
+					if destination.KafkaOptions.Partitions < 0 {
+						issues = append(issues, validationError(field+".kafka_options.partitions", "must be zero (broker default) or a positive integer", "set a partition count such as 6, or omit for the broker default"))
+					}
+					if destination.KafkaOptions.ReplicationFactor < 0 {
+						issues = append(issues, validationError(field+".kafka_options.replication_factor", "must be zero (broker default) or a positive integer", "set a replication factor such as 3, or omit for the broker default"))
+					}
 				}
 			}
 			// SQS cross-endpoint consistency
@@ -592,6 +635,27 @@ func redisOptionsValidationIssues(fieldPrefix string, opts RedisEndpointOptions,
 		issues = append(issues, validationError(fieldPrefix+".max_len",
 			fmt.Sprintf("max_len is only valid for redis_stream and redis_list destinations; got %q", destType),
 			"remove max_len or change the destination type to redis_stream or redis_list"))
+	}
+	return issues
+}
+
+// kafkaPartitionKeyValidationIssues validates the per-route partition_key block.
+// An empty source means "no partition key" (round-robin) and is always valid.
+func kafkaPartitionKeyValidationIssues(fieldPrefix string, pk KafkaPartitionKeyConfig) []ValidationIssue {
+	var issues []ValidationIssue
+	switch pk.Source {
+	case "", "endpoint":
+		// valid; empty = round-robin, endpoint = key on endpoint name
+	case "static":
+		if pk.Value == "" {
+			issues = append(issues, validationError(fieldPrefix+".value", "value is required when source is static", "set a literal partition key"))
+		}
+	case "header", "body":
+		if pk.Path == "" {
+			issues = append(issues, validationError(fieldPrefix+".path", "path is required when source is header or body", "set a header name or dotted body path"))
+		}
+	default:
+		issues = append(issues, validationError(fieldPrefix+".source", fmt.Sprintf("%q is not supported", pk.Source), "use static, endpoint, header, or body"))
 	}
 	return issues
 }

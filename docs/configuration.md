@@ -323,6 +323,69 @@ destinations:
       #   insecure_skip_verify: false
 ```
 
+### Kafka
+
+Kafka fields live under `destinations.<id>.kafka`. Hookway publishes each webhook event as one message to a topic using [segmentio/kafka-go](https://github.com/segmentio/kafka-go).
+
+- `destinations.<id>.type`: set to `kafka`.
+- `destinations.<id>.kafka.brokers`: required list of one or more bootstrap broker addresses (e.g. `["broker1:9092", "broker2:9092"]`).
+- `destinations.<id>.kafka.acks`: producer acknowledgement level — `all` (default, durable — waits for all in-sync replicas), `one`, or `none`.
+- `destinations.<id>.kafka.compression`: `none` (default), `gzip`, `snappy`, `lz4`, or `zstd`.
+- `destinations.<id>.kafka.publish_timeout`: optional duration, default `5s`.
+- `destinations.<id>.kafka.sasl`: optional SASL auth. Omit the whole block for no SASL.
+  - `mechanism`: `plain`, `scram-sha-256`, or `scram-sha-512`.
+  - `username` / `password`: SASL credentials, usually `${KAFKA_USERNAME}` / `${KAFKA_PASSWORD}`.
+- `destinations.<id>.kafka.tls`: optional TLS settings. Omit or set `enabled: false` for plaintext. Fields mirror the RabbitMQ/Redis TLS block:
+  - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
+  - `client_cert` / `client_key`: paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: dev-only; disables certificate verification.
+- `destinations.<id>.kafka.retry`: optional producer retry/backoff, mapped onto the kafka-go writer.
+  - `max_attempts`: default `3`.
+  - `initial_backoff`: default `100ms`.
+  - `max_backoff`: default `2s`.
+
+**Security note:** omitting both `tls.enabled` and `sasl` connects to the brokers in plaintext with no authentication. Hookway logs a startup warning in this case; use it only for local development.
+
+**`target` is the topic.** The per-route `target` field is the Kafka topic name. Setting the route's `create: true` makes Hookway pre-create the topic via an admin `CreateTopics` call at startup (idempotent — an already-existing topic is left as-is). This replaces relying on broker-side auto-creation, which raced the first publish. Omit `create: true` when topics are pre-provisioned; `create: false` (or omitted) routes must already exist on the broker.
+
+**Partition key:** the optional per-route `kafka_options.partition_key` block derives the Kafka message key (which selects the partition), reusing the same source model as FIFO group ids:
+
+- `source`: one of `static` | `endpoint` | `header` | `body`. `static` uses `value`; `header`/`body` extract `path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name.
+- `fallback`: a literal value, or `endpoint`; used when extraction yields nothing.
+
+Keyed messages preserve per-key ordering within the topic. Omit `partition_key` entirely for round-robin distribution across partitions.
+
+**Topic creation options:** for `create: true` routes, two optional per-route settings tune the pre-created topic:
+
+- `kafka_options.partitions`: number of partitions for the topic. Omit (or `0`) to use the broker default.
+- `kafka_options.replication_factor`: replication factor for the topic. Omit (or `0`) to use the broker default.
+
+See `examples/destinations/kafka.yaml` for a complete reference config.
+
+```yaml
+destinations:
+  events:
+    type: "kafka"
+    kafka:
+      brokers:
+        - "${KAFKA_BROKER_1}"
+        - "${KAFKA_BROKER_2}"
+      acks: "all"
+      compression: "snappy"
+      publish_timeout: "5s"
+      sasl:
+        mechanism: "scram-sha-256"
+        username: "${KAFKA_USERNAME}"
+        password: "${KAFKA_PASSWORD}"
+      tls:
+        enabled: true
+      retry:
+        max_attempts: 3
+        initial_backoff: "100ms"
+        max_backoff: "2s"
+```
+
 ### Redis / Valkey
 
 Hookway supports four Redis destination types. All share a common `redis:` connection block on the destination, and per-route settings under `redis_options` on each endpoint route.
@@ -505,6 +568,7 @@ Destination route fields:
   - `consumer_group`: name of the consumer group Hookway creates at startup when `create: true`. Valid for `redis_stream` only.
   - `ttl`: key expiry duration (e.g. `"168h"`). Valid for `redis_kv` only.
   - `key_template`: key naming template for `redis_kv`. Tokens `{prefix}`, `{target}`, `{endpoint}`, `{id}`, and `{idempotency_key}` are substituted at publish time. Valid for `redis_kv` only.
+- `kafka_options`: optional per-route Kafka settings (only valid when the destination is `kafka`). `partition_key` derives the Kafka message key using the same source model as `fifo.group_id` (`source`: `static` | `endpoint` | `header` | `body`, plus `value`/`path`/`fallback`); omit it for round-robin partition distribution. `partitions` and `replication_factor` tune the topic Hookway pre-creates for `create: true` routes; omit either (or leave at `0`) to use the broker default.
 - `fifo`: required when `target` ends in `.fifo` (and only allowed then). Controls FIFO ordering and deduplication:
   - `group_id.source`: one of `static` | `endpoint` | `header` | `body` — where the `MessageGroupId` comes from. `static` uses `group_id.value`; `header`/`body` extract `group_id.path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. `group_id.fallback` (a literal, or `endpoint`) is used when extraction yields nothing.
   - `dedup.use_idempotency_key`: when true, use the envelope `idempotency_key` as the `MessageDeduplicationId` when present.
