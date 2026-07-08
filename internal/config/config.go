@@ -108,6 +108,10 @@ type rawConfig struct {
 			ExpectedAudience   string `yaml:"expected_audience"`
 			BodyHashClaim      string `yaml:"body_hash_claim"`
 		} `yaml:"auth"`
+		Filters        []rawFilterConditionConfig `yaml:"filters"`
+		FilterResponse struct {
+			Status int `yaml:"status"`
+		} `yaml:"filter_response"`
 	} `yaml:"endpoints"`
 }
 
@@ -243,6 +247,8 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				ExpectedIssuer:     endpoint.Auth.ExpectedIssuer,
 				ExpectedAudience:   endpoint.Auth.ExpectedAudience,
 				BodyHashClaim:      endpoint.Auth.BodyHashClaim},
+			Filters:        convertFilters(endpoint.Filters),
+			FilterResponse: FilterResponseConfig{Status: endpoint.FilterResponse.Status},
 		}
 	}
 	return cfg, issues

@@ -1,0 +1,127 @@
+# examples/filters.yaml
+#
+# Reference config demonstrating webhook filtering. A filter chain is a list of
+# conditions combined with AND — every condition must pass. Filters attach at
+# two levels:
+#
+#   endpoint-level (endpoints.<name>.filters)
+#       Evaluated first, after auth and body parsing. If the chain fails,
+#       nothing is published. The response is controlled by filter_response
+#       (default: a silent 202 ack with no destinations).
+#
+#   route-level (endpoints.<name>.destinations[].filters)
+#       Evaluated per destination. A route whose chain fails is dropped from
+#       delivery; other routes still receive the payload. Route filtering always
+#       acks with 202 — filter_response applies only to the endpoint chain.
+#
+# Condition fields:
+#   source    header | body
+#   path      header name, or dotted body path (e.g. repository.private)
+#   operator  eq ne gt gte lt lte contains prefix suffix regex exists not_exists
+#   value     comparison value; its type selects the mode for eq/ne. Omit for
+#             exists / not_exists.
+#
+# Header values are always strings, so numeric/bool operators parse them
+# ("42" matches eq: 42; "true"/"1" match eq: true). A missing or type-mismatched
+# value fails the condition (never errors), including ne. A non-JSON body fails
+# every body condition except not_exists.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  primary:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+endpoints:
+  # Endpoint-level filtering: only GitHub "push" events on public repos are
+  # accepted. Anything else is dropped with a silent 202 ack (the default), so
+  # GitHub does not retry filtered-out deliveries.
+  github_push_public:
+    enabled: true
+    path: "/webhooks/github"
+    filters:
+      - source: header
+        path: X-GitHub-Event
+        operator: eq
+        value: "push"
+      - source: body
+        path: repository.private
+        operator: eq
+        value: false
+    destinations:
+      - destination: "primary"
+        target: "github-public-pushes"
+        create: true
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${GITHUB_WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"
+      idempotency_header: "X-GitHub-Delivery"
+
+  # Route-level filtering: every accepted event fans out selectively. Main-branch
+  # pushes go to one queue, all pushes to another. A route whose filter fails is
+  # simply skipped — it is never counted as a delivery failure — so this endpoint
+  # always returns 202.
+  github_branch_router:
+    enabled: true
+    path: "/webhooks/github-router"
+    destinations:
+      - destination: "primary"
+        target: "github-main-pushes"
+        create: true
+        filters:
+          - source: body
+            path: ref
+            operator: eq
+            value: "refs/heads/main"
+      - destination: "primary"
+        target: "github-all-pushes"
+        create: true
+        # No filters: receives every event this endpoint accepts.
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${GITHUB_WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"
+
+  # Endpoint filtering that rejects non-matching payloads with a configured
+  # status instead of a silent ack. Shows numeric (gte), regex, and exists
+  # operators. filter_response.status returns 422 to the sender when the chain
+  # fails; omit filter_response for the default silent 202.
+  orders_high_value:
+    enabled: true
+    path: "/webhooks/orders"
+    filters:
+      - source: body
+        path: order.total
+        operator: gte
+        value: 100
+      - source: body
+        path: order.currency
+        operator: regex
+        value: "^(USD|EUR|GBP)$"
+      - source: body
+        path: customer.id
+        operator: exists
+    filter_response:
+      status: 422
+    destinations:
+      - destination: "primary"
+        target: "high-value-orders"
+        create: true
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_ts_colon"
+      secret: "${ORDERS_WEBHOOK_SECRET}"
+      signature_header: "X-Order-Signature"
+      timestamp_tolerance: "5m"

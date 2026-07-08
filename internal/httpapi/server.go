@@ -19,6 +19,7 @@ import (
 
 	"github.com/jasongiroux/hookway/internal/auth"
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/filter"
 	hooklogging "github.com/jasongiroux/hookway/internal/logging"
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
@@ -35,6 +36,8 @@ type Server struct {
 	endpointLimiters map[string]*ratelimit.Limiter
 	replayCaches     map[string]*replay.Cache
 	verifiers        map[string]auth.Verifier
+	endpointFilters  map[string]filter.Chain
+	routeFilters     map[string][]filter.Chain
 	trustedProxies   []*net.IPNet
 	inflight         chan struct{}
 	metrics          *metrics.Metrics
@@ -60,6 +63,8 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 		endpointLimiters: map[string]*ratelimit.Limiter{},
 		replayCaches:     map[string]*replay.Cache{},
 		verifiers:        map[string]auth.Verifier{},
+		endpointFilters:  map[string]filter.Chain{},
+		routeFilters:     map[string][]filter.Chain{},
 		metrics:          appMetrics,
 		mux:              http.NewServeMux(),
 	}
@@ -93,6 +98,19 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 			logger.Warn("endpoint has authentication disabled; this is not recommended and accepts every request unverified", "endpoint", name)
 		}
 		s.verifiers[name] = verifier
+
+		// Compile filter chains once. Config validation already rejects bad
+		// chains before serving, but tests may build a Config directly without
+		// Load; if compilation fails here, fail closed with a match-nothing
+		// chain (mirrors the auth RejectAll fallback above).
+		s.endpointFilters[name] = compileFilterChain(logger, name, "endpoint", endpoint.Filters)
+		if len(endpoint.Destinations) > 0 {
+			chains := make([]filter.Chain, len(endpoint.Destinations))
+			for i, route := range endpoint.Destinations {
+				chains[i] = compileFilterChain(logger, name, "route", route.Filters)
+			}
+			s.routeFilters[name] = chains
+		}
 	}
 	s.trustedProxies = parseCIDRs(cfg.Security.TrustedProxies)
 	if cfg.Server.MaxInflightRequests > 0 {
@@ -101,6 +119,27 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 	s.metrics.RegisterConfig(cfg)
 	s.routes()
 	return s
+}
+
+// compileFilterChain compiles a config filter chain into a filter.Chain,
+// converting config conditions to filter specs. It fails closed (match nothing)
+// if the chain unexpectedly fails to compile, so a misconfigured chain never
+// silently passes everything through.
+func compileFilterChain(logger *slog.Logger, endpoint, level string, filters []config.FilterConditionConfig) filter.Chain {
+	if len(filters) == 0 {
+		return filter.Chain{}
+	}
+	specs := make([]filter.Spec, len(filters))
+	for i, f := range filters {
+		specs[i] = filter.Spec{Source: f.Source, Path: f.Path, Operator: f.Operator, Value: f.Value}
+	}
+	chain, issues := filter.Compile(specs)
+	if len(issues) > 0 {
+		logger.Error("filter chain failed to compile; endpoint will drop all matching requests",
+			"endpoint", endpoint, "filter_level", level, "issues", len(issues))
+		return filter.MatchNothing()
+	}
+	return chain
 }
 
 // parseCIDRs accepts bare IPs and CIDR ranges, normalising bare IPs to a
@@ -323,7 +362,58 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "internal error"})
 		return
 	}
-	published, failed, err := s.publishRoutes(r.Context(), endpointName, endpoint, env, routes)
+	// Endpoint-level filter chain gates every destination. Filters run against
+	// the unfiltered headers (env.OrigHeaders) so behaviour does not change when
+	// logging redaction lists change, and against the parsed JSON body.
+	if chain := s.endpointFilters[endpointName]; !chain.Empty() {
+		if ok, idx := chain.Match(env.OrigHeaders, env.Body); !ok {
+			source, path, operator := chain.Describe(idx)
+			for _, route := range routes {
+				s.metrics.Filtered(endpointName, route.Destination, route.Target, "endpoint")
+			}
+			s.logger.Info("webhook filtered at endpoint",
+				"endpoint", endpointName, "filter_level", "endpoint", "filter_index", idx,
+				"filter_source", source, "filter_path", path, "filter_operator", operator,
+				"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID)
+			status = endpoint.FilterResponseStatus()
+			if status >= 200 && status < 300 {
+				// Silent drop: keep the replay reservation (the delivery was
+				// consumed) and return the normal accepted shape so senders
+				// cannot probe the filter configuration.
+				writeJSON(w, status, map[string]any{
+					"status": "accepted", "endpoint": endpointName, "destinations": []map[string]string{},
+					"event_id": env.ID, "request_id": env.RequestID,
+				})
+			} else {
+				// Configured rejection: release the reservation so a sender
+				// retry is filtered again rather than rejected as a replay.
+				releaseReplay()
+				writeJSON(w, status, map[string]string{"error": "filtered"})
+			}
+			return
+		}
+	}
+	// Route-level filter chains decide which destinations receive the payload.
+	// Filtered routes are never treated as delivery failures; dropping them from
+	// the slice keeps the delivery_failure_policy semantics untouched.
+	activeRoutes := routes
+	if chains := s.routeFilters[endpointName]; len(chains) > 0 {
+		activeRoutes = make([]config.EndpointDestinationConfig, 0, len(routes))
+		for i, route := range routes {
+			if ok, idx := chains[i].Match(env.OrigHeaders, env.Body); !ok {
+				source, path, operator := chains[i].Describe(idx)
+				s.metrics.Filtered(endpointName, route.Destination, route.Target, "route")
+				s.logger.Info("webhook filtered at route",
+					"endpoint", endpointName, "destination_queue_id", route.Destination, "queue", route.Target,
+					"filter_level", "route", "filter_index", idx,
+					"filter_source", source, "filter_path", path, "filter_operator", operator,
+					"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID)
+				continue
+			}
+			activeRoutes = append(activeRoutes, route)
+		}
+	}
+	published, failed, err := s.publishRoutes(r.Context(), endpointName, endpoint, env, activeRoutes)
 	if err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable

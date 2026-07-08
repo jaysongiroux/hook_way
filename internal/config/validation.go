@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/auth"
+	"github.com/jasongiroux/hookway/internal/filter"
 )
 
 // pgIdentifier matches a safe, unquoted-style SQL identifier for schema/table
@@ -438,6 +439,7 @@ func (c Config) ValidationIssues() []ValidationIssue {
 					))
 				}
 			}
+			issues = append(issues, filterValidationIssues(field+".filters", destination.Filters)...)
 		}
 		if endpoint.Path == "" {
 			issues = append(issues, validationError(fieldPrefix+".path", "path is required for enabled endpoints", "set a path such as \"/webhooks/billing/events\""))
@@ -506,6 +508,40 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 		if endpoint.Auth.RemoveBearer && endpoint.Auth.Type != auth.AuthTypeHeaderExact {
 			issues = append(issues, validationError(fieldPrefix+".auth.remove_bearer", "only supported for header_exact auth", "set auth.type to \"header_exact\" or remove remove_bearer"))
+		}
+		issues = append(issues, filterValidationIssues(fieldPrefix+".filters", endpoint.Filters)...)
+		if endpoint.FilterResponse.Status != 0 {
+			if len(endpoint.Filters) == 0 {
+				issues = append(issues, validationError(fieldPrefix+".filter_response", "filter_response has no effect without filters", "add a filters chain or remove filter_response"))
+			}
+			if endpoint.FilterResponse.Status < 200 || endpoint.FilterResponse.Status > 599 {
+				issues = append(issues, validationError(fieldPrefix+".filter_response.status", "must be a valid HTTP status code (200-599)", "use a client-error status such as 422, or omit for the default silent 202 ack"))
+			}
+		}
+	}
+	return issues
+}
+
+// filterValidationIssues validates an endpoint or route filter chain by
+// compiling it and translating each compile issue into a config validation
+// issue. It also enforces config-level rules that the filter package cannot know
+// about, such as valid HTTP header names for header sources.
+func filterValidationIssues(fieldPrefix string, filters []FilterConditionConfig) []ValidationIssue {
+	if len(filters) == 0 {
+		return nil
+	}
+	specs := make([]filter.Spec, len(filters))
+	for i, f := range filters {
+		specs[i] = filter.Spec{Source: f.Source, Path: f.Path, Operator: f.Operator, Value: f.Value}
+	}
+	var issues []ValidationIssue
+	_, filterIssues := filter.Compile(specs)
+	for _, issue := range filterIssues {
+		issues = append(issues, validationError(fmt.Sprintf("%s[%d].%s", fieldPrefix, issue.Index, issue.Field), issue.Message, issue.Suggestion))
+	}
+	for i, f := range filters {
+		if f.Source == filter.SourceHeader && f.Path != "" && !safeHeaderName.MatchString(f.Path) {
+			issues = append(issues, validationError(fmt.Sprintf("%s[%d].path", fieldPrefix, i), "header name is invalid", "use a valid HTTP header name such as \"X-GitHub-Event\""))
 		}
 	}
 	return issues

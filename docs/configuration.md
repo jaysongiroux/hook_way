@@ -66,7 +66,7 @@ security:
 When disabled, the metrics route is not registered.
 
 Metrics include HTTP request counts, auth failures, rate limits, load-shedding
-saturation (`hookway_saturated_total`), publish latency,
+saturation (`hookway_saturated_total`), filter drops (`hookway_filtered_total`), publish latency,
 RabbitMQ reconnect/confirm/retry/DLQ counters, config load failures, and —
 when `runtime_metrics` is enabled — Go runtime and process CPU/memory metrics. Startup
 config failures still block serving traffic, so config failure metrics are
@@ -725,6 +725,8 @@ Endpoint fields:
 - `replay_protection`: optional endpoint replay cache settings.
 - `ip_allowlist`: optional list of IP addresses or CIDR ranges accepted for this endpoint.
 - `auth`: endpoint authentication settings.
+- `filters`: optional endpoint-level filter chain. All conditions must pass or the payload is not published to any destination. See [Filtering](#filtering).
+- `filter_response`: optional. Controls the response when the endpoint filter chain rejects a payload. `status: 0` (default) returns a silent `202` ack with no destinations; a non-2xx status (e.g. `422`) is returned to the sender instead. Has no effect without `filters`.
 
 Destination route fields:
 
@@ -744,6 +746,7 @@ Destination route fields:
   - `group_id.source`: one of `static` | `endpoint` | `header` | `body` — where the `MessageGroupId` comes from. `static` uses `group_id.value`; `header`/`body` extract `group_id.path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. `group_id.fallback` (a literal, or `endpoint`) is used when extraction yields nothing.
   - `dedup.use_idempotency_key`: when true, use the envelope `idempotency_key` as the `MessageDeduplicationId` when present.
   - `dedup.content_based_fallback`: must be `true` for FIFO targets so messages without an idempotency key are still deduplicated via the resource's content-based deduplication.
+- `filters`: optional route-level filter chain. When it fails, only this route is skipped — the payload can still reach other routes. A skipped route is never counted as a delivery failure. See [Filtering](#filtering).
 
 Delivery failure policies:
 
@@ -761,6 +764,45 @@ Replay protection fields:
 Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node. The reservation is only committed after a successful publish, so a transient broker outage does not turn a provider's legitimate retry into a permanent `409 replay detected`.
 
 Fan-out is at-least-once per destination, not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With `stop_on_failure`, if one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`. With `skip_failed`, partial success is acknowledged with `202` and failed routes are reported in the response.
+
+### Filtering
+
+Filters gate a payload based on its headers and JSON body before it reaches a destination. A filter chain is a list of conditions combined with **AND** — every condition must pass. Filters attach at two levels:
+
+- **Endpoint** (`endpoints.<name>.filters`): evaluated first, after authentication and body parsing. If the chain fails, nothing is published. The response is controlled by `filter_response` (default: a silent `202` ack).
+- **Route** (`endpoints.<name>.destinations[].filters`): evaluated per destination. A route whose chain fails is dropped from delivery; other routes still receive the payload. Route filtering **always** acks (`202`) — `filter_response` applies only to the endpoint chain. When every route is filtered out, the response is a normal `202` with an empty `destinations` list.
+
+Each condition has four fields:
+
+```yaml
+filters:
+  - source: header        # header | body
+    path: X-GitHub-Event  # header name, or dotted body path such as repository.private
+    operator: eq
+    value: "push"
+```
+
+- `source`: `header` reads the request header named by `path` (case-insensitive; the first value wins for multi-valued headers). `body` walks `path` as a dotted path into the parsed JSON body (e.g. `repository.private`). Array indexing is not supported.
+- `operator`: see the table below.
+- `value`: the comparison value. Its type (string, number, boolean) selects the comparison mode for `eq`/`ne`. Omit `value` for `exists`/`not_exists`.
+
+Operators:
+
+| Operator | Value type | Meaning |
+|---|---|---|
+| `eq`, `ne` | string, number, boolean | equal / not equal (type-aware) |
+| `gt`, `gte`, `lt`, `lte` | number | numeric comparison |
+| `contains`, `prefix`, `suffix` | string | substring / prefix / suffix |
+| `regex` | string | Go RE2 match; the pattern is compiled and validated at config load |
+| `exists`, `not_exists` | (none) | value present / absent at `path` |
+
+**Type coercion.** Header values are always strings, so numeric and boolean operators parse them (`"42"` matches `eq: 42`; `"true"`/`"1"` match `eq: true`). Body values keep their JSON type: a numeric operator on a JSON number compares directly, and a body string `"42"` is also parsed for `eq: 42`, but a JSON number does **not** match a string `value` such as `"42"`. When a value is missing or its type cannot be coerced to the operator's type, the condition **fails** (it never errors) — including `ne`, which requires the value to be present, comparable, and different. A non-JSON request body makes every `body` condition fail except `not_exists`, which passes. A JSON `null` leaf counts as present: `exists` passes, comparisons fail.
+
+**Header source.** Filters read the original, unredacted request headers, so behaviour does not change when `security.redacted_header_denylist` or `forwarded_header_allowlist` are adjusted.
+
+**Env expansion caveat.** Config files are passed through `os.ExpandEnv` before parsing, so `$name` or `${...}` sequences inside any value — including a `regex` value — are replaced with environment variables (usually empty). Anchors and character classes such as `^refs/heads/\w+$` are unaffected; escape or avoid literal `$`-prefixed tokens.
+
+Drops are counted by `hookway_filtered_total{endpoint, destination_queue_id, queue, level}` (`level` is `endpoint` or `route`) and logged at Info with the failing condition's index, source, path, and operator — never the header or body value.
 
 Auth fields:
 
