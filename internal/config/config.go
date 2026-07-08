@@ -16,6 +16,17 @@ import (
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 var safeHeaderName = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
 
+// LoopHopsHeader is the HTTP header Hookway stamps on outbound webhook
+// deliveries and reads on inbound requests to detect delivery loops (a webhook
+// destination that points back at Hookway). Each Hookway hop increments the
+// count; an inbound request whose count reaches an endpoint's max is rejected.
+const LoopHopsHeader = "X-Hookway-Hops"
+
+// defaultLoopMaxHops is the hop ceiling applied when loop protection is enabled
+// but max_hops is not set. An inbound request is rejected when its hop count is
+// greater than or equal to this value.
+const defaultLoopMaxHops = 3
+
 type Config struct {
 	Server       ServerConfig                 `yaml:"server"`
 	Security     SecurityConfig               `yaml:"security"`
@@ -37,11 +48,34 @@ type ServerConfig struct {
 }
 
 type SecurityConfig struct {
-	TrustedProxyHeaders      bool     `yaml:"trusted_proxy_headers"`
-	TrustedProxies           []string `yaml:"trusted_proxies"`
-	RequestIDHeader          string   `yaml:"request_id_header"`
-	RedactedHeaderDenylist   []string `yaml:"redacted_header_denylist"`
-	ForwardedHeaderAllowlist []string `yaml:"forwarded_header_allowlist"`
+	TrustedProxyHeaders      bool                 `yaml:"trusted_proxy_headers"`
+	TrustedProxies           []string             `yaml:"trusted_proxies"`
+	RequestIDHeader          string               `yaml:"request_id_header"`
+	RedactedHeaderDenylist   []string             `yaml:"redacted_header_denylist"`
+	ForwardedHeaderAllowlist []string             `yaml:"forwarded_header_allowlist"`
+	LoopProtection           LoopProtectionConfig `yaml:"loop_protection"`
+}
+
+// LoopProtectionConfig configures detection of webhook delivery loops via the
+// LoopHopsHeader hop counter. Enabled defaults to true; MaxHops defaults to
+// defaultLoopMaxHops.
+type LoopProtectionConfig struct {
+	Enabled *bool `yaml:"enabled"`
+	MaxHops int   `yaml:"max_hops"`
+}
+
+// LoopProtectionEnabled reports whether inbound loop rejection is active.
+// Defaults to true unless explicitly disabled.
+func (s SecurityConfig) LoopProtectionEnabled() bool {
+	return s.LoopProtection.Enabled == nil || *s.LoopProtection.Enabled
+}
+
+// LoopMaxHops returns the configured hop ceiling, or the default when unset.
+func (s SecurityConfig) LoopMaxHops() int {
+	if s.LoopProtection.MaxHops <= 0 {
+		return defaultLoopMaxHops
+	}
+	return s.LoopProtection.MaxHops
 }
 
 type RateLimitConfig struct {

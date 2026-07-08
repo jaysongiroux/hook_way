@@ -30,6 +30,9 @@ config validation failed
 - `security.request_id_header`: optional request ID header name.
 - `security.redacted_header_denylist`: optional list of exact HTTP header names that are redacted in logs and in the published envelope. This augments automatic redaction of obvious secrets; it does not replace it.
 - `security.forwarded_header_allowlist`: optional list of HTTP header names. When non-empty, only these headers are logged and forwarded to the queue (fail-safe); every other header is dropped entirely. The denylist and built-in sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through. When empty, behavior is the legacy denylist filter (everything except denylisted/sensitive headers is forwarded).
+- `security.loop_protection`: detects webhook delivery loops (a webhook destination that points back at Hookway). See [Loop protection](#loop-protection).
+  - `enabled`: optional boolean, default `true`. When true, an inbound request whose hop count has reached `max_hops` is rejected.
+  - `max_hops`: optional positive integer, default `3`. Hookway rejects an inbound request when its `X-Hookway-Hops` value is greater than or equal to this. Raise it if you intentionally chain more than three Hookway instances; lower it to break tight self-loops sooner.
 
 ```yaml
 security:
@@ -47,7 +50,22 @@ security:
   forwarded_header_allowlist:
     - "Content-Type"
     - "X-Request-ID"
+  # Optional. Defaults to enabled with a 3-hop ceiling.
+  loop_protection:
+    enabled: true
+    max_hops: 3
 ```
+
+### Loop protection
+
+A webhook destination can point back at a Hookway endpoint (directly, or through a chain of Hookways), creating a delivery loop that would amplify traffic without bound. Hookway detects this with a hop counter carried in the `X-Hookway-Hops` header:
+
+- Every outbound **webhook** delivery is stamped with `X-Hookway-Hops: <inbound count + 1>`, in both envelope and proxy payload modes. A request that never passed through Hookway has no header and counts as `0`.
+- On the inbound side, when `security.loop_protection.enabled` is true, Hookway rejects a request whose hop count is greater than or equal to `max_hops`, before authentication and publishing. The rejection is a terminal `400` so a well-behaved sender — including an upstream Hookway, whose delivery engine treats `4xx` as non-retryable — stops rather than retrying the loop.
+
+Because the hop count increments per Hookway hop (not per loop iteration), a tight self-loop is broken after at most `max_hops` iterations, and an intentional finite chain of up to `max_hops` Hookways still works. A malformed or negative header value counts as `0`, so it can only reset the counter, never bypass the limit. The header is always stamped on outbound deliveries even when this instance has enforcement disabled, so a downstream Hookway can still detect the loop.
+
+This mechanism relies on the header surviving each hop; a loop that transits an intermediary which strips unknown headers will not be caught. Rejections are counted by `hookway_loop_rejected_total{endpoint, destination_queue_id, queue}` and logged at Warn.
 
 ## Rate Limit
 
@@ -66,7 +84,8 @@ security:
 When disabled, the metrics route is not registered.
 
 Metrics include HTTP request counts, auth failures, rate limits, load-shedding
-saturation (`hookway_saturated_total`), filter drops (`hookway_filtered_total`), publish latency,
+saturation (`hookway_saturated_total`), filter drops (`hookway_filtered_total`), loop
+rejections (`hookway_loop_rejected_total`), publish latency,
 RabbitMQ reconnect/confirm/retry/DLQ counters, config load failures, and —
 when `runtime_metrics` is enabled — Go runtime and process CPU/memory metrics. Startup
 config failures still block serving traffic, so config failure metrics are

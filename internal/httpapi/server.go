@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -268,6 +269,22 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "method not allowed"})
 		return
 	}
+	// Loop protection: reject a request whose hop count has reached the limit,
+	// which happens when a webhook destination points back at Hookway. Rejecting
+	// with a terminal 4xx stops a well-behaved sender (including an upstream
+	// Hookway, whose webhook engine treats 4xx as non-retryable) from retrying.
+	inboundHops := parseHopCount(r.Header.Get(config.LoopHopsHeader))
+	if s.cfg.Security.LoopProtectionEnabled() && inboundHops >= s.cfg.Security.LoopMaxHops() {
+		status = http.StatusBadRequest
+		for _, route := range routes {
+			s.metrics.LoopRejected(endpointName, route.Destination, route.Target)
+		}
+		s.logger.Warn("webhook rejected: delivery loop detected",
+			"endpoint", endpointName, "hops", inboundHops, "max_hops", s.cfg.Security.LoopMaxHops(),
+			"request_id", requestIDFromContext(r.Context()), "trace_id", traceIDFromContext(r.Context()))
+		writeJSON(w, status, map[string]string{"error": "loop detected"})
+		return
+	}
 	// Backpressure: bound concurrent webhook processing so a flood cannot
 	// exhaust memory by buffering unbounded bodies. Acquired before reading the
 	// body and released when handling completes.
@@ -355,6 +372,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:  s.idempotencyKey(r, endpoint, rawBody),
 		HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
 		HeaderAllowlist: s.cfg.Security.ForwardedHeaderAllowlist,
+		Hops:            inboundHops,
 	})
 	if err != nil {
 		releaseReplay()
@@ -528,7 +546,7 @@ func (s *Server) publishRoute(ctx context.Context, endpointName string, env webh
 		Endpoint: env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
 		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
 		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
-		RawBody: env.RawBody, OrigHeaders: env.OrigHeaders,
+		RawBody: env.RawBody, OrigHeaders: env.OrigHeaders, Hops: env.Hops,
 	}
 	start := time.Now()
 	err := s.publisher.Publish(ctx, route.Destination, route.Target, msg)
@@ -553,6 +571,21 @@ func (s *Server) publishRoute(ctx context.Context, endpointName string, env webh
 		index: index, destinationID: route.Destination, queue: route.Target,
 		duration: duration, err: err,
 	}
+}
+
+// parseHopCount reads the loop-protection hop header. A missing, negative, or
+// malformed value counts as 0 (a fresh delivery) so a garbled header can never
+// bypass the limit — it only ever resets the count, and Hookway's own stamping
+// always writes a valid integer.
+func parseHopCount(v string) int {
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 var errBodyTooLarge = errors.New("body too large")

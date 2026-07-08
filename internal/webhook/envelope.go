@@ -33,6 +33,10 @@ type Envelope struct {
 	// (webhook proxy mode) so the exact original bytes/headers can be forwarded.
 	RawBody     []byte      `json:"-"`
 	OrigHeaders http.Header `json:"-"`
+	// Hops is the loop-protection hop count read from the inbound request. The
+	// webhook destination stamps Hops+1 on the next outbound delivery. In-memory
+	// only.
+	Hops int `json:"-"`
 }
 
 type AuthInfo struct {
@@ -61,6 +65,7 @@ type EnvelopeOptions struct {
 	IdempotencyKey     string
 	HeaderDenylist     []string
 	HeaderAllowlist    []string
+	Hops               int
 }
 
 func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope, error) {
@@ -102,5 +107,6 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 	}
 	env.RawBody = opts.RawBody
 	env.OrigHeaders = req.Header.Clone()
+	env.Hops = opts.Hops
 	return env, nil
 }

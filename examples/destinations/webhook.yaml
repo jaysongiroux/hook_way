@@ -22,6 +22,14 @@
 #
 # `on_existing_conflict` is NOT valid for webhook destinations — the field is
 # rejected at config validation time. Do not set it on webhook entries.
+#
+# LOOP PROTECTION: every outbound delivery is stamped with an X-Hookway-Hops
+# header (incremented per Hookway hop). If this URL points back at a Hookway
+# endpoint, that endpoint rejects the request with 400 once the count reaches
+# security.loop_protection.max_hops (default 3). See docs/configuration.md.
+security:
+  loop_protection:
+    max_hops: 2
 
 server:
   addr: ":8088"

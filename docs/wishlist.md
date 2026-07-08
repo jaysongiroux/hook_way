@@ -3,7 +3,6 @@
 ## Routing
 - This is a net-new feature but allows basic routing from endpoint after auth to specific destinations based on simple logic based on the content of the webhook's body.
     - route based on header or body
-    - ~~route based on header or body~~ — largely covered by route-level filter chains (see Filtering); each destination route can carry its own filter chain so events fan out selectively.
 
 ## Destinations
 - 
@@ -18,5 +17,3 @@
 - 
 
 # Edge cases
-- Loops
-    - webhook -> hookway (webhook destination points to hookway) -> hookway

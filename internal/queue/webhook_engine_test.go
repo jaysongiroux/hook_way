@@ -44,6 +44,47 @@ func TestWebhookEngineEnvelopeDelivers(t *testing.T) {
 	}
 }
 
+func proxyDelivery(url string) *webhookDelivery {
+	return &webhookDelivery{destID: "notify", target: "orders", url: url, mode: "proxy",
+		client: &http.Client{Timeout: 2 * time.Second}, retry: RetryPolicy{MaxAttempts: 1, InitialBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond},
+		auth: webhookAuth{Type: "proxy"}, logger: testLogger()}
+}
+
+func TestWebhookEngineStampsHopHeaderEnvelopeMode(t *testing.T) {
+	var gotHops string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHops = r.Header.Get("X-Hookway-Hops")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	// Inbound hop count 2 → outbound must be stamped 3.
+	_ = e.Enqueue(webhookJob{delivery: envelopeDelivery(srv.URL), msg: Message{ID: "evt", ReceivedAt: time.Now(), Hops: 2}})
+	_ = e.Close()
+	if gotHops != "3" {
+		t.Fatalf("outbound X-Hookway-Hops = %q, want 3", gotHops)
+	}
+}
+
+func TestWebhookEngineStampsHopHeaderProxyModeOverwritesInbound(t *testing.T) {
+	var gotHops []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHops = r.Header.Values("X-Hookway-Hops")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	// Proxy mode copies OrigHeaders (which carry an inbound hop of 1); stamping
+	// must overwrite it with the incremented value, not append a second header.
+	orig := http.Header{}
+	orig.Set("X-Hookway-Hops", "1")
+	_ = e.Enqueue(webhookJob{delivery: proxyDelivery(srv.URL), msg: Message{ID: "evt", ReceivedAt: time.Now(), Hops: 1, OrigHeaders: orig, RawBody: []byte("{}")}})
+	_ = e.Close()
+	if len(gotHops) != 1 || gotHops[0] != "2" {
+		t.Fatalf("outbound X-Hookway-Hops = %v, want single value 2", gotHops)
+	}
+}
+
 func TestWebhookEngineRetriesThenSucceeds(t *testing.T) {
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

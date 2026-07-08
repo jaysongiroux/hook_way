@@ -8,8 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/jasongiroux/hookway/internal/config"
 )
 
 var errWebhookQueueFull = errors.New("webhook: delivery queue full")
@@ -191,7 +194,8 @@ func buildWebhookRequest(ctx context.Context, d *webhookDelivery, msg Message) (
 			return nil, err
 		}
 		copyProxyHeaders(req.Header, msg.OrigHeaders)
-		return req, nil // proxy: no hook_way auth
+		stampLoopHops(req, msg) // overwrites any inbound hop header copied above
+		return req, nil         // proxy: no hook_way auth
 	}
 	body, err := json.Marshal(msg)
 	if err != nil {
@@ -202,8 +206,16 @@ func buildWebhookRequest(ctx context.Context, d *webhookDelivery, msg Message) (
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	stampLoopHops(req, msg)
 	applyWebhookAuth(req, d.auth, body, msg.ID, time.Now())
 	return req, nil
+}
+
+// stampLoopHops sets the loop-protection hop header to one more than the inbound
+// count, so a downstream Hookway can detect a delivery loop. It always fires;
+// inbound enforcement is what each Hookway toggles via config.
+func stampLoopHops(req *http.Request, msg Message) {
+	req.Header.Set(config.LoopHopsHeader, strconv.Itoa(msg.Hops+1))
 }
 
 // hopByHop headers are managed by the transport and must not be forwarded.
