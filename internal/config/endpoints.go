@@ -91,18 +91,50 @@ type EndpointConfig struct {
 	ReplayProtection      ReplayProtectionConfig      `yaml:"replay_protection"`
 	IPAllowlist           []string                    `yaml:"ip_allowlist"`
 	Auth                  AuthConfig                  `yaml:"auth"`
+	Filters               []FilterConditionConfig     `yaml:"filters"`
+	FilterResponse        FilterResponseConfig        `yaml:"filter_response"`
 }
 
 type EndpointDestinationConfig struct {
-	Destination  string               `yaml:"destination"`
-	Target       string               `yaml:"target"`
-	Create       bool                 `yaml:"create"`
-	QueueOptions RabbitMQQueueOptions `yaml:"queue_options"`
-	SQSOptions   SQSEndpointOptions   `yaml:"sqs_options"`
-	SNSOptions   SNSEndpointOptions   `yaml:"sns_options"`
-	RedisOptions RedisEndpointOptions `yaml:"redis_options"`
-	KafkaOptions KafkaEndpointOptions `yaml:"kafka_options"`
-	FIFO         *FIFOConfig          `yaml:"fifo"`
+	Destination  string                  `yaml:"destination"`
+	Target       string                  `yaml:"target"`
+	Create       bool                    `yaml:"create"`
+	QueueOptions RabbitMQQueueOptions    `yaml:"queue_options"`
+	SQSOptions   SQSEndpointOptions      `yaml:"sqs_options"`
+	SNSOptions   SNSEndpointOptions      `yaml:"sns_options"`
+	RedisOptions RedisEndpointOptions    `yaml:"redis_options"`
+	KafkaOptions KafkaEndpointOptions    `yaml:"kafka_options"`
+	FIFO         *FIFOConfig             `yaml:"fifo"`
+	Filters      []FilterConditionConfig `yaml:"filters"`
+}
+
+// FilterConditionConfig is one condition in an endpoint or route filter chain.
+// All conditions in a chain must pass (AND) for the payload to proceed. Value
+// carries the raw YAML scalar (string/int/float/bool/nil); the filter package
+// decides the comparison type from the operator and value.
+type FilterConditionConfig struct {
+	Source   string `yaml:"source"`
+	Path     string `yaml:"path"`
+	Operator string `yaml:"operator"`
+	Value    any    `yaml:"value"`
+}
+
+// FilterResponseConfig controls how an endpoint responds when its filter chain
+// rejects a payload. Status 0 (the default) means a silent 202 ack with no
+// destinations; a non-2xx status (e.g. 422) is returned to the sender instead.
+type FilterResponseConfig struct {
+	Status int `yaml:"status"`
+}
+
+// defaultFilterResponseStatus is returned when no filter_response.status is set.
+const defaultFilterResponseStatus = 202
+
+// FilterResponseStatus returns the configured non-match status, or 202 default.
+func (e EndpointConfig) FilterResponseStatus() int {
+	if e.FilterResponse.Status == 0 {
+		return defaultFilterResponseStatus
+	}
+	return e.FilterResponse.Status
 }
 
 type EndpointRateLimitConfig struct {
@@ -172,7 +204,28 @@ type rawEndpointDestinationConfig struct {
 		Partitions        int `yaml:"partitions"`
 		ReplicationFactor int `yaml:"replication_factor"`
 	} `yaml:"kafka_options"`
-	FIFO *rawFIFOConfig `yaml:"fifo"`
+	FIFO    *rawFIFOConfig             `yaml:"fifo"`
+	Filters []rawFilterConditionConfig `yaml:"filters"`
+}
+
+type rawFilterConditionConfig struct {
+	Source   string `yaml:"source"`
+	Path     string `yaml:"path"`
+	Operator string `yaml:"operator"`
+	Value    any    `yaml:"value"`
+}
+
+func convertFilters(raw []rawFilterConditionConfig) []FilterConditionConfig {
+	if len(raw) == 0 {
+		return nil
+	}
+	filters := make([]FilterConditionConfig, 0, len(raw))
+	for _, f := range raw {
+		filters = append(filters, FilterConditionConfig{
+			Source: f.Source, Path: f.Path, Operator: f.Operator, Value: f.Value,
+		})
+	}
+	return filters
 }
 
 func convertEndpointDestinations(fieldPrefix string, raw []rawEndpointDestinationConfig) ([]EndpointDestinationConfig, []ValidationIssue) {
@@ -224,7 +277,8 @@ func convertEndpointDestinations(fieldPrefix string, raw []rawEndpointDestinatio
 				Partitions:        destination.KafkaOptions.Partitions,
 				ReplicationFactor: destination.KafkaOptions.ReplicationFactor,
 			},
-			FIFO: convertFIFO(destination.FIFO),
+			FIFO:    convertFIFO(destination.FIFO),
+			Filters: convertFilters(destination.Filters),
 		})
 	}
 	return destinations, issues

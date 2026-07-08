@@ -63,7 +63,7 @@ validate-examples:
 		WEBHOOK_SECRET=dummy \
 		WEBHOOK_URL=https://example.com/hooks \
 		WEBHOOK_API_KEY=dummy; \
-	for f in examples/config.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
+	for f in examples/config.yaml examples/filters.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done
