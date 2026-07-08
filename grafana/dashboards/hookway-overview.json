@@ -490,6 +490,12 @@
           "expr": "sum(rate(hookway_saturated_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
           "legendFormat": "saturated",
           "refId": "D"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "sum(rate(hookway_loop_rejected_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
+          "legendFormat": "loop",
+          "refId": "E"
         }
       ],
       "title": "Pre-publish Rejections",

@@ -104,6 +104,9 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 		}
 	}
+	if c.Security.LoopProtection.MaxHops < 0 {
+		issues = append(issues, validationError("security.loop_protection.max_hops", "must be zero (use the default) or a positive integer", "set a small ceiling such as 3, or omit to use the default"))
+	}
 	if len(c.Destinations) == 0 {
 		issues = append(issues, validationError("destinations", "at least one destination is required", "add destinations.billing with type \"rabbitmq\""))
 	}

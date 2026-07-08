@@ -19,6 +19,7 @@ type Metrics struct {
 	forbidden                *prometheus.CounterVec
 	replayRejected           *prometheus.CounterVec
 	filtered                 *prometheus.CounterVec
+	loopRejected             *prometheus.CounterVec
 	publishTotal             *prometheus.CounterVec
 	publishDuration          *prometheus.HistogramVec
 	messagesPublished        *prometheus.CounterVec
@@ -69,6 +70,10 @@ func New() *Metrics {
 		Name: "hookway_filtered_total",
 		Help: "Webhook deliveries dropped by endpoint or route filters.",
 	}, []string{"endpoint", "destination_queue_id", "queue", "level"})
+	m.loopRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_loop_rejected_total",
+		Help: "Webhook requests rejected because the delivery hop count reached the loop-protection limit.",
+	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.publishTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_publish_total",
 		Help: "RabbitMQ publish attempts.",
@@ -137,7 +142,7 @@ func New() *Metrics {
 		Name: "hookway_webhook_dropped_total", Help: "Webhook deliveries dropped because the queue was full.",
 	}, []string{"destination_queue_id", "queue"})
 	m.registry.MustRegister(
-		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered,
+		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.redisPubSubNoSubscribers,
@@ -194,6 +199,11 @@ func (m *Metrics) ReplayRejected(endpoint, destinationQueueID, queue string) {
 // "route".
 func (m *Metrics) Filtered(endpoint, destinationQueueID, queue, level string) {
 	m.filtered.WithLabelValues(endpoint, destinationQueueID, queue, level).Inc()
+}
+
+// LoopRejected counts an inbound request rejected by loop protection.
+func (m *Metrics) LoopRejected(endpoint, destinationQueueID, queue string) {
+	m.loopRejected.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
 }
 
 func (m *Metrics) Publish(endpoint, destinationQueueID, queue, status string, duration time.Duration) {

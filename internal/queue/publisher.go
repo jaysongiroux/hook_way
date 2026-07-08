@@ -35,6 +35,9 @@ type Message struct {
 	// webhook proxy mode. Other destinations ignore these.
 	RawBody     []byte      `json:"-"`
 	OrigHeaders http.Header `json:"-"`
+	// Hops is the inbound loop-protection hop count. The webhook destination
+	// stamps Hops+1 on the outbound request; other destinations ignore it.
+	Hops int `json:"-"`
 }
 
 type RabbitMQConfig struct {
