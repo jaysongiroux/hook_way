@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,5 +77,46 @@ func TestRunHealthcheckRejectsUnhealthyEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "status 503") {
 		t.Fatalf("stderr = %q, want status 503", stderr.String())
+	}
+}
+
+func TestRun_SchemaPrintsJSONSchema(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"schema"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr: %s)", code, stderr.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("schema output not valid JSON: %v", err)
+	}
+	if _, ok := doc["properties"]; !ok {
+		t.Fatalf("schema missing properties")
+	}
+}
+
+func TestRun_ValidateJSONEmitsIssuesEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	// Missing server.addr → a validation issue.
+	if err := os.WriteFile(path, []byte("server:\n  max_body_bytes: 1048576\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"validate", "--config", path, "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for invalid config, got %d", code)
+	}
+	var resp struct {
+		Issues []struct {
+			Field    string `json:"field"`
+			Severity string `json:"severity"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		t.Fatalf("stdout not valid JSON envelope: %v (out: %s)", err, stdout.String())
+	}
+	if len(resp.Issues) == 0 {
+		t.Fatalf("expected issues in envelope")
 	}
 }

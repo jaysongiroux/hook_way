@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/configapi"
+	"github.com/jasongiroux/hookway/internal/editor"
 	"github.com/jasongiroux/hookway/internal/httpapi"
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
@@ -30,6 +33,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "healthcheck" {
 		return runHealthcheck(args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "schema" {
+		return runSchema(stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "editor" {
+		return runEditor(args[1:], stdout, stderr)
+	}
 	return runServe(args, stdout, stderr)
 }
 
@@ -38,6 +47,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configFlag := flags.String("config", "", "path to Hookway YAML config")
+	jsonOut := flags.Bool("json", false, "emit validation results as JSON")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -46,11 +56,59 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "config path required: %v\n", err)
 		return 1
 	}
+
+	if *jsonOut {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "read config: %v\n", err)
+			return 1
+		}
+		resp := configapi.Validate(data)
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(resp); err != nil {
+			fmt.Fprintf(stderr, "encode json: %v\n", err)
+			return 1
+		}
+		if len(resp.Issues) > 0 {
+			return 1
+		}
+		return 0
+	}
+
 	if err := config.NewService().Validate(path); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "config valid: %s\n", path)
+	return 0
+}
+
+// runSchema prints the JSON Schema describing the Hookway config to stdout.
+func runSchema(stdout, stderr io.Writer) int {
+	data, err := configapi.Schema()
+	if err != nil {
+		fmt.Fprintf(stderr, "generate schema: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, string(data))
+	return 0
+}
+
+// runEditor serves the config API (GET /schema, POST /validate) for a config UI.
+func runEditor(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("editor", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	addr := flags.String("addr", ":8090", "listen address for the config API")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	srv := editor.NewServer(*addr)
+	fmt.Fprintf(stdout, "hookway config API listening on %s (GET /schema, POST /validate)\n", *addr)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Fprintf(stderr, "editor server stopped: %v\n", err)
+		return 1
+	}
 	return 0
 }
 

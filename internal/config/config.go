@@ -169,17 +169,29 @@ func (s Service) Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	expanded := os.ExpandEnv(string(rawBytes))
-	var raw rawConfig
-	decoder := yaml.NewDecoder(bytes.NewBufferString(expanded))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&raw); err != nil {
-		if strings.Contains(err.Error(), "field") && strings.Contains(err.Error(), "not found") {
-			return Config{}, fmt.Errorf("unknown or invalid YAML field in %s: %w", path, err)
-		}
-		return Config{}, fmt.Errorf("invalid YAML syntax in %s: %w", path, err)
+	return s.loadBytes(rawBytes, path, true)
+}
+
+// loadBytes parses, converts, and validates config from raw YAML bytes. source
+// names the origin (a file path, or "config" for in-memory bytes) for error
+// text. When expandEnv is true, ${VAR} references are expanded against the
+// process environment before parsing; when false, they are left as opaque
+// literals (see ValidateBytes).
+func (s Service) loadBytes(rawBytes []byte, source string, expandEnv bool) (Config, error) {
+	raw := string(rawBytes)
+	if expandEnv {
+		raw = os.ExpandEnv(raw)
 	}
-	cfg, issues := convert(raw)
+	var config rawConfig
+	decoder := yaml.NewDecoder(bytes.NewBufferString(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
+		if strings.Contains(err.Error(), "field") && strings.Contains(err.Error(), "not found") {
+			return Config{}, fmt.Errorf("unknown or invalid YAML field in %s: %w", source, err)
+		}
+		return Config{}, fmt.Errorf("invalid YAML syntax in %s: %w", source, err)
+	}
+	cfg, issues := convert(config)
 	if len(issues) > 0 {
 		return Config{}, ConfigValidationError{Issues: issues}
 	}
@@ -187,6 +199,31 @@ func (s Service) Load(path string) (Config, error) {
 		return Config{}, ConfigValidationError{Issues: issues}
 	}
 	return cfg, nil
+}
+
+// ValidateBytes validates raw YAML config bytes and returns structured issues.
+// A nil slice means the config is valid. Unlike Load, this path does NOT
+// expand ${VAR} references against the process environment: the bytes are
+// treated as untrusted candidate config (e.g. from the HTTP /validate
+// endpoint), and ${VAR} is left as an opaque literal so validating it cannot
+// leak process-environment secrets.
+func (s Service) ValidateBytes(data []byte) []ValidationIssue {
+	_, err := s.loadBytes(data, "config", false)
+	return issuesFromError(err)
+}
+
+// issuesFromError converts a load error into structured issues. Structured
+// ConfigValidationError issues pass through; any other error (YAML syntax,
+// unknown field) becomes a single "config" issue carrying the message.
+func issuesFromError(err error) []ValidationIssue {
+	if err == nil {
+		return nil
+	}
+	var cve ConfigValidationError
+	if errors.As(err, &cve) {
+		return cve.Issues
+	}
+	return []ValidationIssue{{Field: "config", Message: err.Error()}}
 }
 
 func (s Service) Validate(path string) error {
