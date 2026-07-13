@@ -680,6 +680,19 @@ func TestLoadAcceptsBasicScheme(t *testing.T) {
 	t.Fatal("basic scheme not present after load")
 }
 
+func TestLoadParsesSecurityAPIKey(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	body := replace(validYAML(), "security:\n", "security:\n  api_key: \"admin-key\"\n")
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Security.APIKey != "admin-key" {
+		t.Fatalf("Security.APIKey = %q, want \"admin-key\"", cfg.Security.APIKey)
+	}
+}
+
 func replace(s, old, new string) string {
 	return strings.ReplaceAll(s, old, new)
 }

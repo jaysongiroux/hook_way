@@ -95,16 +95,41 @@ func runSchema(stdout, stderr io.Writer) int {
 	return 0
 }
 
+// editorAPIKey resolves the config-API auth key from config. When no config is
+// available (neither --config nor HOOKWAY_CONFIG), it returns "" so the editor
+// runs unauthenticated. A provided-but-unloadable config is a hard error.
+func editorAPIKey(configFlag string) (string, error) {
+	path, err := config.ResolvePath(configFlag)
+	if err != nil {
+		return "", nil // no config ⇒ unauthenticated (standalone editor)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return "", err
+	}
+	return cfg.Security.APIKey, nil
+}
+
 // runEditor serves the config API (GET /schema, POST /validate) for a config UI.
 func runEditor(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("editor", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	addr := flags.String("addr", ":8090", "listen address for the config API")
+	configFlag := flags.String("config", "", "path to Hookway YAML config (for API-key auth)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	srv := editor.NewServer(*addr)
-	fmt.Fprintf(stdout, "hookway config API listening on %s (GET /schema, POST /validate)\n", *addr)
+	apiKey, err := editorAPIKey(*configFlag)
+	if err != nil {
+		fmt.Fprintf(stderr, "load config for editor auth: %v\n", err)
+		return 1
+	}
+	authState := "disabled"
+	if apiKey != "" {
+		authState = "enabled"
+	}
+	srv := editor.NewServer(*addr, apiKey)
+	fmt.Fprintf(stdout, "hookway config API listening on %s (GET /schema, POST /validate); authentication: %s\n", *addr, authState)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(stderr, "editor server stopped: %v\n", err)
 		return 1
