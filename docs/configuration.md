@@ -56,6 +56,18 @@ security:
     max_hops: 3
 ```
 
+### `security.api_key`
+
+Optional shared API key protecting the metrics endpoint and the config API
+(`hookway editor`). When set, callers must send `Authorization: Bearer <key>`.
+When empty or omitted, those endpoints are unauthenticated. The value may be an
+`${ENV}` reference (expanded on config load), e.g.:
+
+```yaml
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+```
+
 ### Loop protection
 
 A webhook destination can point back at a Hookway endpoint (directly, or through a chain of Hookways), creating a delivery loop that would amplify traffic without bound. Hookway detects this with a hop counter carried in the `X-Hookway-Hops` header:

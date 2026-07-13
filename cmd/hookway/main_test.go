@@ -95,6 +95,58 @@ func TestRun_SchemaPrintsJSONSchema(t *testing.T) {
 	}
 }
 
+func TestEditorAPIKeyFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg.yaml")
+	body := `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+security:
+  api_key: "admin-key"
+destinations:
+  billing:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "amqp://guest:guest@localhost:5672/"
+      exchange: "webhooks"
+      exchange_type: "direct"
+      durable: true
+endpoints:
+  test:
+    enabled: true
+    path: "/test"
+    destinations:
+      - destination: "billing"
+        target: "test-target"
+        create: true
+    auth:
+      type: "hmac_sha256"
+      secret: "test-secret"
+      signature_header: "X-Signature"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := editorAPIKey(path)
+	if err != nil {
+		t.Fatalf("editorAPIKey error: %v", err)
+	}
+	if key != "admin-key" {
+		t.Fatalf("key = %q, want \"admin-key\"", key)
+	}
+}
+
+func TestEditorAPIKeyNoConfigIsUnauthenticated(t *testing.T) {
+	t.Setenv("HOOKWAY_CONFIG", "") // ensure no ambient config is resolved
+	key, err := editorAPIKey("")
+	if err != nil {
+		t.Fatalf("editorAPIKey error: %v", err)
+	}
+	if key != "" {
+		t.Fatalf("key = %q, want \"\" (no config ⇒ unauthenticated)", key)
+	}
+}
+
 func TestRun_ValidateJSONEmitsIssuesEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")

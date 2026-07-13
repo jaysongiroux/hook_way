@@ -86,3 +86,13 @@ go run ./cmd/hookway editor --addr :8090
 
 Both endpoints allow any origin (CORS `*`); they expose no secrets. The API
 serves no UI assets — it is the backend a separate front-end connects to.
+
+Pass `--config` (or set `HOOKWAY_CONFIG`) so the editor reads `security.api_key`
+and requires `Authorization: Bearer <key>` on `GET /schema` and `POST /validate`:
+
+```bash
+go run ./cmd/hookway editor --addr :8090 --config examples/config.yaml
+```
+
+Without a config, the editor runs unauthenticated. `OPTIONS` preflight is always
+allowed so browser CORS works.

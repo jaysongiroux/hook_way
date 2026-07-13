@@ -48,6 +48,10 @@ type ServerConfig struct {
 }
 
 type SecurityConfig struct {
+	// APIKey, when set, requires callers of the metrics and config-API endpoints
+	// to send "Authorization: Bearer <APIKey>". Empty disables that auth. May be
+	// an ${ENV} reference (expanded on file load).
+	APIKey                   string               `yaml:"api_key"`
 	TrustedProxyHeaders      bool                 `yaml:"trusted_proxy_headers"`
 	TrustedProxies           []string             `yaml:"trusted_proxies"`
 	RequestIDHeader          string               `yaml:"request_id_header"`

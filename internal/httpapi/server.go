@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/jasongiroux/hookway/internal/apikey"
 	"github.com/jasongiroux/hookway/internal/auth"
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/filter"
@@ -179,7 +180,8 @@ func (s *Server) routes() {
 }
 
 func (s *Server) metricsHandler() http.Handler {
-	return promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{})
+	h := promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{})
+	return apikey.Middleware(s.cfg.Security.APIKey, h)
 }
 
 // MetricsServer returns a dedicated *http.Server exposing only the metrics

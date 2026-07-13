@@ -91,6 +91,24 @@ Logs include request method, path, endpoint, destination queue id, queue, status
 
 `schema_version` is the consumer contract for published envelopes. Patch/minor changes may add fields or enum values without removing existing fields. Breaking payload shape, field meaning, or required-field changes require a new schema version and a migration window for consumers.
 
+## Metrics & config-API authentication
+
+Set `security.api_key` to require `Authorization: Bearer <key>` on the metrics
+endpoint and on the `hookway editor` config API. Health endpoints
+(`/health`, `/healthz`, `/ready`, `/readyz`) are never authenticated.
+
+Prometheus scrape config when a key is set:
+
+```yaml
+scrape_configs:
+  - job_name: hookway
+    authorization:
+      type: Bearer
+      credentials: "<your-api-key>"
+    static_configs:
+      - targets: ["hookway:9090"]
+```
+
 ## Production Hardening
 
 - Terminate TLS at a trusted load balancer or reverse proxy. Enable `trusted_proxy_headers` only with `trusted_proxies` set to your proxy/ingress CIDRs so forwarded client IPs cannot be spoofed.

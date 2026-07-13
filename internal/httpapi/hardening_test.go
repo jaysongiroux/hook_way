@@ -87,6 +87,63 @@ func TestMetricsServedOnSeparatePortWhenAddrSet(t *testing.T) {
 	}
 }
 
+func TestMetricsRequiresAPIKeyWhenConfigured(t *testing.T) {
+	cfg := testConfig()
+	cfg.Security.APIKey = "s3cret"
+	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+
+	// No credentials → 401.
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("/metrics without key = %d, want 401", rec.Code)
+	}
+
+	// Correct bearer → 200.
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/metrics with key = %d, want 200", rec.Code)
+	}
+
+	// Health must stay open (handleLive always returns 200).
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/healthz without key = %d, want 200 (health must stay open)", rec.Code)
+	}
+}
+
+func TestMetricsAPIKeyOnDedicatedPort(t *testing.T) {
+	cfg := testConfig()
+	cfg.Security.APIKey = "s3cret"
+	cfg.Metrics.Addr = ":0"
+	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+	ms := srv.MetricsServer()
+	if ms == nil {
+		t.Fatal("expected a dedicated metrics server")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	ms.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("dedicated /metrics without key = %d, want 401", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	rec = httptest.NewRecorder()
+	ms.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dedicated /metrics with key = %d, want 200", rec.Code)
+	}
+}
+
 func hmacSHA256HexSigned(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
