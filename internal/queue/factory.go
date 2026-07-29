@@ -272,20 +272,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 
 func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, error) {
 	publishers := map[string]Publisher{}
-
-	var webhookEngine *webhookDeliveryEngine
-	getWebhookEngine := func() *webhookDeliveryEngine {
-		if webhookEngine == nil {
-			workers := cfg.Server.FanoutConcurrency
-			queueSize, drain := webhookEngineSizing(cfg)
-			var wm WebhookMetrics
-			if m, ok := f.metrics.(WebhookMetrics); ok {
-				wm = m
-			}
-			webhookEngine = newWebhookDeliveryEngine(workers, queueSize, drain, wm, f.logger)
-		}
-		return webhookEngine
-	}
+	var webhookPubs []*WebhookPublisher
 
 	for id, destination := range cfg.Destinations {
 		if !destinationUsed(cfg, id) {
@@ -298,6 +285,11 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				URL: rabbit.URL, Exchange: rabbit.Exchange, ExchangeType: rabbit.ExchangeType,
 				Durable: rabbit.Durable, PublishTimeout: rabbit.PublishTimeout,
 				DeclareQueues: rabbit.DeclareQueues, PublisherChannels: rabbit.PublisherChannels,
+				Retry: RetryPolicy{
+					MaxAttempts:    rabbit.Retry.MaxAttempts,
+					InitialBackoff: rabbit.Retry.InitialBackoff,
+					MaxBackoff:     rabbit.Retry.MaxBackoff,
+				},
 				TLS: RabbitMQTLSConfig{
 					CACert: rabbit.TLS.CACert, ClientCert: rabbit.TLS.ClientCert, ClientKey: rabbit.TLS.ClientKey,
 					ServerName: rabbit.TLS.ServerName, InsecureSkipVerify: rabbit.TLS.InsecureSkipVerify,
@@ -390,25 +382,53 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			if f.webhookConnector != nil {
 				publisher, err = f.webhookConnector(ctx, id, destination.Webhook, collectWebhookTargets(cfg, id))
 			} else {
-				// The publisher needs its own metrics ref for the drop counter; the
-				// engine got its copy in getWebhookEngine() above.
 				var wm WebhookMetrics
 				if m, ok := f.metrics.(WebhookMetrics); ok {
 					wm = m
 				}
-				publisher, err = NewWebhookPublisher(getWebhookEngine(), destination.Webhook, id, collectWebhookTargets(cfg, id), wm, f.logger)
+				publisher, err = NewWebhookPublisher(destination.Webhook, id, collectWebhookTargets(cfg, id), WebhookPublisherOptions{
+					Workers:      cfg.Server.FanoutConcurrency,
+					DefaultDrain: cfg.Server.ShutdownTimeout,
+					Metrics:      wm,
+					Logger:       f.logger,
+				})
 			}
 			if err != nil {
 				return nil, err
+			}
+			// Only real webhook publishers carry a dead-letter engine to wire in
+			// phase two; a test-seam connector may return any Publisher.
+			if wp, ok := publisher.(*WebhookPublisher); ok {
+				webhookPubs = append(webhookPubs, wp)
 			}
 			publishers[id] = publisher
 		default:
 			return nil, fmt.Errorf("unsupported destinations.%s.type %q", id, destination.Type)
 		}
 	}
+
+	// Phase two: wire dead-letter routing. A failed async webhook delivery calls
+	// this resolver, which routes the copied message to the (already-built)
+	// dead-letter destination's publisher. Validation guarantees the target is a
+	// non-webhook destination, so no delivery cycle is possible.
+	dlqPublish := func(ctx context.Context, destID, target string, msg Message) error {
+		p, ok := publishers[destID]
+		if !ok {
+			return fmt.Errorf("dead-letter destination %q is not configured", destID)
+		}
+		return p.Publish(ctx, destID, target, msg)
+	}
+	for _, wp := range webhookPubs {
+		wp.setDeadLetterPublisher(dlqPublish)
+	}
+
 	return NewRoutingPublisher(publishers), nil
 }
 
+// destinationUsed reports whether a destination must be built: either it is the
+// target of an enabled endpoint route, or it is referenced as the dead-letter
+// destination of some endpoint-used webhook destination. The dead-letter level
+// is one deep only — DLQ targets are never webhook destinations.
 func destinationUsed(cfg config.Config, destinationID string) bool {
 	for _, endpoint := range cfg.Endpoints {
 		for _, route := range endpoint.DestinationRoutes() {
@@ -417,7 +437,58 @@ func destinationUsed(cfg config.Config, destinationID string) bool {
 			}
 		}
 	}
+	for id, dest := range cfg.Destinations {
+		if dest.Type != "webhook" || dest.Webhook.DeadLetter.Destination != destinationID {
+			continue
+		}
+		if endpointRoutesToDestination(cfg, id) {
+			return true
+		}
+	}
 	return false
+}
+
+// endpointRoutesToDestination reports whether any enabled endpoint routes to the
+// given destination id (the direct-use test, without the dead-letter expansion).
+func endpointRoutesToDestination(cfg config.Config, destinationID string) bool {
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination == destinationID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// deadLetterTargets returns the dead-letter target names that route to
+// destinationID from endpoint-used webhook destinations. These are merged into
+// the backend target collectors so a DLQ target with no direct endpoint route is
+// still configured (and declared, for rabbitmq declare_queues). Deduped.
+func deadLetterTargets(cfg config.Config, destinationID string) []string {
+	seen := map[string]struct{}{}
+	var targets []string
+	for id, dest := range cfg.Destinations {
+		if dest.Type != "webhook" {
+			continue
+		}
+		dl := dest.Webhook.DeadLetter
+		if dl.Destination != destinationID || dl.Target == "" {
+			continue
+		}
+		if !endpointRoutesToDestination(cfg, id) {
+			continue
+		}
+		if _, ok := seen[dl.Target]; ok {
+			continue
+		}
+		seen[dl.Target] = struct{}{}
+		targets = append(targets, dl.Target)
+	}
+	return targets
 }
 
 func collectQueueDeclarations(cfg config.Config, destinationID string) []QueueDeclaration {
@@ -444,6 +515,25 @@ func collectQueueDeclarations(cfg config.Config, destinationID string) []QueueDe
 			byQueue[route.Target] = declaration
 		}
 	}
+	// Merge dead-letter targets routed here from webhook destinations. A DLQ
+	// queue has no endpoint route, so it is declared based on the rabbitmq
+	// destination's declare_queues flag (mirroring the auto-declare default).
+	rabbit := cfg.Destinations[destinationID].RabbitMQ
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := byQueue[t]; ok {
+			continue
+		}
+		declaration := QueueDeclaration{Name: t, CreateQueue: rabbit.DeclareQueues}
+		declaration.Options = mergeQueueOptions(rabbit.QueueDefaults, config.RabbitMQQueueOptions{})
+		if rabbit.DeadLetter.Enabled {
+			dlq := rabbit.DeadLetter
+			declaration.DLQ = &DeadLetterDeclaration{
+				Exchange: dlq.Exchange, ExchangeType: dlq.ExchangeType, Queue: dlq.Queue,
+				RoutingKey: dlq.RoutingKey, CreateQueue: dlq.CreateQueue, Durable: &dlq.Durable,
+			}
+		}
+		byQueue[t] = declaration
+	}
 	declarations := make([]QueueDeclaration, 0, len(byQueue))
 	for _, declaration := range byQueue {
 		declarations = append(declarations, declaration)
@@ -466,6 +556,12 @@ func collectQueues(cfg config.Config, destinationID string) []string {
 				seen[route.Target] = struct{}{}
 				queues = append(queues, route.Target)
 			}
+		}
+	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			queues = append(queues, t)
 		}
 	}
 	return queues
@@ -495,6 +591,12 @@ func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
 			})
 		}
 	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, SQSTarget{Name: t})
+		}
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets
 }
@@ -522,6 +624,12 @@ func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
 			})
 		}
 	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, SNSTarget{Name: t})
+		}
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets
 }
@@ -542,6 +650,12 @@ func collectS3Targets(cfg config.Config, destinationID string) []S3Target {
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, S3Target{Name: route.Target})
+		}
+	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, S3Target{Name: t})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
@@ -566,6 +680,12 @@ func collectPostgresTargets(cfg config.Config, destinationID string) []PostgresT
 			targets = append(targets, PostgresTarget{Name: route.Target})
 		}
 	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, PostgresTarget{Name: t})
+		}
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets
 }
@@ -586,6 +706,12 @@ func collectMongoTargets(cfg config.Config, destinationID string) []MongoTarget 
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, MongoTarget{Name: route.Target})
+		}
+	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, MongoTarget{Name: t})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
@@ -625,6 +751,12 @@ func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget 
 			})
 		}
 	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, KafkaTarget{Topic: t})
+		}
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Topic < targets[j].Topic })
 	return targets
 }
@@ -652,6 +784,12 @@ func collectRedisTargets(cfg config.Config, destinationID string) []RedisTarget 
 				KeyTemplate:   route.RedisOptions.KeyTemplate,
 				Create:        route.Create,
 			})
+		}
+	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, RedisTarget{Name: t})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
@@ -692,32 +830,6 @@ func collectWebhookTargets(cfg config.Config, destinationID string) []WebhookTar
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	return targets
-}
-
-// webhookEngineSizing derives the shared queue size (max max_queue among webhook
-// destinations, default 1000) and drain timeout (max drain_timeout, else
-// server.shutdown_timeout).
-func webhookEngineSizing(cfg config.Config) (queueSize int, drain time.Duration) {
-	queueSize = 0
-	drain = 0
-	for _, d := range cfg.Destinations {
-		if d.Type != "webhook" {
-			continue
-		}
-		if d.Webhook.MaxQueue > queueSize {
-			queueSize = d.Webhook.MaxQueue
-		}
-		if d.Webhook.DrainTimeout > drain {
-			drain = d.Webhook.DrainTimeout
-		}
-	}
-	if queueSize <= 0 {
-		queueSize = 1000
-	}
-	if drain <= 0 {
-		drain = cfg.Server.ShutdownTimeout
-	}
-	return queueSize, drain
 }
 
 func mergeQueueOptions(defaults, override config.RabbitMQQueueOptions) QueueOptions {

@@ -80,6 +80,43 @@ func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
 	}
 }
 
+func TestFactoryPopulatesRabbitMQRetryConfig(t *testing.T) {
+	called := map[string]RabbitMQConfig{}
+	factory := NewFactory(FactoryOptions{
+		RabbitMQConnector: func(ctx context.Context, destinationID string, cfg RabbitMQConfig) (Publisher, error) {
+			called[destinationID] = cfg
+			return &recordingPublisher{}, nil
+		},
+	})
+
+	_, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"billing": {
+				Type: "rabbitmq",
+				RabbitMQ: config.RabbitMQConfig{
+					URL: "amqp://billing", Exchange: "hookway.billing", ExchangeType: "direct",
+					Retry: config.RetryPolicyConfig{MaxAttempts: 5, InitialBackoff: 200 * time.Millisecond, MaxBackoff: 5 * time.Second},
+				},
+			},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"paddle_billing": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{{
+					Destination: "billing", Target: "billing-events", Create: true,
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	billing := called["billing"]
+	if billing.Retry != (RetryPolicy{MaxAttempts: 5, InitialBackoff: 200 * time.Millisecond, MaxBackoff: 5 * time.Second}) {
+		t.Fatalf("retry config not populated: %#v", billing.Retry)
+	}
+}
+
 func TestFactoryCreatesPublishersAndDeclarationsForFanoutDestinations(t *testing.T) {
 	called := map[string]RabbitMQConfig{}
 	factory := NewFactory(FactoryOptions{
@@ -672,9 +709,20 @@ type recordingPublisher struct {
 	destinationID string
 	queue         string
 	msg           Message
+
+	// rejectAfterClose makes Publish return an error once Close has been
+	// called, mimicking a real backend (e.g. rabbitmq/SQS client) that
+	// rejects publishes after shutdown. Used to catch Close-ordering bugs
+	// where a dead-letter target is closed before the webhook publisher
+	// that drains into it. Default false preserves existing callers'
+	// behavior of recording publishes unconditionally.
+	rejectAfterClose bool
 }
 
 func (r *recordingPublisher) Publish(ctx context.Context, destinationID, queue string, msg Message) error {
+	if r.rejectAfterClose && r.closed {
+		return fmt.Errorf("recordingPublisher %q: publish after close", destinationID)
+	}
 	r.published++
 	r.destinationID = destinationID
 	r.queue = queue

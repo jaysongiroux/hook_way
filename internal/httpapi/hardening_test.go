@@ -265,6 +265,81 @@ func TestSpoofedForwardedHeaderIgnoredUnlessPeerIsTrustedProxy(t *testing.T) {
 	}
 }
 
+func TestSourceIPWalksForwardedForRightToLeftSkippingTrustedProxies(t *testing.T) {
+	cfg := testConfig()
+	cfg.Security.TrustedProxyHeaders = true
+	cfg.Security.TrustedProxies = []string{"10.0.0.0/8"}
+	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+
+	newReq := func(remoteAddr, xff string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = remoteAddr
+		if xff != "" {
+			req.Header.Set("X-Forwarded-For", xff)
+		}
+		return req
+	}
+
+	t.Run("spoofed leftmost entry ignored; real client from the right is used", func(t *testing.T) {
+		// A single untrusted hop between the spoofed client-controlled entry
+		// and the trusted immediate peer: the spoofed leftmost value must be
+		// ignored since it is not the rightmost non-trusted-proxy entry...
+		// but with only one entry it IS the rightmost, so use two entries
+		// where the attacker prepends a fake allowlisted IP to the left of
+		// their own real (rightmost) address.
+		req := newReq("10.0.0.9:1234", "203.0.113.10, 198.51.100.77")
+		if got := srv.sourceIP(req); got != "198.51.100.77" {
+			t.Fatalf("sourceIP = %q, want rightmost entry 198.51.100.77 (leftmost spoofed entry must be ignored)", got)
+		}
+	})
+
+	t.Run("chain of two trusted proxies resolves to real client", func(t *testing.T) {
+		req := newReq("10.0.0.9:1234", "203.0.113.10, 10.0.0.5")
+		if got := srv.sourceIP(req); got != "203.0.113.10" {
+			t.Fatalf("sourceIP = %q, want real client 203.0.113.10 after skipping trusted proxy hop 10.0.0.5", got)
+		}
+	})
+
+	t.Run("garbage entry stops the walk and uses the last good rightmost hop", func(t *testing.T) {
+		req := newReq("10.0.0.9:1234", "not-an-ip, 10.0.0.5")
+		if got := srv.sourceIP(req); got != "10.0.0.5" {
+			t.Fatalf("sourceIP = %q, want last good hop 10.0.0.5 (never continue toward the client-controlled left end past a malformed entry)", got)
+		}
+	})
+
+	t.Run("all entries are trusted proxies falls back to leftmost", func(t *testing.T) {
+		req := newReq("10.0.0.9:1234", "10.0.0.1, 10.0.0.2")
+		if got := srv.sourceIP(req); got != "10.0.0.1" {
+			t.Fatalf("sourceIP = %q, want leftmost entry 10.0.0.1 when every hop is a trusted proxy", got)
+		}
+	})
+
+	t.Run("untrusted peer ignores XFF entirely", func(t *testing.T) {
+		req := newReq("203.0.113.200:1234", "203.0.113.10, 10.0.0.5")
+		if got := srv.sourceIP(req); got != "203.0.113.200" {
+			t.Fatalf("sourceIP = %q, want peer address 203.0.113.200 since the peer is not a trusted proxy", got)
+		}
+	})
+}
+
+func TestSourceIPUsesRightmostEntryWhenTrustedProxiesNotConfigured(t *testing.T) {
+	// trusted_proxy_headers on with no trusted_proxies configured trusts any
+	// peer (legacy permissive mode). There are no "trusted proxy" addresses
+	// to recognize and skip in the XFF chain, so the walker returns the
+	// rightmost entry immediately.
+	cfg := testConfig()
+	cfg.Security.TrustedProxyHeaders = true
+	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.200:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.77")
+
+	if got := srv.sourceIP(req); got != "198.51.100.77" {
+		t.Fatalf("sourceIP = %q, want rightmost entry 198.51.100.77", got)
+	}
+}
+
 func TestPublishFailureDoesNotPoisonReplayCacheForRetry(t *testing.T) {
 	cfg := testConfig()
 	endpoint := cfg.Endpoints["paddle_billing"]

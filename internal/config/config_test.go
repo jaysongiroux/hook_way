@@ -326,6 +326,8 @@ func TestLoadReturnsHelpfulValidationErrors(t *testing.T) {
 }
 
 func TestLoadReportsInvalidDurationWithFieldPath(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	body := replace(validYAML(), "read_timeout: \"5s\"", "read_timeout: \"soon\"")
 	_, err := Load(writeConfig(t, body))
 	if err == nil {
@@ -352,6 +354,8 @@ func TestExampleConfigIsValid(t *testing.T) {
 }
 
 func TestLoadReportsUnknownFieldsAndYAMLSyntax(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	_, err := Load(writeConfig(t, replace(validYAML(), "server:", "server:\n  typo: true")))
 	if err == nil {
 		t.Fatal("expected unknown field error")
@@ -590,6 +594,7 @@ server:
   write_timeout: "10s"
   idle_timeout: "60s"
   shutdown_timeout: "10s"
+  publish_timeout: "10s"
   max_body_bytes: 1048576
   fanout_concurrency: 4
 security:
@@ -2015,6 +2020,73 @@ func TestConvertDestinationWebhook(t *testing.T) {
 	}
 }
 
+func TestConvertDestinationRabbitMQRetry(t *testing.T) {
+	raw := rawDestinationConfig{Type: "rabbitmq"}
+	raw.RabbitMQ.URL = "amqp://x"
+	raw.RabbitMQ.Exchange = "e"
+	raw.RabbitMQ.ExchangeType = "direct"
+	raw.RabbitMQ.Retry.MaxAttempts = 5
+	raw.RabbitMQ.Retry.InitialBackoff = "200ms"
+	raw.RabbitMQ.Retry.MaxBackoff = "5s"
+
+	dest, issues := convertDestination("destinations.billing", raw)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+	if dest.RabbitMQ.Retry.MaxAttempts != 5 {
+		t.Fatalf("max_attempts not mapped: %#v", dest.RabbitMQ.Retry)
+	}
+	if dest.RabbitMQ.Retry.InitialBackoff != 200*time.Millisecond {
+		t.Fatalf("initial_backoff not mapped: %#v", dest.RabbitMQ.Retry)
+	}
+	if dest.RabbitMQ.Retry.MaxBackoff != 5*time.Second {
+		t.Fatalf("max_backoff not mapped: %#v", dest.RabbitMQ.Retry)
+	}
+}
+
+func TestConvertDestinationRabbitMQRetryUnsetPreservesZero(t *testing.T) {
+	raw := rawDestinationConfig{Type: "rabbitmq"}
+	raw.RabbitMQ.URL = "amqp://x"
+	raw.RabbitMQ.Exchange = "e"
+	raw.RabbitMQ.ExchangeType = "direct"
+
+	dest, issues := convertDestination("destinations.billing", raw)
+	if len(issues) != 0 {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+	if dest.RabbitMQ.Retry != (RetryPolicyConfig{}) {
+		t.Fatalf("unset retry should stay zero so the queue layer applies its own defaults: %#v", dest.RabbitMQ.Retry)
+	}
+}
+
+func TestValidateRabbitMQRetry(t *testing.T) {
+	mk := func(r RetryPolicyConfig) Config {
+		return Config{
+			Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+			Destinations: map[string]DestinationConfig{"billing": {Type: "rabbitmq", RabbitMQ: RabbitMQConfig{
+				URL: "amqp://x", Exchange: "e", ExchangeType: "direct", Retry: r,
+			}}},
+			Endpoints: map[string]EndpointConfig{"e": {Enabled: true, Path: "/e", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+				Destinations: []EndpointDestinationConfig{{Destination: "billing", Target: "orders"}}}},
+		}
+	}
+	if iss := mk(RetryPolicyConfig{MaxAttempts: 3, InitialBackoff: 100 * time.Millisecond, MaxBackoff: time.Second}).ValidationIssues(); len(iss) != 0 {
+		t.Fatalf("valid retry rejected: %#v", iss)
+	}
+	if iss := mk(RetryPolicyConfig{MaxAttempts: -1}).ValidationIssues(); !hasIssue(iss, "destinations.billing.rabbitmq.retry.max_attempts") {
+		t.Fatalf("negative max_attempts not rejected: %#v", iss)
+	}
+	if iss := mk(RetryPolicyConfig{InitialBackoff: -time.Second}).ValidationIssues(); !hasIssue(iss, "destinations.billing.rabbitmq.retry.initial_backoff") {
+		t.Fatalf("negative initial_backoff not rejected: %#v", iss)
+	}
+	if iss := mk(RetryPolicyConfig{MaxBackoff: -time.Second}).ValidationIssues(); !hasIssue(iss, "destinations.billing.rabbitmq.retry.max_backoff") {
+		t.Fatalf("negative max_backoff not rejected: %#v", iss)
+	}
+	if iss := mk(RetryPolicyConfig{InitialBackoff: 5 * time.Second, MaxBackoff: time.Second}).ValidationIssues(); !hasIssue(iss, "destinations.billing.rabbitmq.retry.initial_backoff") {
+		t.Fatalf("initial > max not rejected: %#v", iss)
+	}
+}
+
 func TestValidateWebhook(t *testing.T) {
 	mk := func(w WebhookConfig) Config {
 		return Config{
@@ -2052,5 +2124,66 @@ func TestValidateWebhook(t *testing.T) {
 	iss = mk(WebhookConfig{URL: "https://x", Auth: WebhookAuthConfig{Type: "hmac", Secret: "s3cr3t", Scheme: "sha1"}}).ValidationIssues()
 	if !hasIssue(iss, "destinations.notify.webhook.auth.scheme") {
 		t.Fatalf("bad hmac scheme not rejected; got %#v", iss)
+	}
+}
+
+func TestLoadParsesLoggingLevel(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	for _, level := range []string{"debug", "info", "warn", "error", ""} {
+		t.Run("level="+level, func(t *testing.T) {
+			body := validYAML()
+			if level != "" {
+				body += "logging:\n  level: \"" + level + "\"\n"
+			}
+			cfg, err := Load(writeConfig(t, body))
+			if err != nil {
+				t.Fatalf("Load returned error: %v", err)
+			}
+			if cfg.Logging.Level != level {
+				t.Fatalf("Logging.Level = %q, want %q", cfg.Logging.Level, level)
+			}
+		})
+	}
+}
+
+func TestValidationRejectsInvalidLoggingLevel(t *testing.T) {
+	cfg := Config{Logging: LoggingConfig{Level: "trace"}}
+	if !hasIssue(cfg.ValidationIssues(), "logging.level") {
+		t.Fatalf("invalid logging.level not rejected: %#v", cfg.ValidationIssues())
+	}
+}
+
+func TestValidationAcceptsEmptyOrValidLoggingLevel(t *testing.T) {
+	for _, level := range []string{"", "debug", "info", "warn", "error"} {
+		cfg := Config{Logging: LoggingConfig{Level: level}}
+		if hasIssue(cfg.ValidationIssues(), "logging.level") {
+			t.Fatalf("valid logging.level %q rejected: %#v", level, cfg.ValidationIssues())
+		}
+	}
+}
+
+func TestExpandEnvLenientExpandsKnownAndReportsMissing(t *testing.T) {
+	t.Setenv("KNOWN_VAR", "known-value")
+	os.Unsetenv("DEFINITELY_UNSET_VAR")
+
+	expanded, missing := ExpandEnvLenient("known=${KNOWN_VAR} missing=${DEFINITELY_UNSET_VAR}")
+
+	if !strings.Contains(expanded, "known=known-value") {
+		t.Fatalf("expanded = %q, want known var substituted", expanded)
+	}
+	if !strings.Contains(expanded, "missing=${DEFINITELY_UNSET_VAR}") {
+		t.Fatalf("expanded = %q, want missing var left as opaque literal (not emptied)", expanded)
+	}
+	if len(missing) != 1 || missing[0] != "DEFINITELY_UNSET_VAR" {
+		t.Fatalf("missing = %#v, want [DEFINITELY_UNSET_VAR]", missing)
+	}
+}
+
+func TestExpandEnvLenientNoMissingReturnsEmptySlice(t *testing.T) {
+	t.Setenv("KNOWN_VAR", "known-value")
+	_, missing := ExpandEnvLenient("known=${KNOWN_VAR}")
+	if len(missing) != 0 {
+		t.Fatalf("missing = %#v, want none", missing)
 	}
 }

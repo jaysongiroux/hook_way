@@ -12,11 +12,16 @@ import (
 )
 
 type Envelope struct {
-	SchemaVersion      string         `json:"schema_version"`
-	ID                 string         `json:"id"`
-	IdempotencyKey     string         `json:"idempotency_key,omitempty"`
-	RequestID          string         `json:"request_id,omitempty"`
-	TraceID            string         `json:"trace_id,omitempty"`
+	SchemaVersion  string `json:"schema_version"`
+	ID             string `json:"id"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	TraceID        string `json:"trace_id,omitempty"`
+	// Traceparent is the outbound W3C traceparent header value (additive;
+	// schema_version stays 1.0). It carries the inbound header verbatim when
+	// syntactically valid, or a synthesized one derived from TraceID
+	// otherwise. See httpapi.traceparentFromRequest.
+	Traceparent        string         `json:"traceparent,omitempty"`
 	Endpoint           string         `json:"endpoint"`
 	DestinationQueueID string         `json:"destination_queue_id"`
 	Queue              string         `json:"queue"`
@@ -60,6 +65,7 @@ type EnvelopeOptions struct {
 	SourceIP           string
 	RequestID          string
 	TraceID            string
+	Traceparent        string
 	AuthType           string
 	AuthScheme         string
 	IdempotencyKey     string
@@ -83,6 +89,7 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 		IdempotencyKey:     opts.IdempotencyKey,
 		RequestID:          opts.RequestID,
 		TraceID:            opts.TraceID,
+		Traceparent:        opts.Traceparent,
 		Endpoint:           opts.Endpoint,
 		DestinationQueueID: opts.DestinationQueueID,
 		Queue:              opts.Queue,

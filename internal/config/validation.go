@@ -81,11 +81,25 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	if c.Server.MaxBodyBytes <= 0 {
 		issues = append(issues, validationError("server.max_body_bytes", "must be a positive integer", "set a safe byte limit, for example 1048576"))
 	}
-	if c.Server.MaxInflightRequests < 0 {
-		issues = append(issues, validationError("server.max_inflight_requests", "must be zero (unlimited) or a positive integer", "set a bound such as 256 to apply backpressure under load"))
+	if c.Server.MaxInflightRequests < maxInflightRequestsUnlimited {
+		issues = append(issues, validationError("server.max_inflight_requests", "must be -1 (unlimited) or a positive integer", fmt.Sprintf("omit the field or set 0 to use the default of %d, or -1 to disable the limit", defaultMaxInflightRequests)))
 	}
 	if c.Server.FanoutConcurrency < 0 {
 		issues = append(issues, validationError("server.fanout_concurrency", "must be zero (default) or a positive integer", "set a bound such as 8"))
+	}
+	if c.Server.PublishTimeout > c.Server.ShutdownTimeout {
+		issues = append(issues, validationError(
+			"server.publish_timeout",
+			fmt.Sprintf("must be less than or equal to server.shutdown_timeout (publish_timeout=%s, shutdown_timeout=%s)", c.Server.PublishTimeout, c.Server.ShutdownTimeout),
+			"a synchronous publish that outlives shutdown_timeout can make an otherwise clean SIGTERM shutdown time out and report failure; lower server.publish_timeout or raise server.shutdown_timeout",
+		))
+	}
+	if c.Server.PublishTimeout > c.Server.WriteTimeout {
+		issues = append(issues, validationError(
+			"server.publish_timeout",
+			fmt.Sprintf("must be less than or equal to server.write_timeout (publish_timeout=%s, write_timeout=%s)", c.Server.PublishTimeout, c.Server.WriteTimeout),
+			"a synchronous webhook response can't be written after write_timeout elapses, so a publish that runs longer causes the sender to see a spurious timeout and retry; lower server.publish_timeout or raise server.write_timeout",
+		))
 	}
 	for i, header := range c.Security.RedactedHeaderDenylist {
 		if !safeHeaderName.MatchString(header) {
@@ -212,6 +226,29 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			if w.MaxQueue < 0 {
 				issues = append(issues, validationError(fieldPrefix+".webhook.max_queue", "must be zero (default) or a positive integer", "set a buffer size such as 1000"))
 			}
+			switch w.DeliveryMode {
+			case "", "sync", "async":
+				// ok
+			default:
+				issues = append(issues, validationError(fieldPrefix+".webhook.delivery_mode", fmt.Sprintf("%q is not supported", w.DeliveryMode), "use \"sync\" or \"async\", or omit for async"))
+			}
+			dlSet := w.DeadLetter.Destination != "" || w.DeadLetter.Target != ""
+			if dlSet {
+				if w.DeliveryMode == "sync" {
+					issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter", "dead_letter only applies to async delivery", "remove dead_letter or set delivery_mode to \"async\""))
+				}
+				if (w.DeadLetter.Destination == "") != (w.DeadLetter.Target == "") {
+					issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter", "dead_letter.destination and dead_letter.target must both be set", "set both, or remove the dead_letter block"))
+				}
+				if w.DeadLetter.Destination != "" {
+					dlq, ok := c.Destinations[w.DeadLetter.Destination]
+					if !ok {
+						issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter.destination", fmt.Sprintf("references unknown destination %q", w.DeadLetter.Destination), "set dead_letter.destination to the id of a configured non-webhook destination"))
+					} else if dlq.Type == "webhook" {
+						issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter.destination", "dead_letter destination must not be a webhook destination", "point dead_letter.destination at a durable backend such as a rabbitmq, sqs, or s3 destination"))
+					}
+				}
+			}
 			if (w.TLS.ClientCert == "") != (w.TLS.ClientKey == "") {
 				issues = append(issues, validationError(fieldPrefix+".webhook.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
 			}
@@ -265,6 +302,19 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				issues = append(issues, validationError(rabbitPrefix+".publisher_channels", "must be zero (default) or a positive integer", "set publish concurrency such as 8"))
 			}
 			issues = append(issues, queueOptionValidationIssues(rabbitPrefix+".queue_defaults", dest.RabbitMQ.QueueDefaults)...)
+			retry := dest.RabbitMQ.Retry
+			if retry.MaxAttempts < 0 {
+				issues = append(issues, validationError(rabbitPrefix+".retry.max_attempts", "must be zero (default) or a positive integer", "set a value such as 3"))
+			}
+			if retry.InitialBackoff < 0 {
+				issues = append(issues, validationError(rabbitPrefix+".retry.initial_backoff", "must be zero (default) or a positive duration", "set a value such as \"100ms\""))
+			}
+			if retry.MaxBackoff < 0 {
+				issues = append(issues, validationError(rabbitPrefix+".retry.max_backoff", "must be zero (default) or a positive duration", "set a value such as \"2s\""))
+			}
+			if retry.InitialBackoff > 0 && retry.MaxBackoff > 0 && retry.InitialBackoff > retry.MaxBackoff {
+				issues = append(issues, validationError(rabbitPrefix+".retry.initial_backoff", "must be less than or equal to retry.max_backoff", "lower initial_backoff or raise max_backoff"))
+			}
 			tls := dest.RabbitMQ.TLS
 			if (tls.ClientCert == "") != (tls.ClientKey == "") {
 				issues = append(issues, validationError(rabbitPrefix+".tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
@@ -290,6 +340,12 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	}
 	if c.Metrics.Enabled && (c.Metrics.Path == "" || c.Metrics.Path[0] != '/') {
 		issues = append(issues, validationError("metrics.path", "must start with / when metrics are enabled", "set metrics.path to \"/metrics\""))
+	}
+	switch c.Logging.Level {
+	case "", "debug", "info", "warn", "error":
+		// ok
+	default:
+		issues = append(issues, validationError("logging.level", fmt.Sprintf("%q is not supported", c.Logging.Level), "use \"debug\", \"info\", \"warn\", or \"error\", or omit for the default of \"info\""))
 	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.RequestsPerMinute <= 0 {

@@ -439,17 +439,120 @@ func TestRabbitMQPublisherRetriesPublishFailures(t *testing.T) {
 	}
 }
 
+// TestRabbitMQPublisherDefaultsToThreeRetryAttempts guards the B2 fix: an
+// unset Retry.MaxAttempts must drive 3 attempts (2 retries) rather than the
+// old default of 1 (no retry at all), so transient confirm/connect failures
+// are retried out of the box.
+func TestRabbitMQPublisherDefaultsToThreeRetryAttempts(t *testing.T) {
+	ctx := context.Background()
+	metrics := &rabbitMQMetricsRecorder{}
+	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
+		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry.default", ExchangeType: "direct", Durable: true,
+		PublishTimeout: 2 * time.Second,
+		Metrics:        metrics,
+	})
+	if err != nil {
+		t.Fatalf("constructor should tolerate unavailable startup: %v", err)
+	}
+
+	msg := Message{ID: "evt_retry_default", Endpoint: "paddle_billing", Body: map[string]any{"ok": true}, ReceivedAt: time.Now().UTC()}
+	if err := pub.Publish(ctx, "billing", "billing-events", msg); err == nil {
+		t.Fatal("expected publish error")
+	}
+	if metrics.retries != 2 {
+		t.Fatalf("expected 2 retries (3 attempts total) by default, got %d", metrics.retries)
+	}
+}
+
+// TestRabbitMQPublisherHonorsConfiguredMaxAttempts uses a value that differs
+// from both the old (1) and new (3) hardcoded defaults, proving max_attempts
+// is actually threaded through from config rather than hardcoded.
+func TestRabbitMQPublisherHonorsConfiguredMaxAttempts(t *testing.T) {
+	ctx := context.Background()
+	metrics := &rabbitMQMetricsRecorder{}
+	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
+		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry.configured", ExchangeType: "direct", Durable: true,
+		PublishTimeout: 2 * time.Second,
+		Retry:          RetryPolicy{MaxAttempts: 5, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		Metrics:        metrics,
+	})
+	if err != nil {
+		t.Fatalf("constructor should tolerate unavailable startup: %v", err)
+	}
+
+	msg := Message{ID: "evt_retry_configured", Endpoint: "paddle_billing", Body: map[string]any{"ok": true}, ReceivedAt: time.Now().UTC()}
+	if err := pub.Publish(ctx, "billing", "billing-events", msg); err == nil {
+		t.Fatal("expected publish error")
+	}
+	if metrics.retries != 4 {
+		t.Fatalf("expected 4 retries (5 attempts total), got %d", metrics.retries)
+	}
+}
+
+// TestRabbitMQPublisherMandatoryUnroutableFailsWithoutRetryStorm publishes to
+// an exchange with no bound queue. A mandatory publish to an unroutable
+// routing key is broker-acked (confirm) but also returned (basic.return); by
+// spec the broker sends the return before the ack, so draining the return
+// channel right after receiving the ack reliably observes it. This must
+// surface as a Publish error and fire the unroutable metric exactly once —
+// not burn the configured retry budget, since "no binding for this routing
+// key" is a terminal config error, not a transient one.
+func TestRabbitMQPublisherMandatoryUnroutableFailsWithoutRetryStorm(t *testing.T) {
+	ctx := context.Background()
+	container, err := runRabbitMQ(ctx)
+	if err != nil {
+		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
+	}
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	url, err := container.AmqpURL(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metrics := &rabbitMQMetricsRecorder{}
+	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
+		URL: url, Exchange: "hookway.unroutable", ExchangeType: "direct", Durable: true,
+		PublishTimeout: 5 * time.Second,
+		// No DeclareQueues/Queues: the exchange exists but nothing is bound to
+		// "no-such-route", so a mandatory publish to it is unroutable.
+		Retry:   RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
+		Metrics: metrics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+
+	msg := Message{ID: "evt_unroutable", Endpoint: "paddle_billing", Body: map[string]any{"ok": true}, ReceivedAt: time.Now().UTC()}
+	if err := pub.Publish(ctx, "billing", "no-such-route", msg); err == nil {
+		t.Fatal("expected publish error for unroutable message")
+	}
+	if metrics.unroutable != 1 {
+		t.Fatalf("expected unroutable metric to fire once, got %d", metrics.unroutable)
+	}
+	if metrics.retries != 0 {
+		t.Fatalf("unroutable is a terminal config error and must not retry; got %d retries", metrics.retries)
+	}
+	if metrics.confirms != 0 {
+		t.Fatalf("an unroutable publish must not count as a successful confirm; got %d", metrics.confirms)
+	}
+}
+
 type rabbitMQMetricsRecorder struct {
 	reconnects int
 	confirms   int
 	retries    int
 	dlqs       int
+	unroutable int
 }
 
 func (r *rabbitMQMetricsRecorder) RabbitMQReconnect()         { r.reconnects++ }
 func (r *rabbitMQMetricsRecorder) RabbitMQPublishConfirm()    { r.confirms++ }
 func (r *rabbitMQMetricsRecorder) RabbitMQPublishRetry()      { r.retries++ }
 func (r *rabbitMQMetricsRecorder) RabbitMQDeadLetterPublish() { r.dlqs++ }
+func (r *rabbitMQMetricsRecorder) RabbitMQUnroutable(destinationQueueID, queue string) {
+	r.unroutable++
+}
 
 func runRabbitMQ(ctx context.Context) (container *tcrabbitmq.RabbitMQContainer, err error) {
 	defer func() {
@@ -481,5 +584,43 @@ func TestRabbitMQEagerConnectFailureLogs(t *testing.T) {
 	line := lastQueueLogLine(t, &buf, "rabbitmq initial connect failed; will retry on publish")
 	if line == nil || line["level"] != "WARN" || line["destination"] == nil {
 		t.Fatalf("missing eager-connect warn: %v", line)
+	}
+}
+
+// TestNextBackoffAppliesJitterWithinBand guards the D8 fix: nextBackoff must
+// apply +/-20% jitter to the doubled delay so many callers backing off at
+// once (e.g. every publisher reconnecting after a shared broker outage)
+// don't retry in lockstep. Doubling 100ms with no jitter would always yield
+// exactly 200ms; with jitter every sample should land in [160ms, 240ms] and,
+// across enough samples, actually vary.
+func TestNextBackoffAppliesJitterWithinBand(t *testing.T) {
+	base := 100 * time.Millisecond
+	want := 2 * base
+	lower := time.Duration(float64(want) * 0.8)
+	upper := time.Duration(float64(want) * 1.2)
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		got := nextBackoff(base, 0)
+		if got < lower || got > upper {
+			t.Fatalf("nextBackoff(%v, 0) = %v, want within [%v, %v]", base, got, lower, upper)
+		}
+		seen[got] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected jittered delays to vary across samples, got only %v", seen)
+	}
+}
+
+// TestNextBackoffJitterNeverExceedsMax guards the "cap applied after jitter"
+// requirement: even when jitter pushes the doubled delay above maxDelay, the
+// cap must still be hard.
+func TestNextBackoffJitterNeverExceedsMax(t *testing.T) {
+	base := time.Second
+	max := 1500 * time.Millisecond
+	for i := 0; i < 200; i++ {
+		got := nextBackoff(base, max)
+		if got > max {
+			t.Fatalf("nextBackoff(%v, %v) = %v, exceeds hard cap", base, max, got)
+		}
 	}
 }

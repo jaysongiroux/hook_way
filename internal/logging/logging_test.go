@@ -55,6 +55,80 @@ func TestStructuredRequestLogDoesNotLeakSecrets(t *testing.T) {
 	}
 }
 
+func TestSensitiveHeaderRedactsKeyAndAuthSubstrings(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("X-Api-Key", "topsecret")
+	headers.Set("X-Auth-User", "alice")
+	headers.Set("Accept-Language", "en-US")
+	headers.Set("Content-Type", "application/json")
+	headers.Set("X-GitHub-Delivery", "delivery-123")
+
+	redacted := FilterHeaders(headers, nil, nil)
+
+	for _, key := range []string{"x-api-key", "x-auth-user"} {
+		if got := redacted[key]; len(got) != 1 || got[0] != "redacted" {
+			t.Fatalf("%s not redacted: %#v", key, redacted)
+		}
+	}
+	for _, key := range []string{"accept-language", "content-type", "x-github-delivery"} {
+		if got := redacted[key]; len(got) == 0 || got[0] == "redacted" {
+			t.Fatalf("benign header %s unexpectedly redacted: %#v", key, redacted)
+		}
+	}
+}
+
+func TestParseLevel(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		input   string
+		want    slog.Level
+		wantErr bool
+	}{
+		{name: "empty defaults to info", input: "", want: slog.LevelInfo},
+		{name: "debug", input: "debug", want: slog.LevelDebug},
+		{name: "info", input: "info", want: slog.LevelInfo},
+		{name: "warn", input: "warn", want: slog.LevelWarn},
+		{name: "error", input: "error", want: slog.LevelError},
+		{name: "case insensitive", input: "DEBUG", want: slog.LevelDebug},
+		{name: "unsupported value", input: "trace", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseLevel(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseLevel(%q) error = nil, want error", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseLevel(%q) unexpected error: %v", tt.input, err)
+			}
+			if got != tt.want {
+				t.Fatalf("ParseLevel(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLevelVarGatesDebugOutput(t *testing.T) {
+	var buf bytes.Buffer
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(slog.LevelInfo)
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: levelVar}))
+
+	logger.Debug("debug line should be suppressed")
+	if strings.Contains(buf.String(), "debug line") {
+		t.Fatalf("debug line leaked at info level: %s", buf.String())
+	}
+
+	buf.Reset()
+	levelVar.Set(slog.LevelDebug)
+	logger.Debug("debug line should be emitted")
+	if !strings.Contains(buf.String(), "debug line") {
+		t.Fatalf("debug line missing at debug level: %s", buf.String())
+	}
+}
+
 func TestRequestLogLevelFollowsHTTPStatus(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

@@ -9,7 +9,14 @@ RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/hookway ./cmd/hookway
+# VERSION/COMMIT default to the same "dev"/"none" sentinels as
+# cmd/hookway/main.go's package-level vars, so an image built without
+# --build-arg (e.g. a local `docker build .`) still produces a working binary.
+# The Makefile's docker-build target passes both from `git describe`/`git
+# rev-parse`; release.yml's build-push step passes them from the CI checkout.
+ARG VERSION=dev
+ARG COMMIT=none
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hookway ./cmd/hookway
 
 FROM scratch
 USER 65532:65532

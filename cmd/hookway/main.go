@@ -17,8 +17,18 @@ import (
 	"github.com/jasongiroux/hookway/internal/configapi"
 	"github.com/jasongiroux/hookway/internal/editor"
 	"github.com/jasongiroux/hookway/internal/httpapi"
+	hooklogging "github.com/jasongiroux/hookway/internal/logging"
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
+)
+
+// version and commit identify the build. They default to "dev"/"none" for a
+// plain `go build`/`go run` and are overridden at build time via
+// `-ldflags "-X main.version=... -X main.commit=..."` (see the Makefile's
+// build target and the Dockerfile).
+var (
+	version = "dev"
+	commit  = "none"
 )
 
 func main() {
@@ -39,15 +49,34 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "editor" {
 		return runEditor(args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "version" {
+		fmt.Fprintf(stdout, "hookway %s (%s)\n", version, commit)
+		return 0
+	}
 	return runServe(args, stdout, stderr)
 }
 
 // runValidate checks config syntax and semantic validation without opening network connections.
+//
+// Env-expansion behavior across the two output modes and --no-env:
+//   - plain validate (no flags): config.NewService().Validate → config.Load,
+//     which expands ${VAR} strictly and HARD-fails (nonzero exit, no output
+//     other than the error) on any referenced-but-unset variable. Unchanged
+//     by this function's other additions.
+//   - validate --json: configapi.ValidateWithEnv(data, true) also expands
+//     ${VAR}, but a missing variable is reported as a "config.env.<NAME>"
+//     issue at severity "warning" (exit 0 if it's the only issue) rather than
+//     aborting — CI commonly validates without production secrets set.
+//   - --no-env (either mode): skips expansion entirely, so ${VAR} is left as
+//     an opaque literal and only structural/syntax issues can appear. Plain
+//     --no-env uses config.NewService().ValidateBytes (the same non-expanding
+//     path ValidateWithEnv(_, false) delegates to) instead of Load.
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configFlag := flags.String("config", "", "path to Hookway YAML config")
 	jsonOut := flags.Bool("json", false, "emit validation results as JSON")
+	noEnv := flags.Bool("no-env", false, "skip ${VAR} environment expansion; check syntax and structure only")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -63,16 +92,32 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "read config: %v\n", err)
 			return 1
 		}
-		resp := configapi.Validate(data)
+		resp := configapi.ValidateWithEnv(data, !*noEnv)
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(resp); err != nil {
 			fmt.Fprintf(stderr, "encode json: %v\n", err)
 			return 1
 		}
-		if len(resp.Issues) > 0 {
+		for _, iss := range resp.Issues {
+			if iss.Severity != "warning" {
+				return 1
+			}
+		}
+		return 0
+	}
+
+	if *noEnv {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "read config: %v\n", err)
 			return 1
 		}
+		if issues := config.NewService().ValidateBytes(data); len(issues) > 0 {
+			fmt.Fprintln(stderr, config.ConfigValidationError{Issues: issues})
+			return 1
+		}
+		fmt.Fprintf(stdout, "config valid (no-env): %s\n", path)
 		return 0
 	}
 
@@ -166,12 +211,26 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("hookway", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configFlag := flags.String("config", "", "path to Hookway YAML config")
+	versionFlag := flags.Bool("version", false, "print version and exit")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
+	if *versionFlag {
+		fmt.Fprintf(stdout, "hookway %s (%s)\n", version, commit)
+		return 0
+	}
 
-	logger := slog.New(slog.NewJSONHandler(stdout, nil))
+	// levelVar defaults to slog.LevelInfo (its zero value) until cfg loads, so
+	// the config-path/config-load failure logs below are never suppressed;
+	// it's then set from cfg.Logging.Level once config is available. Using a
+	// *slog.LevelVar (rather than baking a fixed Level into HandlerOptions)
+	// keeps the level adjustable after construction -- e.g. by a future admin
+	// endpoint -- without rebuilding the logger/handler.
+	levelVar := new(slog.LevelVar)
+	logger := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: levelVar}))
+	logger.Info("hookway starting", "version", version, "commit", commit)
 	appMetrics := metrics.New()
+	appMetrics.SetBuildInfo(version, commit)
 	path, err := config.ResolvePath(*configFlag)
 	if err != nil {
 		appMetrics.ConfigLoadFailure("path")
@@ -184,6 +243,16 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		logger.Error("config load failed", "error", err)
 		return 1
 	}
+	level, err := hooklogging.ParseLevel(cfg.Logging.Level)
+	if err != nil {
+		// Unreachable in practice: cfg.ValidationIssues() already rejected an
+		// unsupported logging.level before Load returned successfully. Kept as
+		// a defensive check so a future validation/parsing mismatch fails
+		// loudly instead of silently running at the wrong level.
+		logger.Error("invalid logging.level", "error", err)
+		return 1
+	}
+	levelVar.Set(level)
 	if cfg.Metrics.RuntimeMetricsEnabled() {
 		appMetrics.EnableRuntimeCollectors()
 	}
@@ -200,8 +269,39 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	defer publisher.Close()
 
 	app := httpapi.NewServerWithMetrics(cfg, publisher, logger, appMetrics)
+
+	// Start the background readiness prober before serving traffic. It caches
+	// destination readiness so /ready and /readyz never trigger a live broker
+	// fan-out per request; cancelling probeCtx on shutdown stops the goroutine.
+	//
+	// The stop-and-wait defer below is registered after publisher.Close()'s
+	// defer, so on every return path (graceful shutdown or an early error
+	// return) it runs first: the prober goroutine has exited -- or the
+	// bounded wait has elapsed -- before publisher.Close() runs underneath
+	// it, so a well-behaved in-flight probe never races Close().
+	probeCtx, cancelProbe := context.WithCancel(context.Background())
+	proberDone := app.StartReadinessProbe(probeCtx)
+	defer func() {
+		cancelProbe()
+		// A well-behaved probe always returns within readiness_timeout (its
+		// per-probe context deadline); the small margin gives the goroutine
+		// time to observe ctx.Done() and exit. The wait stays bounded -- not
+		// unbounded -- so a destination client that ignores context
+		// cancellation forever cannot hang shutdown.
+		wait := cfg.Server.ReadinessTimeout + 2*time.Second
+		select {
+		case <-proberDone:
+		case <-time.After(wait):
+			logger.Warn("readiness prober did not stop within timeout")
+		}
+	}()
+
 	srv := app.HTTPServer()
-	errs := make(chan error, 1)
+	// Buffered for 2: the main listener and the (optional) dedicated metrics
+	// listener each get their own slot, so neither goroutine can block forever
+	// writing an error nobody will read after the process is already on its
+	// way out via the other one.
+	errs := make(chan error, 2)
 	go func() {
 		logger.Info("hookway listening", "addr", cfg.Server.Addr)
 		errs <- srv.ListenAndServe()
@@ -211,8 +311,19 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if metricsSrv != nil {
 		go func() {
 			logger.Info("hookway metrics listening", "addr", metricsSrv.Addr, "path", cfg.Metrics.Path)
+			// http.ErrServerClosed only comes back from a deliberate
+			// Shutdown/Close (the deferred httpapi.Shutdown(ctx, metricsSrv)
+			// below, which only runs once runServe is already on its way out).
+			// That is a clean stop, not a failure, so it must NOT be pushed
+			// onto errs -- doing so would race a spurious "fatal" error right
+			// after the real shutdown signal was already handled. Any
+			// other error (most commonly: the metrics address is already in
+			// use) is a genuine startup/runtime failure and is routed onto the
+			// same errs channel the main listener uses, so it drives the same
+			// shutdown-and-exit path as a failed main listener.
 			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.Error("metrics server stopped", "error", err)
+				errs <- err
 			}
 		}()
 		defer func() {

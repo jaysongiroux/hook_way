@@ -32,8 +32,8 @@ destinations:
       # Uncomment to override the S3 endpoint, e.g. for LocalStack:
       # endpoint: "http://localhost:4566"
       # Omit both of the following to use the default AWS credential chain:
-      # access_key_id: "${AWS_ACCESS_KEY_ID:test}"
-      # secret_access_key: "${AWS_SECRET_ACCESS_KEY:test}"
+      # access_key_id: "AKIA..."
+      # secret_access_key: "..."
 
       # bucket: required — the S3 bucket to write objects into.
       bucket: "my-webhook-events"
@@ -51,7 +51,7 @@ destinations:
       # sse: "AES256"
 
       # sse_kms_key_id: KMS key ARN or alias. Only used when sse is "aws:kms".
-      # sse_kms_key_id: "${S3_KMS_KEY_ID:-}"
+      # sse_kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/abcd-1234"
 
 endpoints:
   order_events:

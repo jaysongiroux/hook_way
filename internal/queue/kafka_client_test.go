@@ -1,7 +1,9 @@
 package queue
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	kafka "github.com/segmentio/kafka-go"
 
@@ -96,5 +98,21 @@ func TestKafkaBuildTLSConfig(t *testing.T) {
 	}
 	if _, err := buildKafkaTLSConfig(config.KafkaTLSConfig{Enabled: true, ClientCert: "/only-cert.pem"}); err == nil {
 		t.Fatalf("expected error for half mTLS")
+	}
+}
+
+// TestNewKafkaOpsSetsShortBatchTimeout guards against the kafka-go writer
+// default BatchTimeout (1s), which would add up to ~1s of latency to every
+// synchronous single-message publish. No brokers are dialed by
+// newKafkaOps itself (topic creation is skipped when there are no
+// create:true targets), so this runs without a real Kafka broker.
+func TestNewKafkaOpsSetsShortBatchTimeout(t *testing.T) {
+	ops, err := newKafkaOps(context.Background(), "notify", config.KafkaConfig{Brokers: []string{"broker:9092"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("newKafkaOps: %v", err)
+	}
+	t.Cleanup(func() { _ = ops.Close() })
+	if ops.writer.BatchTimeout != 10*time.Millisecond {
+		t.Fatalf("writer.BatchTimeout = %v, want 10ms", ops.writer.BatchTimeout)
 	}
 }

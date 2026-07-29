@@ -17,17 +17,30 @@ import (
 
 type WebhookTarget struct{ Name string }
 
-// WebhookPublisher enqueues deliveries onto the shared engine. targets is
-// written once in the constructor; read-only in Publish (safe for fan-out).
+// WebhookPublisherOptions carries the cross-cutting dependencies a webhook
+// publisher needs to build (and, in async mode, own) its delivery engine.
+type WebhookPublisherOptions struct {
+	Workers      int           // async worker-pool size (server.fanout_concurrency)
+	DefaultDrain time.Duration // fallback drain when cfg.DrainTimeout is 0
+	Metrics      WebhookMetrics
+	Logger       *slog.Logger
+}
+
+// WebhookPublisher delivers to a single webhook destination. In async mode it
+// owns a per-destination delivery engine; in sync mode Publish delivers inline
+// on the caller's goroutine and returns the delivery result. targets is written
+// once in the constructor; read-only in Publish (safe for fan-out).
 type WebhookPublisher struct {
-	engine   *webhookDeliveryEngine
+	engine   *webhookDeliveryEngine // nil in sync mode
+	syncMode bool
 	destID   string
 	delivery map[string]*webhookDelivery // per target
 	metrics  WebhookMetrics              // may be nil
 	logger   *slog.Logger
 }
 
-func NewWebhookPublisher(engine *webhookDeliveryEngine, cfg config.WebhookConfig, destID string, targets []WebhookTarget, m WebhookMetrics, logger *slog.Logger) (*WebhookPublisher, error) {
+func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []WebhookTarget, opts WebhookPublisherOptions) (*WebhookPublisher, error) {
+	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -55,6 +68,14 @@ func NewWebhookPublisher(engine *webhookDeliveryEngine, cfg config.WebhookConfig
 		retryMaxBackoff = 30 * time.Second
 	}
 
+	syncMode := cfg.DeliveryMode == "sync"
+	// DLQ is async-only; validation guarantees no dead_letter with sync mode.
+	dlqDestination, dlqTarget := "", ""
+	if !syncMode {
+		dlqDestination = cfg.DeadLetter.Destination
+		dlqTarget = cfg.DeadLetter.Target
+	}
+
 	deliveries := make(map[string]*webhookDelivery, len(targets))
 	for _, t := range targets {
 		deliveries[t.Name] = &webhookDelivery{
@@ -73,10 +94,24 @@ func NewWebhookPublisher(engine *webhookDeliveryEngine, cfg config.WebhookConfig
 				Scheme:        cfg.Auth.Scheme,
 				EventIDHeader: cfg.Auth.EventIDHeader,
 			},
-			logger: logger,
+			logger:         logger,
+			dlqDestination: dlqDestination,
+			dlqTarget:      dlqTarget,
 		}
 	}
-	return &WebhookPublisher{engine: engine, destID: destID, delivery: deliveries, metrics: m, logger: logger}, nil
+
+	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger}
+	if !syncMode {
+		drain := cfg.DrainTimeout
+		if drain <= 0 {
+			drain = opts.DefaultDrain
+		}
+		p.engine = newWebhookDeliveryEngine(destID, opts.Workers, cfg.MaxQueue, drain, opts.Metrics, logger)
+		if opts.Metrics != nil {
+			opts.Metrics.WebhookQueueCapacity(destID, p.engine.capacity())
+		}
+	}
+	return p, nil
 }
 
 func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
@@ -84,21 +119,53 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 	if !ok {
 		return fmt.Errorf("webhook %q: target %q is not configured", p.destID, target)
 	}
+	if p.syncMode {
+		_, _, err := d.run(ctx, msg, p.metrics)
+		if err != nil {
+			return fmt.Errorf("webhook %q: %w", p.destID, err)
+		}
+		return nil
+	}
 	if err := p.engine.Enqueue(webhookJob{delivery: d, msg: msg}); err != nil {
+		reason := "engine_closing"
+		if errors.Is(err, errWebhookQueueFull) {
+			reason = "queue_full"
+		}
 		if p.metrics != nil {
-			p.metrics.WebhookDropped(p.destID, target)
+			p.metrics.WebhookDropped(p.destID, target, reason)
 		}
 		return fmt.Errorf("webhook %q: enqueue: %w", p.destID, err)
 	}
 	return nil
 }
 
-// Ready is a no-op: the target is external; do not probe it.
-func (p *WebhookPublisher) Ready(ctx context.Context) error { return nil }
+// setDeadLetterPublisher wires the dead-letter resolver onto the owned engine.
+// No-op in sync mode (no engine, and DLQ is async-only).
+func (p *WebhookPublisher) setDeadLetterPublisher(fn deadLetterFunc) {
+	if p.engine != nil {
+		p.engine.setDeadLetter(fn)
+	}
+}
 
-// Close drains the shared engine (idempotent; safe if multiple webhook
-// publishers share one engine).
-func (p *WebhookPublisher) Close() error { return p.engine.Close() }
+// Ready reports saturation for async delivery. Sync mode is always ready (there
+// is no queue). It never probes the external target.
+func (p *WebhookPublisher) Ready(ctx context.Context) error {
+	if p.syncMode || p.engine == nil {
+		return nil
+	}
+	if depth, capacity, isSaturated := p.engine.saturated(); isSaturated {
+		return fmt.Errorf("webhook %q: delivery queue saturated (%d/%d)", p.destID, depth, capacity)
+	}
+	return nil
+}
+
+// Close drains the owned engine (idempotent). Sync mode has no engine.
+func (p *WebhookPublisher) Close() error {
+	if p.engine != nil {
+		return p.engine.Close()
+	}
+	return nil
+}
 
 func newWebhookHTTPClient(cfg config.WebhookConfig) (*http.Client, error) {
 	timeout := cfg.Timeout

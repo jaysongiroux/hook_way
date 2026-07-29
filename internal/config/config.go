@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,19 +33,38 @@ type Config struct {
 	Security     SecurityConfig               `yaml:"security"`
 	RateLimit    RateLimitConfig              `yaml:"rate_limit"`
 	Metrics      MetricsConfig                `yaml:"metrics"`
+	Logging      LoggingConfig                `yaml:"logging"`
 	Destinations map[string]DestinationConfig `yaml:"destinations"`
 	Endpoints    map[string]EndpointConfig    `yaml:"endpoints"`
 }
 
 type ServerConfig struct {
-	Addr                string
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	IdleTimeout         time.Duration
-	ShutdownTimeout     time.Duration
+	Addr            string
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	ShutdownTimeout time.Duration
+	// PublishTimeout bounds how long a webhook request's fan-out publish is
+	// allowed to run once detached from the inbound request context (see
+	// internal/httpapi Server.handleWebhook). Defaults to 10s when omitted,
+	// matching the WriteTimeout/ShutdownTimeout defaults so a synchronous
+	// publish can't outlive the response write or a graceful shutdown; an
+	// explicitly-set non-positive value is rejected at load time. Config
+	// validation also rejects a PublishTimeout greater than ShutdownTimeout or
+	// WriteTimeout (see ValidationIssues), since either would let a slow sync
+	// publish outlive its response write or a graceful shutdown deadline.
+	PublishTimeout      time.Duration
 	MaxBodyBytes        int64
 	MaxInflightRequests int
 	FanoutConcurrency   int
+	// ReadinessInterval is how often the background readiness prober re-checks
+	// every destination. Defaults to 10s when omitted; an explicitly-set
+	// non-positive value is rejected at load time.
+	ReadinessInterval time.Duration
+	// ReadinessTimeout bounds a single readiness probe's destination fan-out.
+	// Defaults to 5s when omitted; an explicitly-set non-positive value is
+	// rejected at load time.
+	ReadinessTimeout time.Duration
 }
 
 type SecurityConfig struct {
@@ -106,6 +126,15 @@ func (m MetricsConfig) RuntimeMetricsEnabled() bool {
 	return m.RuntimeMetrics == nil || *m.RuntimeMetrics
 }
 
+// LoggingConfig configures the process-wide structured logger.
+type LoggingConfig struct {
+	// Level is the minimum severity logged: "debug", "info", "warn", or
+	// "error". Empty defaults to "info". See internal/logging.ParseLevel for
+	// the values accepted at runtime; ValidationIssues enforces the same enum
+	// at config-load time.
+	Level string `yaml:"level"`
+}
+
 type rawConfig struct {
 	Server struct {
 		Addr                string `yaml:"addr"`
@@ -113,13 +142,17 @@ type rawConfig struct {
 		WriteTimeout        string `yaml:"write_timeout"`
 		IdleTimeout         string `yaml:"idle_timeout"`
 		ShutdownTimeout     string `yaml:"shutdown_timeout"`
+		PublishTimeout      string `yaml:"publish_timeout"`
 		MaxBodyBytes        int64  `yaml:"max_body_bytes"`
 		MaxInflightRequests int    `yaml:"max_inflight_requests"`
 		FanoutConcurrency   int    `yaml:"fanout_concurrency"`
+		ReadinessInterval   string `yaml:"readiness_interval"`
+		ReadinessTimeout    string `yaml:"readiness_timeout"`
 	} `yaml:"server"`
 	Security     SecurityConfig                  `yaml:"security"`
 	RateLimit    RateLimitConfig                 `yaml:"rate_limit"`
 	Metrics      MetricsConfig                   `yaml:"metrics"`
+	Logging      LoggingConfig                   `yaml:"logging"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 	Endpoints    map[string]struct {
 		Enabled               bool                           `yaml:"enabled"`
@@ -184,7 +217,11 @@ func (s Service) Load(path string) (Config, error) {
 func (s Service) loadBytes(rawBytes []byte, source string, expandEnv bool) (Config, error) {
 	raw := string(rawBytes)
 	if expandEnv {
-		raw = os.ExpandEnv(raw)
+		expanded, missing := expandEnvStrict(raw)
+		if len(missing) > 0 {
+			return Config{}, ConfigValidationError{Issues: MissingEnvIssues(missing)}
+		}
+		raw = expanded
 	}
 	var config rawConfig
 	decoder := yaml.NewDecoder(bytes.NewBufferString(raw))
@@ -203,6 +240,111 @@ func (s Service) loadBytes(rawBytes []byte, source string, expandEnv bool) (Conf
 		return Config{}, ConfigValidationError{Issues: issues}
 	}
 	return cfg, nil
+}
+
+// MissingEnvIssues builds one ValidationIssue per referenced-but-unset
+// environment variable name (as produced by expandEnvStrict / ExpandEnvLenient
+// missing lists). Shared by Load's hard-failure path and by
+// internal/configapi's expand-and-downgrade-to-warning path, so both surfaces
+// report the exact same field/message/suggestion text for the same problem.
+func MissingEnvIssues(missing []string) []ValidationIssue {
+	issues := make([]ValidationIssue, len(missing))
+	for i, name := range missing {
+		issues[i] = validationError(
+			"config.env."+name,
+			fmt.Sprintf("environment variable %s is referenced (as ${%s} or $%s) but is not set", name, name, name),
+			fmt.Sprintf("export %s before starting Hookway, or remove the reference if it was a typo", name),
+		)
+	}
+	return issues
+}
+
+// dollarEscapeSentinel stands in for a literal "$$" escape while
+// expandEnvStrict runs os.Expand, then is restored to a single "$" afterward.
+// It is built from NUL bytes, which cannot occur in a YAML text file, so it
+// can never collide with anything a real config could contain.
+const dollarEscapeSentinel = "\x00\x00hookway-literal-dollar\x00\x00"
+
+// expandEnvStrict expands ${VAR} and $VAR references in raw against the
+// process environment, and reports every referenced variable that is unset.
+//
+// This differs from os.ExpandEnv (the previous behavior) in two ways:
+//   - An unset variable is a load error, not a silent expansion to "". A
+//     typo'd env var name should never result in an empty secret/URL/etc.
+//     making it into a running config.
+//   - "$$" is treated as an escape for a literal "$", matching shell
+//     convention, so values that legitimately contain a dollar sign don't
+//     need to route around expansion.
+//
+// A variable that is set but empty is allowed and expands to "" -- that is
+// the operator's explicit choice, not a missing reference.
+//
+// missing is nil when every reference resolved; expanded is only meaningful
+// when missing is empty.
+func expandEnvStrict(raw string) (expanded string, missing []string) {
+	out, missing := expandEnvCollect(raw, true)
+	if len(missing) > 0 {
+		return "", missing
+	}
+	return out, nil
+}
+
+// ExpandEnvLenient expands ${VAR} and $VAR references the same way
+// expandEnvStrict does, but never fails: every SET variable is substituted
+// normally, while a referenced-but-unset variable is left as the opaque
+// literal "${NAME}" (rather than expanding to "") AND is reported by name in
+// missing, so a caller can decide how to treat it (e.g. a warning instead of
+// a hard load error).
+//
+// Leaving missing references as a non-empty literal — instead of ""  — matters:
+// it means a config that is otherwise complete except for one unset secret
+// still passes every *other* structural/required-field check, instead of
+// tripping a cascade of unrelated "field is required" errors caused by the
+// substitution itself. The caller is expected to already know (via missing)
+// that the field's real value is unresolved.
+//
+// It exists for validation paths — such as `validate --json` — that want to
+// run every other structural check even when production secrets aren't set in
+// the local environment. It is exported for internal/configapi to build an
+// expand-then-validate flow on top of internal/config's non-expanding
+// ValidateBytes, without ValidateBytes itself ever touching the process
+// environment (see ValidateBytes's doc comment).
+func ExpandEnvLenient(raw string) (expanded string, missing []string) {
+	return expandEnvCollect(raw, false)
+}
+
+// expandEnvCollect does the actual ${VAR}/$VAR substitution against the
+// process environment. When zeroMissing is true, a missing variable expands
+// to "" and the returned expanded string is only meaningful when missing is
+// empty (expandEnvStrict's contract). When false, a missing variable is left
+// as the literal "${NAME}" and expanded is always meaningful (ExpandEnvLenient's
+// contract). Either way, missing is the sorted list of variable names that
+// were referenced but unset.
+func expandEnvCollect(raw string, zeroMissing bool) (expanded string, missing []string) {
+	escaped := strings.ReplaceAll(raw, "$$", dollarEscapeSentinel)
+
+	missingSet := map[string]struct{}{}
+	out := os.Expand(escaped, func(name string) string {
+		val, ok := os.LookupEnv(name)
+		if ok {
+			return val
+		}
+		missingSet[name] = struct{}{}
+		if zeroMissing {
+			return ""
+		}
+		return "${" + name + "}"
+	})
+	out = strings.ReplaceAll(out, dollarEscapeSentinel, "$")
+	if len(missingSet) == 0 {
+		return out, nil
+	}
+	names := make([]string, 0, len(missingSet))
+	for name := range missingSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return out, names
 }
 
 // ValidateBytes validates raw YAML config bytes and returns structured issues.
@@ -257,33 +399,70 @@ func ConfigFlag() *string {
 	return flag.String("config", "", "path to Hookway YAML config")
 }
 
+// defaultMaxInflightRequests is the concurrent-request cap applied when
+// server.max_inflight_requests is omitted or explicitly 0, so a fresh install
+// gets bounded backpressure instead of the historical unbounded behavior.
+const defaultMaxInflightRequests = 256
+
+// maxInflightRequestsUnlimited is the sentinel raw value (and the value
+// stored on ServerConfig) that disables the in-flight semaphore entirely.
+// It is <= 0, so internal/httpapi.Server's `> 0` semaphore-creation check
+// continues to work unmodified.
+const maxInflightRequestsUnlimited = -1
+
+// maxInflightRequests resolves the raw server.max_inflight_requests value to
+// the value stored on ServerConfig: 0 (omitted) defaults to
+// defaultMaxInflightRequests; maxInflightRequestsUnlimited (-1) is passed
+// through unchanged to disable the limit; any other value (including other
+// negatives, which ValidationIssues rejects) passes through as-is.
+func maxInflightRequests(raw int) int {
+	if raw == 0 {
+		return defaultMaxInflightRequests
+	}
+	return raw
+}
+
 func convert(raw rawConfig) (Config, []ValidationIssue) {
 	var issues []ValidationIssue
-	read, issue := parseDuration("server.read_timeout", raw.Server.ReadTimeout, 5*time.Second)
+	read, issue := parsePositiveDefaultDuration("server.read_timeout", raw.Server.ReadTimeout, 5*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
-	write, issue := parseDuration("server.write_timeout", raw.Server.WriteTimeout, 10*time.Second)
+	write, issue := parsePositiveDefaultDuration("server.write_timeout", raw.Server.WriteTimeout, 10*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
-	idle, issue := parseDuration("server.idle_timeout", raw.Server.IdleTimeout, 60*time.Second)
+	idle, issue := parsePositiveDefaultDuration("server.idle_timeout", raw.Server.IdleTimeout, 60*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
-	shutdown, issue := parseDuration("server.shutdown_timeout", raw.Server.ShutdownTimeout, 10*time.Second)
+	shutdown, issue := parsePositiveDefaultDuration("server.shutdown_timeout", raw.Server.ShutdownTimeout, 10*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	publish, issue := parsePositiveDefaultDuration("server.publish_timeout", raw.Server.PublishTimeout, 10*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	readinessInterval, issue := parsePositiveDefaultDuration("server.readiness_interval", raw.Server.ReadinessInterval, 10*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	readinessTimeout, issue := parsePositiveDefaultDuration("server.readiness_timeout", raw.Server.ReadinessTimeout, 5*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
 	cfg := Config{
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
-			IdleTimeout: idle, ShutdownTimeout: shutdown, MaxBodyBytes: raw.Server.MaxBodyBytes,
-			MaxInflightRequests: raw.Server.MaxInflightRequests, FanoutConcurrency: raw.Server.FanoutConcurrency,
+			IdleTimeout: idle, ShutdownTimeout: shutdown, PublishTimeout: publish, MaxBodyBytes: raw.Server.MaxBodyBytes,
+			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests), FanoutConcurrency: raw.Server.FanoutConcurrency,
+			ReadinessInterval: readinessInterval, ReadinessTimeout: readinessTimeout,
 		},
 		Security:     raw.Security,
 		RateLimit:    raw.RateLimit,
 		Metrics:      raw.Metrics,
+		Logging:      raw.Logging,
 		Destinations: map[string]DestinationConfig{},
 		Endpoints:    map[string]EndpointConfig{},
 	}
@@ -293,7 +472,7 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		cfg.Destinations[id] = dest
 	}
 	for name, endpoint := range raw.Endpoints {
-		tolerance, issue := parseDuration("endpoints."+name+".auth.timestamp_tolerance", endpoint.Auth.TimestampTolerance, 5*time.Minute)
+		tolerance, issue := parsePositiveDefaultDuration("endpoints."+name+".auth.timestamp_tolerance", endpoint.Auth.TimestampTolerance, 5*time.Minute)
 		if issue.Field != "" {
 			issues = append(issues, issue)
 		}

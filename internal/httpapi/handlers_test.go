@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -287,7 +288,14 @@ func TestWebhookSkipFailedReturnsUnavailableWhenAllDestinationsFail(t *testing.T
 	}
 }
 
-func TestWebhookSkipFailedPartialSuccessKeepsReplayReservation(t *testing.T) {
+// TestWebhookSkipFailedPartialSuccessReleasesReplayReservation covers B1: a
+// partial-failure 202 (some destinations failed under skip_failed) must
+// release the replay reservation, so an identical sender retry is accepted
+// again rather than rejected as a replay — otherwise the failed destinations
+// could never receive the event. This mirrors stop_on_failure's existing
+// retry semantics; consumers already dedupe replays of already-published
+// destinations via idempotency_key.
+func TestWebhookSkipFailedPartialSuccessReleasesReplayReservation(t *testing.T) {
 	cfg := testConfig()
 	endpoint := cfg.Endpoints["paddle_billing"]
 	endpoint.DeliveryFailurePolicy = "skip_failed"
@@ -298,6 +306,36 @@ func TestWebhookSkipFailedPartialSuccessKeepsReplayReservation(t *testing.T) {
 	}
 	cfg.Endpoints["paddle_billing"] = endpoint
 	pub := &fakePublisher{err: errors.New("activity down"), errDestination: "activity"}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`true`)
+	sig := signed("secret", time.Now(), body)
+
+	for i, want := range []int{http.StatusAccepted, http.StatusAccepted} {
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+		req.Header.Set("Paddle-Signature", sig)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatalf("request %d status = %d want %d body = %s", i, rec.Code, want, rec.Body.String())
+		}
+	}
+}
+
+// TestWebhookSkipFailedFullSuccessKeepsReplayReservation is the counterpart
+// to the partial-failure case above: when every destination succeeds under
+// skip_failed, the replay reservation is kept (unchanged), so an identical
+// retry is rejected as a replay.
+func TestWebhookSkipFailedFullSuccessKeepsReplayReservation(t *testing.T) {
+	cfg := testConfig()
+	endpoint := cfg.Endpoints["paddle_billing"]
+	endpoint.DeliveryFailurePolicy = "skip_failed"
+	endpoint.ReplayProtection = config.ReplayProtectionConfig{Enabled: true, TTL: time.Minute, MaxEntries: 10}
+	endpoint.Destinations = []config.EndpointDestinationConfig{
+		{Destination: "billing", Target: "billing-events"},
+		{Destination: "activity", Target: "activity-events"},
+	}
+	cfg.Endpoints["paddle_billing"] = endpoint
+	pub := &fakePublisher{}
 	srv := NewServer(cfg, pub, slog.Default())
 	body := []byte(`true`)
 	sig := signed("secret", time.Now(), body)
@@ -412,6 +450,72 @@ func TestWebhookFanoutHonorsConcurrencyLimit(t *testing.T) {
 	}
 }
 
+// TestWebhookPublishSurvivesRequestContextCancellation covers B4: publishing
+// is detached from the inbound request context, so a sender disconnect (the
+// request context being canceled) mid-publish must not cancel or fail the
+// publish. The fake publisher blocks until the *original* request context is
+// canceled and then reports whether the context it was actually called with
+// (the detached publish context) was itself canceled or expired.
+func TestWebhookPublishSurvivesRequestContextCancellation(t *testing.T) {
+	cfg := testConfig()
+	reqCtx, cancelReq := context.WithCancel(context.Background())
+	pub := &blockUntilClosedPublisher{unblock: reqCtx.Done()}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body)).WithContext(reqCtx)
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		srv.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	// Give the handler time to reach Publish (and start blocking on the
+	// request context) before simulating the sender disconnecting.
+	time.Sleep(20 * time.Millisecond)
+	cancelReq()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not return after the request context was canceled")
+	}
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s, want 202 (publish should survive request cancellation)", rec.Code, rec.Body.String())
+	}
+	if pub.sawCanceledCtx.Load() {
+		t.Fatal("publish observed a canceled context; the publish context must be detached from the request context")
+	}
+}
+
+// TestWebhookPublishTimeoutReturnsUnavailable covers B4's independent bound:
+// even though the publish context is detached from the request, it is still
+// governed by server.publish_timeout. A publisher that blocks longer than a
+// short configured timeout must cause the publish to fail with
+// context.DeadlineExceeded and the handler to respond 503.
+func TestWebhookPublishTimeoutReturnsUnavailable(t *testing.T) {
+	cfg := testConfig()
+	cfg.Server.PublishTimeout = 20 * time.Millisecond
+	pub := &deadlinePublisher{delay: 500 * time.Millisecond}
+	srv := NewServer(cfg, pub, slog.Default())
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s, want 503", rec.Code, rec.Body.String())
+	}
+	if !errors.Is(pub.lastErr(), context.DeadlineExceeded) {
+		t.Fatalf("publish error = %v, want context.DeadlineExceeded", pub.lastErr())
+	}
+}
+
 func TestRequestIDPropagatesToResponseEnvelopeAndLogs(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
@@ -443,11 +547,139 @@ func TestRequestIDPropagatesToResponseEnvelopeAndLogs(t *testing.T) {
 	}
 }
 
-func TestHealthEndpointUsesReadinessButPublicErrorIsGeneric(t *testing.T) {
+// TestInboundTraceparentPropagatesByteIdenticalToPublishedMessage covers C4:
+// a well-formed inbound Traceparent header must surface byte-identical on the
+// published queue.Message (which the webhook engine later stamps onto the
+// outbound request in both envelope and proxy modes).
+func TestInboundTraceparentPropagatesByteIdenticalToPublishedMessage(t *testing.T) {
+	pub := &fakePublisher{}
+	srv := NewServer(testConfig(), pub, slog.Default())
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	req.Header.Set("Traceparent", want)
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1", pub.published)
+	}
+	if pub.published[0].msg.Traceparent != want {
+		t.Fatalf("published traceparent = %q, want byte-identical %q", pub.published[0].msg.Traceparent, want)
+	}
+}
+
+// TestAbsentInboundTraceparentSynthesizesValidOneMatchingTraceID covers C4:
+// when no inbound Traceparent is present, the published message must still
+// carry a syntactically valid one whose trace-id component matches the
+// envelope's derived trace id (so envelope.trace_id and the traceparent stay
+// consistent for whoever correlates the two).
+func TestAbsentInboundTraceparentSynthesizesValidOneMatchingTraceID(t *testing.T) {
+	pub := &fakePublisher{}
+	srv := NewServer(testConfig(), pub, slog.Default())
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1", pub.published)
+	}
+	msg := pub.published[0].msg
+	parts := strings.Split(msg.Traceparent, "-")
+	if len(parts) != 4 || parts[0] != "00" || len(parts[1]) != 32 || len(parts[2]) != 16 || parts[3] != "01" {
+		t.Fatalf("synthesized traceparent %q is not syntactically valid", msg.Traceparent)
+	}
+	if parts[1] != msg.TraceID {
+		t.Fatalf("synthesized traceparent trace-id %q != envelope trace id %q", parts[1], msg.TraceID)
+	}
+}
+
+// TestMalformedInboundTraceparentIsSynthesizedNotPropagated covers C4: a
+// garbled inbound Traceparent must not be forwarded verbatim (a downstream
+// system should never receive a header that fails to parse); Hookway must
+// synthesize a fresh, valid one instead.
+func TestMalformedInboundTraceparentIsSynthesizedNotPropagated(t *testing.T) {
+	pub := &fakePublisher{}
+	srv := NewServer(testConfig(), pub, slog.Default())
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	garbage := "not-a-traceparent"
+	req.Header.Set("Traceparent", garbage)
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1", pub.published)
+	}
+	msg := pub.published[0].msg
+	if msg.Traceparent == garbage {
+		t.Fatalf("malformed inbound traceparent must not be propagated verbatim")
+	}
+	parts := strings.Split(msg.Traceparent, "-")
+	if len(parts) != 4 || len(parts[1]) != 32 || len(parts[2]) != 16 {
+		t.Fatalf("synthesized traceparent %q is not syntactically valid", msg.Traceparent)
+	}
+}
+
+// TestNonHexInboundTraceIDIsNotAdoptedForSynthesizedTraceparent covers C4: a
+// crafted inbound Traceparent whose trace-id segment is the right length (32
+// chars) but not valid hex must not be adopted verbatim into the synthesized
+// outbound traceparent — doing so would produce a "00-<non-hex>-<span>-01"
+// header that violates W3C well-formedness even though Hookway's own
+// isValidTraceparent check correctly rejected the inbound header for
+// propagation. The trace id used for synthesis (and stamped on the envelope)
+// must be valid lowercase hex, and the two must still agree with each other.
+func TestNonHexInboundTraceIDIsNotAdoptedForSynthesizedTraceparent(t *testing.T) {
+	pub := &fakePublisher{}
+	srv := NewServer(testConfig(), pub, slog.Default())
+	body := []byte(`true`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/paddle/billing", bytes.NewReader(body))
+	nonHexTraceID := strings.Repeat("g", 32)
+	req.Header.Set("Traceparent", "00-"+nonHexTraceID+"-00f067aa0ba902b7-01")
+	req.Header.Set("Paddle-Signature", signed("secret", time.Now(), body))
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %#v, want 1", pub.published)
+	}
+	msg := pub.published[0].msg
+	parts := strings.Split(msg.Traceparent, "-")
+	if len(parts) != 4 || len(parts[1]) != 32 {
+		t.Fatalf("synthesized traceparent %q is not syntactically valid", msg.Traceparent)
+	}
+	if !isHex(parts[1]) {
+		t.Fatalf("synthesized traceparent trace-id %q is not valid hex", parts[1])
+	}
+	if parts[1] == nonHexTraceID {
+		t.Fatalf("synthesized traceparent must not adopt the non-hex inbound trace id verbatim")
+	}
+	if parts[1] != msg.TraceID {
+		t.Fatalf("synthesized traceparent trace-id %q != envelope trace id %q", parts[1], msg.TraceID)
+	}
+}
+
+func TestReadyEndpointsServeCachedResultAndPublicErrorIsGeneric(t *testing.T) {
 	var logs bytes.Buffer
 	pub := &fakePublisher{readyErr: errors.New("rabbitmq dial tcp secret-url failed")}
 	srv := NewServer(testConfig(), pub, slog.New(slog.NewJSONHandler(&logs, nil)))
-	for _, path := range []string{"/health", "/ready", "/readyz"} {
+	// Seed the cached readiness result the prober would maintain.
+	srv.readiness.probeOnce(context.Background())
+	for _, path := range []string{"/ready", "/readyz"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
@@ -461,11 +693,14 @@ func TestHealthEndpointUsesReadinessButPublicErrorIsGeneric(t *testing.T) {
 	if !strings.Contains(logs.String(), "rabbitmq dial tcp") {
 		t.Fatalf("internal readiness reason not logged: %s", logs.String())
 	}
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/healthz status = %d, want liveness OK", rec.Code)
+	// /health and /healthz are liveness aliases: alive even when not ready.
+	for _, path := range []string{"/health", "/healthz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want liveness OK while not ready", path, rec.Code)
+		}
 	}
 }
 
@@ -593,6 +828,7 @@ func TestHealthReadyAndDisabledMetrics(t *testing.T) {
 	cfg := testConfig()
 	cfg.Metrics.Enabled = false
 	srv := NewServer(cfg, &fakePublisher{}, slog.Default())
+	srv.readiness.probeOnce(context.Background())
 	for path, want := range map[string]int{"/health": 200, "/healthz": 200, "/ready": 200, "/readyz": 200, "/metrics": 404} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
@@ -664,6 +900,55 @@ func (p *contextCancelPublisher) Publish(ctx context.Context, destinationID, q s
 
 func (p *contextCancelPublisher) Ready(ctx context.Context) error { return nil }
 func (p *contextCancelPublisher) Close() error                    { return nil }
+
+// blockUntilClosedPublisher blocks until unblock is closed, then reports
+// success unless the context it was actually invoked with was itself
+// canceled or expired by that point. Used to prove a publish context is (or
+// is not) detached from some other context the test controls independently.
+type blockUntilClosedPublisher struct {
+	unblock        <-chan struct{}
+	sawCanceledCtx atomic.Bool
+}
+
+func (p *blockUntilClosedPublisher) Publish(ctx context.Context, destinationID, q string, msg queue.Message) error {
+	<-p.unblock
+	if ctx.Err() != nil {
+		p.sawCanceledCtx.Store(true)
+		return ctx.Err()
+	}
+	return nil
+}
+func (p *blockUntilClosedPublisher) Ready(ctx context.Context) error { return nil }
+func (p *blockUntilClosedPublisher) Close() error                    { return nil }
+
+// deadlinePublisher sleeps for delay, or returns earlier via ctx.Done() if
+// the context governing the publish expires first. Used to exercise
+// server.publish_timeout.
+type deadlinePublisher struct {
+	delay time.Duration
+	mu    sync.Mutex
+	err   error
+}
+
+func (p *deadlinePublisher) Publish(ctx context.Context, destinationID, q string, msg queue.Message) error {
+	var err error
+	select {
+	case <-time.After(p.delay):
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	p.mu.Lock()
+	p.err = err
+	p.mu.Unlock()
+	return err
+}
+func (p *deadlinePublisher) Ready(ctx context.Context) error { return nil }
+func (p *deadlinePublisher) Close() error                    { return nil }
+func (p *deadlinePublisher) lastErr() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
+}
 
 // failingPublisher always returns an error from Publish.
 type failingPublisher struct{ err error }
@@ -756,7 +1041,7 @@ func TestNewServerDoesNotWarnWithoutNoAuth(t *testing.T) {
 
 func testConfig() config.Config {
 	return config.Config{
-		Server:    config.ServerConfig{Addr: ":0", MaxBodyBytes: 1024},
+		Server:    config.ServerConfig{Addr: ":0", MaxBodyBytes: 1024, PublishTimeout: 10 * time.Second},
 		Security:  config.SecurityConfig{RequestIDHeader: "X-Request-ID"},
 		RateLimit: config.RateLimitConfig{Enabled: false, RequestsPerMinute: 120, Burst: 20, KeyBy: "ip"},
 		Metrics:   config.MetricsConfig{Enabled: true, Path: "/metrics"},

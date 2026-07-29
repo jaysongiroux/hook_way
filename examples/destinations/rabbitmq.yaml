@@ -29,6 +29,12 @@ destinations:
       # Publish concurrency: pool of confirm channels. Raise if broker
       # round-trips become the throughput ceiling.
       publisher_channels: 8
+      # Retry a nacked confirm or a transient publish/connect failure before
+      # giving up. Defaults shown; omit the whole block to use them.
+      retry:
+        max_attempts: 3
+        initial_backoff: "100ms"
+        max_backoff: "2s"
       # Default queue arguments applied to all queues declared by Hookway.
       # Per-route queue_options can override these individually.
       queue_defaults:

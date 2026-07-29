@@ -33,10 +33,18 @@ type Metrics struct {
 	rabbitMQConfirms         prometheus.Counter
 	rabbitMQRetries          prometheus.Counter
 	rabbitMQDLQPublishes     prometheus.Counter
+	rabbitMQUnroutable       *prometheus.CounterVec
 	redisPubSubNoSubscribers *prometheus.CounterVec
 	webhookDelivery          *prometheus.CounterVec
 	webhookRetries           *prometheus.CounterVec
 	webhookDropped           *prometheus.CounterVec
+	webhookDeadLetter        *prometheus.CounterVec
+	webhookDeadLetterFailure *prometheus.CounterVec
+	webhookQueueDepth        *prometheus.GaugeVec
+	webhookQueueCapacity     *prometheus.GaugeVec
+	destinationReady         *prometheus.GaugeVec
+	panics                   *prometheus.CounterVec
+	buildInfo                *prometheus.GaugeVec
 	runtimeRegistered        bool
 }
 
@@ -128,6 +136,10 @@ func New() *Metrics {
 		Name: "hookway_rabbitmq_dead_letter_publish_total",
 		Help: "RabbitMQ dead-letter publish attempts.",
 	})
+	m.rabbitMQUnroutable = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_rabbitmq_unroutable_total",
+		Help: "RabbitMQ mandatory publishes returned as unroutable.",
+	}, []string{"destination_queue_id", "queue"})
 	m.redisPubSubNoSubscribers = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_redis_pubsub_dropped_no_subscriber_total",
 		Help: "Redis pub/sub messages dropped because no subscriber was listening.",
@@ -139,14 +151,37 @@ func New() *Metrics {
 		Name: "hookway_webhook_retries_total", Help: "Webhook delivery retries.",
 	}, []string{"destination_queue_id", "queue"})
 	m.webhookDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "hookway_webhook_dropped_total", Help: "Webhook deliveries dropped because the queue was full.",
+		Name: "hookway_webhook_dropped_total", Help: "Webhook deliveries dropped before delivery, by reason (queue_full|engine_closing).",
+	}, []string{"destination_queue_id", "queue", "reason"})
+	m.webhookDeadLetter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_webhook_dead_letter_total", Help: "Terminally-failed webhook deliveries redirected to a dead-letter destination.",
+	}, []string{"destination_queue_id", "queue", "outcome"})
+	m.webhookDeadLetterFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_webhook_dead_letter_failures_total", Help: "Dead-letter redirects that themselves failed.",
 	}, []string{"destination_queue_id", "queue"})
+	m.webhookQueueDepth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_webhook_queue_depth", Help: "Current webhook delivery queue depth.",
+	}, []string{"destination_queue_id"})
+	m.webhookQueueCapacity = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_webhook_queue_capacity", Help: "Configured webhook delivery queue capacity.",
+	}, []string{"destination_queue_id"})
+	m.destinationReady = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_destination_ready", Help: "Readiness of each configured message queue destination as observed by the background readiness prober (1 ready, 0 not ready).",
+	}, []string{"destination_queue_id"})
+	m.panics = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_panics_total", Help: "Panics recovered by Hookway, by the location they were recovered in.",
+	}, []string{"location"})
+	m.buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_build_info", Help: "Build version and commit Hookway was compiled from (value is always 1).",
+	}, []string{"version", "commit"})
 	m.registry.MustRegister(
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
-		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.redisPubSubNoSubscribers,
+		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
+		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
+		m.destinationReady, m.panics, m.buildInfo,
 	)
 	return m
 }
@@ -263,6 +298,14 @@ func (m *Metrics) RabbitMQDeadLetterPublish() {
 	m.rabbitMQDLQPublishes.Inc()
 }
 
+// RabbitMQUnroutable records a mandatory publish that the broker returned as
+// unroutable (basic.return): the exchange had no matching binding for the
+// routing key, so the message was never enqueued despite Hookway getting a
+// broker confirm.
+func (m *Metrics) RabbitMQUnroutable(destinationQueueID, queue string) {
+	m.rabbitMQUnroutable.WithLabelValues(destinationQueueID, queue).Inc()
+}
+
 func (m *Metrics) RedisPubSubNoSubscriber(destination, target string) {
 	m.redisPubSubNoSubscribers.WithLabelValues(destination, target).Inc()
 }
@@ -275,6 +318,48 @@ func (m *Metrics) WebhookRetry(destination, target string) {
 	m.webhookRetries.WithLabelValues(destination, target).Inc()
 }
 
-func (m *Metrics) WebhookDropped(destination, target string) {
-	m.webhookDropped.WithLabelValues(destination, target).Inc()
+func (m *Metrics) WebhookDropped(destination, target, reason string) {
+	m.webhookDropped.WithLabelValues(destination, target, reason).Inc()
+}
+
+func (m *Metrics) WebhookDeadLetter(destination, target, outcome string) {
+	m.webhookDeadLetter.WithLabelValues(destination, target, outcome).Inc()
+}
+
+func (m *Metrics) WebhookDeadLetterFailure(destination, target string) {
+	m.webhookDeadLetterFailure.WithLabelValues(destination, target).Inc()
+}
+
+func (m *Metrics) WebhookQueueDepth(destination string, depth int) {
+	m.webhookQueueDepth.WithLabelValues(destination).Set(float64(depth))
+}
+
+func (m *Metrics) WebhookQueueCapacity(destination string, capacity int) {
+	m.webhookQueueCapacity.WithLabelValues(destination).Set(float64(capacity))
+}
+
+// DestinationReady sets the readiness gauge for a single destination: 1 when
+// the background readiness prober's last probe of it succeeded, 0 otherwise.
+func (m *Metrics) DestinationReady(destinationQueueID string, ready bool) {
+	value := 0.0
+	if ready {
+		value = 1
+	}
+	m.destinationReady.WithLabelValues(destinationQueueID).Set(value)
+}
+
+// Panic records a recovered panic. location identifies where it was recovered:
+// "handler" (ServeHTTP), "fanout" (skip_failed fan-out publish worker), or
+// "webhook_worker" (async webhook delivery engine worker).
+func (m *Metrics) Panic(location string) {
+	m.panics.WithLabelValues(location).Inc()
+}
+
+// SetBuildInfo records the running binary's version and commit as a gauge
+// fixed at 1, so dashboards can join other metrics against the build that
+// produced them. version and commit are compiled-in constants (see
+// cmd/hookway's -ldflags-injected package vars), not user or request input,
+// so this carries no unbounded-cardinality risk.
+func (m *Metrics) SetBuildInfo(version, commit string) {
+	m.buildInfo.WithLabelValues(version, commit).Set(1)
 }

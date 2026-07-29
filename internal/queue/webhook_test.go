@@ -35,9 +35,8 @@ func TestWebhookPublisherEnqueuesAndDelivers(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
-	eng := newWebhookDeliveryEngine(2, 10, 2*time.Second, nil, testLogger())
-	pub, err := NewWebhookPublisher(eng, config.WebhookConfig{URL: srv.URL, Timeout: time.Second, Auth: config.WebhookAuthConfig{Type: "none"}},
-		"notify", []WebhookTarget{{Name: "orders"}}, nil, testLogger())
+	pub, err := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, Auth: config.WebhookAuthConfig{Type: "none"}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Workers: 2, DefaultDrain: 2 * time.Second, Logger: testLogger()})
 	if err != nil {
 		t.Fatalf("ctor: %v", err)
 	}
@@ -51,8 +50,7 @@ func TestWebhookPublisherEnqueuesAndDelivers(t *testing.T) {
 }
 
 func TestWebhookPublisherRejectsUnknownTarget(t *testing.T) {
-	eng := newWebhookDeliveryEngine(1, 1, time.Second, nil, testLogger())
-	pub, _ := NewWebhookPublisher(eng, config.WebhookConfig{URL: "http://x", Auth: config.WebhookAuthConfig{Type: "none"}}, "notify", []WebhookTarget{{Name: "orders"}}, nil, testLogger())
+	pub, _ := NewWebhookPublisher(config.WebhookConfig{URL: "http://x", Auth: config.WebhookAuthConfig{Type: "none"}}, "notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Workers: 1, DefaultDrain: time.Second, Logger: testLogger()})
 	if err := pub.Publish(context.Background(), "notify", "nope", Message{ID: "x", ReceivedAt: time.Now()}); err == nil {
 		t.Fatal("expected error for unknown target")
 	}
@@ -68,8 +66,7 @@ func TestWebhookPublisherProxyForwardsRawBodyAndHeaders(t *testing.T) {
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
-	eng := newWebhookDeliveryEngine(1, 10, 2*time.Second, nil, testLogger())
-	pub, _ := NewWebhookPublisher(eng, config.WebhookConfig{URL: srv.URL, Timeout: time.Second, Auth: config.WebhookAuthConfig{Type: "proxy"}}, "notify", []WebhookTarget{{Name: ""}}, nil, testLogger())
+	pub, _ := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, Auth: config.WebhookAuthConfig{Type: "proxy"}}, "notify", []WebhookTarget{{Name: ""}}, WebhookPublisherOptions{Workers: 1, DefaultDrain: 2 * time.Second, Logger: testLogger()})
 	orig := http.Header{}
 	orig.Set("X-Vendor-Signature", "abc123")
 	orig.Set("Content-Type", "application/xml")
@@ -86,12 +83,11 @@ func TestWebhookPublisherDefaultRetryPolicy(t *testing.T) {
 	// Build a publisher with an empty retry config (all-zero) and confirm the
 	// delivery gets the documented defaults: max_attempts=3, initial_backoff=500ms,
 	// max_backoff=30s. This is the fast, deterministic approach (no real HTTP calls).
-	eng := newWebhookDeliveryEngine(1, 10, time.Second, nil, testLogger())
-	pub, err := NewWebhookPublisher(eng, config.WebhookConfig{
+	pub, err := NewWebhookPublisher(config.WebhookConfig{
 		URL:  "https://example.com/hooks",
 		Auth: config.WebhookAuthConfig{Type: "none"},
 		// Retry intentionally left zero (unset)
-	}, "notify", []WebhookTarget{{Name: "orders"}}, nil, testLogger())
+	}, "notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Workers: 1, DefaultDrain: time.Second, Logger: testLogger()})
 	if err != nil {
 		t.Fatalf("ctor: %v", err)
 	}
@@ -112,18 +108,151 @@ func TestWebhookPublisherDefaultRetryPolicy(t *testing.T) {
 	}
 }
 
+func TestWebhookSyncPublishReturnsNilOn2xx(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	pub, err := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, DeliveryMode: "sync", Auth: config.WebhookAuthConfig{Type: "none"}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Logger: testLogger()})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("sync publish: %v", err)
+	}
+	// Sync delivery happens before Publish returns — no Close/drain needed.
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("sync mode should deliver inline; hits=%d", hits)
+	}
+	if err := pub.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+func TestWebhookSyncPublishReturnsErrorOn4xx(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(400)
+	}))
+	defer srv.Close()
+	pub, _ := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, DeliveryMode: "sync", Auth: config.WebhookAuthConfig{Type: "none"},
+		Retry: config.RetryPolicyConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Logger: testLogger()})
+	if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err == nil {
+		t.Fatal("sync publish should return error on terminal 4xx")
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("4xx is terminal; want exactly 1 attempt, got %d", hits)
+	}
+}
+
+func TestWebhookSyncPublishReturnsErrorOnExhausted5xx(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+	pub, _ := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, DeliveryMode: "sync", Auth: config.WebhookAuthConfig{Type: "none"},
+		Retry: config.RetryPolicyConfig{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Logger: testLogger()})
+	if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err == nil {
+		t.Fatal("sync publish should return error after exhausting retries on 5xx")
+	}
+	if atomic.LoadInt32(&hits) != 3 {
+		t.Fatalf("want 3 attempts on exhausted 5xx, got %d", hits)
+	}
+}
+
+func TestWebhookSyncPublishHonorsContextDeadlineMidBackoff(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503) // retryable, forces a backoff sleep the ctx will cut short
+	}))
+	defer srv.Close()
+	pub, _ := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, DeliveryMode: "sync", Auth: config.WebhookAuthConfig{Type: "none"},
+		Retry: config.RetryPolicyConfig{MaxAttempts: 5, InitialBackoff: time.Second, MaxBackoff: 5 * time.Second}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Logger: testLogger()})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := pub.Publish(ctx, "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err == nil {
+		t.Fatal("expected error when context deadline expires mid-backoff")
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("ctx deadline should cut the 1s backoff short; took %v", elapsed)
+	}
+}
+
+func TestWebhookReadyReflectsSaturation(t *testing.T) {
+	// Use a worker-less engine so buffer depth is fully controlled (a live worker
+	// pool would consume the junk jobs and is racy). Same-package struct literals.
+	e := &webhookDeliveryEngine{destID: "notify", jobs: make(chan webhookJob, 10), logger: testLogger()}
+	pub := &WebhookPublisher{engine: e, destID: "notify", logger: testLogger()}
+	if err := pub.Ready(context.Background()); err != nil {
+		t.Fatalf("empty queue must be Ready, got %v", err)
+	}
+	for len(e.jobs) < 9 { // 90% => saturated
+		e.jobs <- webhookJob{}
+	}
+	if err := pub.Ready(context.Background()); err == nil {
+		t.Fatal("saturated queue must report not-Ready")
+	}
+}
+
+func TestWebhookSyncModeHasNoEngine(t *testing.T) {
+	pub, _ := NewWebhookPublisher(config.WebhookConfig{URL: "http://x", DeliveryMode: "sync", Auth: config.WebhookAuthConfig{Type: "none"}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Logger: testLogger()})
+	if pub.engine != nil {
+		t.Fatal("sync mode must not build a delivery engine")
+	}
+	if err := pub.Ready(context.Background()); err != nil {
+		t.Fatalf("sync mode Ready must be nil, got %v", err)
+	}
+	if err := pub.Close(); err != nil {
+		t.Fatalf("sync mode Close must be nil, got %v", err)
+	}
+}
+
 // fakeWebhookMetrics counts calls to each metric method.
 type fakeWebhookMetrics struct {
-	dropped int32
-	retries int32
+	dropped             int32
+	retries             int32
+	deadLetter          int32
+	deadLetterFail      int32
+	lastDroppedReceived string
+	lastDepth           int32
+	lastCapacity        int32
+	panics              int32
+	lastPanicLocation   string
 	// deliveries[outcome]++
 	deliveries map[string]int32
 }
 
-func (f *fakeWebhookMetrics) WebhookDropped(_, _ string) { atomic.AddInt32(&f.dropped, 1) }
-func (f *fakeWebhookMetrics) WebhookRetry(_, _ string)   { atomic.AddInt32(&f.retries, 1) }
+func (f *fakeWebhookMetrics) WebhookDropped(_, _, reason string) {
+	atomic.AddInt32(&f.dropped, 1)
+	f.lastDroppedReceived = reason
+}
+func (f *fakeWebhookMetrics) WebhookRetry(_, _ string) { atomic.AddInt32(&f.retries, 1) }
 func (f *fakeWebhookMetrics) WebhookDelivery(_, _, outcome string) {
 	// not needed for this test, but must satisfy the interface
+}
+func (f *fakeWebhookMetrics) WebhookDeadLetter(_, _, _ string) { atomic.AddInt32(&f.deadLetter, 1) }
+func (f *fakeWebhookMetrics) WebhookDeadLetterFailure(_, _ string) {
+	atomic.AddInt32(&f.deadLetterFail, 1)
+}
+func (f *fakeWebhookMetrics) WebhookQueueDepth(_ string, depth int) {
+	atomic.StoreInt32(&f.lastDepth, int32(depth))
+}
+func (f *fakeWebhookMetrics) WebhookQueueCapacity(_ string, capacity int) {
+	atomic.StoreInt32(&f.lastCapacity, int32(capacity))
+}
+func (f *fakeWebhookMetrics) Panic(location string) {
+	atomic.AddInt32(&f.panics, 1)
+	f.lastPanicLocation = location
 }
 
 func TestWebhookPublisherDroppedMetricOnQueueFull(t *testing.T) {
@@ -137,10 +266,9 @@ func TestWebhookPublisherDroppedMetricOnQueueFull(t *testing.T) {
 
 	// engine: 1 worker, queue size 1 — so once the worker is busy and the single
 	// buffer slot is taken, the next Enqueue must fail and WebhookDropped fires.
-	eng := newWebhookDeliveryEngine(1, 1, time.Second, nil, testLogger())
 	m := &fakeWebhookMetrics{}
-	pub, err := NewWebhookPublisher(eng, config.WebhookConfig{URL: srv.URL, Timeout: time.Second, Auth: config.WebhookAuthConfig{Type: "none"}},
-		"notify", []WebhookTarget{{Name: "orders"}}, m, testLogger())
+	pub, err := NewWebhookPublisher(config.WebhookConfig{URL: srv.URL, Timeout: time.Second, MaxQueue: 1, Auth: config.WebhookAuthConfig{Type: "none"}},
+		"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Workers: 1, DefaultDrain: time.Second, Metrics: m, Logger: testLogger()})
 	if err != nil {
 		t.Fatalf("ctor: %v", err)
 	}
@@ -169,5 +297,8 @@ func TestWebhookPublisherDroppedMetricOnQueueFull(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&m.dropped); got != 1 {
 		t.Fatalf("expected WebhookDropped called exactly once, got %d", got)
+	}
+	if m.lastDroppedReceived != "queue_full" {
+		t.Fatalf("expected drop reason %q, got %q", "queue_full", m.lastDroppedReceived)
 	}
 }

@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +45,7 @@ type Server struct {
 	trustedProxies   []*net.IPNet
 	inflight         chan struct{}
 	metrics          *metrics.Metrics
+	readiness        *readinessProber
 	mux              *http.ServeMux
 }
 
@@ -70,6 +73,7 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 		metrics:          appMetrics,
 		mux:              http.NewServeMux(),
 	}
+	s.readiness = newReadinessProber(publisher, appMetrics, logger, cfg.Server.ReadinessInterval, cfg.Server.ReadinessTimeout)
 	for name, endpoint := range cfg.Endpoints {
 		if endpoint.RateLimit.Enabled != nil {
 			s.endpointLimiters[name] = ratelimit.New(*endpoint.RateLimit.Enabled, endpoint.RateLimit.RequestsPerMinute, endpoint.RateLimit.Burst)
@@ -123,6 +127,21 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 	return s
 }
 
+// filterLevelBodyUnparsed is the hookway_filtered_total "level" label used
+// in place of "endpoint"/"route" when the failing condition was body-sourced
+// against a request body that never parsed as JSON (see bodyUnparsedFilter).
+const filterLevelBodyUnparsed = "body_unparsed"
+
+// bodyUnparsedFilter reports whether a filter drop should be attributed to an
+// unparsed (non-JSON) request body rather than a legitimate filter match: true
+// only when the failing condition reads from the body AND the body never
+// parsed as JSON (env.Body == nil). A body condition that legitimately fails
+// against present JSON, or a header condition evaluated against a non-JSON
+// body, is not this case.
+func bodyUnparsedFilter(conditionSource string, body any) bool {
+	return conditionSource == filter.SourceBody && body == nil
+}
+
 // compileFilterChain compiles a config filter chain into a filter.Chain,
 // converting config conditions to filter specs. It fails closed (match nothing)
 // if the chain unexpectedly fails to compile, so a misconfigured chain never
@@ -166,7 +185,7 @@ func parseCIDRs(entries []string) []*net.IPNet {
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("/health", s.handleReady)
+	s.mux.HandleFunc("/health", s.handleLive)
 	s.mux.HandleFunc("/healthz", s.handleLive)
 	s.mux.HandleFunc("/ready", s.handleReady)
 	s.mux.HandleFunc("/readyz", s.handleReady)
@@ -206,13 +225,59 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	requestID := s.requestID(r)
 	traceID := traceIDFromRequest(r)
+	traceparent := traceparentFromRequest(r, traceID)
 	w.Header().Set("X-Request-ID", requestID)
 	ctx := context.WithValue(r.Context(), requestIDKey{}, requestID)
 	ctx = context.WithValue(ctx, traceIDKey{}, traceID)
+	ctx = context.WithValue(ctx, traceparentKey{}, traceparent)
 	r = r.WithContext(ctx)
 	s.metrics.Inflight(1)
 	defer s.metrics.Inflight(-1)
-	s.mux.ServeHTTP(w, r)
+	rw := &recoveringResponseWriter{ResponseWriter: w}
+	defer s.recoverHandlerPanic(rw, requestID, traceID)
+	s.mux.ServeHTTP(rw, r)
+}
+
+// recoveringResponseWriter tracks whether a response has started (WriteHeader
+// or Write called) so a panic recovered after some output was already flushed
+// does not attempt a second, invalid WriteHeader call.
+type recoveringResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (w *recoveringResponseWriter) WriteHeader(status int) {
+	w.wroteHeader = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *recoveringResponseWriter) Write(b []byte) (int, error) {
+	w.wroteHeader = true
+	return w.ResponseWriter.Write(b)
+}
+
+// recoverHandlerPanic is deferred around s.mux.ServeHTTP. On a panic it logs a
+// structured Error with the stack trace, counts hookway_panics_total{location="handler"},
+// and — only when nothing has been written to the response yet — writes a
+// clean 500. A panic that occurs mid-write (after headers or a partial body
+// were already flushed) cannot be un-written, so in that case this only
+// logs and counts; the client sees a truncated/aborted response, which is the
+// correct (if less clean) outcome given net/http has already committed bytes.
+func (s *Server) recoverHandlerPanic(rw *recoveringResponseWriter, requestID, traceID string) {
+	rec := recover()
+	if rec == nil {
+		return
+	}
+	s.logger.Error("panic recovered in http handler",
+		"location", "handler",
+		"panic", fmt.Sprint(rec),
+		"stack", string(debug.Stack()),
+		"request_id", requestID, "trace_id", traceID,
+	)
+	s.metrics.Panic("handler")
+	if !rw.wroteHeader {
+		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+	}
 }
 
 func (s *Server) HTTPServer() *http.Server {
@@ -229,13 +294,26 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleReady serves the cached readiness result maintained by the background
+// prober. It never triggers a live destination fan-out, so a fleet of pods
+// cannot stampede the brokers via kubelet probes, and one flaky destination
+// cannot exceed a probe deadline. The prober logs the underlying reason on each
+// failed probe; the public response stays generic so it cannot leak broker
+// URLs or credentials.
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	if err := s.publisher.Ready(r.Context()); err != nil {
-		s.logger.Error("readiness check failed", "error", err.Error(), "request_id", requestIDFromContext(r.Context()), "trace_id", traceIDFromContext(r.Context()))
+	if _, ready := s.readiness.status(time.Now()); !ready {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "not ready"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+// StartReadinessProbe launches the background readiness prober and returns a
+// channel closed when it stops (on ctx cancellation). Call it once, after the
+// publisher is connected and before serving traffic; cancel ctx on shutdown to
+// stop the goroutine.
+func (s *Server) StartReadinessProbe(ctx context.Context) <-chan struct{} {
+	return s.readiness.run(ctx)
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -346,10 +424,14 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "unauthorized"})
 		return
 	}
-	// Reserve the replay key against replays. Release it on publish failure so a
-	// sender retry is not permanently rejected as a replay. In fan-out mode that
-	// retry can duplicate destinations already published before a later
-	// destination failed; consumers must keep using idempotency keys.
+	// Reserve the replay key against replays. Release it whenever a retry of
+	// this exact request could still make progress: full publish failure (no
+	// destination succeeded), and partial failure under skip_failed (some
+	// destinations still need the event). Full success keeps the reservation.
+	// A retry after partial failure re-delivers to destinations that already
+	// succeeded; that duplicate is the documented consumer-side dedup
+	// contract via idempotency_key, identical to stop_on_failure's retry
+	// semantics today.
 	replayKey := s.replayReservationKey(endpoint, r, rawBody)
 	replayCache := s.replayCaches[endpointName]
 	if replayCache != nil {
@@ -369,7 +451,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	env, err := webhook.BuildEnvelopeWithOptions(r, webhook.EnvelopeOptions{
 		Endpoint: endpointName, DestinationQueueID: destinationLabel, Queue: targetLabel, RawBody: rawBody, ReceivedAt: time.Now(), SourceIP: sourceIP,
-		RequestID: requestIDFromContext(r.Context()), TraceID: traceIDFromContext(r.Context()),
+		RequestID: requestIDFromContext(r.Context()), TraceID: traceIDFromContext(r.Context()), Traceparent: traceparentFromContext(r.Context()),
 		AuthType: endpoint.Auth.Type, AuthScheme: defaultScheme(endpoint.Auth.Scheme),
 		IdempotencyKey:  s.idempotencyKey(r, endpoint, rawBody),
 		HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
@@ -388,13 +470,23 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	if chain := s.endpointFilters[endpointName]; !chain.Empty() {
 		if ok, idx := chain.Match(env.OrigHeaders, env.Body); !ok {
 			source, path, operator := chain.Describe(idx)
-			for _, route := range routes {
-				s.metrics.Filtered(endpointName, route.Destination, route.Target, "endpoint")
+			level := "endpoint"
+			if bodyUnparsedFilter(source, env.Body) {
+				level = filterLevelBodyUnparsed
 			}
-			s.logger.Info("webhook filtered at endpoint",
-				"endpoint", endpointName, "filter_level", "endpoint", "filter_index", idx,
+			for _, route := range routes {
+				s.metrics.Filtered(endpointName, route.Destination, route.Target, level)
+			}
+			logArgs := []any{
+				"endpoint", endpointName, "filter_level", level, "filter_index", idx,
 				"filter_source", source, "filter_path", path, "filter_operator", operator,
-				"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID)
+				"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID,
+			}
+			if level == filterLevelBodyUnparsed {
+				s.logger.Warn("body filter evaluated against unparsed body", logArgs...)
+			} else {
+				s.logger.Info("webhook filtered at endpoint", logArgs...)
+			}
 			status = endpoint.FilterResponseStatus()
 			if status >= 200 && status < 300 {
 				// Silent drop: keep the replay reservation (the delivery was
@@ -422,18 +514,36 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		for i, route := range routes {
 			if ok, idx := chains[i].Match(env.OrigHeaders, env.Body); !ok {
 				source, path, operator := chains[i].Describe(idx)
-				s.metrics.Filtered(endpointName, route.Destination, route.Target, "route")
-				s.logger.Info("webhook filtered at route",
+				level := "route"
+				if bodyUnparsedFilter(source, env.Body) {
+					level = filterLevelBodyUnparsed
+				}
+				s.metrics.Filtered(endpointName, route.Destination, route.Target, level)
+				logArgs := []any{
 					"endpoint", endpointName, "destination_queue_id", route.Destination, "queue", route.Target,
-					"filter_level", "route", "filter_index", idx,
+					"filter_level", level, "filter_index", idx,
 					"filter_source", source, "filter_path", path, "filter_operator", operator,
-					"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID)
+					"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID,
+				}
+				if level == filterLevelBodyUnparsed {
+					s.logger.Warn("body filter evaluated against unparsed body", logArgs...)
+				} else {
+					s.logger.Info("webhook filtered at route", logArgs...)
+				}
 				continue
 			}
 			activeRoutes = append(activeRoutes, route)
 		}
 	}
-	published, failed, err := s.publishRoutes(r.Context(), endpointName, endpoint, env, activeRoutes)
+	// Detach the publish from the inbound request context: a sender
+	// disconnect or timeout after the body is read and the signature verified
+	// must not cancel in-flight publishes (the work is already committed to
+	// being delivered). context.WithoutCancel preserves request-scoped values
+	// (request id, trace id) while dropping the parent's cancellation signal;
+	// server.publish_timeout independently bounds how long the fan-out may run.
+	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.cfg.Server.PublishTimeout)
+	defer cancel()
+	published, failed, err := s.publishRoutes(pubCtx, endpointName, endpoint, env, activeRoutes)
 	if err != nil {
 		releaseReplay()
 		status = http.StatusServiceUnavailable
@@ -452,6 +562,13 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		"event_id": env.ID, "request_id": env.RequestID,
 	}
 	if len(failed) > 0 {
+		// Partial failure under skip_failed: release the reservation so an
+		// identical sender retry is accepted again (not rejected 409) and can
+		// redeliver to the destinations that failed here. That retry also
+		// re-publishes to destinations that already succeeded; consumers
+		// dedupe that duplicate via idempotency_key, identical to the retry
+		// contract stop_on_failure already relies on today.
+		releaseReplay()
 		body["failed_destinations"] = failed
 	}
 	writeJSON(w, status, body)
@@ -499,8 +616,7 @@ func (s *Server) publishRoutesSkipFailed(ctx context.Context, endpointName strin
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				route := routes[index]
-				results <- s.publishRoute(ctx, endpointName, env, route, index)
+				results <- s.publishRouteRecovered(ctx, endpointName, env, routes[index], index)
 			}
 		}()
 	}
@@ -542,10 +658,36 @@ func compactRouteResults(results []map[string]string) []map[string]string {
 	return compacted
 }
 
+// publishRouteRecovered wraps publishRoute with a per-job panic guard so a
+// publisher that panics for one route (fan-out under skip_failed) is recorded
+// as a failed route rather than crashing the process or leaving the
+// WaitGroup/results channel wedged — the deferred recover still runs, wg.Done
+// still fires, and a result is still sent.
+func (s *Server) publishRouteRecovered(ctx context.Context, endpointName string, env webhook.Envelope, route config.EndpointDestinationConfig, index int) (result publishRouteResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			s.logger.Error("panic recovered in fan-out publish worker",
+				"location", "fanout",
+				"panic", fmt.Sprint(rec),
+				"stack", string(debug.Stack()),
+				"endpoint", endpointName, "destination", route.Destination, "queue", route.Target,
+				"request_id", env.RequestID, "trace_id", env.TraceID,
+			)
+			s.metrics.Panic("fanout")
+			result = publishRouteResult{
+				index: index, destinationID: route.Destination, queue: route.Target,
+				err: fmt.Errorf("panic: %v", rec),
+			}
+		}
+	}()
+	return s.publishRoute(ctx, endpointName, env, route, index)
+}
+
 func (s *Server) publishRoute(ctx context.Context, endpointName string, env webhook.Envelope, route config.EndpointDestinationConfig, index int) publishRouteResult {
 	msg := queue.Message{
 		SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
-		Endpoint: env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
+		Traceparent: env.Traceparent,
+		Endpoint:    env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
 		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
 		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
 		RawBody: env.RawBody, OrigHeaders: env.OrigHeaders, Hops: env.Hops,
@@ -612,13 +754,52 @@ func (s *Server) sourceIP(r *http.Request) string {
 	// allowlist and per-IP rate limiting.
 	if s.trustsPeer(peer) {
 		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			return strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			if ip := s.rightmostUntrustedForwardedIP(forwarded); ip != "" {
+				return ip
+			}
 		}
 		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
 			return realIP
 		}
 	}
 	return peer
+}
+
+// rightmostUntrustedForwardedIP resolves the real client address from an
+// X-Forwarded-For header value. Proxies append to the right as a request
+// passes through them, so the header reads
+// "client, proxy_a, proxy_b, ..., proxy_n" with the entry closest to Hookway
+// on the right. The leftmost entry is client-controlled and cannot be
+// trusted on its own: a client can send "X-Forwarded-For: <allowlisted-ip>"
+// to spoof the IP allowlist or rotate fake addresses to dodge per-IP rate
+// limiting.
+//
+// To find the real client, walk the list right to left, skipping any entry
+// that is itself a trusted proxy, and return the first (i.e. rightmost)
+// entry that is not. If every entry is a trusted proxy, there is no
+// untrusted hop to report, so the leftmost entry is returned.
+//
+// A malformed/unparseable entry stops the walk immediately: the caller gets
+// the last known-good (more rightward, closer-to-trusted) hop rather than
+// continuing further left toward the client-controlled end, which fails
+// toward the trusted side instead of toward attacker-controlled input.
+// Returns "" only when no entry could be parsed at all (e.g. the header's
+// first parsed entry is already malformed), letting the caller fall back to
+// X-Real-IP or the peer address.
+func (s *Server) rightmostUntrustedForwardedIP(forwarded string) string {
+	parts := strings.Split(forwarded, ",")
+	lastGood := ""
+	for i := len(parts) - 1; i >= 0; i-- {
+		entry := strings.TrimSpace(parts[i])
+		if net.ParseIP(entry) == nil {
+			break
+		}
+		lastGood = entry
+		if !s.isTrustedProxy(entry) {
+			return entry
+		}
+	}
+	return lastGood
 }
 
 // trustsPeer reports whether forwarding headers from this immediate peer should
@@ -631,12 +812,21 @@ func (s *Server) trustsPeer(peer string) bool {
 	if len(s.trustedProxies) == 0 {
 		return true
 	}
-	ip := net.ParseIP(peer)
-	if ip == nil {
+	return s.isTrustedProxy(peer)
+}
+
+// isTrustedProxy reports whether ip falls inside one of the configured
+// trusted_proxies CIDR ranges. It backs both trustsPeer (should we honour
+// forwarding headers from this immediate peer at all) and
+// rightmostUntrustedForwardedIP (should this X-Forwarded-For entry be
+// skipped as a known proxy hop rather than treated as the real client).
+func (s *Server) isTrustedProxy(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
 		return false
 	}
 	for _, network := range s.trustedProxies {
-		if network.Contains(ip) {
+		if network.Contains(parsed) {
 			return true
 		}
 	}
@@ -706,7 +896,14 @@ func (s *Server) requestID(r *http.Request) string {
 func traceIDFromRequest(r *http.Request) string {
 	if traceparent := r.Header.Get("Traceparent"); traceparent != "" {
 		parts := strings.Split(traceparent, "-")
-		if len(parts) >= 2 && len(parts[1]) == 32 {
+		// The trace-id segment must be well-formed hex, not merely the right
+		// length: this value is reused both for logging (trace_id) and, when
+		// no valid inbound traceparent is available to propagate verbatim, as
+		// the trace-id embedded in a synthesized outbound "00-<id>-...-01"
+		// header (see traceparentFromRequest). A length-only check lets a
+		// crafted non-hex segment (e.g. 32 "g" characters) flow into that
+		// synthesized header and violate W3C well-formedness.
+		if len(parts) >= 2 && len(parts[1]) == 32 && isHex(parts[1]) {
 			return parts[1]
 		}
 	}
@@ -716,8 +913,62 @@ func traceIDFromRequest(r *http.Request) string {
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
+// traceparentFromRequest returns the outbound W3C traceparent header value
+// for this request's deliveries: the inbound Traceparent header verbatim when
+// it is syntactically valid, otherwise a synthesized
+// "00-<traceID>-<16-hex-random-span>-01" using the same trace id already
+// derived for this request (traceIDFromRequest). Synthesizing (rather than
+// leaving it empty) keeps distributed traces intact across the gateway even
+// when the sender didn't participate in W3C trace context.
+func traceparentFromRequest(r *http.Request, traceID string) string {
+	if tp := r.Header.Get("Traceparent"); isValidTraceparent(tp) {
+		return tp
+	}
+	return "00-" + traceID + "-" + randomSpanID() + "-01"
+}
+
+// isValidTraceparent checks the structural shape of a W3C traceparent header:
+// four hyphen-separated hex fields of length 2 (version), 32 (trace-id), 16
+// (span-id), 2 (flags). It does not validate the version-specific rules
+// beyond that (e.g. version "ff" or an all-zero trace/span id), which is
+// sufficient to distinguish a well-formed propagated header from an absent or
+// garbled one.
+func isValidTraceparent(tp string) bool {
+	if tp == "" {
+		return false
+	}
+	parts := strings.Split(tp, "-")
+	if len(parts) != 4 {
+		return false
+	}
+	fieldLens := [4]int{2, 32, 16, 2}
+	for i, part := range parts {
+		if len(part) != fieldLens[i] || !isHex(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// randomSpanID returns a 16-hex-character (8-byte) span id, reusing the same
+// uuid-derived randomness source traceIDFromRequest already relies on rather
+// than adding a crypto/rand dependency for one call site.
+func randomSpanID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")[:16]
+}
+
 type requestIDKey struct{}
 type traceIDKey struct{}
+type traceparentKey struct{}
 
 func requestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey{}).(string)
@@ -727,6 +978,11 @@ func requestIDFromContext(ctx context.Context) string {
 func traceIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(traceIDKey{}).(string)
 	return id
+}
+
+func traceparentFromContext(ctx context.Context) string {
+	tp, _ := ctx.Value(traceparentKey{}).(string)
+	return tp
 }
 
 func defaultScheme(scheme string) string {
