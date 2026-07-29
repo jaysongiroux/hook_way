@@ -192,6 +192,13 @@ func newKafkaOps(ctx context.Context, destinationID string, cfg config.KafkaConf
 		WriteBackoffMin: minBackoff,
 		WriteBackoffMax: maxBackoff,
 		WriteTimeout:    timeout,
+		// The kafka-go default BatchTimeout (1s) exists to accumulate a batch
+		// across concurrent producers before flushing. Hookway calls
+		// WriteMessages synchronously for a single message per request, so a
+		// long BatchTimeout only adds latency waiting for a batch that will
+		// never fill. Set it short so a lone message flushes almost
+		// immediately instead of waiting up to a second.
+		BatchTimeout: 10 * time.Millisecond,
 		// Topics are pre-created below for create:true routes, so the Writer
 		// does not rely on broker-side auto-creation (which races on first publish).
 		AllowAutoTopicCreation: false,

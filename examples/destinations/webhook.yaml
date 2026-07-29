@@ -1,24 +1,34 @@
 # examples/destinations/webhook.yaml
 #
 # Reference config for a Webhook destination. Hookway delivers each inbound
-# webhook event to a configured HTTPS endpoint using async store-and-forward:
-# Publish() enqueues the job and returns immediately (the caller's inbound
-# request receives hook_way's own 202 Accepted — NOT the downstream response).
-# Actual delivery outcome is observable only via logs and metrics.
+# webhook event to a configured HTTPS endpoint.
 #
-# A single shared delivery engine (worker pool) is created per server. The pool
-# size is controlled by server.fanout_concurrency. The engine's job queue is
-# bounded by max_queue (largest value across all webhook destinations, default
-# 1000). When the queue is full, Publish fails and the upstream sender receives
-# a non-2xx response, creating backpressure so that it retries.
+# DELIVERY MODE (delivery_mode: async | sync; default async)
+#   async (default): Publish() enqueues the job and returns immediately (the
+#     caller's inbound request receives hook_way's own 202 Accepted — NOT the
+#     downstream response). Delivery outcome is observable via logs, metrics,
+#     and (optionally) a dead_letter destination.
+#   sync: Publish() delivers inline (with retries) and returns the outcome, so
+#     the inbound request only succeeds when the downstream delivery does. This
+#     adds up to (max_attempts × timeout + backoff) latency to the inbound
+#     request. RECOMMENDED for critical, low-volume hooks where the sender
+#     should see delivery failures directly. dead_letter does not apply to sync.
+#
+# Each webhook destination has its OWN delivery engine (worker pool + queue), so
+# a slow target cannot block deliveries to other destinations. The pool size is
+# controlled by server.fanout_concurrency; the queue is bounded by max_queue
+# (per-destination, default 1000). When the queue is full, Publish fails and the
+# upstream sender receives a non-2xx response, creating backpressure.
 #
 # On shutdown, hook_way drains the queue within drain_timeout (defaults to
 # server.shutdown_timeout) before exiting, so in-flight deliveries are not lost
 # across graceful restarts / deploys.
 #
-# NON-DURABLE: a hard crash (kill -9, OOM, host failure) loses any events that
-# were queued or in-flight but not yet delivered. hook_way is not a transparent
-# proxy — the downstream response is not returned to the inbound sender.
+# NON-DURABLE (async): a hard crash (kill -9, OOM, host failure) loses any events
+# that were queued or in-flight but not yet delivered — UNLESS a dead_letter
+# destination is configured, which durably captures terminally-failed deliveries.
+# hook_way is not a transparent proxy — the downstream response is not returned
+# to the inbound sender in async mode.
 #
 # `on_existing_conflict` is NOT valid for webhook destinations — the field is
 # rejected at config validation time. Do not set it on webhook entries.
@@ -45,16 +55,31 @@ destinations:
       # Required: the target endpoint URL. Must be http:// or https://.
       url: "${WEBHOOK_URL}"
 
+      # Optional: delivery mode. "async" (default) enqueues and returns 202;
+      # "sync" delivers inline and returns the downstream outcome to the caller.
+      delivery_mode: "async"
+
       # Optional: per-request HTTP timeout (default 10s).
       timeout: "10s"
 
-      # Optional: max number of pending deliveries in the queue (default 1000).
-      # When the queue is full, inbound Publish calls fail (backpressure).
+      # Optional (async only): max number of pending deliveries in this
+      # destination's queue (default 1000, now truly per-destination). When the
+      # queue is full, inbound Publish calls fail (backpressure).
       max_queue: 1000
 
-      # Optional: how long to drain queued deliveries on shutdown (defaults to
-      # server.shutdown_timeout).
+      # Optional (async only): how long to drain queued deliveries on shutdown
+      # (defaults to server.shutdown_timeout).
       drain_timeout: "30s"
+
+      # Optional (async only): dead-letter routing for terminally-failed
+      # deliveries (4xx, or 5xx/timeout after retries are exhausted). The
+      # referenced destination MUST exist and MUST NOT be a webhook destination
+      # (this makes delivery loops structurally impossible). The failed message
+      # is enriched with a "dead_letter" block (destination, target, outcome,
+      # attempts, failed_at) and published to the named destination/target.
+      # dead_letter:
+      #   destination: "dlq-rabbit"   # id of a non-webhook destination below
+      #   target: "webhook-dead-letters"
 
       # Optional retry policy. Retries are attempted on HTTP 429, 5xx, and
       # network-level errors (connection refused, timeout). Other 4xx responses
@@ -107,6 +132,16 @@ destinations:
       #   client_key: ""               # path to PEM key for mutual TLS (must pair with client_cert)
       #   server_name: ""              # override SNI/verification hostname
       #   insecure_skip_verify: false  # dev-only; disables cert verification; never use in production
+
+  # Example dead-letter destination for the webhook above. Uncomment together
+  # with the dead_letter block on `forward`. Must be a NON-webhook destination.
+  # dlq-rabbit:
+  #   type: rabbitmq
+  #   rabbitmq:
+  #     url: "${RABBITMQ_URL}"
+  #     exchange: "hookway.dlq"
+  #     exchange_type: "direct"
+  #     declare_queues: true   # declares the dead-letter target queue on startup
 
 endpoints:
   order_events:

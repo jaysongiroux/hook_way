@@ -21,8 +21,9 @@ import (
 )
 
 // These tests exercise the full outbound-webhook stack end to end: a real
-// config.Config drives Factory.Create, which builds the shared delivery engine
-// and a WebhookPublisher, and deliveries land on a live httptest.Server. Unlike
+// config.Config drives Factory.Create, which builds a per-destination delivery
+// engine and a WebhookPublisher, and deliveries land on a live httptest.Server.
+// Unlike
 // the container-backed suites (Postgres/Mongo/Kafka/...), the webhook
 // destination talks plain HTTP, so the "integration" here is a loopback server
 // rather than Docker — no external dependency, always runs.
@@ -209,6 +210,139 @@ func TestWebhookIntegrationHMACSignatureVerifiedByConsumer(t *testing.T) {
 	if sawEventID != "evt_hmac" {
 		t.Fatalf("X-Hookway-Event-Id = %q, want evt_hmac", sawEventID)
 	}
+}
+
+// webhookDLQConfig routes an endpoint to webhook "notify" (async) whose terminal
+// failures dead-letter to a non-webhook destination "dlq"/"dead". The dlq is a
+// rabbitmq destination injected via the RabbitMQ connector seam in tests.
+func webhookDLQConfig(url string, retry config.RetryPolicyConfig) config.Config {
+	return config.Config{
+		Server: config.ServerConfig{FanoutConcurrency: 2, ShutdownTimeout: 5 * time.Second},
+		Destinations: map[string]config.DestinationConfig{
+			"notify": {Type: "webhook", Webhook: config.WebhookConfig{
+				URL: url, Timeout: 2 * time.Second, DeliveryMode: "async", Retry: retry,
+				Auth:       config.WebhookAuthConfig{Type: "none"},
+				DeadLetter: config.WebhookDeadLetterConfig{Destination: "dlq", Target: "dead"},
+			}},
+			"dlq": {Type: "rabbitmq", RabbitMQ: config.RabbitMQConfig{URL: "amqp://x", Exchange: "hookway.dlq", ExchangeType: "direct"}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"hook": {Enabled: true, Path: "/hook", Destinations: []config.EndpointDestinationConfig{
+				{Destination: "notify", Target: "orders"},
+			}},
+		},
+	}
+}
+
+// TestWebhookIntegrationDeadLetterOnTerminal4xx drives a full delivery that fails
+// terminally (404) and asserts the message is redirected to the dead-letter
+// destination with populated DeadLetter meta.
+func TestWebhookIntegrationDeadLetterOnTerminal4xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	rec := &recordingPublisher{}
+	f := NewFactory(FactoryOptions{
+		RabbitMQConnector: func(ctx context.Context, id string, cfg RabbitMQConfig) (Publisher, error) { return rec, nil },
+		Logger:            testLogger(),
+	})
+	pub, err := f.Create(context.Background(), webhookDLQConfig(srv.URL, config.RetryPolicyConfig{MaxAttempts: 1}))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "evt_dlq", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	_ = pub.Close() // drains: delivery fails, dead-letter dispatched
+
+	if rec.published != 1 {
+		t.Fatalf("dead-letter publisher received %d messages, want 1", rec.published)
+	}
+	if rec.queue != "dead" {
+		t.Fatalf("dead-letter target = %q, want \"dead\"", rec.queue)
+	}
+	if rec.msg.DeadLetter == nil || rec.msg.DeadLetter.Outcome != "4xx" || rec.msg.DeadLetter.Destination != "notify" {
+		t.Fatalf("dead-letter meta = %#v", rec.msg.DeadLetter)
+	}
+}
+
+// TestWebhookIntegrationDeadLetterOnExhaustedRetries proves the attempts count is
+// recorded in the dead-letter meta after retries are exhausted on 500s.
+func TestWebhookIntegrationDeadLetterOnExhaustedRetries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	rec := &recordingPublisher{}
+	f := NewFactory(FactoryOptions{
+		RabbitMQConnector: func(ctx context.Context, id string, cfg RabbitMQConfig) (Publisher, error) { return rec, nil },
+		Logger:            testLogger(),
+	})
+	retry := config.RetryPolicyConfig{MaxAttempts: 3, InitialBackoff: 2 * time.Millisecond, MaxBackoff: 5 * time.Millisecond}
+	pub, err := f.Create(context.Background(), webhookDLQConfig(srv.URL, retry))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "evt", ReceivedAt: time.Now()}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	_ = pub.Close()
+
+	if rec.msg.DeadLetter == nil {
+		t.Fatal("dead-letter meta missing")
+	}
+	if rec.msg.DeadLetter.Attempts != 3 || rec.msg.DeadLetter.Outcome != "5xx" {
+		t.Fatalf("dead-letter meta = %#v, want 3 attempts / 5xx", rec.msg.DeadLetter)
+	}
+}
+
+// TestWebhookIntegrationSyncMode proves sync delivery returns the downstream
+// outcome to the caller: an error on 503, nil on 200 (delivered before return).
+func TestWebhookIntegrationSyncMode(t *testing.T) {
+	t.Run("503 returns error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+		cfg := webhookIntegrationConfig(srv.URL, "orders", config.WebhookAuthConfig{Type: "none"}, config.RetryPolicyConfig{MaxAttempts: 1})
+		notify := cfg.Destinations["notify"]
+		notify.Webhook.DeliveryMode = "sync"
+		cfg.Destinations["notify"] = notify
+		pub, err := NewFactory(FactoryOptions{Logger: testLogger()}).Create(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		defer pub.Close()
+		if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err == nil {
+			t.Fatal("sync 503 must return an error to the caller")
+		}
+	})
+	t.Run("200 returns nil and delivers before return", func(t *testing.T) {
+		var hits int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&hits, 1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		cfg := webhookIntegrationConfig(srv.URL, "orders", config.WebhookAuthConfig{Type: "none"}, config.RetryPolicyConfig{})
+		notify := cfg.Destinations["notify"]
+		notify.Webhook.DeliveryMode = "sync"
+		cfg.Destinations["notify"] = notify
+		pub, err := NewFactory(FactoryOptions{Logger: testLogger()}).Create(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		defer pub.Close()
+		if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err != nil {
+			t.Fatalf("sync 200 must return nil, got %v", err)
+		}
+		if atomic.LoadInt32(&hits) != 1 {
+			t.Fatalf("sync mode must deliver before Publish returns; hits=%d", hits)
+		}
+	})
 }
 
 // parseTsDotSignature parses a "t=<ts>,v1=<hex>" header, mirroring what a

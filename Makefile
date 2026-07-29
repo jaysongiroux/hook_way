@@ -1,8 +1,20 @@
-.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test lint validate validate-examples run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test lint validate validate-examples build run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
 IMAGE ?= hookway:local
+
+# VERSION/COMMIT are baked into the binary via -ldflags so `hookway version`
+# and the hookway_build_info metric identify the build they came from. Both
+# fall back to sentinel values ("dev"/"none", matching cmd/hookway/main.go's
+# package-level defaults) outside a git checkout (e.g. a source tarball) or a
+# shallow clone with no reachable commit.
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
+
+build:
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway ./cmd/hookway
 
 test:
 	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka'
@@ -72,7 +84,7 @@ run:
 	HOOKWAY_CONFIG=$(CONFIG) $(GO) run ./cmd/hookway
 
 docker-build:
-	docker build -t $(IMAGE) .
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)

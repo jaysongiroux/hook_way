@@ -47,6 +47,9 @@ jobs:
       - name: Postgres integration tests (testcontainers)
         run: make postgres-integration-test
 
+      - name: MongoDB integration tests (testcontainers)
+        run: make mongodb-integration-test
+
       - name: Kafka integration tests (testcontainers)
         run: make kafka-integration-test
 
@@ -97,6 +100,16 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{raw}}
 
+      - name: Resolve build version/commit
+        if: github.event_name != 'pull_request'
+        id: build-info
+        # Mirrors the Makefile's VERSION/COMMIT so the pushed image's
+        # hookway_build_info and `hookway version` match a local `make
+        # docker-build` for the same commit.
+        run: |
+          echo "version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
@@ -112,6 +125,9 @@ jobs:
           push: true
           tags: ${{ steps.docker-meta.outputs.tags }}
           labels: ${{ steps.docker-meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build-info.outputs.version }}
+            COMMIT=${{ steps.build-info.outputs.commit }}
 
       - name: Update Docker Hub description
         if: github.event_name != 'pull_request'

@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,7 +17,7 @@ func testLogger() *slog.Logger {
 
 func testEngine(t *testing.T, workers, queue int) *webhookDeliveryEngine {
 	t.Helper()
-	return newWebhookDeliveryEngine(workers, queue, 5*time.Second, nil, testLogger())
+	return newWebhookDeliveryEngine("notify", workers, queue, 5*time.Second, nil, testLogger())
 }
 
 func envelopeDelivery(url string) *webhookDelivery {
@@ -85,6 +86,70 @@ func TestWebhookEngineStampsHopHeaderProxyModeOverwritesInbound(t *testing.T) {
 	}
 }
 
+// TestWebhookEngineSetsTraceparentHeaderEnvelopeMode covers C4: the outbound
+// request must carry msg.Traceparent verbatim (buildWebhookRequest is the
+// only place that stamps it — the envelope JSON body separately carries the
+// field too, but the header is what actually propagates the trace to a
+// receiver that isn't parsing the envelope).
+func TestWebhookEngineSetsTraceparentHeaderEnvelopeMode(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Traceparent")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	_ = e.Enqueue(webhookJob{delivery: envelopeDelivery(srv.URL), msg: Message{ID: "evt", ReceivedAt: time.Now(), Traceparent: want}})
+	_ = e.Close()
+	if got != want {
+		t.Fatalf("outbound Traceparent = %q, want %q", got, want)
+	}
+}
+
+// TestWebhookEngineSetsTraceparentHeaderProxyModeOverwritesInbound covers C4
+// for proxy mode: traceparent is not hop-by-hop, so any inbound Traceparent
+// copied via OrigHeaders must be overwritten with msg.Traceparent (the value
+// computed from the request Hookway actually received), not left as whatever
+// the original sender happened to send.
+func TestWebhookEngineSetsTraceparentHeaderProxyModeOverwritesInbound(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("Traceparent")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	orig := http.Header{}
+	orig.Set("Traceparent", "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-aaaaaaaaaaaaaaaa-00")
+	want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	_ = e.Enqueue(webhookJob{delivery: proxyDelivery(srv.URL), msg: Message{
+		ID: "evt", ReceivedAt: time.Now(), OrigHeaders: orig, RawBody: []byte("{}"), Traceparent: want,
+	}})
+	_ = e.Close()
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("outbound Traceparent = %v, want single value %q", got, want)
+	}
+}
+
+// TestWebhookEngineOmitsTraceparentHeaderWhenMessageHasNone guards the
+// "only set when non-empty" rule: an empty msg.Traceparent must not stamp an
+// empty header (nor leave a copied-but-blank one in proxy mode).
+func TestWebhookEngineOmitsTraceparentHeaderWhenMessageHasNone(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Values("Traceparent")
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	_ = e.Enqueue(webhookJob{delivery: envelopeDelivery(srv.URL), msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	_ = e.Close()
+	if len(got) != 0 {
+		t.Fatalf("expected no Traceparent header, got %v", got)
+	}
+}
+
 func TestWebhookEngineRetriesThenSucceeds(t *testing.T) {
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +188,7 @@ func TestWebhookEngineQueueFull(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-block; w.WriteHeader(200) }))
 	defer srv.Close()
 	defer close(block)
-	e := newWebhookDeliveryEngine(1, 1, time.Second, nil, testLogger())
+	e := newWebhookDeliveryEngine("notify", 1, 1, time.Second, nil, testLogger())
 	d := envelopeDelivery(srv.URL)
 	// first fills the worker, second fills the queue(1), third must be rejected
 	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "1", ReceivedAt: time.Now()}})
@@ -157,5 +222,293 @@ func TestWebhookEngineDrainDeliversQueued(t *testing.T) {
 	_ = e.Close() // must block until all 5 delivered (within drain timeout)
 	if atomic.LoadInt32(&delivered) != 5 {
 		t.Fatalf("drain should deliver all queued jobs; delivered %d/5", delivered)
+	}
+}
+
+func TestParseRetryAfterIntegerSeconds(t *testing.T) {
+	got := parseRetryAfter("2", time.Now())
+	if got != 2*time.Second {
+		t.Fatalf("parseRetryAfter(%q) = %v, want 2s", "2", got)
+	}
+}
+
+func TestParseRetryAfterHTTPDate(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	future := now.Add(5 * time.Second)
+	header := future.Format(http.TimeFormat)
+	got := parseRetryAfter(header, now)
+	if got < 4*time.Second || got > 5*time.Second {
+		t.Fatalf("parseRetryAfter(%q) = %v, want ~5s", header, got)
+	}
+}
+
+func TestParseRetryAfterGarbageFallsBackToZero(t *testing.T) {
+	for _, header := range []string{"", "not-a-duration", "-5", "0", "Thursday"} {
+		if got := parseRetryAfter(header, time.Now()); got != 0 {
+			t.Fatalf("parseRetryAfter(%q) = %v, want 0 (fallback to computed backoff)", header, got)
+		}
+	}
+}
+
+// TestWebhookEngineUsesRetryAfterSecondsOverComputedBackoff guards the D8 fix:
+// a 429 with Retry-After must win over the (much smaller) configured
+// exponential backoff for the wait before the next attempt.
+func TestWebhookEngineUsesRetryAfterSecondsOverComputedBackoff(t *testing.T) {
+	var calls int32
+	var secondCallAt time.Time
+	firstCallAt := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(429)
+			return
+		}
+		secondCallAt = time.Now()
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	d := envelopeDelivery(srv.URL)
+	d.retry = RetryPolicy{MaxAttempts: 2, InitialBackoff: time.Millisecond, MaxBackoff: 10 * time.Second}
+	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	_ = e.Close()
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("expected 2 attempts (429 then 200), got %d", calls)
+	}
+	if secondCallAt.Sub(firstCallAt) < 900*time.Millisecond {
+		t.Fatalf("retry fired after %v, want >= ~1s per Retry-After header (not the 1ms computed backoff)", secondCallAt.Sub(firstCallAt))
+	}
+}
+
+// dlqDelivery builds a delivery whose target always fails terminally and routes
+// to the given dead-letter destination/target.
+func dlqDelivery(url, dlqDest, dlqTarget string) *webhookDelivery {
+	d := envelopeDelivery(url)
+	d.retry = RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond}
+	d.dlqDestination = dlqDest
+	d.dlqTarget = dlqTarget
+	return d
+}
+
+func TestWebhookEngineDeadLetterDispatchedOnTerminal4xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	var gotDest, gotTarget string
+	var gotMsg Message
+	done := make(chan struct{})
+	m := &fakeWebhookMetrics{}
+	e := newWebhookDeliveryEngine("notify", 1, 10, time.Second, m, testLogger())
+	e.setDeadLetter(func(ctx context.Context, destID, target string, msg Message) error {
+		gotDest, gotTarget, gotMsg = destID, target, msg
+		close(done)
+		return nil
+	})
+	_ = e.Enqueue(webhookJob{delivery: dlqDelivery(srv.URL, "dlq", "dead"), msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dead-letter resolver was not invoked")
+	}
+	_ = e.Close()
+
+	if gotDest != "dlq" || gotTarget != "dead" {
+		t.Fatalf("resolver got dest=%q target=%q, want dlq/dead", gotDest, gotTarget)
+	}
+	if gotMsg.DeadLetter == nil {
+		t.Fatal("dead-letter meta not populated on message")
+	}
+	dl := gotMsg.DeadLetter
+	if dl.Destination != "notify" || dl.Target != "orders" || dl.Outcome != "4xx" {
+		t.Fatalf("dead-letter meta = %#v", dl)
+	}
+	if dl.Attempts != 1 {
+		t.Fatalf("dead-letter attempts = %d, want 1 (4xx is terminal on first try)", dl.Attempts)
+	}
+	if dl.FailedAt.IsZero() {
+		t.Fatal("dead-letter FailedAt not set")
+	}
+	if atomic.LoadInt32(&m.deadLetter) != 1 {
+		t.Fatalf("WebhookDeadLetter metric = %d, want 1", m.deadLetter)
+	}
+}
+
+func TestWebhookEngineDeadLetterAttemptsCountOnExhaustedRetries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500) // always 5xx => retryable, exhausts attempts
+	}))
+	defer srv.Close()
+
+	var attempts int
+	done := make(chan struct{})
+	e := newWebhookDeliveryEngine("notify", 1, 10, time.Second, nil, testLogger())
+	e.setDeadLetter(func(ctx context.Context, destID, target string, msg Message) error {
+		attempts = msg.DeadLetter.Attempts
+		close(done)
+		return nil
+	})
+	d := dlqDelivery(srv.URL, "dlq", "dead")
+	d.retry = RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond}
+	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("resolver not invoked")
+	}
+	_ = e.Close()
+	if attempts != 3 {
+		t.Fatalf("dead-letter attempts = %d, want 3 (exhausted)", attempts)
+	}
+}
+
+func TestWebhookEngineDeadLetterResolverErrorRecordsFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	done := make(chan struct{})
+	m := &fakeWebhookMetrics{}
+	e := newWebhookDeliveryEngine("notify", 1, 10, time.Second, m, testLogger())
+	e.setDeadLetter(func(ctx context.Context, destID, target string, msg Message) error {
+		close(done)
+		return context.DeadlineExceeded // simulate DLQ publish failure
+	})
+	_ = e.Enqueue(webhookJob{delivery: dlqDelivery(srv.URL, "dlq", "dead"), msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("resolver not invoked")
+	}
+	_ = e.Close()
+	if atomic.LoadInt32(&m.deadLetterFail) != 1 {
+		t.Fatalf("WebhookDeadLetterFailure = %d, want 1", m.deadLetterFail)
+	}
+	if atomic.LoadInt32(&m.deadLetter) != 0 {
+		t.Fatalf("WebhookDeadLetter should not fire on failure, got %d", m.deadLetter)
+	}
+}
+
+func TestWebhookEngineNoDeadLetterLogsAndDrops(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	var resolverCalled int32
+	e := newWebhookDeliveryEngine("notify", 1, 10, time.Second, nil, testLogger())
+	e.setDeadLetter(func(ctx context.Context, destID, target string, msg Message) error {
+		atomic.AddInt32(&resolverCalled, 1)
+		return nil
+	})
+	// delivery with empty dlqDestination => log-and-drop, resolver never called.
+	d := envelopeDelivery(srv.URL)
+	d.retry = RetryPolicy{MaxAttempts: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
+	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	_ = e.Close()
+	if atomic.LoadInt32(&resolverCalled) != 0 {
+		t.Fatalf("resolver must not be called when no dead_letter configured, called %d", resolverCalled)
+	}
+}
+
+func TestWebhookEngineSaturatedBoundaryAt90Percent(t *testing.T) {
+	// Bare engine, no workers, so the buffer depth is fully controlled.
+	e := &webhookDeliveryEngine{destID: "notify", jobs: make(chan webhookJob, 10), logger: testLogger()}
+	fill := func(n int) {
+		for len(e.jobs) < n {
+			e.jobs <- webhookJob{}
+		}
+		for len(e.jobs) > n {
+			<-e.jobs
+		}
+	}
+	fill(8)
+	if _, _, sat := e.saturated(); sat {
+		t.Fatalf("8/10 must not be saturated")
+	}
+	fill(9) // exactly 90%
+	if depth, capacity, sat := e.saturated(); !sat {
+		t.Fatalf("9/10 must be saturated (depth=%d cap=%d)", depth, capacity)
+	}
+}
+
+func TestWebhookEngineQueueDepthMetricOnEnqueue(t *testing.T) {
+	// Bare engine, no workers: Enqueue reports the post-send depth deterministically.
+	m := &fakeWebhookMetrics{}
+	e := &webhookDeliveryEngine{destID: "notify", jobs: make(chan webhookJob, 10), metrics: m, logger: testLogger()}
+	if err := e.Enqueue(webhookJob{}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if got := atomic.LoadInt32(&m.lastDepth); got != 1 {
+		t.Fatalf("WebhookQueueDepth reported %d, want 1", got)
+	}
+}
+
+// TestWebhookEngineGarbageRetryAfterFallsBackToComputedBackoff guards the
+// fallback path: an unparseable Retry-After must not stall delivery — the
+// engine should fall back to the (fast, in this test) computed backoff.
+func TestWebhookEngineGarbageRetryAfterFallsBackToComputedBackoff(t *testing.T) {
+	var calls int32
+	start := time.Now()
+	var secondCallAt time.Time
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "not-a-valid-value")
+			w.WriteHeader(429)
+			return
+		}
+		secondCallAt = time.Now()
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	e := testEngine(t, 1, 10)
+	d := envelopeDelivery(srv.URL)
+	d.retry = RetryPolicy{MaxAttempts: 2, InitialBackoff: time.Millisecond, MaxBackoff: 5 * time.Millisecond}
+	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "evt", ReceivedAt: time.Now()}})
+	_ = e.Close()
+	if atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("expected 2 attempts (429 then 200), got %d", calls)
+	}
+	if secondCallAt.Sub(start) > time.Second {
+		t.Fatalf("garbage Retry-After should fall back to fast computed backoff, took %v", secondCallAt.Sub(start))
+	}
+}
+
+// TestWebhookEngineWorkerRecoversPanicAndKeepsDeliveringNextJob covers plan
+// item C2: a delivery that panics inside attempt() (here, a nil *http.Client,
+// which panics on Do) must not take down the worker goroutine. The key
+// assertion is that the test process survives (does not crash) and the next
+// enqueued job on the same worker is still delivered afterward.
+func TestWebhookEngineWorkerRecoversPanicAndKeepsDeliveringNextJob(t *testing.T) {
+	var delivered int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&delivered, 1)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	m := &fakeWebhookMetrics{}
+	e := newWebhookDeliveryEngine("notify", 1, 10, 5*time.Second, m, testLogger())
+
+	panicking := envelopeDelivery(srv.URL)
+	panicking.client = nil // (*http.Client)(nil).Do panics with a nil pointer dereference
+	if err := e.Enqueue(webhookJob{delivery: panicking, msg: Message{ID: "boom", ReceivedAt: time.Now()}}); err != nil {
+		t.Fatalf("enqueue panicking job: %v", err)
+	}
+	if err := e.Enqueue(webhookJob{delivery: envelopeDelivery(srv.URL), msg: Message{ID: "ok", ReceivedAt: time.Now()}}); err != nil {
+		t.Fatalf("enqueue healthy job: %v", err)
+	}
+	_ = e.Close()
+
+	if atomic.LoadInt32(&delivered) != 1 {
+		t.Fatalf("worker must survive the panic and still deliver the next job; delivered=%d", delivered)
+	}
+	if atomic.LoadInt32(&m.panics) != 1 {
+		t.Fatalf("Panic metric calls = %d, want 1", m.panics)
+	}
+	if m.lastPanicLocation != "webhook_worker" {
+		t.Fatalf("panic location = %q, want webhook_worker", m.lastPanicLocation)
 	}
 }

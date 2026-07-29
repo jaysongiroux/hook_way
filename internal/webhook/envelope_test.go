@@ -17,6 +17,7 @@ func TestBuildEnvelopeParsesJSONAndRedactsHeaders(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Paddle-Signature", "secret")
 	req.Header.Set("X-Api-Token", "secret")
+	req.Header.Set("X-Api-Key", "secret")
 
 	env, err := BuildEnvelope(req, "paddle_billing", "billing-events", []byte(`{"event_type":"subscription.created"}`), time.Unix(0, 0), "203.0.113.42")
 	if err != nil {
@@ -25,7 +26,7 @@ func TestBuildEnvelopeParsesJSONAndRedactsHeaders(t *testing.T) {
 	if env.ID == "" || env.RawBodyBase64 != nil {
 		t.Fatalf("bad envelope: %#v", env)
 	}
-	if env.Headers["paddle-signature"][0] != "redacted" || env.Headers["x-api-token"][0] != "redacted" {
+	if env.Headers["paddle-signature"][0] != "redacted" || env.Headers["x-api-token"][0] != "redacted" || env.Headers["x-api-key"][0] != "redacted" {
 		t.Fatalf("headers not redacted: %#v", env.Headers)
 	}
 	if env.Body == nil {
@@ -67,6 +68,47 @@ func TestBuildEnvelopeIncludesPublishedContractFields(t *testing.T) {
 		if !strings.Contains(string(got), want) {
 			t.Fatalf("envelope JSON missing %s: %s", want, got)
 		}
+	}
+}
+
+// TestBuildEnvelopeCarriesTraceparent covers C4: EnvelopeOptions.Traceparent
+// (computed by the httpapi layer) must land verbatim on the envelope and be
+// serialized under the additive "traceparent" field, omitted when empty so
+// schema_version stays 1.0 for callers that never set it.
+func TestBuildEnvelopeCarriesTraceparent(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodPost, "/webhooks/paddle/billing", nil)
+	want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{
+		Endpoint: "paddle_billing", Queue: "billing-events",
+		RawBody: []byte(`{}`), ReceivedAt: time.Unix(0, 0),
+		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", Traceparent: want,
+	})
+	if err != nil {
+		t.Fatalf("BuildEnvelopeWithOptions returned error: %v", err)
+	}
+	if env.Traceparent != want {
+		t.Fatalf("env.Traceparent = %q, want %q", env.Traceparent, want)
+	}
+	got, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), `"traceparent":"`+want+`"`) {
+		t.Fatalf("envelope JSON missing traceparent: %s", got)
+	}
+
+	// Omitted when unset (additive field, schema_version stays 1.0).
+	envNoTP, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{
+		Endpoint: "paddle_billing", Queue: "billing-events",
+		RawBody: []byte(`{}`), ReceivedAt: time.Unix(0, 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotNoTP, _ := json.Marshal(envNoTP)
+	if strings.Contains(string(gotNoTP), "traceparent") {
+		t.Fatalf("expected traceparent omitted when unset: %s", gotNoTP)
 	}
 }
 

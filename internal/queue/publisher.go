@@ -14,11 +14,17 @@ type Publisher interface {
 }
 
 type Message struct {
-	SchemaVersion      string         `json:"schema_version"`
-	ID                 string         `json:"id"`
-	IdempotencyKey     string         `json:"idempotency_key,omitempty"`
-	RequestID          string         `json:"request_id,omitempty"`
-	TraceID            string         `json:"trace_id,omitempty"`
+	SchemaVersion  string `json:"schema_version"`
+	ID             string `json:"id"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	TraceID        string `json:"trace_id,omitempty"`
+	// Traceparent is the outbound W3C traceparent header value: the inbound
+	// header verbatim when syntactically valid, otherwise one synthesized
+	// from TraceID. The webhook destination sets it on the outbound request
+	// (envelope and proxy modes); other destinations carry it in the JSON
+	// envelope but do not otherwise act on it.
+	Traceparent        string         `json:"traceparent,omitempty"`
 	Endpoint           string         `json:"endpoint"`
 	DestinationQueueID string         `json:"destination_queue_id"`
 	Queue              string         `json:"queue"`
@@ -38,6 +44,20 @@ type Message struct {
 	// Hops is the inbound loop-protection hop count. The webhook destination
 	// stamps Hops+1 on the outbound request; other destinations ignore it.
 	Hops int `json:"-"`
+	// DeadLetter is populated only when an async webhook delivery has terminally
+	// failed and is being redirected to a configured dead-letter destination. It
+	// is additive and omitted otherwise, so schema_version stays 1.0.
+	DeadLetter *DeadLetterMeta `json:"dead_letter,omitempty"`
+}
+
+// DeadLetterMeta records why and how a webhook delivery was dead-lettered. It
+// travels on the copied Message the dead-letter destination receives.
+type DeadLetterMeta struct {
+	Destination string    `json:"destination"` // the failed webhook destination id
+	Target      string    `json:"target"`      // the failed webhook target
+	Outcome     string    `json:"outcome"`     // last delivery outcome (4xx|5xx|429|timeout|error)
+	Attempts    int       `json:"attempts"`    // delivery attempts made before giving up
+	FailedAt    time.Time `json:"failed_at"`
 }
 
 type RabbitMQConfig struct {
@@ -107,6 +127,10 @@ type RabbitMQMetrics interface {
 	RabbitMQPublishConfirm()
 	RabbitMQPublishRetry()
 	RabbitMQDeadLetterPublish()
+	// RabbitMQUnroutable records a mandatory publish the broker returned
+	// (basic.return) as unroutable — a terminal config error (no binding for
+	// the routing key), not a transient failure.
+	RabbitMQUnroutable(destinationQueueID, queue string)
 }
 
 // RedisPubSubMetrics records redis_pubsub delivery observability. Implemented by
@@ -119,5 +143,19 @@ type RedisPubSubMetrics interface {
 type WebhookMetrics interface {
 	WebhookDelivery(destination, target, outcome string)
 	WebhookRetry(destination, target string)
-	WebhookDropped(destination, target string)
+	// WebhookDropped records an async delivery dropped before it was ever
+	// attempted. reason is "queue_full" or "engine_closing".
+	WebhookDropped(destination, target, reason string)
+	// WebhookDeadLetter records a terminally-failed delivery successfully
+	// redirected to its dead-letter destination.
+	WebhookDeadLetter(destination, target, outcome string)
+	// WebhookDeadLetterFailure records a dead-letter redirect that itself failed.
+	WebhookDeadLetterFailure(destination, target string)
+	// WebhookQueueDepth reports the current async delivery queue depth.
+	WebhookQueueDepth(destination string, depth int)
+	// WebhookQueueCapacity reports the async delivery queue capacity (set once).
+	WebhookQueueCapacity(destination string, capacity int)
+	// Panic records a panic recovered inside the async delivery engine worker.
+	// location is always "webhook_worker" for this interface's callers.
+	Panic(location string)
 }

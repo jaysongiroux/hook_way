@@ -15,12 +15,13 @@ config validation failed
 ## Server
 
 - `server.addr`: required listen address, example `":8080"`.
-- `server.read_timeout`: optional duration, default `5s`.
-- `server.write_timeout`: optional duration, default `10s`.
-- `server.idle_timeout`: optional duration, default `60s`.
-- `server.shutdown_timeout`: optional duration, default `10s`.
+- `server.read_timeout`: optional duration, default `5s`. If set explicitly, must be positive; omit the field (rather than setting `0s` or a negative value) to use the default.
+- `server.write_timeout`: optional duration, default `10s`. Same non-positive restriction as `read_timeout`.
+- `server.idle_timeout`: optional duration, default `60s`. Same non-positive restriction as `read_timeout`.
+- `server.shutdown_timeout`: optional duration, default `10s`. Same non-positive restriction as `read_timeout`.
+- `server.publish_timeout`: optional duration, default `10s` (matches `write_timeout`/`shutdown_timeout`). Same non-positive restriction as `read_timeout`. Bounds the fan-out publish for a single webhook request; the publish runs detached from the inbound request's cancellation (a sender disconnect or timeout does not abort in-flight publishes) but is still bounded by this deadline so a stalled destination cannot hang a delivery indefinitely. Config validation rejects `publish_timeout` greater than `shutdown_timeout` (a slow synchronous publish could otherwise make a clean SIGTERM shutdown time out and report failure) or greater than `write_timeout` (a sync-mode response can't be written after `write_timeout` elapses, so the sender would see a spurious timeout and retry). Lower `publish_timeout` or raise the other value to resolve either error.
 - `server.max_body_bytes`: required positive integer.
-- `server.max_inflight_requests`: optional non-negative integer. When `> 0`, caps concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. `0` (default) means unlimited. Health, readiness, and metrics endpoints are never subject to this limit.
+- `server.max_inflight_requests`: optional integer. Omitted or explicit `0` defaults to `256`, capping concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. Explicit `-1` disables the limit (unlimited in-flight requests). Any other negative value is rejected. Health, readiness, and metrics endpoints are never subject to this limit.
 - `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for endpoints using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
 
 ## Security
@@ -98,7 +99,7 @@ When disabled, the metrics route is not registered.
 Metrics include HTTP request counts, auth failures, rate limits, load-shedding
 saturation (`hookway_saturated_total`), filter drops (`hookway_filtered_total`), loop
 rejections (`hookway_loop_rejected_total`), publish latency,
-RabbitMQ reconnect/confirm/retry/DLQ counters, config load failures, and —
+RabbitMQ reconnect/confirm/retry/DLQ/unroutable (`hookway_rabbitmq_unroutable_total`) counters, config load failures, and —
 when `runtime_metrics` is enabled — Go runtime and process CPU/memory metrics. Startup
 config failures still block serving traffic, so config failure metrics are
 recorded in-process before exit and are most useful for tests or future reload
@@ -134,6 +135,19 @@ RabbitMQ fields live under `destinations.<id>.rabbitmq`:
 
   Bad or unreadable CA/cert paths fail fast at startup. Note: the published container image must contain a CA bundle for `amqps://` to work at all — the provided Dockerfile copies `ca-certificates` into the `scratch` image for this reason.
 - `destinations.<id>.rabbitmq.dead_letter`: optional dead-letter exchange/queue declaration settings.
+- `destinations.<id>.rabbitmq.retry`: optional publish retry/backoff, covering both a nacked confirm and a transient publish/connect failure. This does NOT retry an unroutable message (see below) — that is a config error, not a transient failure.
+  - `max_attempts`: default `3`.
+  - `initial_backoff`: default `100ms`.
+  - `max_backoff`: default `2s`.
+
+Every publish is sent `mandatory`: if the exchange has no queue bound for the routing key, the broker returns the message instead of silently dropping it. Hookway surfaces this as a `Publish` error (so the inbound webhook request gets a non-2xx response rather than an incorrect `202`) and increments `hookway_rabbitmq_unroutable_total{destination_queue_id, queue}`. This is treated as a terminal configuration problem — a missing queue binding — so it is not retried.
+
+```yaml
+      retry:
+        max_attempts: 3
+        initial_backoff: "100ms"
+        max_backoff: "2s"
+```
 
 ```yaml
 destinations:
@@ -197,10 +211,12 @@ destinations:
     on_existing_conflict: "reconcile"
     sqs:
       region: "us-east-1"
-      endpoint: "${AWS_ENDPOINT:-}"          # http://localhost:4566 for LocalStack
-      access_key_id: "${AWS_ACCESS_KEY_ID:-}"
-      secret_access_key: "${AWS_SECRET_ACCESS_KEY:-}"
+      # endpoint: "${AWS_ENDPOINT}"          # http://localhost:4566 for LocalStack
+      # access_key_id: "${AWS_ACCESS_KEY_ID}"
+      # secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
 ```
+
+`endpoint`, `access_key_id`, and `secret_access_key` are optional: to use the default AWS credential chain, omit them entirely rather than referencing an env var and leaving it unset — `${ENV_NAME}` references require the variable to be set (empty is fine; unset is a config-load error, see [Secrets](security.md#secrets)).
 
 ### AWS SNS
 
@@ -219,8 +235,8 @@ S3 fields live under `destinations.<id>.s3`. Hookway writes each webhook event a
 
 - `destinations.<id>.type`: set to `s3`.
 - `destinations.<id>.s3.region`: required AWS region, e.g. `us-east-1`.
-- `destinations.<id>.s3.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
-- `destinations.<id>.s3.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
+- `destinations.<id>.s3.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack, or reference `${AWS_ENDPOINT}` if you export it. Omit the field for production (default AWS endpoint).
+- `destinations.<id>.s3.access_key_id` / `secret_access_key`: optional static credentials, e.g. `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both fields entirely to use the default credential chain.
 - `destinations.<id>.s3.bucket`: required S3 bucket name.
 - `destinations.<id>.s3.create`: when `true`, auto-create the bucket at startup if it does not exist. `us-east-1` uses no `LocationConstraint`; all other regions set it automatically. The bucket is verified via `HeadBucket` at startup regardless of this setting.
 - `destinations.<id>.s3.sse`: server-side encryption mode. Leave empty (default) to rely on the bucket's or account's default encryption. Use `"AES256"` for SSE-S3 managed keys or `"aws:kms"` for SSE-KMS.
@@ -247,13 +263,13 @@ destinations:
     on_existing_conflict: "reconcile"     # accepted but no-op for S3
     s3:
       region: "us-east-1"
-      endpoint: "${AWS_ENDPOINT:-}"       # http://localhost:4566 for LocalStack
-      access_key_id: "${AWS_ACCESS_KEY_ID:-}"
-      secret_access_key: "${AWS_SECRET_ACCESS_KEY:-}"
+      # endpoint: "${AWS_ENDPOINT}"       # http://localhost:4566 for LocalStack
+      # access_key_id: "${AWS_ACCESS_KEY_ID}"
+      # secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
       bucket: "my-webhook-events"
       create: true
       sse: "AES256"                       # or "aws:kms"; omit for default encryption
-      # sse_kms_key_id: "${S3_KMS_KEY_ID:-}"
+      # sse_kms_key_id: "${S3_KMS_KEY_ID}"
 ```
 
 ### Postgres
@@ -480,23 +496,32 @@ See `examples/destinations/redis_stream.yaml` for a full annotated reference wit
 
 Webhook fields live under `destinations.<id>.webhook`. Hookway delivers each inbound webhook event to a configured HTTP/HTTPS endpoint as an outbound HTTP POST.
 
-**Async store-and-forward:** `Publish()` enqueues the delivery job and returns immediately with `nil` (success). The inbound sender receives Hookway's own `202 Accepted` — this means the event was _accepted for delivery_, NOT that it was delivered. Actual delivery outcome is observable only via logs and the `hookway_webhook_*` Prometheus metrics. Publishers MUST NOT block on delivery.
+**Delivery mode (`delivery_mode`):** `async` (default) or `sync`.
 
-**Shared delivery engine and worker pool:** a single delivery engine (goroutine pool) is shared across _all_ webhook destinations configured in the same server. The number of concurrent delivery workers is controlled by `server.fanout_concurrency`. The engine's job queue is bounded by `max_queue` (largest value across all webhook destinations; default 1000). When the queue is full, `Publish()` returns an error and the upstream inbound request receives a non-2xx response — the upstream sender is expected to retry, which creates natural backpressure.
+- **`async` (default):** `Publish()` enqueues the delivery job and returns immediately with `nil` (success). The inbound sender receives Hookway's own `202 Accepted` — this means the event was _accepted for delivery_, NOT that it was delivered. Actual delivery outcome is observable via logs, the `hookway_webhook_*` Prometheus metrics, and (optionally) a `dead_letter` destination. This is the default so upgrades preserve existing behavior.
+- **`sync`:** `Publish()` performs the delivery inline (including retries/backoff) and returns the outcome, so the inbound request succeeds only when the downstream delivery does (a terminal `4xx`, exhausted `5xx`/timeout, or a cancelled request context returns an error → the inbound sender sees a non-2xx). This adds up to roughly `max_attempts × timeout` (plus backoff) of latency to the inbound request. **Recommended for critical, low-volume hooks** where the sender should observe delivery failure directly. `dead_letter` does not apply to sync mode (the caller already learns of the failure).
 
-**Graceful drain on shutdown:** on SIGTERM / shutdown, Hookway drains the in-flight and queued deliveries within `drain_timeout` (defaults to `server.shutdown_timeout`) before the process exits. Graceful deploys and restarts do not lose in-flight events. A hard crash (kill -9, OOM, host failure) loses any events that were queued or in-flight but not yet confirmed.
+**Per-destination delivery engine and worker pool (async):** each webhook destination has its **own** delivery engine (goroutine pool + queue), so a slow or failing target cannot head-of-line-block deliveries to other destinations. The number of concurrent delivery workers per engine is controlled by `server.fanout_concurrency`. The engine's job queue is bounded by `max_queue` (**per-destination**, default 1000). When the queue is full, `Publish()` returns an error and the upstream inbound request receives a non-2xx response — the upstream sender is expected to retry, which creates natural backpressure. Readiness (`/readyz`) reports a webhook destination as not-ready when its queue is ≥90% full.
 
-**NON-DURABLE:** the delivery queue is in-memory only. There is no write-ahead log or persistent queue. Do not use the webhook destination when durability across crashes is required; use a durable queue destination (RabbitMQ, SQS, Kafka, etc.) instead.
+**Graceful drain on shutdown (async):** on SIGTERM / shutdown, Hookway drains the in-flight and queued deliveries within `drain_timeout` (defaults to `server.shutdown_timeout`) before the process exits. Graceful deploys and restarts do not lose in-flight events. A hard crash (kill -9, OOM, host failure) loses any events that were queued or in-flight but not yet confirmed — unless a `dead_letter` destination is configured.
 
-**Not a transparent proxy:** Hookway does not return the downstream HTTP response to the inbound sender. The inbound sender always sees Hookway's own `202 Accepted` (queue-accept) or error.
+**NON-DURABLE by default:** the delivery queue is in-memory only. There is no write-ahead log or persistent queue. For durability of terminally-failed deliveries, configure a `dead_letter` destination pointing at a durable backend; for full durability of every event, use a durable queue destination (RabbitMQ, SQS, Kafka, etc.) directly.
+
+**Dead-letter (`dead_letter`, async only):** when an async delivery fails terminally — a terminal `4xx`, or `5xx`/timeout/error after retries are exhausted — Hookway can redirect the message to another destination instead of dropping it (log-and-drop is the default when no `dead_letter` is set). The redirected message is the original envelope enriched with a `dead_letter` block (`destination`, `target`, `outcome`, `attempts`, `failed_at`). The referenced destination MUST exist and MUST NOT itself be a `webhook` destination — this makes delivery loops structurally impossible (no cycle-detection needed). The dead-letter target queue/topic is auto-collected into the backend destination (and declared for RabbitMQ when `declare_queues: true`) even if it has no direct endpoint route.
+
+**Not a transparent proxy (async):** Hookway does not return the downstream HTTP response to the inbound sender. In async mode the inbound sender always sees Hookway's own `202 Accepted` (queue-accept) or an error. In sync mode the inbound sender still sees Hookway's status (2xx/non-2xx), never the downstream body.
 
 #### Fields
 
 - `destinations.<id>.type`: set to `webhook`.
 - `destinations.<id>.webhook.url`: required. The target endpoint URL. Must be `http://` or `https://`.
+- `destinations.<id>.webhook.delivery_mode`: optional. `async` (default) or `sync`. See [Delivery mode](#webhook) above.
 - `destinations.<id>.webhook.timeout`: optional per-request HTTP timeout. Default `10s`.
-- `destinations.<id>.webhook.max_queue`: optional bound on the in-memory delivery queue. Default `1000`. When the queue fills, inbound `Publish` calls fail (backpressure).
-- `destinations.<id>.webhook.drain_timeout`: optional graceful-drain deadline on shutdown. Defaults to `server.shutdown_timeout`.
+- `destinations.<id>.webhook.max_queue`: optional bound on the in-memory delivery queue (async only, per-destination). Default `1000`. When the queue fills, inbound `Publish` calls fail (backpressure).
+- `destinations.<id>.webhook.drain_timeout`: optional graceful-drain deadline on shutdown (async only). Defaults to `server.shutdown_timeout`.
+- `destinations.<id>.webhook.dead_letter`: optional (async only). Redirect terminally-failed deliveries to another destination.
+  - `destination`: id of a configured **non-webhook** destination. Required with `target`.
+  - `target`: the queue/topic/target name on that destination. Required with `destination`.
 - `destinations.<id>.webhook.retry`: optional retry/backoff settings.
   - `max_attempts`: total attempts (including the first). Default `3`.
   - `initial_backoff`: first retry wait. Default `500ms`.
@@ -518,9 +543,9 @@ Webhook fields live under `destinations.<id>.webhook`. Hookway delivers each inb
 | `429` | Retry with backoff |
 | `5xx` | Retry with backoff |
 | Network error / timeout | Retry with backoff |
-| Other `4xx` (400, 401, 403, 404, …) | Terminal — no retry; event dropped |
+| Other `4xx` (400, 401, 403, 404, …) | Terminal — no retry; dead-lettered if configured, else dropped |
 
-Retries use exponential backoff (doubling, capped at `retry.max_backoff`). After `retry.max_attempts` the delivery is abandoned; the final outcome is observable via `hookway_webhook_delivery_total{outcome=...}` and an Error log entry.
+Retries use exponential backoff (doubling, +/-20% jitter, capped at `retry.max_backoff`) — jitter keeps many destinations that all start failing at once (e.g. a shared downstream outage) from retrying in lockstep. A `429` response with a valid `Retry-After` header (integer seconds or an HTTP-date, per RFC 9110) overrides the computed backoff for that wait, still capped at `retry.max_backoff`; an absent or unparseable header falls back to the computed backoff. After `retry.max_attempts` the delivery is abandoned; the final outcome is observable via `hookway_webhook_delivery_total{outcome=...}` and an Error log entry.
 
 #### Payload modes
 
@@ -612,9 +637,15 @@ assert constant_time_equal(received_hex, expected_hex)
 |--------|--------|-------------|
 | `hookway_webhook_delivery_total` | `destination_queue_id`, `queue`, `outcome` | Delivery attempts by outcome. `outcome` values: `2xx`, `4xx`, `5xx`, `429`, `timeout`, `error`. |
 | `hookway_webhook_retries_total` | `destination_queue_id`, `queue` | Incremented per retry attempt. |
-| `hookway_webhook_dropped_total` | `destination_queue_id`, `queue` | Incremented ONLY when the delivery queue is full at enqueue time (backpressure). NOT incremented on retry exhaustion or terminal 4xx. |
+| `hookway_webhook_dropped_total` | `destination_queue_id`, `queue`, `reason` | Async delivery dropped before it was ever attempted. `reason` is `queue_full` (buffer full at enqueue — backpressure) or `engine_closing` (enqueue during shutdown). NOT incremented on retry exhaustion or terminal 4xx. |
+| `hookway_webhook_dead_letter_total` | `destination_queue_id`, `queue`, `outcome` | Terminally-failed deliveries successfully redirected to the `dead_letter` destination. `outcome` is the last delivery outcome (`4xx`, `5xx`, `429`, `timeout`, `error`). |
+| `hookway_webhook_dead_letter_failures_total` | `destination_queue_id`, `queue` | Dead-letter redirects that themselves failed (or fired with no resolver). The event is then logged and dropped. |
+| `hookway_webhook_queue_depth` | `destination_queue_id` | Current async delivery queue depth (gauge). |
+| `hookway_webhook_queue_capacity` | `destination_queue_id` | Configured async delivery queue capacity (gauge; set once at startup). |
 
-Retry-exhausted or terminal-4xx deliveries are observable via `hookway_webhook_delivery_total{outcome="5xx"|"4xx"|"timeout"|"error"}` and an Error log entry — they do NOT increment `hookway_webhook_dropped_total`.
+> **Metric change:** `hookway_webhook_dropped_total` gained a `reason` label in this release. Dashboards/alerts that aggregated the metric without a `reason` selector continue to work; those that pinned an exact label set must add `reason`.
+
+Retry-exhausted or terminal-4xx deliveries are observable via `hookway_webhook_delivery_total{outcome="5xx"|"4xx"|"timeout"|"error"}` and an Error log entry — they do NOT increment `hookway_webhook_dropped_total`. When a `dead_letter` destination is configured, such failures also increment `hookway_webhook_dead_letter_total` (on successful redirect) or `hookway_webhook_dead_letter_failures_total` (on redirect failure).
 
 The generic `Publish` metric (`hookway_publish_total{status}`) reflects queue-accept (`accepted`) or queue-full drop (`dropped`) at the point where the inbound event is enqueued, before any delivery attempt.
 
@@ -624,9 +655,13 @@ destinations:
     type: "webhook"
     webhook:
       url: "${WEBHOOK_URL}"
+      delivery_mode: "async"    # sync | async (default async)
       timeout: "10s"
-      max_queue: 1000
-      drain_timeout: "30s"
+      max_queue: 1000           # async only; per-destination
+      drain_timeout: "30s"      # async only
+      dead_letter:              # async only; must reference a non-webhook destination
+        destination: "dlq-rabbit"
+        target: "webhook-dead-letters"
       retry:
         max_attempts: 5
         initial_backoff: "500ms"
@@ -643,6 +678,15 @@ destinations:
       #   client_key: "/etc/ssl/private/client.key"
       #   server_name: "internal.example.com"
       #   insecure_skip_verify: false
+
+  # The dead_letter destination referenced above — a durable, non-webhook backend.
+  dlq-rabbit:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.dlq"
+      exchange_type: "direct"
+      declare_queues: true   # declares the "webhook-dead-letters" queue on startup
 ```
 
 See `examples/destinations/webhook.yaml` for the full annotated reference config with all four auth types shown.
@@ -835,6 +879,8 @@ Operators:
 
 Drops are counted by `hookway_filtered_total{endpoint, destination_queue_id, queue, level}` (`level` is `endpoint` or `route`) and logged at Info with the failing condition's index, source, path, and operator — never the header or body value.
 
+**Body filters require a JSON-parseable body.** `source: body` conditions read the parsed JSON body; a request whose body did not parse as JSON (e.g. form-encoded or plain-text payloads) fails every `body` condition except `not_exists`, exactly as described above. To make that silent-looking drop visible to operators, when the *failing* condition is body-sourced and the body did not parse as JSON, `level` is `body_unparsed` instead of `endpoint`/`route`, and a `"body filter evaluated against unparsed body"` warning is logged with the endpoint and filter index. This is purely a visibility signal — match semantics and the delivery outcome are unchanged. A `header` condition failing against a non-JSON body, or a `body` condition legitimately failing against present JSON, is not flagged this way.
+
 Auth fields:
 
 - `type`: authentication family; `hmac_sha256` for HMAC body signatures (the digest is chosen per-scheme — most use SHA-256, `hmac_sha1_hex` uses SHA-1), `header_exact` for static header secrets, `jwt` for Bearer JSON Web Tokens, `no_auth` to disable verification entirely.
@@ -852,7 +898,7 @@ Auth fields:
 - `secret`: required (except for `no_auth`); reference an environment variable such as `${WEBHOOK_SECRET}`. For `jwt_rs256` and `jwt_es256`, this must be a PEM-encoded public key (e.g. `${JWT_PUBLIC_KEY}`).
 - `signature_header`: required HTTP header Hookway reads for verification (signature or static secret); not required for `no_auth`. For `jwt` schemes, set to `Authorization` (the JWT is read as `Bearer <token>`).
 - `remove_bearer`: optional; when `true` on `header_exact` endpoints, strips a leading `Bearer`/`bearer` prefix (case-insensitive) and following whitespace from the header value before comparing to `secret`. Ignored for `hmac_sha256` endpoints (config validation rejects it).
-- `timestamp_tolerance`: positive duration; required only for timestamped HMAC schemes (e.g. `hmac_sha256_ts_colon`). For `jwt` schemes, used as clock-skew leeway for `exp`/`nbf` validation.
+- `timestamp_tolerance`: optional duration, default `5m`; required (and enforced positive) only for timestamped HMAC schemes (e.g. `hmac_sha256_ts_colon`) and `jwt` schemes, where it is the clock-skew leeway for `exp`/`nbf` validation. If set explicitly on any scheme, it must be a positive duration — omit the field to use the default, or a negative/zero value is rejected at config load.
 - `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted on `hmac_sha256` endpoints, Hookway falls back to a hash of the verified signature. When omitted on `header_exact` endpoints, Hookway falls back to a hash of the raw body.
 - `expected_issuer`: optional; for `jwt` schemes, enforces the `iss` claim must match this value.
 - `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
@@ -861,6 +907,8 @@ Auth fields:
 ## Logging & observability
 
 Hookway emits structured `slog` JSON logs. Each log record carries a consistent set of field keys so log queries and alerts are stable across destinations.
+
+- `logging.level`: optional, one of `debug`, `info`, `warn`, `error`; default `info`. Controls the minimum severity written to stdout — e.g. set `debug` to see the startup verify/exists checks and retry-attempt lines called out below, which are otherwise suppressed at the default `info` level.
 
 ### Canonical log fields
 

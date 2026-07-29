@@ -2,11 +2,31 @@ package logging
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ParseLevel parses a case-insensitive log level name into a slog.Level. An
+// empty string defaults to "info" so an omitted logging.level config field is
+// valid. Supported values are "debug", "info", "warn", and "error"; anything
+// else is an error naming the unsupported value.
+func ParseLevel(level string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "", "info":
+		return slog.LevelInfo, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("unsupported log level %q: use debug, info, warn, or error", level)
+	}
+}
 
 type RequestAttrs struct {
 	Message            string
@@ -96,5 +116,6 @@ func SensitiveHeader(key string) bool {
 	if key == "authorization" || key == "cookie" || key == "set-cookie" || key == "paddle-signature" {
 		return true
 	}
-	return strings.Contains(key, "secret") || strings.Contains(key, "token") || strings.Contains(key, "signature")
+	return strings.Contains(key, "secret") || strings.Contains(key, "token") || strings.Contains(key, "signature") ||
+		strings.Contains(key, "key") || strings.Contains(key, "auth")
 }

@@ -19,6 +19,7 @@ func TestRabbitMQReliabilityMetricsAreExposed(t *testing.T) {
 	m.RabbitMQPublishConfirm()
 	m.RabbitMQPublishRetry()
 	m.RabbitMQDeadLetterPublish()
+	m.RabbitMQUnroutable("billing", "billing-events")
 	m.ConfigLoadFailure("validation")
 
 	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
@@ -37,11 +38,15 @@ hookway_rabbitmq_reconnects_total 1
 # HELP hookway_rabbitmq_retries_total RabbitMQ publish retries.
 # TYPE hookway_rabbitmq_retries_total counter
 hookway_rabbitmq_retries_total 1
+# HELP hookway_rabbitmq_unroutable_total RabbitMQ mandatory publishes returned as unroutable.
+# TYPE hookway_rabbitmq_unroutable_total counter
+hookway_rabbitmq_unroutable_total{destination_queue_id="billing",queue="billing-events"} 1
 `),
 		"hookway_rabbitmq_reconnects_total",
 		"hookway_rabbitmq_confirms_total",
 		"hookway_rabbitmq_retries_total",
 		"hookway_rabbitmq_dead_letter_publish_total",
+		"hookway_rabbitmq_unroutable_total",
 		"hookway_config_load_failures_total",
 	)
 	if err != nil {
@@ -76,6 +81,45 @@ hookway_saturated_total{destination_queue_id="billing",endpoint="paddle_billing"
 		"hookway_publish_total",
 		"hookway_rate_limited_total",
 		"hookway_saturated_total",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWebhookDeliveryMetricsAreExposed(t *testing.T) {
+	m := New()
+
+	m.WebhookDelivery("notify", "orders", "5xx")
+	m.WebhookRetry("notify", "orders")
+	m.WebhookDropped("notify", "orders", "queue_full")
+	m.WebhookDeadLetter("notify", "orders", "4xx")
+	m.WebhookDeadLetterFailure("notify", "orders")
+	m.WebhookQueueDepth("notify", 7)
+	m.WebhookQueueCapacity("notify", 1000)
+
+	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP hookway_webhook_dropped_total Webhook deliveries dropped before delivery, by reason (queue_full|engine_closing).
+# TYPE hookway_webhook_dropped_total counter
+hookway_webhook_dropped_total{destination_queue_id="notify",queue="orders",reason="queue_full"} 1
+# HELP hookway_webhook_dead_letter_total Terminally-failed webhook deliveries redirected to a dead-letter destination.
+# TYPE hookway_webhook_dead_letter_total counter
+hookway_webhook_dead_letter_total{destination_queue_id="notify",outcome="4xx",queue="orders"} 1
+# HELP hookway_webhook_dead_letter_failures_total Dead-letter redirects that themselves failed.
+# TYPE hookway_webhook_dead_letter_failures_total counter
+hookway_webhook_dead_letter_failures_total{destination_queue_id="notify",queue="orders"} 1
+# HELP hookway_webhook_queue_depth Current webhook delivery queue depth.
+# TYPE hookway_webhook_queue_depth gauge
+hookway_webhook_queue_depth{destination_queue_id="notify"} 7
+# HELP hookway_webhook_queue_capacity Configured webhook delivery queue capacity.
+# TYPE hookway_webhook_queue_capacity gauge
+hookway_webhook_queue_capacity{destination_queue_id="notify"} 1000
+`),
+		"hookway_webhook_dropped_total",
+		"hookway_webhook_dead_letter_total",
+		"hookway_webhook_dead_letter_failures_total",
+		"hookway_webhook_queue_depth",
+		"hookway_webhook_queue_capacity",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -220,12 +264,52 @@ hookway_endpoint_info{destination_queue_id="billing",endpoint="example_fanout",p
 	}
 }
 
+func TestPanicMetricCountsByLocation(t *testing.T) {
+	m := New()
+
+	m.Panic("handler")
+	m.Panic("handler")
+	m.Panic("fanout")
+	m.Panic("webhook_worker")
+
+	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP hookway_panics_total Panics recovered by Hookway, by the location they were recovered in.
+# TYPE hookway_panics_total counter
+hookway_panics_total{location="fanout"} 1
+hookway_panics_total{location="handler"} 2
+hookway_panics_total{location="webhook_worker"} 1
+`),
+		"hookway_panics_total",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetBuildInfoRegistersGaugeSetToOne(t *testing.T) {
+	m := New()
+
+	m.SetBuildInfo("1.2.3", "abc1234")
+
+	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP hookway_build_info Build version and commit Hookway was compiled from (value is always 1).
+# TYPE hookway_build_info gauge
+hookway_build_info{commit="abc1234",version="1.2.3"} 1
+`),
+		"hookway_build_info",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMetricsImplementsRabbitMQMetricsHook(t *testing.T) {
 	var _ interface {
 		RabbitMQReconnect()
 		RabbitMQPublishConfirm()
 		RabbitMQPublishRetry()
 		RabbitMQDeadLetterPublish()
+		RabbitMQUnroutable(destinationQueueID, queue string)
 		ConfigLoadFailure(string)
 	} = New()
 	var _ = prometheus.Gauge(nil)

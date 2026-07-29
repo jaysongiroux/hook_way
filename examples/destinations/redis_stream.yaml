@@ -46,8 +46,8 @@ destinations:
       # master_name: "mymaster"
 
       # ── Optional auth ─────────────────────────────────────────────────────
-      # username: "${REDIS_USERNAME:-}"
-      # password: "${REDIS_PASSWORD:-}"
+      # username: "myuser"       # optional; only if your Redis requires auth (or reference an env var you export)
+      # password: "mypassword"
 
       # ── Optional database index (single/sentinel only; cluster ignores it) ─
       # db: 0

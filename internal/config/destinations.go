@@ -16,6 +16,7 @@ type RabbitMQConfig struct {
 	TLS               RabbitMQTLSConfig
 	DeadLetter        RabbitMQDeadLetterConfig
 	QueueDefaults     RabbitMQQueueOptions
+	Retry             RetryPolicyConfig
 }
 
 // RabbitMQTLSConfig configures TLS for amqps:// connections. All fields are
@@ -116,9 +117,18 @@ type WebhookConfig struct {
 	Timeout      time.Duration
 	MaxQueue     int
 	DrainTimeout time.Duration
+	DeliveryMode string // "" (async) | "sync" | "async"
+	DeadLetter   WebhookDeadLetterConfig
 	Retry        RetryPolicyConfig
 	Auth         WebhookAuthConfig
 	TLS          WebhookTLSConfig
+}
+
+// WebhookDeadLetterConfig points a failed async webhook delivery at another
+// (non-webhook) destination/target. Async only. Empty means log-and-drop.
+type WebhookDeadLetterConfig struct {
+	Destination string
+	Target      string
 }
 
 type SQSConfig struct {
@@ -228,7 +238,12 @@ type rawDestinationConfig struct {
 		DeclareQueues     bool                    `yaml:"declare_queues"`
 		PublisherChannels int                     `yaml:"publisher_channels"`
 		QueueDefaults     rawRabbitMQQueueOptions `yaml:"queue_defaults"`
-		TLS               struct {
+		Retry             struct {
+			MaxAttempts    int    `yaml:"max_attempts"`
+			InitialBackoff string `yaml:"initial_backoff"`
+			MaxBackoff     string `yaml:"max_backoff"`
+		} `yaml:"retry"`
+		TLS struct {
 			CACert             string `yaml:"ca_cert"`
 			ClientCert         string `yaml:"client_cert"`
 			ClientKey          string `yaml:"client_key"`
@@ -297,7 +312,12 @@ type rawDestinationConfig struct {
 		Timeout      string `yaml:"timeout"`
 		MaxQueue     int    `yaml:"max_queue"`
 		DrainTimeout string `yaml:"drain_timeout"`
-		Retry        struct {
+		DeliveryMode string `yaml:"delivery_mode"`
+		DeadLetter   struct {
+			Destination string `yaml:"destination"`
+			Target      string `yaml:"target"`
+		} `yaml:"dead_letter"`
+		Retry struct {
 			MaxAttempts    int    `yaml:"max_attempts"`
 			InitialBackoff string `yaml:"initial_backoff"`
 			MaxBackoff     string `yaml:"max_backoff"`
@@ -391,6 +411,16 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	}
 	queueDefaults, queueDefaultIssues := convertQueueOptions(fieldPrefix+".rabbitmq.queue_defaults", raw.RabbitMQ.QueueDefaults)
 	issues = append(issues, queueDefaultIssues...)
+	// 0 fallback preserves "unset" (mirrors the webhook retry block below);
+	// queue-layer defaults (3 attempts / 100ms / 2s) apply when the field is 0.
+	rabbitInitBackoff, issue := parseDuration(fieldPrefix+".rabbitmq.retry.initial_backoff", raw.RabbitMQ.Retry.InitialBackoff, 0)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	rabbitMaxBackoff, issue := parseDuration(fieldPrefix+".rabbitmq.retry.max_backoff", raw.RabbitMQ.Retry.MaxBackoff, 0)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
 	kafkaPublishTimeout, issue := parseDuration(fieldPrefix+".kafka.publish_timeout", raw.Kafka.PublishTimeout, 5*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
@@ -427,6 +457,11 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			ExchangeType: raw.RabbitMQ.ExchangeType, Durable: raw.RabbitMQ.Durable,
 			PublishTimeout: publish, DeclareQueues: raw.RabbitMQ.DeclareQueues,
 			PublisherChannels: raw.RabbitMQ.PublisherChannels,
+			Retry: RetryPolicyConfig{
+				MaxAttempts:    raw.RabbitMQ.Retry.MaxAttempts,
+				InitialBackoff: rabbitInitBackoff,
+				MaxBackoff:     rabbitMaxBackoff,
+			},
 			TLS: RabbitMQTLSConfig{
 				CACert: raw.RabbitMQ.TLS.CACert, ClientCert: raw.RabbitMQ.TLS.ClientCert,
 				ClientKey: raw.RabbitMQ.TLS.ClientKey, ServerName: raw.RabbitMQ.TLS.ServerName,
@@ -534,6 +569,11 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			Timeout:      webhookTimeout,
 			MaxQueue:     raw.Webhook.MaxQueue,
 			DrainTimeout: webhookDrain,
+			DeliveryMode: raw.Webhook.DeliveryMode,
+			DeadLetter: WebhookDeadLetterConfig{
+				Destination: raw.Webhook.DeadLetter.Destination,
+				Target:      raw.Webhook.DeadLetter.Target,
+			},
 			Retry: RetryPolicyConfig{
 				MaxAttempts:    raw.Webhook.Retry.MaxAttempts,
 				InitialBackoff: webhookInitBackoff,

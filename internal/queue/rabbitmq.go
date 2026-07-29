@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"sync"
 	"time"
@@ -42,6 +43,27 @@ type publishChannel struct {
 	ch       *amqp.Channel
 	conn     *amqp.Connection
 	confirms <-chan amqp.Confirmation
+	// returns delivers basic.return notifications for mandatory publishes the
+	// broker could not route (no matching binding). Exactly one publish is
+	// outstanding per pooled channel at a time, so any return observed here
+	// unambiguously belongs to the in-flight publish.
+	returns <-chan amqp.Return
+}
+
+// unroutableError marks a mandatory publish the broker returned as unroutable
+// (basic.return): the exchange/routing key had no matching binding. This is a
+// terminal configuration problem, not a transient broker hiccup, so the
+// retry loop in Publish must not spend the configured retry budget on it.
+type unroutableError struct {
+	exchange   string
+	routingKey string
+	replyCode  int
+	replyText  string
+}
+
+func (e *unroutableError) Error() string {
+	return fmt.Sprintf("rabbitmq publish unroutable: exchange=%q routing_key=%q reply_code=%d reply_text=%q",
+		e.exchange, e.routingKey, e.replyCode, e.replyText)
 }
 
 func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPublisher, error) {
@@ -123,6 +145,13 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, destinationQueueID, que
 			}
 			return nil
 		}
+		var unroutable *unroutableError
+		if errors.As(last, &unroutable) {
+			// Terminal config error (no binding for this routing key): retrying
+			// would just burn the retry budget on a message that can never
+			// route, so return immediately instead of looping.
+			return last
+		}
 		if attempt == attempts {
 			break
 		}
@@ -173,7 +202,10 @@ func (p *RabbitMQPublisher) publishOnce(ctx context.Context, queueName string, m
 	if msg.IdempotencyKey != "" {
 		headers = amqp.Table{"x-idempotency-key": msg.IdempotencyKey}
 	}
-	if err := pc.ch.PublishWithContext(ctx, p.cfg.Exchange, queueName, false, false, amqp.Publishing{
+	// mandatory=true so an unroutable message (no queue bound to this routing
+	// key) comes back as a basic.return instead of being silently broker-acked
+	// and dropped.
+	if err := pc.ch.PublishWithContext(ctx, p.cfg.Exchange, queueName, true, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    msg.ReceivedAt,
@@ -196,6 +228,25 @@ func (p *RabbitMQPublisher) publishOnce(ctx context.Context, queueName string, m
 		}
 		if !ack.Ack {
 			return fmt.Errorf("rabbitmq publish nack delivery_tag=%d", ack.DeliveryTag)
+		}
+		// The broker sends basic.return BEFORE the ack for a mandatory
+		// unroutable message, so if a return is coming for this publish it is
+		// already queued on pc.returns by the time the ack arrives — a
+		// non-blocking drain here is safe. Exactly one publish is outstanding
+		// per pooled channel, so any return observed belongs to this publish.
+		// A confirm ack=true does not mean success when a return is present.
+		select {
+		case ret, ok := <-pc.returns:
+			if ok {
+				if p.cfg.Metrics != nil {
+					p.cfg.Metrics.RabbitMQUnroutable(p.cfg.DestinationID, queueName)
+				}
+				return &unroutableError{
+					exchange: p.cfg.Exchange, routingKey: queueName,
+					replyCode: int(ret.ReplyCode), replyText: ret.ReplyText,
+				}
+			}
+		default:
 		}
 		if p.cfg.Metrics != nil {
 			p.cfg.Metrics.RabbitMQPublishConfirm()
@@ -256,7 +307,8 @@ func (p *RabbitMQPublisher) openChannel(conn *amqp.Connection) (*publishChannel,
 		return nil, err
 	}
 	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-	return &publishChannel{ch: ch, conn: conn, confirms: confirms}, nil
+	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
+	return &publishChannel{ch: ch, conn: conn, confirms: confirms, returns: returns}, nil
 }
 
 // connection returns a live connection, dialing once under the write lock when
@@ -508,7 +560,7 @@ func (p *RabbitMQPublisher) retryAttempts() int {
 	if p.cfg.Retry.MaxAttempts > 0 {
 		return p.cfg.Retry.MaxAttempts
 	}
-	return 1
+	return 3
 }
 
 func (p *RabbitMQPublisher) initialBackoff() time.Duration {
@@ -532,15 +584,34 @@ func (p *RabbitMQPublisher) dialTimeout() time.Duration {
 	return 5 * time.Second
 }
 
+const backoffFloor = 100 * time.Millisecond
+
+// nextBackoff doubles delay (exponential backoff), applies +/-20% jitter so
+// many callers backing off after a shared outage (e.g. every RabbitMQ
+// publisher reconnecting, or every webhook destination hitting the same
+// downstream 5xx) don't retry in lockstep, then re-applies the floor and cap
+// so jitter can never push the result below the floor or above a configured
+// maxDelay. This is a runtime-path random source (not config/security
+// sensitive), so math/rand/v2 is fine.
 func nextBackoff(delay, maxDelay time.Duration) time.Duration {
 	if delay <= 0 {
-		delay = 100 * time.Millisecond
+		delay = backoffFloor
 	}
 	delay *= 2
+	delay = jitter(delay)
+	if delay < backoffFloor {
+		delay = backoffFloor
+	}
 	if maxDelay > 0 && delay > maxDelay {
 		return maxDelay
 	}
 	return delay
+}
+
+// jitter multiplies d by a uniformly random factor in [0.8, 1.2) (+/-20%).
+func jitter(d time.Duration) time.Duration {
+	factor := 0.8 + rand.Float64()*0.4
+	return time.Duration(float64(d) * factor)
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
