@@ -9,6 +9,7 @@ Every `.yaml` file is a self-contained config that passes `go run ./cmd/hookway 
 |------|-------------|
 | `config.yaml` | Minimal canonical config: one RabbitMQ destination, one `hmac_sha256` endpoint. This is the default for `make validate` and `make run`. |
 | `filters.yaml` | Filtering reference: endpoint-level filtering with a silent drop, route-level filtering that fans out selectively, and a configured non-match status (`filter_response`) using numeric, regex, and `exists` operators. See `docs/configuration.md` § Filtering. |
+| `replay.yaml` | Webhook-replay reference: one RabbitMQ endpoint plus `replay` enabled with a bounded Postgres-backed store (`ttl`, `max_events`, `cleanup_interval`) and its protected API on a separate `replay.addr` listener, authenticated via `security.api_key`. See `docs/configuration.md` § Replay and `docs/security.md` § Replay. |
 
 ## Destination reference configs
 

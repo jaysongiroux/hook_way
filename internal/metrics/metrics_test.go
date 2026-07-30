@@ -303,6 +303,31 @@ hookway_build_info{commit="abc1234",version="1.2.3"} 1
 	}
 }
 
+func TestReplayCaptureMetricsAreExposed(t *testing.T) {
+	m := New()
+
+	m.ReplayCaptured("paddle_billing")
+	m.ReplayCaptured("paddle_billing")
+	m.ReplayCaptureFailure("insert")
+	m.ReplayCaptureFailure("update")
+	m.ReplayCaptureFailure("update")
+
+	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
+# HELP hookway_replay_captured_total Webhook events captured into the replay store.
+# TYPE hookway_replay_captured_total counter
+hookway_replay_captured_total{endpoint="paddle_billing"} 2
+# HELP hookway_replay_capture_failures_total Replay store capture/outcome-update failures (including recovered panics), by operation.
+# TYPE hookway_replay_capture_failures_total counter
+hookway_replay_capture_failures_total{op="insert"} 1
+hookway_replay_capture_failures_total{op="update"} 2
+`),
+		"hookway_replay_captured_total", "hookway_replay_capture_failures_total",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMetricsImplementsRabbitMQMetricsHook(t *testing.T) {
 	var _ interface {
 		RabbitMQReconnect()

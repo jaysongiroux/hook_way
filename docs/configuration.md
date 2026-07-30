@@ -904,6 +904,56 @@ Auth fields:
 - `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
 - `body_hash_claim`: optional; for `jwt` schemes, names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. When set, Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.
 
+## Replay
+
+`replay` configures an optional store of accepted inbound events (Postgres-backed) and a protected HTTP API to list, inspect, and re-deliver them. Disabled (the zero value) by default: nothing is captured, no listener is started, and no Postgres connection is required.
+
+- `replay.enabled`: optional boolean, default `false`.
+- `replay.addr`: required when enabled. The dedicated listener address for the replay API, e.g. `":9091"`. Separate from `server.addr` so the replay API is never accidentally exposed on the public webhook port.
+- `replay.skip_unauthenticated`: optional boolean, default `false`. When true, skips capture for endpoints whose `auth.type` is `no_auth`, since such endpoints have no caller identity to attribute a captured event to.
+- `replay.ttl`: optional duration, default `0` (keep forever). Bounds how long a captured event is retained before the background cleanup sweep deletes it.
+- `replay.max_events`: optional non-negative integer, default `0` (no cap). Caps the total number of retained events; the cleanup sweep evicts the oldest events first once the cap is exceeded.
+- `replay.cleanup_interval`: optional duration, default `1h` when `replay.enabled` is true and the field is left unset. How often the background sweep runs to enforce `ttl` and `max_events`.
+- `replay.postgres`: required when enabled. Reuses the same connection shape as `destinations.<id>.postgres` (`url`, `schema`, `max_conns`, `tls`); unlike a postgres destination, `table` is not a required single-sink table name — the replay store uses its own fixed table names.
+
+Set at least one of `ttl`/`max_events` to bound storage — `ttl` bounds by age, `max_events` by row count; the cleanup loop enforces both.
+
+```yaml
+security:
+  api_key: "${REPLAY_API_KEY}"
+
+replay:
+  enabled: true
+  addr: ":9091"
+  skip_unauthenticated: true
+  ttl: "168h"
+  max_events: 1000000
+  cleanup_interval: "1h"
+  postgres:
+    url: "${REPLAY_DB_URL}"
+```
+
+**Authentication:** the replay API is protected by [`security.api_key`](#securityapi_key) (`Authorization: Bearer <key>`), the same key used by the metrics endpoint and config API. Config validation **requires** a non-empty `security.api_key` whenever `replay.enabled` is true — an unauthenticated API that can re-inject traffic into destinations is rejected at config load rather than silently left open.
+
+**Capture requires authentication to pass.** Only events that pass the endpoint's own authentication are captured — a request rejected by auth (bad signature, expired token, etc.) is never written to the replay store. `replay.skip_unauthenticated` additionally excludes `no_auth` endpoints from capture even though such requests do pass "authentication" (there being none to fail).
+
+### Replay API
+
+The replay API is served on `replay.addr`, distinct from the webhook listener:
+
+- `GET /replay/events`: list captured events. Query params: `endpoint`, `destination`, `target`, `status`, `since`/`until` (RFC 3339 timestamps), `limit`, `cursor` (opaque, from a previous response's `next_cursor`). Response: `{"events": [...], "next_cursor": "..."}`, where each event summary has `id`, `endpoint`, `status`, `idempotency_key`, `received_at`.
+- `GET /replay/events/{id}`: fetch one captured event, including its full stored envelope. Response: `{"id", "endpoint", "status", "idempotency_key", "received_at", "envelope"}`. `404` when not found.
+- `POST /replay/events/{id}/replay`: re-deliver one captured event to every destination it was originally recorded as delivered/failed to. Body (optional): `{"reprocess": false}`. Response: `{"replayed_event_id", "original_event_id", "destinations": [...]}`. `404` when the event doesn't exist; `422` when the event has no recorded deliveries (see Limitations below).
+- `POST /replay/replay`: bulk re-delivery over a filtered set of events. Body (all fields optional): `{"endpoint", "destination", "target", "status", "since", "until", "reprocess": false, "dry_run": false, "max": 100}`. With `dry_run: true`, returns `{"matched": <count>, "dry_run": true}` and replays nothing. Otherwise replays up to `max` matching events (default and per-request ceiling; the store additionally clamps list pages to its own maximum) and returns `{"replayed": <count>, "capped": <bool>, "results": [...]}` — `capped` is true when more events matched the filter than were replayed in this request. `destination`/`target` here only **select** which events to replay (events that were recorded as delivered/failed to that destination) — they do not restrict delivery. Each matched event is still re-delivered to **all** of its own recorded destinations, not just the one used to select it.
+
+**`reprocess`:** a replayed event is published as a new event (a fresh event id, `replay_of` set to the original event's id, and hop count reset to 0). When `reprocess` is `false` (default), the original `idempotency_key` is preserved, so a consumer that already deduplicated the original delivery treats the replay as a no-op (dedup-safe re-send). When `true`, a fresh idempotency key is generated, so consumers process the replayed copy as a new event.
+
+### Limitations
+
+An event with no recorded deliveries is not replayable (`422 Unprocessable Entity` on single replay; skipped with a reason in bulk replay). This includes the `stop_on_failure` full-failure path: when the first failed destination stops the fan-out, the outcome is unknown for every route, so the event is captured with status `pending` but has no delivery rows to replay against.
+
+Replaying to a `proxy`-mode webhook destination is not supported (the original raw request is not persisted); such destinations are skipped on replay with a reason in the response.
+
 ## Logging & observability
 
 Hookway emits structured `slog` JSON logs. Each log record carries a consistent set of field keys so log queries and alerts are stable across destinations.

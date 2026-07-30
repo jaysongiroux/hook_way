@@ -34,6 +34,7 @@ type Config struct {
 	RateLimit    RateLimitConfig              `yaml:"rate_limit"`
 	Metrics      MetricsConfig                `yaml:"metrics"`
 	Logging      LoggingConfig                `yaml:"logging"`
+	Replay       ReplayConfig                 `yaml:"replay"`
 	Destinations map[string]DestinationConfig `yaml:"destinations"`
 	Endpoints    map[string]EndpointConfig    `yaml:"endpoints"`
 }
@@ -135,6 +136,37 @@ type LoggingConfig struct {
 	Level string `yaml:"level"`
 }
 
+// ReplayConfig configures the optional webhook-replay store: a Postgres-backed
+// record of accepted inbound events, served over its own protected listener so
+// operators can inspect and re-deliver past webhooks. Disabled (the zero
+// value) by default; nothing is captured, no listener is started, and no
+// Postgres connection is required.
+type ReplayConfig struct {
+	Enabled bool
+	// Addr is the dedicated listener address for the replay API, e.g. ":9091".
+	// Required when Enabled, so the replay API is never accidentally exposed
+	// on the public webhook port.
+	Addr string
+	// SkipUnauthenticated, when true, skips event capture for endpoints whose
+	// auth.type is "no_auth", since such endpoints have no caller identity to
+	// attribute a captured event to.
+	SkipUnauthenticated bool
+	// TTL bounds how long a captured event is retained before the background
+	// cleanup sweep deletes it. Zero means keep forever.
+	TTL time.Duration
+	// MaxEvents caps the total number of retained events (oldest evicted
+	// first by the cleanup sweep). Zero means no cap.
+	MaxEvents int64
+	// CleanupInterval is how often the background sweep runs to enforce TTL
+	// and MaxEvents. Defaults to 1h when Enabled and left unset.
+	CleanupInterval time.Duration
+	// Postgres is the replay store's database connection. Reuses the same
+	// PostgresConfig shape as postgres destinations; unlike a postgres
+	// destination, Table is not a required single-sink table name -- replay
+	// uses its own fixed table names and treats Table as an optional prefix.
+	Postgres PostgresConfig
+}
+
 type rawConfig struct {
 	Server struct {
 		Addr                string `yaml:"addr"`
@@ -149,10 +181,19 @@ type rawConfig struct {
 		ReadinessInterval   string `yaml:"readiness_interval"`
 		ReadinessTimeout    string `yaml:"readiness_timeout"`
 	} `yaml:"server"`
-	Security     SecurityConfig                  `yaml:"security"`
-	RateLimit    RateLimitConfig                 `yaml:"rate_limit"`
-	Metrics      MetricsConfig                   `yaml:"metrics"`
-	Logging      LoggingConfig                   `yaml:"logging"`
+	Security  SecurityConfig  `yaml:"security"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	Replay    struct {
+		Enabled             bool              `yaml:"enabled"`
+		Addr                string            `yaml:"addr"`
+		SkipUnauthenticated bool              `yaml:"skip_unauthenticated"`
+		TTL                 string            `yaml:"ttl"`
+		MaxEvents           int64             `yaml:"max_events"`
+		CleanupInterval     string            `yaml:"cleanup_interval"`
+		Postgres            rawPostgresConfig `yaml:"postgres"`
+	} `yaml:"replay"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 	Endpoints    map[string]struct {
 		Enabled               bool                           `yaml:"enabled"`
@@ -452,6 +493,17 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
+	replayTTL, issue := parseDuration("replay.ttl", raw.Replay.TTL, 0)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	replayCleanupInterval, issue := parseDuration("replay.cleanup_interval", raw.Replay.CleanupInterval, 0)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	if raw.Replay.Enabled && replayCleanupInterval == 0 {
+		replayCleanupInterval = time.Hour
+	}
 	cfg := Config{
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
@@ -459,10 +511,19 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests), FanoutConcurrency: raw.Server.FanoutConcurrency,
 			ReadinessInterval: readinessInterval, ReadinessTimeout: readinessTimeout,
 		},
-		Security:     raw.Security,
-		RateLimit:    raw.RateLimit,
-		Metrics:      raw.Metrics,
-		Logging:      raw.Logging,
+		Security:  raw.Security,
+		RateLimit: raw.RateLimit,
+		Metrics:   raw.Metrics,
+		Logging:   raw.Logging,
+		Replay: ReplayConfig{
+			Enabled:             raw.Replay.Enabled,
+			Addr:                raw.Replay.Addr,
+			SkipUnauthenticated: raw.Replay.SkipUnauthenticated,
+			TTL:                 replayTTL,
+			MaxEvents:           raw.Replay.MaxEvents,
+			CleanupInterval:     replayCleanupInterval,
+			Postgres:            convertPostgresConfig(raw.Replay.Postgres),
+		},
 		Destinations: map[string]DestinationConfig{},
 		Endpoints:    map[string]EndpointConfig{},
 	}

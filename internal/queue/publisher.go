@@ -48,6 +48,11 @@ type Message struct {
 	// failed and is being redirected to a configured dead-letter destination. It
 	// is additive and omitted otherwise, so schema_version stays 1.0.
 	DeadLetter *DeadLetterMeta `json:"dead_letter,omitempty"`
+	// ReplayOf is set only on messages produced by the replay API: it carries
+	// the original captured event id this delivery is a replay of. It is
+	// additive and omitted for normal (first-time) deliveries, so
+	// schema_version stays 1.0.
+	ReplayOf string `json:"replay_of,omitempty"`
 }
 
 // DeadLetterMeta records why and how a webhook delivery was dead-lettered. It

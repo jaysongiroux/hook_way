@@ -115,6 +115,18 @@ scrape_configs:
       - targets: ["hookway:9090"]
 ```
 
+## Replay
+
+The optional replay store and its API (see [Configuration § Replay](configuration.md#replay)) re-deliver past webhook events to their original destinations, so it carries its own authentication and isolation requirements beyond the read-only metrics/config-API key.
+
+- **Separate listener.** The replay API is served on `replay.addr`, a dedicated listener distinct from the public webhook port (`server.addr`). Keep `replay.addr` off the internet-facing network path and behind the same network controls (firewalls, private subnets, VPN) you'd use for any admin-plane traffic — it is not designed to be reachable from the same network as webhook senders.
+- **Mandatory authentication.** `replay.enabled: true` requires a non-empty `security.api_key`; config validation rejects the config otherwise. This is enforced (not merely recommended) because the replay API is not read-only — `POST /replay/replay` and `POST /replay/events/{id}/replay` re-inject stored payloads into live destinations, so an unauthenticated instance of this API would let anyone replay arbitrary captured traffic. Callers authenticate the same way as the metrics endpoint: `Authorization: Bearer <security.api_key>`.
+- **Capture scope.** Only events that pass the endpoint's own authentication are ever captured — a request that fails auth verification is rejected before capture, so the replay store cannot become a side channel for unauthenticated payloads. Set `replay.skip_unauthenticated: true` to additionally exclude `no_auth` endpoints from capture, since those endpoints have no caller identity to attribute a captured event to.
+- **Best-effort, non-gating capture.** Writing a captured event (or its delivery outcome) to the replay store is strictly best-effort: a store error or panic is caught, logged, and counted in `hookway_replay_capture_failures_total{op}` — it never blocks the webhook response or changes its status code. The store's reachability is exposed only as the gauge `hookway_replay_store_up` (set by the background cleanup sweep); it is observability-only and does **not** feed into `/ready`/`/readyz`, so a replay-store outage never pulls the pod out of load-balancer rotation.
+- **Replay identity and idempotency.** A replayed event is published as a new event: a fresh event id, `replay_of` set to the original event's id, and hop count reset to `0`. The `reprocess` flag on both replay endpoints controls dedup behavior — `false` (default) preserves the original `idempotency_key`, so a consumer that already processed the original delivery treats the replay as a no-op; `true` generates a fresh idempotency key so consumers process it as a new event. Choose `reprocess: true` deliberately — it is what makes an operator-triggered replay actually reach a consumer that already deduplicated the first delivery.
+- **v1 limitation:** an event with no recorded per-destination delivery outcome cannot be replayed (`422` on single replay; skipped in bulk replay). This includes the `stop_on_failure` full-failure path, where the first failed destination stops the fan-out before any outcome is known — the event is still captured (status `pending`) but has nothing to replay against.
+- **v1 limitation:** replaying to a `proxy`-mode webhook destination is not supported (the original raw request is not persisted); such destinations are skipped on replay with a reason in the response.
+
 ## Production Hardening
 
 - Terminate TLS at a trusted load balancer or reverse proxy. Enable `trusted_proxy_headers` only with `trusted_proxies` set to your proxy/ingress CIDRs so forwarded client IPs cannot be spoofed.
@@ -125,6 +137,7 @@ scrape_configs:
 - Tune `destinations.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
 - Tune `server.fanout_concurrency` to bound per-request goroutines and concurrent publishes across fan-out routes (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
+- If `replay` is enabled, keep `replay.addr` off the internet-facing network path (private port/network, same as `metrics.addr`) and always set `security.api_key` — config validation already requires it, but treat the key with the same care as any credential capable of re-injecting webhook traffic.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
 - Set `security.forwarded_header_allowlist` so only intended headers reach consumers and logs.
 - Rotate webhook secrets per endpoint and keep old/new overlap short during provider-side rotations.

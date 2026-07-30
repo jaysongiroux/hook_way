@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test lint validate validate-examples build run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint validate validate-examples build run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -17,10 +17,10 @@ build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway ./cmd/hookway
 
 test:
-	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka'
+	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore'
 
 test-race:
-	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka'
+	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore'
 
 integration-test:
 	$(GO) test ./internal/queue -run TestRabbitMQ -count=1
@@ -42,6 +42,9 @@ kafka-integration-test:
 
 webhook-integration-test:
 	$(GO) test ./internal/queue -run 'TestWebhookIntegration' -count=1
+
+replaystore-integration-test:
+	$(GO) test ./internal/replaystore -run 'TestReplayStore' -count=1
 
 # test-all runs every test once: unit + RabbitMQ + AWS + Redis integration suites.
 # Integration tests self-skip when Docker is unavailable. -count=1 disables the
@@ -74,8 +77,10 @@ validate-examples:
 		KAFKA_PASSWORD=dummy \
 		WEBHOOK_SECRET=dummy \
 		WEBHOOK_URL=https://example.com/hooks \
-		WEBHOOK_API_KEY=dummy; \
-	for f in examples/config.yaml examples/filters.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
+		WEBHOOK_API_KEY=dummy \
+		REPLAY_DB_URL=postgres://localhost:5432/db \
+		REPLAY_API_KEY=dummy; \
+	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done
@@ -89,7 +94,7 @@ docker-build:
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test lint docker-build vuln-scan
+release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build
