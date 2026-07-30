@@ -44,6 +44,7 @@ go run ./cmd/hookway --config examples/config.yaml
 - `GET /readyz` reports the same cached readiness state as `/ready`.
 - `GET /health` is a liveness alias for `/healthz` (it does NOT report readiness), so infrastructure treating `/health` as a liveness probe will not restart pods on transient destination outages.
 - `GET /metrics` exposes Prometheus metrics when enabled.
+- When `replay` is enabled, captured events can be listed, inspected, and re-delivered via a protected API on a separate `replay.addr` listener. See [Configuration § Replay](docs/configuration.md#replay) and [Security § Replay](docs/security.md#replay).
 
 Successful webhook response:
 

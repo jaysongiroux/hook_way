@@ -29,6 +29,7 @@ import (
 	"github.com/jasongiroux/hookway/internal/queue"
 	"github.com/jasongiroux/hookway/internal/ratelimit"
 	"github.com/jasongiroux/hookway/internal/replay"
+	"github.com/jasongiroux/hookway/internal/replaystore"
 	"github.com/jasongiroux/hookway/internal/webhook"
 )
 
@@ -47,6 +48,11 @@ type Server struct {
 	metrics          *metrics.Metrics
 	readiness        *readinessProber
 	mux              *http.ServeMux
+	// replay is the webhook-replay capture seam, nil when replay capture is
+	// disabled (config.Replay.Enabled == false or not yet wired via
+	// SetReplayCapturer). Every use of it in handleWebhook is best-effort: an
+	// error or panic never changes the webhook response.
+	replay ReplayCapturer
 }
 
 func NewServer(cfg config.Config, publisher queue.Publisher, logger *slog.Logger) *Server {
@@ -342,6 +348,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	endpointLabel = endpointName
 	destinationLabel = endpoint.DestinationLabel()
 	targetLabel = endpoint.TargetLabel()
+	// captureEnabled gates webhook-replay capture for this request: no store
+	// wired (s.replay nil), or this is a no_auth endpoint and operators opted
+	// to skip capturing events with no caller identity to attribute them to
+	// (config.Replay.SkipUnauthenticated). Computed once so every capture
+	// call site below stays consistent.
+	captureEnabled := s.replay != nil && !(s.cfg.Replay.SkipUnauthenticated && endpoint.Auth.Type == auth.AuthTypeNoAuth)
 	routes := endpoint.DestinationRoutes()
 	if r.Method != http.MethodPost {
 		status = http.StatusMethodNotAllowed
@@ -535,12 +547,32 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			activeRoutes = append(activeRoutes, route)
 		}
 	}
+	// Capture INSERT: only once auth has passed and the endpoint/route filters
+	// have decided at least one destination will actually receive this event
+	// -- an event with zero active routes has nothing to deliver or replay, so
+	// skip it. Runs BEFORE pubCtx is created (below) and on its own
+	// replayCaptureTimeout budget, independent of server.publish_timeout: a
+	// slow-but-successful replay-store write (lock contention, pool
+	// exhaustion, network blip) must add only its own bounded latency to the
+	// request here, never eat into the publish deadline that publishRoutes is
+	// about to get. Strictly best-effort: captureEvent recovers its own
+	// errors/panics and never changes this response.
+	if captureEnabled && len(activeRoutes) > 0 {
+		s.captureEvent(r.Context(), replaystore.Event{
+			ID: env.ID, Endpoint: endpointName, IdempotencyKey: env.IdempotencyKey,
+			RequestID: env.RequestID, TraceID: env.TraceID, ReceivedAt: env.ReceivedAt,
+			Envelope: envelopeToMessage(env),
+		})
+	}
 	// Detach the publish from the inbound request context: a sender
 	// disconnect or timeout after the body is read and the signature verified
 	// must not cancel in-flight publishes (the work is already committed to
 	// being delivered). context.WithoutCancel preserves request-scoped values
 	// (request id, trace id) while dropping the parent's cancellation signal;
-	// server.publish_timeout independently bounds how long the fan-out may run.
+	// server.publish_timeout independently bounds how long the fan-out may
+	// run. Created here, after the capture INSERT above (not before it), so
+	// publishRoutes always gets the full PublishTimeout budget regardless of
+	// how long that capture write took.
 	pubCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.cfg.Server.PublishTimeout)
 	defer cancel()
 	published, failed, err := s.publishRoutes(pubCtx, endpointName, endpoint, env, activeRoutes)
@@ -553,6 +585,16 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"request_id", requestIDFromContext(r.Context()),
 			"trace_id", traceIDFromContext(r.Context()),
 		)
+		// Outcome UPDATE: on the stop_on_failure full-failure path, published
+		// and failed are both nil (publishRoutesStopOnFailure bails on the
+		// first failure), so deliveries is empty and the event's stored status
+		// stays "pending" -- it is still captured and replayable, only its
+		// per-destination outcome is unknown. Accepted v1 limitation. Uses
+		// r.Context() (its own fresh replayCaptureTimeout budget), not pubCtx:
+		// pubCtx may already be fully exhausted after a full-timeout publish.
+		if captureEnabled && len(activeRoutes) > 0 {
+			s.recordOutcome(r.Context(), env.ID, deliveriesFromResults(published, failed))
+		}
 		writeJSON(w, status, map[string]string{"error": "service unavailable"})
 		return
 	}
@@ -570,6 +612,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		// contract stop_on_failure already relies on today.
 		releaseReplay()
 		body["failed_destinations"] = failed
+	}
+	// Uses r.Context() (its own fresh replayCaptureTimeout budget), not
+	// pubCtx: pubCtx may already be near-exhausted after publishRoutes ran,
+	// and a slow store write here must not race that near-empty deadline.
+	if captureEnabled && len(activeRoutes) > 0 {
+		s.recordOutcome(r.Context(), env.ID, deliveriesFromResults(published, failed))
 	}
 	writeJSON(w, status, body)
 }
@@ -684,14 +732,9 @@ func (s *Server) publishRouteRecovered(ctx context.Context, endpointName string,
 }
 
 func (s *Server) publishRoute(ctx context.Context, endpointName string, env webhook.Envelope, route config.EndpointDestinationConfig, index int) publishRouteResult {
-	msg := queue.Message{
-		SchemaVersion: env.SchemaVersion, ID: env.ID, IdempotencyKey: env.IdempotencyKey, RequestID: env.RequestID, TraceID: env.TraceID,
-		Traceparent: env.Traceparent,
-		Endpoint:    env.Endpoint, DestinationQueueID: route.Destination, Queue: route.Target, ReceivedAt: env.ReceivedAt,
-		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
-		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
-		RawBody: env.RawBody, OrigHeaders: env.OrigHeaders, Hops: env.Hops,
-	}
+	msg := envelopeToMessage(env)
+	msg.DestinationQueueID = route.Destination
+	msg.Queue = route.Target
 	start := time.Now()
 	err := s.publisher.Publish(ctx, route.Destination, route.Target, msg)
 	duration := time.Since(start)

@@ -166,18 +166,8 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			if pg.Table == "" {
 				issues = append(issues, validationError(fieldPrefix+".postgres.table", "table is required for postgres destinations", "set table to the destination table name, e.g. \"webhook_events\""))
-			} else if !pgIdentifier.MatchString(pg.Table) {
-				issues = append(issues, validationError(fieldPrefix+".postgres.table", "table name contains unsupported characters", "use only letters, digits, and underscores, starting with a letter or underscore"))
 			}
-			if pg.Schema != "" && !pgIdentifier.MatchString(pg.Schema) {
-				issues = append(issues, validationError(fieldPrefix+".postgres.schema", "schema name contains unsupported characters", "use only letters, digits, and underscores, starting with a letter or underscore"))
-			}
-			if pg.MaxConns < 0 {
-				issues = append(issues, validationError(fieldPrefix+".postgres.max_conns", "must be zero (default) or a positive integer", "set a pool cap such as 10, or omit for the default"))
-			}
-			if (pg.TLS.ClientCert == "") != (pg.TLS.ClientKey == "") {
-				issues = append(issues, validationError(fieldPrefix+".postgres.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
-			}
+			issues = append(issues, postgresConnValidationIssues(fieldPrefix+".postgres", pg)...)
 		}
 		if dest.Type == "mongodb" {
 			m := dest.Mongo
@@ -357,6 +347,27 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if c.RateLimit.KeyBy != "ip" {
 			issues = append(issues, validationError("rate_limit.key_by", "only ip is supported for MVP", "set rate_limit.key_by to \"ip\""))
 		}
+	}
+	if c.Replay.Enabled {
+		if c.Replay.Postgres.URL == "" {
+			issues = append(issues, validationError("replay.postgres.url", "a Postgres URL is required when replay is enabled", "set replay.postgres.url, e.g. ${REPLAY_DB_URL}"))
+		}
+		if c.Security.APIKey == "" {
+			issues = append(issues, validationError("replay.enabled", "the replay API re-injects traffic and must be authenticated; set security.api_key when replay is enabled", "set security.api_key (e.g. ${REPLAY_API_KEY}) or disable replay"))
+		}
+		if c.Replay.Addr == "" {
+			issues = append(issues, validationError("replay.addr", "listen address is required when replay is enabled", "set replay.addr to a host:port such as \":9091\""))
+		}
+		if c.Replay.TTL < 0 {
+			issues = append(issues, validationError("replay.ttl", "must be zero (keep forever) or a positive duration", "168h or omit"))
+		}
+		if c.Replay.MaxEvents < 0 {
+			issues = append(issues, validationError("replay.max_events", "must be zero (no cap) or a positive integer", "1000000 or omit"))
+		}
+		if c.Replay.CleanupInterval < 0 {
+			issues = append(issues, validationError("replay.cleanup_interval", "must be a positive duration", "omit to use the 1h default"))
+		}
+		issues = append(issues, postgresConnValidationIssues("replay.postgres", c.Replay.Postgres)...)
 	}
 	paths := map[string]string{}
 	queueOptions := map[string]RabbitMQQueueOptions{}
@@ -701,6 +712,35 @@ func endpointPathsOverlap(a, b string) bool {
 		shorter, longer = longer, shorter
 	}
 	return strings.HasPrefix(longer, shorter+"/")
+}
+
+// postgresConnValidationIssues validates the fields shared by every Postgres
+// connection block: schema/table identifier safety, max_conns range, and
+// mutual-TLS both-or-neither. It is used by both the postgres-destination
+// path and the replay-store path (see rawPostgresConfig / convertPostgresConfig
+// in destinations.go), so the two never drift.
+//
+// It deliberately does NOT decide whether url or table are required -- that
+// differs by caller: a postgres destination always requires both a url and a
+// table (its single sink table name), while the replay store only requires a
+// url once enabled and treats table as an optional prefix override (see
+// ReplayConfig's doc comment). Callers check those themselves with
+// context-specific field names and messages before calling this helper.
+func postgresConnValidationIssues(prefix string, cfg PostgresConfig) []ValidationIssue {
+	var issues []ValidationIssue
+	if cfg.Table != "" && !pgIdentifier.MatchString(cfg.Table) {
+		issues = append(issues, validationError(prefix+".table", "table name contains unsupported characters", "use only letters, digits, and underscores, starting with a letter or underscore"))
+	}
+	if cfg.Schema != "" && !pgIdentifier.MatchString(cfg.Schema) {
+		issues = append(issues, validationError(prefix+".schema", "schema name contains unsupported characters", "use only letters, digits, and underscores, starting with a letter or underscore"))
+	}
+	if cfg.MaxConns < 0 {
+		issues = append(issues, validationError(prefix+".max_conns", "must be zero (default) or a positive integer", "set a pool cap such as 10, or omit for the default"))
+	}
+	if (cfg.TLS.ClientCert == "") != (cfg.TLS.ClientKey == "") {
+		issues = append(issues, validationError(prefix+".tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+	}
+	return issues
 }
 
 // redisConfigValidationIssues validates the shared redis: connection block.

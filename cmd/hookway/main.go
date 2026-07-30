@@ -20,6 +20,8 @@ import (
 	hooklogging "github.com/jasongiroux/hookway/internal/logging"
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jasongiroux/hookway/internal/replayapi"
+	"github.com/jasongiroux/hookway/internal/replaystore"
 )
 
 // version and commit identify the build. They default to "dev"/"none" for a
@@ -30,6 +32,17 @@ var (
 	version = "dev"
 	commit  = "none"
 )
+
+// replayCleanupShutdownWait bounds how long shutdown waits for the replay
+// cleanup goroutine to exit after its context is cancelled. It is a small
+// fixed duration -- NOT derived from cfg.Replay.CleanupInterval (default
+// 1h) -- because the cleanup ctx is cancelled first and a mid-sweep pgx call
+// (Ping/PurgeExpired/PurgeOverCount) respects ctx cancellation, so the
+// goroutine exits near-instantly; a wedged sweep can't delay shutdown past
+// this wait, and tying it to CleanupInterval would let shutdown block for up
+// to an hour -- far past a typical k8s terminationGracePeriodSeconds (~30s),
+// so it would never actually protect shutdown.
+const replayCleanupShutdownWait = 5 * time.Second
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -270,6 +283,26 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 	app := httpapi.NewServerWithMetrics(cfg, publisher, logger, appMetrics)
 
+	// The replay store's connection is opened -- and its defer registered --
+	// before every other background goroutine below (the readiness prober,
+	// the main/metrics listeners, the replay listener, and the cleanup loop).
+	// defer runs LIFO, so registering replayStore.Close() first means it
+	// fires LAST on any return path: every one of the store's users (the
+	// replay listener and the cleanup loop, registered further down) has
+	// already stopped -- or hit its own bounded wait -- before the pool
+	// closes underneath them.
+	var replayStore *replaystore.Store
+	if cfg.Replay.Enabled {
+		replayStore, err = replaystore.New(context.Background(), cfg.Replay, logger)
+		if err != nil {
+			logger.Error("replay store connection failed", "error", err)
+			return 1
+		}
+		defer replayStore.Close()
+		app.SetReplayCapturer(replayStore)
+		logger.Info("replay capture enabled")
+	}
+
 	// Start the background readiness prober before serving traffic. It caches
 	// destination readiness so /ready and /readyz never trigger a live broker
 	// fan-out per request; cancelling probeCtx on shutdown stops the goroutine.
@@ -297,11 +330,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}()
 
 	srv := app.HTTPServer()
-	// Buffered for 2: the main listener and the (optional) dedicated metrics
-	// listener each get their own slot, so neither goroutine can block forever
-	// writing an error nobody will read after the process is already on its
-	// way out via the other one.
-	errs := make(chan error, 2)
+	// Buffered for 3: the main listener, the (optional) dedicated metrics
+	// listener, and the (optional) replay API listener each get their own
+	// slot, so no goroutine can block forever writing an error nobody will
+	// read after the process is already on its way out via one of the
+	// others.
+	errs := make(chan error, 3)
 	go func() {
 		logger.Info("hookway listening", "addr", cfg.Server.Addr)
 		errs <- srv.ListenAndServe()
@@ -333,6 +367,45 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		}()
 	}
 
+	// The replay listener and cleanup loop are the replay store's only
+	// users, and their stop-defers are registered here -- AFTER the metrics
+	// server's defer above and (critically) AFTER replayStore.Close()'s
+	// defer registered earlier, right after app was constructed. defer runs
+	// LIFO, so on any return path these two defers run FIRST: the cleanup
+	// goroutine is cancelled and awaited, and the replay listener is shut
+	// down, before replayStore.Close() (registered earlier, so it runs
+	// later) closes the pool out from under them. The main webhook srv is
+	// already Shutdown in the mainline below before any deferred function
+	// runs at all, so in-flight captures triggered by webhook handling drain
+	// first.
+	if replayStore != nil {
+		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
+		cleanupDone := replayStore.StartCleanup(cleanupCtx, cfg.Replay.TTL, cfg.Replay.MaxEvents, cfg.Replay.CleanupInterval, appMetrics)
+		defer func() {
+			cancelCleanup()
+			select {
+			case <-cleanupDone:
+			case <-time.After(replayCleanupShutdownWait):
+				// Bounded: a wedged sweep can't hang shutdown.
+				logger.Warn("replay cleanup did not stop within timeout")
+			}
+		}()
+
+		replaySrv := replayapi.NewServer(cfg.Replay.Addr, cfg.Security.APIKey, replayStore, publisher, unsupportedReplayDestinations(cfg), appMetrics, logger)
+		go func() {
+			logger.Info("hookway replay API listening", "addr", cfg.Replay.Addr)
+			if err := replaySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("replay API server stopped", "error", err)
+				errs <- err
+			}
+		}()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = httpapi.Shutdown(ctx, replaySrv)
+		}()
+	}
+
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	select {
@@ -353,4 +426,27 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// unsupportedReplayDestinations returns the set of destination ids the replay
+// API must never publish to, mapped to a human-readable reason -- passed
+// straight through to replayapi.NewServer's unsupported parameter.
+//
+// Today the only member is a proxy-mode webhook destination
+// (type: webhook, webhook.auth.type: proxy): the webhook engine's proxy mode
+// builds its outbound request from queue.Message's RawBody/OrigHeaders (see
+// internal/queue/webhook.go), which are json:"-" and so are never persisted
+// in the replay store's envelope column. Reconstructing a replay from that
+// stored envelope would yield RawBody=nil/OrigHeaders=nil -- an empty-body,
+// no-headers POST silently delivered to the live proxy target. replayapi
+// skips these destinations with the returned reason instead of ever
+// publishing to them (see replayOne).
+func unsupportedReplayDestinations(cfg config.Config) map[string]string {
+	unsupported := make(map[string]string)
+	for id, dest := range cfg.Destinations {
+		if dest.Type == "webhook" && dest.Webhook.Auth.Type == "proxy" {
+			unsupported[id] = "proxy-mode webhook replay is unsupported: the original raw request body/headers are not persisted"
+		}
+	}
+	return unsupported
 }

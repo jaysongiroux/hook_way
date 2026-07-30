@@ -45,6 +45,11 @@ type Metrics struct {
 	destinationReady         *prometheus.GaugeVec
 	panics                   *prometheus.CounterVec
 	buildInfo                *prometheus.GaugeVec
+	replayCaptured           *prometheus.CounterVec
+	replayCaptureFailures    *prometheus.CounterVec
+	replayTriggered          *prometheus.CounterVec
+	replayStoreUp            prometheus.Gauge
+	replayPurged             prometheus.Counter
 	runtimeRegistered        bool
 }
 
@@ -174,6 +179,21 @@ func New() *Metrics {
 	m.buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hookway_build_info", Help: "Build version and commit Hookway was compiled from (value is always 1).",
 	}, []string{"version", "commit"})
+	m.replayCaptured = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_replay_captured_total", Help: "Webhook events captured into the replay store.",
+	}, []string{"endpoint"})
+	m.replayCaptureFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_replay_capture_failures_total", Help: "Replay store capture/outcome-update failures (including recovered panics), by operation.",
+	}, []string{"op"})
+	m.replayTriggered = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_replay_triggered_total", Help: "Replay-store events re-delivered via the replay API, by mode.",
+	}, []string{"mode"})
+	m.replayStoreUp = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hookway_replay_store_up", Help: "Reachability of the replay store's Postgres connection as observed by the background cleanup sweep (1 up, 0 down).",
+	})
+	m.replayPurged = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "hookway_replay_events_purged_total", Help: "Replay-store events purged by the background retention cleanup sweep (age and/or over-count).",
+	})
 	m.registry.MustRegister(
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
@@ -181,7 +201,8 @@ func New() *Metrics {
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
-		m.destinationReady, m.panics, m.buildInfo,
+		m.destinationReady, m.panics, m.buildInfo, m.replayCaptured, m.replayCaptureFailures, m.replayTriggered,
+		m.replayStoreUp, m.replayPurged,
 	)
 	return m
 }
@@ -353,6 +374,48 @@ func (m *Metrics) DestinationReady(destinationQueueID string, ready bool) {
 // "webhook_worker" (async webhook delivery engine worker).
 func (m *Metrics) Panic(location string) {
 	m.panics.WithLabelValues(location).Inc()
+}
+
+// ReplayCaptured records a webhook event successfully inserted into the
+// replay store.
+func (m *Metrics) ReplayCaptured(endpoint string) {
+	m.replayCaptured.WithLabelValues(endpoint).Inc()
+}
+
+// ReplayCaptureFailure records a failed (or panicked) replay-store write. op
+// is "insert" (Capture) or "update" (RecordOutcome). Replay capture is
+// strictly best-effort, so this is the only observable trace of a failure --
+// it never changes the webhook response.
+func (m *Metrics) ReplayCaptureFailure(op string) {
+	m.replayCaptureFailures.WithLabelValues(op).Inc()
+}
+
+// ReplayTriggered records one replay-store event re-delivered via the replay
+// API. mode is "single" (per-event endpoint) or "bulk" (filtered batch), and
+// is incremented once per event replayed, not once per destination.
+func (m *Metrics) ReplayTriggered(mode string) {
+	m.replayTriggered.WithLabelValues(mode).Inc()
+}
+
+// ReplayStoreUp records whether the replay store's Postgres connection was
+// reachable as of the most recent background cleanup sweep's Ping.
+func (m *Metrics) ReplayStoreUp(up bool) {
+	value := 0.0
+	if up {
+		value = 1
+	}
+	m.replayStoreUp.Set(value)
+}
+
+// ReplayPurged records n replay-store events purged by the background
+// retention cleanup sweep. n<=0 is a no-op -- a sweep that purged nothing
+// (e.g. no events past TTL, or both ttl/max_events unset) should not
+// increment the counter.
+func (m *Metrics) ReplayPurged(n int) {
+	if n <= 0 {
+		return
+	}
+	m.replayPurged.Add(float64(n))
 }
 
 // SetBuildInfo records the running binary's version and commit as a gauge

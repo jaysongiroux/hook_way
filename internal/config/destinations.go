@@ -226,6 +226,44 @@ type rawRabbitMQQueueOptions struct {
 	DeadLetterRoutingKey string `yaml:"dead_letter_routing_key"`
 }
 
+// rawPostgresConfig is the YAML mirror of PostgresConfig, shared by every raw
+// config block that embeds a Postgres connection: postgres destinations
+// (rawDestinationConfig.Postgres) and the replay store (rawConfig.Replay.Postgres,
+// see config.go). Keeping one raw shape (and one convertPostgresConfig below)
+// means ${ENV} expansion and TLS fields behave identically for both.
+type rawPostgresConfig struct {
+	URL      string `yaml:"url"`
+	Schema   string `yaml:"schema"`
+	Table    string `yaml:"table"`
+	MaxConns int32  `yaml:"max_conns"`
+	TLS      struct {
+		CACert             string `yaml:"ca_cert"`
+		ClientCert         string `yaml:"client_cert"`
+		ClientKey          string `yaml:"client_key"`
+		ServerName         string `yaml:"server_name"`
+		InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+	} `yaml:"tls"`
+}
+
+// convertPostgresConfig maps a raw postgres connection block to the typed
+// PostgresConfig, defaulting Schema to "public" when omitted. Shared by the
+// postgres-destination conversion path and the replay store's conversion path.
+func convertPostgresConfig(raw rawPostgresConfig) PostgresConfig {
+	return PostgresConfig{
+		URL:      raw.URL,
+		Schema:   postgresSchema(raw.Schema),
+		Table:    raw.Table,
+		MaxConns: raw.MaxConns,
+		TLS: PostgresTLSConfig{
+			CACert:             raw.TLS.CACert,
+			ClientCert:         raw.TLS.ClientCert,
+			ClientKey:          raw.TLS.ClientKey,
+			ServerName:         raw.TLS.ServerName,
+			InsecureSkipVerify: raw.TLS.InsecureSkipVerify,
+		},
+	}
+}
+
 type rawDestinationConfig struct {
 	Type               string `yaml:"type"`
 	OnExistingConflict string `yaml:"on_existing_conflict"`
@@ -282,20 +320,8 @@ type rawDestinationConfig struct {
 		SSE             string `yaml:"sse"`
 		SSEKMSKeyID     string `yaml:"sse_kms_key_id"`
 	} `yaml:"s3"`
-	Postgres struct {
-		URL      string `yaml:"url"`
-		Schema   string `yaml:"schema"`
-		Table    string `yaml:"table"`
-		MaxConns int32  `yaml:"max_conns"`
-		TLS      struct {
-			CACert             string `yaml:"ca_cert"`
-			ClientCert         string `yaml:"client_cert"`
-			ClientKey          string `yaml:"client_key"`
-			ServerName         string `yaml:"server_name"`
-			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
-		} `yaml:"tls"`
-	} `yaml:"postgres"`
-	Mongo struct {
+	Postgres rawPostgresConfig `yaml:"postgres"`
+	Mongo    struct {
 		URI         string `yaml:"uri"`
 		Database    string `yaml:"database"`
 		MaxPoolSize uint64 `yaml:"max_pool_size"`
@@ -497,19 +523,7 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			SSE:             raw.S3.SSE,
 			SSEKMSKeyID:     raw.S3.SSEKMSKeyID,
 		},
-		Postgres: PostgresConfig{
-			URL:      raw.Postgres.URL,
-			Schema:   postgresSchema(raw.Postgres.Schema),
-			Table:    raw.Postgres.Table,
-			MaxConns: raw.Postgres.MaxConns,
-			TLS: PostgresTLSConfig{
-				CACert:             raw.Postgres.TLS.CACert,
-				ClientCert:         raw.Postgres.TLS.ClientCert,
-				ClientKey:          raw.Postgres.TLS.ClientKey,
-				ServerName:         raw.Postgres.TLS.ServerName,
-				InsecureSkipVerify: raw.Postgres.TLS.InsecureSkipVerify,
-			},
-		},
+		Postgres: convertPostgresConfig(raw.Postgres),
 		Mongo: MongoConfig{
 			URI:         raw.Mongo.URI,
 			Database:    raw.Mongo.Database,
