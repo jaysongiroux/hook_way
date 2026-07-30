@@ -1,9 +1,11 @@
-# Pin a patched Go toolchain. The floating golang:1.25-alpine tag resolved to
-# 1.25.4, whose crypto/tls, crypto/x509, net/http and net/url stdlib carry HIGH
-# CVEs (GO-2026-4337/4340/4870/4918/4946/4947/4971/5037/5039, GO-2025-4155/4175,
-# GO-2026-4341/4601) that Trivy flags on the built binary. All are fixed by
-# 1.25.11 (verified with govulncheck). Bump this pin as newer patches ship.
-FROM golang:1.25.11-alpine AS build
+# Pin a patched Go toolchain. Trivy flags every stdlib CVE stamped into the
+# built binary regardless of reachability, so the pin must track the latest
+# 1.25.x patch. 1.25.12 (2026-07-07) fixes fresh HIGH stdlib CVEs in crypto/tls
+# (CVE-2026-42505), os (CVE-2026-39822/27139), net/url (CVE-2026-25679) and
+# html/template (CVE-2026-27142) that 1.25.11 still carried. Verified clean of
+# stdlib findings with govulncheck against the 1.25.12 toolchain. Bump this pin
+# as newer patches ship.
+FROM golang:1.25.12-alpine AS build
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum* ./
