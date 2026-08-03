@@ -62,6 +62,20 @@ jobs:
       - name: Vet
         run: make lint
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Web unit tests
+        run: make web-test
+
+      - name: Build UI (WASM + SPA)
+        run: make ui
+
       - name: Docker build
         run: make docker-build
 

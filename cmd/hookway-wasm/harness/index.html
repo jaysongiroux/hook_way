@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Hookway WASM validator harness</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; color: #152033; margin: 24px; max-width: 900px; }
+    textarea { width: 100%; height: 220px; font-family: ui-monospace, monospace; }
+    pre { background: #f8faff; padding: 12px; border-radius: 8px; overflow: auto; }
+    button { margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Hookway WASM validator harness</h1>
+  <p id="status">Loading WASM…</p>
+  <textarea id="yaml" spellcheck="false">
+server:
+  addr: ":8080"
+endpoints: {}
+</textarea>
+  <p>
+    <button id="validate" disabled>hookwayValidate()</button>
+    <button id="schema" disabled>hookwaySchema()</button>
+  </p>
+  <pre id="out"></pre>
+
+  <script src="wasm_exec.js"></script>
+  <script>
+    const out = document.getElementById("out");
+    const status = document.getElementById("status");
+    const go = new Go();
+    WebAssembly.instantiateStreaming(fetch("hookway.wasm"), go.importObject)
+      .then((res) => {
+        go.run(res.instance);
+        status.textContent = "WASM ready. hookwayValidate / hookwaySchema are live.";
+        document.getElementById("validate").disabled = false;
+        document.getElementById("schema").disabled = false;
+      })
+      .catch((e) => { status.textContent = "WASM load failed: " + e; });
+
+    document.getElementById("validate").addEventListener("click", () => {
+      const raw = globalThis.hookwayValidate(document.getElementById("yaml").value);
+      out.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+    });
+    document.getElementById("schema").addEventListener("click", () => {
+      const raw = globalThis.hookwaySchema();
+      out.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+    });
+  </script>
+</body>
+</html>

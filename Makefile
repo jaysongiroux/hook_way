@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint validate validate-examples build run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -15,6 +15,43 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
 build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway ./cmd/hookway
+
+wasm:
+	mkdir -p internal/editor/assets
+	GOOS=js GOARCH=wasm $(GO) build -o internal/editor/assets/hookway.wasm ./cmd/hookway-wasm
+	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" internal/editor/assets/wasm_exec.js
+
+wasm-harness: wasm
+	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js cmd/hookway-wasm/harness/
+	@echo "Serving harness on http://localhost:8091 (Ctrl-C to stop)"
+	cd cmd/hookway-wasm/harness && python3 -m http.server 8091
+
+web-install:
+	cd web && npm install
+
+web-dev:
+	cd web && npm run dev
+
+web-test:
+	cd web && npm run test
+
+web-build:
+	cd web && npm run build
+
+# ui assembles the embed bundle: build the WASM validator (Milestone 1) and the
+# SPA, then stage both into internal/editor/webui/ for go:embed.
+ui: wasm web-build
+	mkdir -p internal/editor/webui
+	rm -rf internal/editor/webui/assets
+	cp -R web/dist/. internal/editor/webui/
+	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js internal/editor/webui/
+
+# ui-check fails if the embed dir still holds the "not built" placeholder,
+# guarding against shipping a binary without the real UI.
+ui-check:
+	@if grep -q "Hookway Config UI is not built" internal/editor/webui/index.html 2>/dev/null || [ ! -d internal/editor/webui/assets ]; then \
+		echo "error: config UI not staged — run 'make ui' before building a release"; exit 1; \
+	fi
 
 test:
 	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore'
@@ -88,13 +125,13 @@ validate-examples:
 run:
 	HOOKWAY_CONFIG=$(CONFIG) $(GO) run ./cmd/hookway
 
-docker-build:
+docker-build: ui
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint docker-build vuln-scan
+release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint ui-check docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build
