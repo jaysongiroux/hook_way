@@ -1,5 +1,6 @@
-// Package editor serves the Hookway config API (JSON Schema + validation) over
-// HTTP for a future config UI. It serves no UI assets and stores no state.
+// Package editor serves the Hookway config UI (an embedded static SPA) plus the
+// config API (JSON Schema + validation) over HTTP. The SPA is unauthenticated;
+// the API is apikey-guarded. It stores no state and loads no config file.
 package editor
 
 import (
@@ -16,14 +17,27 @@ import (
 // config, so it applies its own fixed ceiling rather than server.max_body_bytes.
 const maxValidateBytes = 5 << 20 // 5 MiB
 
-// Handler returns the routed handler for the config API, guarded by apiKey when
-// non-empty. CORS is outermost so OPTIONS preflight (which cannot carry an
-// Authorization header) is answered before the auth check runs.
+// Handler returns the routed handler for the config editor: the SPA at / (no
+// auth — the browser needs the HTML/JS before it can present a key) and the
+// config API (GET /schema, POST /validate) guarded by apiKey when non-empty.
+// CORS is outermost so OPTIONS preflight is answered before auth runs.
+//
+// The API routes are dispatched through a nested mux reached via method-agnostic
+// top-level patterns ("/schema", "/validate"). Registering "GET /schema" and
+// "POST /validate" directly alongside the "GET /" SPA catch-all would let the
+// catch-all silently absorb the "wrong" method for each API path (e.g. GET
+// /validate), since it is the only pattern matching that method — defeating
+// net/http's automatic 405 for a mismatched method on a known path.
 func Handler(apiKey string) http.Handler {
+	api := http.NewServeMux()
+	api.Handle("GET /schema", apikey.Middleware(apiKey, http.HandlerFunc(handleSchema)))
+	api.Handle("POST /validate", apikey.Middleware(apiKey, http.HandlerFunc(handleValidate)))
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /schema", handleSchema)
-	mux.HandleFunc("POST /validate", handleValidate)
-	return withCORS(apikey.Middleware(apiKey, mux))
+	mux.Handle("/schema", api)
+	mux.Handle("/validate", api)
+	mux.Handle("/", uiHandler())
+	return withCORS(mux)
 }
 
 // NewServer returns an http.Server bound to addr serving the config API, guarded

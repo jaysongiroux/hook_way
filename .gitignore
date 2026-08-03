@@ -34,3 +34,26 @@ go.work.sum
 docs/superpowers/
 docs/scratch/
 *.log
+.superpowers/brainstorm/
+
+# Generated config-UI WASM/build assets (produced by `make wasm` / `make ui`)
+internal/editor/assets/*
+!internal/editor/assets/.gitkeep
+
+# Copied into the harness dir by `make wasm-harness`
+cmd/hookway-wasm/harness/hookway.wasm
+cmd/hookway-wasm/harness/wasm_exec.js
+
+# Frontend (web/) build + deps
+web/node_modules/
+web/dist/
+web/.vite/
+# tsc -b (composite build) byproducts
+web/*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+
+# Staged config-UI bundle for go:embed (populated by `make ui`); keep only the
+# tracked placeholder so a fresh `go build` still embeds something.
+internal/editor/webui/*
+!internal/editor/webui/index.html
