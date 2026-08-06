@@ -1,9 +1,28 @@
 import { beforeEach, expect, test } from "vitest";
 import { toConfig, ExportError } from "./toConfig";
 import { createNode, resetIdCounters } from "./model";
+import { DEST_TYPE_SPECS } from "./destTypes";
 import type { Edge } from "@xyflow/react";
 
 beforeEach(() => resetIdCounters());
+
+// Throwaway spec used only to exercise the generic "group" field mechanism;
+// no real destination type has a group field yet.
+DEST_TYPE_SPECS.__group_test__ = {
+  block: "__group_test__",
+  fields: [
+    { key: "name", label: "Name" },
+    {
+      key: "retry",
+      label: "Retry",
+      kind: "group",
+      fields: [
+        { key: "max_attempts", label: "Max attempts", kind: "number" },
+        { key: "backoff", label: "Backoff" },
+      ],
+    },
+  ],
+};
 
 function edge(source: string, target: string, data = { target: "q", create: true }): Edge {
   return { id: `${source}-${target}`, source, target, data };
@@ -18,6 +37,22 @@ test("endpoint -> destination yields a route with target and default server", ()
   expect(e.path).toBe("/webhooks/endpoint_1");
   expect(e.destinations).toEqual([{ destination: d.data.name, target: "gh-webhooks", create: true }]);
   expect((config.destinations as any)[d.data.name as string].type).toBe("rabbitmq");
+});
+
+// B1: a fresh rabbitmq destination must not emit spurious optional groups
+// (dead_letter / tls / retry / queue_defaults) the user never configured.
+test("a default rabbitmq destination exports a clean block without empty optional groups", () => {
+  const ep = createNode("endpoint", { x: 0, y: 0 });
+  const d = createNode("destination", { x: 0, y: 0 }); // rabbitmq defaults
+  (d.data as any).settings.url = "amqp://h";
+  (d.data as any).settings.exchange = "x";
+  const { config } = toConfig([ep, d], [edge(ep.id, d.id, { target: "t", create: true })]);
+  const rmq = (config.destinations as any)[d.data.name as string].rabbitmq;
+  expect(rmq.dead_letter).toBeUndefined();
+  expect(rmq.tls).toBeUndefined();
+  expect(rmq.retry).toBeUndefined();
+  expect(rmq.queue_defaults).toBeUndefined();
+  expect(rmq).toEqual({ url: "amqp://h", exchange: "x", exchange_type: "direct", durable: true, declare_queues: true });
 });
 
 test("endpoint -> filter -> two destinations puts the filter at endpoint level", () => {
@@ -146,7 +181,26 @@ test("destination bool/number/select settings map to typed YAML values", () => {
   const { config } = toConfig([ep, d], [{ id: "e", source: ep.id, target: d.id, data: { target: "t", create: true } } as any]);
   const rmq = (config.destinations as any)[d.data.name as string].rabbitmq;
   expect(rmq.exchange_type).toBe("topic");
-  expect(rmq.durable).toBe(false);       // bool always emitted
-  expect(rmq.declare_queues).toBe(true);
+  expect(rmq.durable).toBeUndefined();   // false bool omitted (Go zero value is false)
+  expect(rmq.declare_queues).toBe(true); // true bool emitted
   expect(rmq.publish_timeout).toBeUndefined(); // empty text omitted
+});
+
+test("mapSettings emits a nested object for a group field with a non-empty child", () => {
+  const d = createNode("destination", { x: 0, y: 0 });
+  (d.data as any).destType = "__group_test__";
+  (d.data as any).settings = { name: "n", retry: { max_attempts: 3, backoff: "" } };
+  const { config } = toConfig([d], []);
+  const entry = (config.destinations as any)[d.data.name as string];
+  expect(entry.__group_test__).toEqual({ name: "n", retry: { max_attempts: 3 } });
+});
+
+test("mapSettings omits a group field entirely when all its children are empty", () => {
+  const d = createNode("destination", { x: 0, y: 0 });
+  (d.data as any).destType = "__group_test__";
+  (d.data as any).settings = { name: "n", retry: { max_attempts: "", backoff: "" } };
+  const { config } = toConfig([d], []);
+  const entry = (config.destinations as any)[d.data.name as string];
+  expect(entry.__group_test__).toEqual({ name: "n" });
+  expect(entry.__group_test__.retry).toBeUndefined();
 });

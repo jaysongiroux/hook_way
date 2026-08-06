@@ -7,9 +7,11 @@ import { scanEnvVars } from "./envScan";
 export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
+  const serverConfig = useGraphStore((s) => s.serverConfig);
+  const configExtra = useGraphStore((s) => s.configExtra);
   let vars: string[] = [];
   try {
-    const { config, notes } = toConfig(nodes, edges);
+    const { config, notes } = toConfig(nodes, edges, serverConfig, configExtra);
     vars = scanEnvVars(toYaml(config, notes));
   } catch {
     vars = [];

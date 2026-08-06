@@ -6,11 +6,13 @@ import { toYaml } from "./toYaml";
 export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
+  const serverConfig = useGraphStore((s) => s.serverConfig);
+  const configExtra = useGraphStore((s) => s.configExtra);
 
   let yaml = "";
   let error = "";
   try {
-    const { config, notes } = toConfig(nodes, edges);
+    const { config, notes } = toConfig(nodes, edges, serverConfig, configExtra);
     yaml = toYaml(config, notes);
   } catch (e) {
     error = e instanceof ExportError ? e.message : String(e);

@@ -1,5 +1,20 @@
 import { expect, test } from "vitest";
-import { DEST_TYPES, DEST_TYPE_SPECS, defaultSettings, defaultScheme } from "./destTypes";
+import { DEST_TYPES, DEST_TYPE_SPECS, defaultSettings, defaultScheme, defaultsFor } from "./destTypes";
+import type { FieldSpec } from "./destTypes";
+
+// Throwaway spec used only to exercise the generic "group" field mechanism;
+// no real destination type has a group field yet.
+const GROUP_CHILD_FIELDS: FieldSpec[] = [
+  { key: "max_attempts", label: "Max attempts", kind: "number" },
+  { key: "backoff", label: "Backoff", default: "1s" },
+];
+DEST_TYPE_SPECS.__group_test__ = {
+  block: "__group_test__",
+  fields: [
+    { key: "name", label: "Name" },
+    { key: "retry", label: "Retry", kind: "group", fields: GROUP_CHILD_FIELDS },
+  ],
+};
 
 test("DEST_TYPES lists the real 12 backend types without a bare redis", () => {
   expect(DEST_TYPES).toContain("rabbitmq");
@@ -39,4 +54,17 @@ test("select/bool fields carry options/kind", () => {
   expect(et.kind).toBe("select");
   expect(et.options).toEqual(["direct", "fanout", "topic", "headers"]);
   expect(DEST_TYPE_SPECS.rabbitmq.fields.find((f) => f.key === "durable")!.kind).toBe("bool");
+});
+
+test("defaultsFor seeds a nested object with child defaults for a group field", () => {
+  expect(defaultsFor([{ key: "retry", label: "Retry", kind: "group", fields: GROUP_CHILD_FIELDS }])).toEqual({
+    retry: { max_attempts: "", backoff: "1s" },
+  });
+});
+
+test("defaultSettings recurses into a group field via defaultsFor", () => {
+  expect(defaultSettings("__group_test__")).toEqual({
+    name: "",
+    retry: { max_attempts: "", backoff: "1s" },
+  });
 });

@@ -3,6 +3,11 @@ import { defaultSettings } from "./destTypes";
 
 export type NodeKind = "endpoint" | "destination" | "filter";
 
+// Minimum valid server block: `addr` and `max_body_bytes` are both REQUIRED by
+// the Go validator. A fresh graph (and any export without a customized server)
+// falls back to these so the output always validates.
+export const DEFAULT_SERVER: Record<string, unknown> = { addr: ":8080", max_body_bytes: 1048576 };
+
 export interface AuthData {
   type: string;
   scheme: string;
@@ -15,7 +20,12 @@ export interface EndpointData extends Record<string, unknown> {
   kind: "endpoint";
   name: string;
   path: string;
+  enabled: boolean;
   auth: AuthData;
+  // Verbatim endpoint-entry config the UI doesn't model (rate_limit,
+  // replay_protection, max_body_bytes, delivery_failure_policy, ...), minus the
+  // managed keys (enabled/path/auth/destinations/filters). Merged on export.
+  rawExtra?: Record<string, unknown>;
   notes?: string;
 }
 
@@ -24,6 +34,11 @@ export interface DestinationData extends Record<string, unknown> {
   name: string;
   destType: string;
   settings: Record<string, unknown>;
+  // Verbatim config the UI doesn't (yet) model: the destination entry minus
+  // `type`, with the type's managed field keys stripped from the block. Merged
+  // back under the block on export so nothing is dropped. Structure preserved
+  // (block extras stay nested under the block key).
+  rawExtra?: Record<string, unknown>;
   notes?: string;
 }
 
@@ -44,6 +59,9 @@ export type HookwayEdge = Edge;
 export interface EdgeData extends Record<string, unknown> {
   target: string;
   create: boolean;
+  // Verbatim route config the UI doesn't model (queue_options, sqs_options,
+  // fifo, ...), minus managed keys (destination/target/create/filters).
+  rawExtra?: Record<string, unknown>;
 }
 
 export function isNodeKind(s: string): s is NodeKind {
@@ -95,6 +113,7 @@ export function createNode(
         kind: "endpoint",
         name,
         path: `/webhooks/${name}`,
+        enabled: true,
         auth: {
           type: "hmac_sha256",
           scheme: "hmac_sha256_hex",

@@ -8,7 +8,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { isValidConnection } from "./connection";
-import { seedCounters, type HookwayNode } from "./model";
+import { seedCounters, DEFAULT_SERVER, type HookwayNode } from "./model";
 
 let edgeSeq = 0;
 
@@ -31,6 +31,12 @@ function uniqueTarget(base: string, destNodeId: string, edges: Edge[]): string {
 interface GraphState {
   nodes: HookwayNode[];
   edges: Edge[];
+  // Whole `server:` block (managed keys the Server panel edits + any unknown
+  // keys ride along untouched) and the other top-level config blocks the graph
+  // doesn't model (security, rate_limit, metrics, logging, replay, ...). Both
+  // are preserved verbatim across import→export.
+  serverConfig: Record<string, unknown>;
+  configExtra: Record<string, unknown>;
   selectedId: string | null;
   selectedEdgeId: string | null;
   onNodesChange: (changes: NodeChange[]) => void;
@@ -39,15 +45,23 @@ interface GraphState {
   addNode: (n: HookwayNode) => void;
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
   updateEdgeData: (id: string, patch: Record<string, unknown>) => void;
+  setServerConfig: (patch: Record<string, unknown>) => void;
   setSelected: (id: string | null) => void;
   setSelectedEdge: (id: string | null) => void;
-  setGraph: (nodes: HookwayNode[], edges: Edge[]) => void;
+  setGraph: (
+    nodes: HookwayNode[],
+    edges: Edge[],
+    serverConfig?: Record<string, unknown>,
+    configExtra?: Record<string, unknown>,
+  ) => void;
   clear: () => void;
 }
 
 export const useGraphStore = create<GraphState>((set, get) => ({
   nodes: [],
   edges: [],
+  serverConfig: { ...DEFAULT_SERVER },
+  configExtra: {},
   selectedId: null,
   selectedEdgeId: null,
   onNodesChange: (changes) =>
@@ -81,11 +95,34 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         e.id === id ? { ...e, data: { ...(e.data ?? {}), ...patch } } : e,
       ),
     }),
+  setServerConfig: (patch) => {
+    // Merge then drop cleared fields so the exported server block never carries
+    // empty values (a blank duration/number would export as "" and misvalidate).
+    const merged = { ...get().serverConfig, ...patch };
+    const pruned: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(merged)) if (v !== "" && v !== null && v !== undefined) pruned[k] = v;
+    set({ serverConfig: pruned });
+  },
   setSelected: (id) => set({ selectedId: id, selectedEdgeId: null }),
   setSelectedEdge: (id) => set({ selectedEdgeId: id, selectedId: null }),
-  setGraph: (nodes, edges) => {
+  setGraph: (nodes, edges, serverConfig, configExtra) => {
     seedCounters(nodes);
-    set({ nodes, edges, selectedId: null, selectedEdgeId: null });
+    set({
+      nodes,
+      edges,
+      serverConfig: serverConfig ?? { ...DEFAULT_SERVER },
+      configExtra: configExtra ?? {},
+      selectedId: null,
+      selectedEdgeId: null,
+    });
   },
-  clear: () => set({ nodes: [], edges: [], selectedId: null, selectedEdgeId: null }),
+  clear: () =>
+    set({
+      nodes: [],
+      edges: [],
+      serverConfig: { ...DEFAULT_SERVER },
+      configExtra: {},
+      selectedId: null,
+      selectedEdgeId: null,
+    }),
 }));

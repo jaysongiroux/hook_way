@@ -1,18 +1,63 @@
 import type { Edge } from "@xyflow/react";
 import type { AuthData, HookwayNode } from "./model";
-import { DEST_TYPE_SPECS } from "./destTypes";
+import { DEFAULT_SERVER } from "./model";
+import { DEST_TYPE_SPECS, managedKeys } from "./destTypes";
+import type { FieldSpec } from "./destTypes";
 
-function importSettings(destType: string, block: Record<string, unknown> | undefined): Record<string, unknown> {
-  const spec = DEST_TYPE_SPECS[destType];
+// destRawExtra captures the parts of a destination entry the UI doesn't model:
+// entry-level keys other than `type` and the block, plus block-level keys not
+// in the type's managed set (kept nested under the block key). Returns
+// undefined when nothing extra needs preserving.
+function destRawExtra(destType: string, entry: Record<string, unknown>): Record<string, unknown> | undefined {
+  const blockKey = DEST_TYPE_SPECS[destType]?.block ?? destType;
+  const managed = managedKeys(destType);
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(entry)) {
+    if (k === "type") continue;
+    if (k === blockKey) {
+      const blockExtra: Record<string, unknown> = {};
+      if (isPlainObject(v)) {
+        for (const [bk, bv] of Object.entries(v)) if (!managed.has(bk)) blockExtra[bk] = bv;
+      }
+      if (Object.keys(blockExtra).length > 0) extra[blockKey] = blockExtra;
+    } else {
+      extra[k] = v;
+    }
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+function importFields(fields: FieldSpec[], block: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  if (!spec || !block) return out;
-  for (const f of spec.fields) {
+  for (const f of fields) {
     const v = block[f.key];
+    if (f.kind === "group") {
+      if (isPlainObject(v)) out[f.key] = importFields(f.fields ?? [], v);
+      continue;
+    }
     if (v === undefined) continue;
     out[f.key] = f.kind === "list" ? (Array.isArray(v) ? v.join(",") : String(v)) : v;
   }
   return out;
 }
+
+function importSettings(destType: string, block: Record<string, unknown> | undefined): Record<string, unknown> {
+  const spec = DEST_TYPE_SPECS[destType];
+  if (!spec || !block) return {};
+  return importFields(spec.fields, block);
+}
+
+// omitKeys returns a shallow copy of obj without the given keys, or undefined
+// if nothing remains — used to capture the "everything else" passthrough.
+function omitKeys(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> | undefined {
+  const drop = new Set(keys);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) if (!drop.has(k)) out[k] = v;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const ENDPOINT_MANAGED = ["enabled", "path", "auth", "destinations", "filters"];
+const ROUTE_MANAGED = ["destination", "target", "create", "filters"];
 
 function importAuth(a: Record<string, unknown> | undefined): AuthData {
   const raw = (a ?? {}) as Record<string, unknown>;
@@ -50,7 +95,12 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-export function fromConfig(config: Record<string, unknown>): { nodes: HookwayNode[]; edges: Edge[] } {
+export function fromConfig(config: Record<string, unknown>): {
+  nodes: HookwayNode[];
+  edges: Edge[];
+  serverConfig: Record<string, unknown>;
+  configExtra: Record<string, unknown>;
+} {
   const nodes: HookwayNode[] = [];
   const edges: Edge[] = [];
   let filterCounter = 0;
@@ -76,22 +126,31 @@ export function fromConfig(config: Record<string, unknown>): { nodes: HookwayNod
   for (const [name, d] of Object.entries(dests)) {
     const destType = String(d.type ?? "rabbitmq");
     const block = d[DEST_TYPE_SPECS[destType]?.block ?? destType] as Record<string, unknown> | undefined;
+    const rawExtra = destRawExtra(destType, d);
     nodes.push({
       id: `destination:${name}`,
       type: "destination",
       position: { x: 0, y: 0 },
-      data: { kind: "destination", name, destType, settings: importSettings(destType, block) },
+      data: { kind: "destination", name, destType, settings: importSettings(destType, block), ...(rawExtra ? { rawExtra } : {}) },
     });
   }
 
   const eps = (config.endpoints ?? {}) as Record<string, Record<string, unknown>>;
   for (const [name, ep] of Object.entries(eps)) {
     const endpointId = `endpoint:${name}`;
+    const epRawExtra = omitKeys(ep, ENDPOINT_MANAGED);
     nodes.push({
       id: endpointId,
       type: "endpoint",
       position: { x: 0, y: 0 },
-      data: { kind: "endpoint", name, path: String(ep.path ?? ""), auth: importAuth(ep.auth as Record<string, unknown>) },
+      data: {
+        kind: "endpoint",
+        name,
+        path: String(ep.path ?? ""),
+        enabled: ep.enabled === undefined ? true : Boolean(ep.enabled),
+        auth: importAuth(ep.auth as Record<string, unknown>),
+        ...(epRawExtra ? { rawExtra: epRawExtra } : {}),
+      },
     });
 
     let prev = endpointId;
@@ -113,14 +172,20 @@ export function fromConfig(config: Record<string, unknown>): { nodes: HookwayNod
       }
       const dest = String(route.destination ?? "");
       if (!Object.prototype.hasOwnProperty.call(dests, dest)) continue;
+      const routeRawExtra = omitKeys(route, ROUTE_MANAGED);
       edges.push({
         id: nextEdgeId(),
         source: branch,
         target: `destination:${dest}`,
-        data: { target: String(route.target ?? dest), create: route.create ?? true },
+        data: { target: String(route.target ?? dest), create: route.create ?? true, ...(routeRawExtra ? { rawExtra: routeRawExtra } : {}) },
       });
     }
   }
 
-  return { nodes, edges };
+  // Whole server block rides along (Server panel edits known keys, unknown keys
+  // preserved); every other top-level block is preserved verbatim.
+  const serverConfig = isPlainObject(config.server) ? config.server : { ...DEFAULT_SERVER };
+  const configExtra = omitKeys(config, ["server", "destinations", "endpoints"]) ?? {};
+
+  return { nodes, edges, serverConfig, configExtra };
 }

@@ -12,7 +12,7 @@ export function usePersistence(): void {
     let cancelled = false;
     loadGraph().then((g) => {
       if (!cancelled && g && (g.nodes.length > 0 || g.edges.length > 0)) {
-        setGraph(g.nodes, g.edges);
+        setGraph(g.nodes, g.edges, g.serverConfig, g.configExtra);
       }
     });
     return () => {
@@ -25,7 +25,7 @@ export function usePersistence(): void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsub = useGraphStore.subscribe((state) => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void saveGraph(state.nodes, state.edges), DEBOUNCE_MS);
+      timer = setTimeout(() => void saveGraph(state.nodes, state.edges, state.serverConfig, state.configExtra), DEBOUNCE_MS);
     });
     return () => {
       if (timer) clearTimeout(timer);

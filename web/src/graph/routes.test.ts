@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "vitest";
-import { endpointRoutes, owningEndpointId, parallelGroups } from "./routes";
+import { destinationRoutes, endpointRoutes, owningEndpointId, parallelGroups } from "./routes";
 import { createNode, resetIdCounters } from "./model";
 import type { Edge } from "@xyflow/react";
 
@@ -33,6 +33,32 @@ test("owningEndpointId returns the endpoint for a direct edge", () => {
   const ep = createNode("endpoint", { x: 0, y: 0 });
   const d = createNode("destination", { x: 0, y: 0 });
   expect(owningEndpointId("e1", [ep, d], [e("e1", ep.id, d.id)])).toBe(ep.id);
+});
+
+test("destinationRoutes lists incoming routes with their source endpoint", () => {
+  resetIdCounters();
+  const ep1 = createNode("endpoint", { x: 0, y: 0 });
+  const ep2 = createNode("endpoint", { x: 0, y: 100 });
+  const d = createNode("destination", { x: 200, y: 0 });
+  const edges = [
+    e("a", ep1.id, d.id, { target: "t1", create: true }),
+    e("b", ep2.id, d.id, { target: "t2", create: false }),
+  ];
+  const rows = destinationRoutes(d.id, [ep1, ep2, d], edges);
+  expect(rows).toEqual([
+    { edgeId: "a", endpoint: ep1.data.name, target: "t1", create: true },
+    { edgeId: "b", endpoint: ep2.data.name, target: "t2", create: false },
+  ]);
+});
+
+test("destinationRoutes resolves the endpoint through a filter chain", () => {
+  resetIdCounters();
+  const ep = createNode("endpoint", { x: 0, y: 0 });
+  const f = createNode("filter", { x: 100, y: 0 });
+  const d = createNode("destination", { x: 200, y: 0 });
+  const edges = [e("e1", ep.id, f.id), e("e2", f.id, d.id, { target: "t", create: true })];
+  const rows = destinationRoutes(d.id, [ep, f, d], edges);
+  expect(rows).toEqual([{ edgeId: "e2", endpoint: ep.data.name, target: "t", create: true }]);
 });
 
 test("parallelGroups indexes edges sharing a source→target pair", () => {

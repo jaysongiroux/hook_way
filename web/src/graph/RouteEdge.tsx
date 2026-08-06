@@ -17,6 +17,7 @@ export function RouteEdge({
   const count = d.parallelCount ?? 1;
   const index = d.parallelIndex ?? 0;
   const target = String(d.target ?? "");
+  const selected = useGraphStore((s) => s.selectedEdgeId === id);
 
   let path: string;
   let labelX: number;
@@ -42,18 +43,23 @@ export function RouteEdge({
 
   return (
     <>
-      <BaseEdge id={id} path={path} />
+      <BaseEdge
+        id={id}
+        path={path}
+        style={selected ? { stroke: "#366CED", strokeWidth: 2.5 } : undefined}
+      />
       {target && (
         <EdgeLabelRenderer>
           <div
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              background: "#fff",
-              border: "1px solid #d6def0",
+              background: selected ? "#eaf0fe" : "#fff",
+              border: `1px solid ${selected ? "#366CED" : "#d6def0"}`,
               borderRadius: 6,
               padding: "1px 6px",
               fontSize: 11,
+              fontWeight: selected ? 600 : 400,
               color: "#152033",
               pointerEvents: "all",
               cursor: "pointer",

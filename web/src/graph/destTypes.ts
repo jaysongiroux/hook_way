@@ -1,4 +1,4 @@
-export type FieldKind = "text" | "list" | "select" | "bool" | "number";
+export type FieldKind = "text" | "list" | "select" | "bool" | "number" | "group";
 
 export interface FieldSpec {
   key: string;
@@ -7,6 +7,8 @@ export interface FieldSpec {
   options?: string[];
   placeholder?: string;
   default?: string | boolean | number;
+  // Only meaningful when kind === "group": the nested YAML block's own fields.
+  fields?: FieldSpec[];
 }
 
 export interface DestTypeSpec {
@@ -18,6 +20,16 @@ const EXCHANGE_TYPES = ["direct", "fanout", "topic", "headers"];
 const REDIS_MODES = ["single", "cluster", "sentinel"];
 const KAFKA_ACKS = ["all", "one", "none"];
 const KAFKA_COMPRESSION = ["none", "gzip", "snappy", "lz4", "zstd"];
+const RABBITMQ_OVERFLOW = ["reject-publish", "reject-publish-dlx"];
+
+// Reusable TLS block (amqps/rediss/postgres/etc. share this shape in Go).
+const tlsFields: FieldSpec[] = [
+  { key: "ca_cert", label: "CA cert path" },
+  { key: "client_cert", label: "Client cert path" },
+  { key: "client_key", label: "Client key path" },
+  { key: "server_name", label: "Server name" },
+  { key: "insecure_skip_verify", label: "Insecure skip verify", kind: "bool", default: false },
+];
 
 const redisFields: FieldSpec[] = [
   { key: "mode", label: "Mode", kind: "select", options: REDIS_MODES, default: "single" },
@@ -40,6 +52,44 @@ export const DEST_TYPE_SPECS: Record<string, DestTypeSpec> = {
       { key: "durable", label: "Durable", kind: "bool", default: true },
       { key: "declare_queues", label: "Declare queues", kind: "bool", default: true },
       { key: "publish_timeout", label: "Publish timeout", placeholder: "5s" },
+      { key: "publisher_channels", label: "Publisher channels", kind: "number" },
+      {
+        key: "queue_defaults",
+        label: "Queue defaults",
+        kind: "group",
+        fields: [
+          { key: "message_ttl", label: "Message TTL", placeholder: "24h" },
+          { key: "expires", label: "Expires", placeholder: "e.g. 1h" },
+          { key: "max_length", label: "Max length", kind: "number" },
+          { key: "overflow", label: "Overflow", kind: "select", options: ["", ...RABBITMQ_OVERFLOW] },
+          { key: "dead_letter_routing_key", label: "Dead-letter routing key" },
+        ],
+      },
+      {
+        key: "retry",
+        label: "Retry",
+        kind: "group",
+        fields: [
+          { key: "max_attempts", label: "Max attempts", kind: "number" },
+          { key: "initial_backoff", label: "Initial backoff", placeholder: "100ms" },
+          { key: "max_backoff", label: "Max backoff", placeholder: "2s" },
+        ],
+      },
+      {
+        key: "dead_letter",
+        label: "Dead letter",
+        kind: "group",
+        fields: [
+          { key: "enabled", label: "Enabled", kind: "bool", default: false },
+          { key: "exchange", label: "Exchange", placeholder: "hookway.webhooks.dlx" },
+          { key: "exchange_type", label: "Exchange type", kind: "select", options: ["", ...EXCHANGE_TYPES] },
+          { key: "queue", label: "Queue", placeholder: "hookway.webhooks.dlq" },
+          { key: "routing_key", label: "Routing key", placeholder: "webhooks.dead" },
+          { key: "durable", label: "Durable", kind: "bool", default: false },
+          { key: "create_queue", label: "Create queue", kind: "bool", default: false },
+        ],
+      },
+      { key: "tls", label: "TLS", kind: "group", fields: tlsFields },
     ],
   },
   sqs: {
@@ -115,14 +165,26 @@ export const DEST_TYPES: string[] = [
   "redis_stream", "redis_list", "redis_pubsub", "redis_kv",
 ];
 
-export function defaultSettings(type: string): Record<string, unknown> {
-  const spec = DEST_TYPE_SPECS[type];
+export function defaultsFor(fields: FieldSpec[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  if (!spec) return out;
-  for (const f of spec.fields) {
-    out[f.key] = f.default ?? (f.kind === "bool" ? false : "");
+  for (const f of fields) {
+    out[f.key] = f.kind === "group" ? defaultsFor(f.fields ?? []) : f.default ?? (f.kind === "bool" ? false : "");
   }
   return out;
+}
+
+export function defaultSettings(type: string): Record<string, unknown> {
+  const spec = DEST_TYPE_SPECS[type];
+  if (!spec) return {};
+  return defaultsFor(spec.fields);
+}
+
+// managedKeys returns the block-level keys the UI controls for a destination
+// type (each top-level FieldSpec key, groups included). Keys NOT in this set
+// are preserved verbatim as rawExtra so import→export never drops them.
+export function managedKeys(type: string): Set<string> {
+  const spec = DEST_TYPE_SPECS[type];
+  return new Set((spec?.fields ?? []).map((f) => f.key));
 }
 
 // Shared inspector enums (hoisted so Milestone 7 validation can reuse them).
