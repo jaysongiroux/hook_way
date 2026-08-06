@@ -4,8 +4,13 @@ import type { HookwayNode } from "./model";
 import { fromConfig } from "./fromConfig";
 import { layout } from "./layout";
 
-export function fromYaml(text: string): { nodes: HookwayNode[]; edges: Edge[] } {
+export function fromYaml(text: string): {
+  nodes: HookwayNode[];
+  edges: Edge[];
+  serverConfig: Record<string, unknown>;
+  configExtra: Record<string, unknown>;
+} {
   const config = (parse(text) ?? {}) as Record<string, unknown>;
-  const { nodes, edges } = fromConfig(config);
-  return { nodes: layout(nodes, edges), edges };
+  const { nodes, edges, serverConfig, configExtra } = fromConfig(config);
+  return { nodes: layout(nodes, edges), edges, serverConfig, configExtra };
 }

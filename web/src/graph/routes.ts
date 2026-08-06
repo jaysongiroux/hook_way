@@ -54,6 +54,34 @@ export function parallelGroups(edges: Edge[]): Map<string, { index: number; coun
   return out;
 }
 
+export interface IncomingRoute {
+  edgeId: string;
+  endpoint: string;
+  target: string;
+  create: boolean;
+}
+
+export function destinationRoutes(
+  destId: string,
+  nodes: HookwayNode[],
+  edges: Edge[],
+): IncomingRoute[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  return edges
+    .filter((e) => e.target === destId)
+    .map((e) => {
+      const epId = owningEndpointId(e.id, nodes, edges);
+      const ep = epId ? byId.get(epId) : undefined;
+      const d = (e.data ?? {}) as { target?: string; create?: boolean };
+      return {
+        edgeId: e.id,
+        endpoint: String(ep?.data.name ?? "?"),
+        target: String(d.target ?? ""),
+        create: d.create ?? true,
+      };
+    });
+}
+
 export function owningEndpointId(
   edgeId: string,
   nodes: HookwayNode[],

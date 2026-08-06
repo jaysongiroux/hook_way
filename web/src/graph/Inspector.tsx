@@ -8,13 +8,15 @@ import {
   Switch,
   NumberInput,
   Divider,
+  Fieldset,
   UnstyledButton,
   Anchor,
   Group,
 } from "@mantine/core";
 import { useGraphStore } from "./store";
 import type { AuthData, EndpointData, DestinationData, FilterData } from "./model";
-import { endpointRoutes, owningEndpointId } from "./routes";
+import { destinationRoutes, endpointRoutes, owningEndpointId } from "./routes";
+import type { FieldSpec } from "./destTypes";
 import {
   DEST_TYPES,
   DEST_TYPE_SPECS,
@@ -89,9 +91,14 @@ export function Inspector() {
 
   return (
     <Stack gap="sm">
-      <Text fw={600} size="sm">
-        {String(node.data.kind)} · {String(node.data.name)}
+      <Text fw={600} size="sm" tt="uppercase" c="dimmed">
+        {String(node.data.kind)}
       </Text>
+      <TextInput
+        label="Name"
+        value={String(node.data.name)}
+        onChange={(e) => set({ name: e.currentTarget.value })}
+      />
 
       {node.data.kind === "endpoint" && (
         <>
@@ -101,7 +108,10 @@ export function Inspector() {
       )}
       {node.data.kind === "filter" && <FilterForm data={node.data as FilterData} set={set} />}
       {node.data.kind === "destination" && (
-        <DestinationForm data={node.data as DestinationData} set={set} />
+        <>
+          <DestinationForm data={node.data as DestinationData} set={set} />
+          <IncomingRoutesSection destId={node.id} />
+        </>
       )}
 
       <Divider />
@@ -196,6 +206,62 @@ function FilterForm({ data, set }: { data: FilterData; set: (p: Record<string, u
   );
 }
 
+// renderField renders one destination setting control by kind, recursing on
+// "group" fields into a labeled Fieldset. onChange receives the field's new
+// value; a group's onChange receives the merged nested object.
+function renderField(f: FieldSpec, val: unknown, onChange: (v: unknown) => void) {
+  if (f.kind === "group") {
+    const groupVal = (val ?? {}) as Record<string, unknown>;
+    return (
+      <Fieldset key={f.key} legend={f.label} radius="sm" p="xs">
+        <Stack gap="xs">
+          {(f.fields ?? []).map((child) =>
+            renderField(child, groupVal[child.key], (cv) => onChange({ ...groupVal, [child.key]: cv })),
+          )}
+        </Stack>
+      </Fieldset>
+    );
+  }
+  if (f.kind === "select") {
+    return (
+      <Select
+        key={f.key}
+        label={f.label}
+        data={f.options ?? []}
+        value={String(val ?? "")}
+        allowDeselect={false}
+        comboboxProps={{ keepMounted: false }}
+        onChange={(v) => onChange(v ?? "")}
+      />
+    );
+  }
+  if (f.kind === "bool") {
+    return (
+      <Switch key={f.key} label={f.label} checked={Boolean(val)} onChange={(e) => onChange(e.currentTarget.checked)} />
+    );
+  }
+  if (f.kind === "number") {
+    return (
+      <NumberInput
+        key={f.key}
+        label={f.label}
+        value={val === "" || val == null ? "" : Number(val)}
+        onChange={(v) => onChange(v)}
+        min={0}
+      />
+    );
+  }
+  return (
+    <TextInput
+      key={f.key}
+      label={f.label}
+      placeholder={f.placeholder}
+      value={String(val ?? "")}
+      onChange={(e) => onChange(e.currentTarget.value)}
+    />
+  );
+}
+
 function DestinationForm({ data, set }: { data: DestinationData; set: (p: Record<string, unknown>) => void }) {
   const spec = DEST_TYPE_SPECS[data.destType];
   const settings = data.settings ?? {};
@@ -213,52 +279,41 @@ function DestinationForm({ data, set }: { data: DestinationData; set: (p: Record
           set({ destType: t, settings: defaultSettings(t) });
         }}
       />
-      {spec?.fields.map((f) => {
-        const val = settings[f.key];
-        if (f.kind === "select") {
-          return (
-            <Select
-              key={f.key}
-              label={f.label}
-              data={f.options ?? []}
-              value={String(val ?? "")}
-              allowDeselect={false}
-              comboboxProps={{ keepMounted: false }}
-              onChange={(v) => setField(f.key, v ?? "")}
-            />
-          );
-        }
-        if (f.kind === "bool") {
-          return (
-            <Switch
-              key={f.key}
-              label={f.label}
-              checked={Boolean(val)}
-              onChange={(e) => setField(f.key, e.currentTarget.checked)}
-            />
-          );
-        }
-        if (f.kind === "number") {
-          return (
-            <NumberInput
-              key={f.key}
-              label={f.label}
-              value={val === "" || val == null ? "" : Number(val)}
-              onChange={(v) => setField(f.key, v)}
-              min={0}
-            />
-          );
-        }
-        return (
-          <TextInput
-            key={f.key}
-            label={f.label}
-            placeholder={f.placeholder}
-            value={String(val ?? "")}
-            onChange={(e) => setField(f.key, e.currentTarget.value)}
-          />
-        );
-      })}
+      {spec?.fields.map((f) => renderField(f, settings[f.key], (v) => setField(f.key, v)))}
+    </Stack>
+  );
+}
+
+function IncomingRoutesSection({ destId }: { destId: string }) {
+  const nodes = useGraphStore((s) => s.nodes);
+  const edges = useGraphStore((s) => s.edges);
+  const setSelectedEdge = useGraphStore((s) => s.setSelectedEdge);
+  const rows = destinationRoutes(destId, nodes, edges);
+  return (
+    <Stack gap="xs">
+      <Divider />
+      <Text fw={600} size="sm" tt="uppercase" c="dimmed">
+        Incoming routes ({rows.length})
+      </Text>
+      {rows.length === 0 ? (
+        <Text size="xs" c="dimmed">No endpoints route here yet.</Text>
+      ) : (
+        rows.map((r) => (
+          <UnstyledButton
+            key={r.edgeId}
+            aria-label={`route from ${r.endpoint}: ${r.target || "(no target)"}`}
+            onClick={() => setSelectedEdge(r.edgeId)}
+          >
+            <Group justify="space-between" wrap="nowrap" style={{ border: "1px solid #e6ebf5", borderRadius: 6, padding: "6px 8px" }}>
+              <div style={{ minWidth: 0 }}>
+                <Text size="xs" c="dimmed">from {r.endpoint}</Text>
+                <Text size="sm" truncate>{r.target || "(no target)"}</Text>
+              </div>
+              <Text c="dimmed">›</Text>
+            </Group>
+          </UnstyledButton>
+        ))
+      )}
     </Stack>
   );
 }

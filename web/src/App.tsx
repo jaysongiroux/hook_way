@@ -5,6 +5,7 @@ import { Canvas } from "./graph/Canvas";
 import { Inspector } from "./graph/Inspector";
 import { ExportModal } from "./graph/ExportModal";
 import { EnvPanel } from "./graph/EnvPanel";
+import { ServerPanel } from "./graph/ServerPanel";
 import { ImportModal } from "./graph/ImportModal";
 import { usePersistence } from "./graph/usePersistence";
 import { useGraphStore } from "./graph/store";
@@ -21,6 +22,7 @@ export default function App() {
   const [importOpen, { open: openImport, close: closeImport }] = useDisclosure(false);
   const [exportOpen, { open: openExport, close: closeExport }] = useDisclosure(false);
   const [envOpen, { open: openEnv, close: closeEnv }] = useDisclosure(false);
+  const [serverOpen, { open: openServer, close: closeServer }] = useDisclosure(false);
 
   return (
     <AppShell
@@ -38,6 +40,7 @@ export default function App() {
             <Button size="xs" variant="subtle" onClick={openImport}>Import</Button>
             <Button size="xs" variant="subtle" onClick={openExport}>Export</Button>
             <Button size="xs" variant="subtle" onClick={openEnv}>Environment</Button>
+            <Button size="xs" variant="subtle" onClick={openServer}>Server</Button>
             <Button
               size="xs"
               variant="subtle"
@@ -78,6 +81,7 @@ export default function App() {
       <ImportModal opened={importOpen} onClose={closeImport} />
       <ExportModal opened={exportOpen} onClose={closeExport} />
       <EnvPanel opened={envOpen} onClose={closeEnv} />
+      <ServerPanel opened={serverOpen} onClose={closeServer} />
     </AppShell>
   );
 }

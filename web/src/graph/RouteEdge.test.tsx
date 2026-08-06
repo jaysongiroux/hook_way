@@ -79,6 +79,39 @@ test("renders both chips for two parallel routes to the same destination", () =>
   expect(getByText("queue-b")).toBeInTheDocument();
 });
 
+test("the selected edge's chip is highlighted", () => {
+  resetIdCounters();
+  useGraphStore.setState({ nodes: [], edges: [], selectedId: null, selectedEdgeId: "e1" });
+  const ep = {
+    ...createNode("endpoint", { x: 0, y: 0 }),
+    width: 100,
+    height: 40,
+    handles: [{ type: "source" as const, position: Position.Bottom, x: 0, y: 0, width: 1, height: 1 }],
+  };
+  const d = {
+    ...createNode("destination", { x: 200, y: 0 }),
+    width: 100,
+    height: 40,
+    handles: [{ type: "target" as const, position: Position.Top, x: 0, y: 0, width: 1, height: 1 }],
+  };
+  const { getByText } = render(
+    <MantineProvider theme={theme}>
+      <ReactFlowProvider>
+        <div style={{ width: 600, height: 400 }}>
+          <ReactFlow
+            nodes={[ep, d]}
+            edges={[{ id: "e1", source: ep.id, target: d.id, type: "route", data: { target: "gh", create: true } }]}
+            edgeTypes={edgeTypes}
+          />
+        </div>
+      </ReactFlowProvider>
+    </MantineProvider>,
+  );
+  const chip = getByText("gh");
+  expect(chip.style.borderColor).toBe("rgb(54, 108, 237)"); // #366CED, jsdom-normalized
+  expect(chip.style.fontWeight).toBe("600");
+});
+
 test("clicking a route chip selects that edge", () => {
   resetIdCounters();
   useGraphStore.setState({ nodes: [], edges: [], selectedId: null, selectedEdgeId: null });
