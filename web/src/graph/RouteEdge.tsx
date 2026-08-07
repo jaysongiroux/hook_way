@@ -11,6 +11,8 @@ export function RouteEdge({
   targetY,
   sourcePosition,
   targetPosition,
+  markerEnd,
+  style,
   data,
 }: EdgeProps) {
   const d = (data ?? {}) as { target?: string; parallelIndex?: number; parallelCount?: number };
@@ -43,11 +45,7 @@ export function RouteEdge({
 
   return (
     <>
-      <BaseEdge
-        id={id}
-        path={path}
-        style={selected ? { stroke: "#366CED", strokeWidth: 2.5 } : undefined}
-      />
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
       {target && (
         <EdgeLabelRenderer>
           <div

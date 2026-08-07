@@ -4,6 +4,7 @@ import {
   ReactFlowProvider,
   Background,
   Controls,
+  MarkerType,
   useReactFlow,
   type Connection,
   type Edge,
@@ -28,20 +29,39 @@ function CanvasInner() {
   const addNode = useGraphStore((s) => s.addNode);
   const setSelected = useGraphStore((s) => s.setSelected);
   const setSelectedEdge = useGraphStore((s) => s.setSelectedEdge);
+  const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
 
   const routedEdges = useMemo(() => {
     const destIds = new Set(nodes.filter((n) => n.data.kind === "destination").map((n) => n.id));
     const groups = parallelGroups(edges);
     return edges.map((e) => {
-      if (!destIds.has(e.target)) return e;
+      // Arrowhead on every edge shows which way data flows; the selected edge
+      // highlights blue uniformly (arrow + stroke) regardless of what it points
+      // at — otherwise plain edges into filters would fall back to React Flow's
+      // default (dark) selected style while route edges went blue.
+      const sel = e.id === selectedEdgeId;
+      // markerUnits userSpaceOnUse keeps the arrow a fixed size; without it the
+      // marker scales with the path stroke width, so the selected edge's thicker
+      // stroke would balloon the arrowhead.
+      const markerEnd = {
+        type: MarkerType.ArrowClosed,
+        width: 16,
+        height: 16,
+        markerUnits: "userSpaceOnUse",
+        color: sel ? "#366CED" : "#b1b1b7",
+      };
+      const style = sel ? { stroke: "#366CED", strokeWidth: 2.5 } : undefined;
+      if (!destIds.has(e.target)) return { ...e, markerEnd, style };
       const g = groups.get(e.id);
       return {
         ...e,
         type: "route",
+        markerEnd,
+        style,
         data: { ...(e.data ?? {}), parallelIndex: g?.index ?? 0, parallelCount: g?.count ?? 1 },
       };
     });
-  }, [nodes, edges]);
+  }, [nodes, edges, selectedEdgeId]);
 
   const validate = useCallback(
     (c: Connection | Edge) => isValidConnection(c, nodes, edges),
