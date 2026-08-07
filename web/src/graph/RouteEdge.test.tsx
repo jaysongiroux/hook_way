@@ -41,6 +41,37 @@ test("RouteEdge renders the target as a chip", () => {
   expect(getByText("gh-webhooks")).toBeInTheDocument();
 });
 
+test("a route edge renders an arrowhead marker showing data direction", () => {
+  resetIdCounters();
+  const ep = {
+    ...createNode("endpoint", { x: 0, y: 0 }),
+    width: 100,
+    height: 40,
+    handles: [{ type: "source" as const, position: Position.Bottom, x: 0, y: 0, width: 1, height: 1 }],
+  };
+  const d = {
+    ...createNode("destination", { x: 200, y: 0 }),
+    width: 100,
+    height: 40,
+    handles: [{ type: "target" as const, position: Position.Top, x: 0, y: 0, width: 1, height: 1 }],
+  };
+  const { container } = render(
+    <MantineProvider theme={theme}>
+      <ReactFlowProvider>
+        <div style={{ width: 600, height: 400 }}>
+          <ReactFlow
+            nodes={[ep, d]}
+            edges={[{ id: "e1", source: ep.id, target: d.id, type: "route", markerEnd: { type: "arrowclosed" }, data: { target: "q", create: true } }]}
+            edgeTypes={edgeTypes}
+          />
+        </div>
+      </ReactFlowProvider>
+    </MantineProvider>,
+  );
+  const path = container.querySelector(".react-flow__edge-path") as SVGPathElement;
+  expect(path.getAttribute("marker-end")).toBeTruthy();
+});
+
 test("renders both chips for two parallel routes to the same destination", () => {
   resetIdCounters();
   const ep = {
