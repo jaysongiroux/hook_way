@@ -13,8 +13,9 @@
 # Optional claims:
 #   expected_issuer   — enforces the `iss` claim
 #   expected_audience — enforces the `aud` claim
-#   body_hash_claim   — claim name whose value must equal the hex SHA-256 of the body;
-#                       binds the token to the exact request body
+#   body_hash_claim   — required unless allow_unbound_body is true; claim name
+#                       whose value must equal the hex SHA-256 of the body
+#   allow_unbound_body — opt out of body binding (JWT authenticates the caller only)
 #
 # timestamp_tolerance is used as JWT clock leeway (exp/nbf). It is optional
 # for JWT schemes (unlike HMAC timestamped schemes where it is required).

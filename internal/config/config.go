@@ -219,6 +219,7 @@ type rawConfig struct {
 			ExpectedIssuer     string `yaml:"expected_issuer"`
 			ExpectedAudience   string `yaml:"expected_audience"`
 			BodyHashClaim      string `yaml:"body_hash_claim"`
+			AllowUnboundBody   bool   `yaml:"allow_unbound_body"`
 		} `yaml:"auth"`
 		Filters        []rawFilterConditionConfig `yaml:"filters"`
 		FilterResponse struct {
@@ -561,7 +562,8 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				RemoveBearer:       endpoint.Auth.RemoveBearer,
 				ExpectedIssuer:     endpoint.Auth.ExpectedIssuer,
 				ExpectedAudience:   endpoint.Auth.ExpectedAudience,
-				BodyHashClaim:      endpoint.Auth.BodyHashClaim},
+				BodyHashClaim:      endpoint.Auth.BodyHashClaim,
+				AllowUnboundBody:   endpoint.Auth.AllowUnboundBody},
 			Filters:        convertFilters(endpoint.Filters),
 			FilterResponse: FilterResponseConfig{Status: endpoint.FilterResponse.Status},
 		}

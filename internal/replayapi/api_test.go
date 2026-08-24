@@ -88,6 +88,18 @@ func TestReconstructReprocessTrueFreshIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestReconstructHydratesRawBodyAndPreservesOrigHeaders(t *testing.T) {
+	e := sampleEvent()
+	e.Envelope.OrigHeaders = http.Header{"Stripe-Signature": {"t=1,v1=abc"}}
+	msg := reconstruct(e, false)
+	if string(msg.RawBody) != "rawbody" {
+		t.Fatalf("RawBody = %q, want decoded raw_body_base64", msg.RawBody)
+	}
+	if msg.OrigHeaders.Get("Stripe-Signature") != "t=1,v1=abc" {
+		t.Fatalf("OrigHeaders = %#v", msg.OrigHeaders)
+	}
+}
+
 func TestReconstructPreservesEnvelopeFields(t *testing.T) {
 	e := sampleEvent()
 	msg := reconstruct(e, false)

@@ -12,56 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/jasongiroux/hookway/internal/config"
 )
-
-// TestUnsupportedReplayDestinationsFindsOnlyProxyWebhooks covers the wiring
-// replayapi relies on to skip garbage replays: a proxy-mode webhook
-// destination must be flagged with a reason, an envelope-mode webhook and
-// every non-webhook destination type must NOT be, regardless of how many
-// other destinations are configured alongside them.
-func TestUnsupportedReplayDestinationsFindsOnlyProxyWebhooks(t *testing.T) {
-	cfg := config.Config{
-		Destinations: map[string]config.DestinationConfig{
-			"proxy_hook":    {Type: "webhook", Webhook: config.WebhookConfig{Auth: config.WebhookAuthConfig{Type: "proxy"}}},
-			"envelope_hook": {Type: "webhook", Webhook: config.WebhookConfig{Auth: config.WebhookAuthConfig{Type: "hmac"}}},
-			"no_auth_hook":  {Type: "webhook", Webhook: config.WebhookConfig{Auth: config.WebhookAuthConfig{Type: "none"}}},
-			"billing":       {Type: "rabbitmq"},
-		},
-	}
-
-	got := unsupportedReplayDestinations(cfg)
-
-	if len(got) != 1 {
-		t.Fatalf("unsupported = %#v, want exactly 1 entry (proxy_hook)", got)
-	}
-	reason, ok := got["proxy_hook"]
-	if !ok || reason == "" {
-		t.Fatalf("proxy_hook missing or has empty reason: %#v", got)
-	}
-	if _, ok := got["envelope_hook"]; ok {
-		t.Fatal("envelope_hook (auth.type=hmac) must not be flagged unsupported")
-	}
-	if _, ok := got["no_auth_hook"]; ok {
-		t.Fatal("no_auth_hook (auth.type=none) must not be flagged unsupported")
-	}
-	if _, ok := got["billing"]; ok {
-		t.Fatal("non-webhook destination must not be flagged unsupported")
-	}
-}
-
-func TestUnsupportedReplayDestinationsEmptyWhenNoProxyWebhooks(t *testing.T) {
-	cfg := config.Config{
-		Destinations: map[string]config.DestinationConfig{
-			"billing": {Type: "rabbitmq"},
-		},
-	}
-	got := unsupportedReplayDestinations(cfg)
-	if len(got) != 0 {
-		t.Fatalf("unsupported = %#v, want empty", got)
-	}
-}
 
 func TestRunValidateAcceptsValidConfig(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")

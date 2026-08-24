@@ -60,6 +60,10 @@ type readinessProber struct {
 	interval  time.Duration
 	timeout   time.Duration
 	result    atomic.Pointer[readinessResult]
+	// replayPing, when set, is included in every probe so a replay-store
+	// outage takes the pod out of rotation (AND-joined with destinations).
+	// Capture itself stays best-effort; this only affects /ready.
+	replayPing func(context.Context) error
 
 	// staleLoggedAt records the checkedAt of the cached result that most
 	// recently triggered the "reported unhealthy due to staleness" warning
@@ -98,6 +102,10 @@ func newReadinessProber(publisher queue.Publisher, appMetrics *metrics.Metrics, 
 // distinct cached result's checkedAt) rather than once per /ready request,
 // since kubelet polls /ready frequently and the underlying cached result does
 // not change again until the next successful probe.
+func (p *readinessProber) setReplayPing(ping func(context.Context) error) {
+	p.replayPing = ping
+}
+
 func (p *readinessProber) status(now time.Time) (error, bool) {
 	res := p.result.Load()
 	if res == nil {
@@ -149,6 +157,15 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 		aggErr = errors.Join(errs...)
 	} else {
 		aggErr = p.publisher.Ready(probeCtx)
+	}
+
+	if p.replayPing != nil {
+		if err := p.replayPing(probeCtx); err != nil {
+			p.metrics.ReplayStoreUp(false)
+			aggErr = errors.Join(aggErr, fmt.Errorf("replay_store: %w", err))
+		} else {
+			p.metrics.ReplayStoreUp(true)
+		}
 	}
 
 	if aggErr != nil {

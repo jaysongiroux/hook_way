@@ -337,13 +337,11 @@ func TestRecordOutcomeReflectsSkipFailedPartial(t *testing.T) {
 	}
 }
 
-// TestRecordOutcomeSkippedWhenNoDeliveries covers the stop_on_failure
-// full-failure path: publishRoutesStopOnFailure returns nil, nil, err, so
-// deliveriesFromResults(nil, nil) is an empty slice. Issuing the outcome
-// UPDATE in that case is a wasted best-effort write (the row is already
-// "pending" and there is nothing to record), so RecordOutcome must not be
-// called at all -- not called-with-empty-deliveries, but simply skipped.
-func TestRecordOutcomeSkippedWhenNoDeliveries(t *testing.T) {
+// TestRecordOutcomeOnStopOnFailureRecordsFailedAndUnattempted covers the
+// stop_on_failure full-failure path: the first destination fails, later
+// destinations are not attempted, and RecordOutcome still receives a failed
+// row for every route so replay has a destination list.
+func TestRecordOutcomeOnStopOnFailureRecordsFailedAndUnattempted(t *testing.T) {
 	cfg := testConfig()
 	cfg.Replay = config.ReplayConfig{Enabled: true}
 	endpoint := cfg.Endpoints["paddle_billing"]
@@ -370,8 +368,22 @@ func TestRecordOutcomeSkippedWhenNoDeliveries(t *testing.T) {
 	if len(fake.capturedEvents()) != 1 {
 		t.Fatalf("captured = %#v, want 1 (the event is still captured even on full-failure)", fake.capturedEvents())
 	}
-	if outcomes := fake.recordedOutcomes(); len(outcomes) != 0 {
-		t.Fatalf("outcomes = %#v, want none -- an empty-deliveries outcome UPDATE must be skipped entirely", outcomes)
+	outcomes := fake.recordedOutcomes()
+	if len(outcomes) != 1 {
+		t.Fatalf("outcomes = %#v, want 1 so the event is replayable", outcomes)
+	}
+	byDest := map[string]replaystore.Delivery{}
+	for _, d := range outcomes[0].deliveries {
+		byDest[d.DestinationID] = d
+	}
+	if len(byDest) != 2 {
+		t.Fatalf("deliveries = %#v, want failed + unattempted", outcomes[0].deliveries)
+	}
+	if d := byDest["billing"]; d.Outcome != replaystore.OutcomeFailed || d.Target != "billing-events" {
+		t.Fatalf("billing delivery = %#v", d)
+	}
+	if d := byDest["activity"]; d.Outcome != replaystore.OutcomeFailed || d.Target != "activity-events" {
+		t.Fatalf("activity (unattempted) delivery = %#v", d)
 	}
 }
 

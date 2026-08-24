@@ -893,7 +893,7 @@ Auth fields:
   - `exact` (`header_exact`): constant-time equality check between `signature_header` and `secret`; body is not verified. Use `remove_bearer: true` to strip a leading `Bearer`/`bearer` prefix before comparing. *Example: a static token such as RevenueCat's `Authorization` header.*
   - `basic` (`header_exact`): HTTP Basic — `Authorization: Basic <base64(user:pass)>`; constant-time compare against the configured `user:pass` `secret`; body not verified.
   - `no_auth` (`no_auth`): **accepts every request without verification.** Not recommended — Hookway logs a startup warning for any endpoint using it. Reserve it for trusted internal traffic where authentication is enforced upstream (e.g. a private network or gateway). `secret` and `signature_header` are not required for this scheme.
-  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm — a token whose `alg` does not match (including `alg: none`) is rejected, defeating algorithm-confusion attacks. `secret` holds the key: the shared HMAC secret for `jwt_hs256`, or a PEM-encoded public key for `jwt_rs256` (RSA) / `jwt_es256` (EC P-256). `exp` is required; `timestamp_tolerance` is the clock-skew leeway. Optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. Optional `body_hash_claim` names a claim carrying the hex SHA-256 of the raw body, binding the token to the payload (without it, the JWT authenticates the caller but not the body).
+  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm — a token whose `alg` does not match (including `alg: none`) is rejected, defeating algorithm-confusion attacks. `secret` holds the key: the shared HMAC secret for `jwt_hs256`, or a PEM-encoded public key for `jwt_rs256` (RSA) / `jwt_es256` (EC P-256). `exp` is required; `timestamp_tolerance` is the clock-skew leeway. Optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. `body_hash_claim` is required: it names a claim carrying the hex SHA-256 of the raw body, binding the token to the payload. Set `allow_unbound_body: true` to opt out (the JWT then authenticates the caller but not the body).
   - New providers are added by registering a scheme in `internal/auth`, without changing the request path or config shape.
 - `secret`: required (except for `no_auth`); reference an environment variable such as `${WEBHOOK_SECRET}`. For `jwt_rs256` and `jwt_es256`, this must be a PEM-encoded public key (e.g. `${JWT_PUBLIC_KEY}`).
 - `signature_header`: required HTTP header Hookway reads for verification (signature or static secret); not required for `no_auth`. For `jwt` schemes, set to `Authorization` (the JWT is read as `Bearer <token>`).
@@ -902,7 +902,8 @@ Auth fields:
 - `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted on `hmac_sha256` endpoints, Hookway falls back to a hash of the verified signature. When omitted on `header_exact` endpoints, Hookway falls back to a hash of the raw body.
 - `expected_issuer`: optional; for `jwt` schemes, enforces the `iss` claim must match this value.
 - `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
-- `body_hash_claim`: optional; for `jwt` schemes, names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. When set, Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.
+- `body_hash_claim`: required for `jwt` schemes unless `allow_unbound_body` is true. Names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.
+- `allow_unbound_body`: optional; `jwt` only. When true, `body_hash_claim` may be omitted and the JWT authenticates the caller but not the payload. Do not enable this unless a gateway in front of Hookway already binds the body.
 
 ## Replay
 
@@ -950,9 +951,9 @@ The replay API is served on `replay.addr`, distinct from the webhook listener:
 
 ### Limitations
 
-An event with no recorded deliveries is not replayable (`422 Unprocessable Entity` on single replay; skipped with a reason in bulk replay). This includes the `stop_on_failure` full-failure path: when the first failed destination stops the fan-out, the outcome is unknown for every route, so the event is captured with status `pending` but has no delivery rows to replay against.
+An event with no recorded deliveries is not replayable (`422 Unprocessable Entity` on single replay; skipped with a reason in bulk replay). That is now limited to events that never reached publish (for example every route was filtered out). On `stop_on_failure`, the failed destination and any not-yet-attempted routes are recorded as `failed` so the event can be replayed.
 
-Replaying to a `proxy`-mode webhook destination is not supported (the original raw request is not persisted); such destinations are skipped on replay with a reason in the response.
+Proxy-mode webhook destinations are replayable: capture persists the original raw body and request headers in the replay store (`raw_body_base64` and `orig_headers`). Those fields are not forwarded to other destination types.
 
 ## Logging & observability
 
