@@ -161,6 +161,7 @@ type AuthConfig struct {
 	ExpectedIssuer     string
 	ExpectedAudience   string
 	BodyHashClaim      string
+	AllowUnboundBody   bool
 }
 
 type rawFIFOConfig struct {

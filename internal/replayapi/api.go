@@ -10,17 +10,15 @@
 // aggregate labels (e.g. "billing,activity"), not real per-destination ids, so
 // publishing against them would route to a nonexistent destination.
 //
-// A second, related rule: some destination types cannot be safely replayed at
-// all -- a proxy-mode webhook destination builds its outbound request from
-// fields (RawBody/OrigHeaders) that are never persisted in the stored
-// envelope, so reconstructing one from history would silently deliver an
-// empty body with no headers to the live target. The caller (main.go) passes
-// such destination ids in via the unsupported map; replayOne skips them with
-// a reason instead of ever calling Publish for them.
+// The optional unsupported map lets the caller skip destinations that cannot
+// be safely replayed. Proxy-mode webhook destinations are replayable: the
+// store persists orig_headers and raw_body_base64 for reconstructing the
+// original POST.
 package replayapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -120,14 +118,21 @@ func NewServer(addr, apiKey string, store StoreReader, pub queue.Publisher, unsu
 //     that dedup on this key will skip an already-handled event); replaced with
 //     a fresh uuid when reprocess is true (so consumers re-process it).
 //
-// Everything else (Body, RawBodyBase64, Headers, Query, Endpoint, Method, Path,
+// Everything else (Body, RawBody, RawBodyBase64, Headers, OrigHeaders, Query, Endpoint, Method, Path,
 // RequestID, TraceID, Traceparent, SourceIP, Auth, SchemaVersion, and crucially
 // ReceivedAt -- which stays the ORIGINAL receipt time, because this is event X
 // re-delivered, not a newly received request) is copied unchanged.
 // DestinationQueueID/Queue are intentionally left as-is here; the caller
 // overwrites them per recorded delivery before publishing.
+// RawBody is hydrated from RawBodyBase64 when the in-memory bytes are empty
+// so a proxy-mode webhook replay can reconstruct the original POST.
 func reconstruct(e replaystore.Event, reprocess bool) queue.Message {
 	msg := e.Envelope
+	if len(msg.RawBody) == 0 && msg.RawBodyBase64 != nil {
+		if raw, err := base64.StdEncoding.DecodeString(*msg.RawBodyBase64); err == nil {
+			msg.RawBody = raw
+		}
+	}
 	msg.ID = uuid.Must(uuid.NewV7()).String()
 	msg.ReplayOf = e.ID
 	msg.Hops = 0
@@ -197,13 +202,9 @@ var (
 // published (an event whose destinations are ALL unsupported never
 // increments it, since nothing was triggered).
 //
-// A destination present in s.unsupported (e.g. a proxy-mode webhook, whose
-// RawBody/OrigHeaders are not persisted in the stored envelope -- see the
-// package doc and internal/queue/webhook.go's proxy mode) is NEVER published
-// to here: publishing would silently deliver an empty body with no headers
-// to the live target. Instead it is recorded with status "skipped" and the
-// configured reason, exactly like a failed publish does not abort the
-// others.
+// A destination present in s.unsupported is NEVER published to here.
+// Instead it is recorded with status "skipped" and the configured reason,
+// exactly like a failed publish does not abort the others.
 func (s *server) replayOne(ctx context.Context, id string, reprocess bool, mode string) (eventReplayResult, error) {
 	event, found, err := s.store.Get(ctx, id)
 	if err != nil {

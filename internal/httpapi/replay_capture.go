@@ -36,6 +36,9 @@ type ReplayCapturer interface {
 // unaffected.
 func (s *Server) SetReplayCapturer(c ReplayCapturer) {
 	s.replay = c
+	if pinger, ok := c.(interface{ Ping(context.Context) error }); ok {
+		s.readiness.setReplayPing(pinger.Ping)
+	}
 }
 
 // envelopeToMessage copies every event-level field from env into a
@@ -105,17 +108,11 @@ func (s *Server) captureEvent(reqCtx context.Context, ev replaystore.Event) {
 // (context.WithoutCancel + replayCaptureTimeout), independent of
 // server.publish_timeout.
 //
-// Limitation: on the stop_on_failure full-failure path, handleWebhook bails
-// out on the first failed destination, so published/failed (and therefore
-// deliveries here) are empty. The event stays captured with status "pending"
-// since its per-destination outcome is unknown; that is an accepted v1
-// limitation -- the event is still captured and replayable, only its outcome
-// isn't. skip_failed always yields a full published+failed accounting.
-//
-// An empty deliveries slice (that stop_on_failure full-failure case is the
-// only caller today) is a guaranteed no-op UPDATE -- the row is already
-// "pending" and there is nothing to record -- so it short-circuits before
-// ever calling s.replay.RecordOutcome, saving a wasted best-effort write.
+// An empty deliveries slice is a no-op UPDATE (the row is already "pending"
+// and there is nothing to record), so it short-circuits before ever calling
+// s.replay.RecordOutcome. stop_on_failure now returns the failed route plus
+// any unattempted routes in `failed`, so this short-circuit is only for a
+// caller that truly has nothing to record.
 func (s *Server) recordOutcome(reqCtx context.Context, id string, deliveries []replaystore.Delivery) {
 	if len(deliveries) == 0 {
 		return

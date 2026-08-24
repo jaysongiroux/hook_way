@@ -189,7 +189,7 @@ func New() *Metrics {
 		Name: "hookway_replay_triggered_total", Help: "Replay-store events re-delivered via the replay API, by mode.",
 	}, []string{"mode"})
 	m.replayStoreUp = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "hookway_replay_store_up", Help: "Reachability of the replay store's Postgres connection as observed by the background cleanup sweep (1 up, 0 down).",
+		Name: "hookway_replay_store_up", Help: "Reachability of the replay store's Postgres connection as observed by the background readiness prober and cleanup sweep (1 up, 0 down).",
 	})
 	m.replayPurged = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "hookway_replay_events_purged_total", Help: "Replay-store events purged by the background retention cleanup sweep (age and/or over-count).",
@@ -398,7 +398,7 @@ func (m *Metrics) ReplayTriggered(mode string) {
 }
 
 // ReplayStoreUp records whether the replay store's Postgres connection was
-// reachable as of the most recent background cleanup sweep's Ping.
+// reachable as of the most recent readiness probe or cleanup sweep Ping.
 func (m *Metrics) ReplayStoreUp(up bool) {
 	value := 0.0
 	if up {

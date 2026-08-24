@@ -579,6 +579,12 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if endpoint.Auth.RemoveBearer && endpoint.Auth.Type != auth.AuthTypeHeaderExact {
 			issues = append(issues, validationError(fieldPrefix+".auth.remove_bearer", "only supported for header_exact auth", "set auth.type to \"header_exact\" or remove remove_bearer"))
 		}
+		if endpoint.Auth.AllowUnboundBody && endpoint.Auth.Type != auth.AuthTypeJWT {
+			issues = append(issues, validationError(fieldPrefix+".auth.allow_unbound_body", "only supported for jwt auth", "set auth.type to \"jwt\" or remove allow_unbound_body"))
+		}
+		if endpoint.Auth.Type == auth.AuthTypeJWT && endpoint.Auth.BodyHashClaim == "" && !endpoint.Auth.AllowUnboundBody {
+			issues = append(issues, validationError(fieldPrefix+".auth.body_hash_claim", "body_hash_claim is required for jwt auth", "set body_hash_claim to the JWT claim that carries hex(SHA-256(body)), or set allow_unbound_body: true to opt out"))
+		}
 		issues = append(issues, filterValidationIssues(fieldPrefix+".filters", endpoint.Filters)...)
 		if endpoint.FilterResponse.Status != 0 {
 			if len(endpoint.Filters) == 0 {

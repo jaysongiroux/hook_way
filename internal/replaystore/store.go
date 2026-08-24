@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -222,15 +223,50 @@ ins AS (
 UPDATE ` + eventsTable + ` SET status = $5 WHERE id = $1`
 }
 
+// persistedEnvelope is the jsonb shape stored in replay_events.envelope.
+// queue.Message keeps RawBody/OrigHeaders as json:"-" so they are never
+// published to destinations (OrigHeaders in particular carries unredacted
+// vendor signatures). Capture still needs those fields to reconstruct a
+// proxy-mode webhook POST, so they are stored alongside the public envelope
+// under orig_headers, and RawBody is always persisted via raw_body_base64.
+type persistedEnvelope struct {
+	queue.Message
+	OrigHeaders http.Header `json:"orig_headers,omitempty"`
+}
+
 // marshalEnvelope JSON-encodes the captured queue.Message for binding to the
 // envelope jsonb column. Extracted as its own function so the encoding can be
 // pinned down by a unit test without a database (TestCaptureMarshalsEnvelope).
 func marshalEnvelope(msg queue.Message) (string, error) {
-	b, err := json.Marshal(msg)
+	if msg.RawBodyBase64 == nil && len(msg.RawBody) > 0 {
+		encoded := base64.StdEncoding.EncodeToString(msg.RawBody)
+		msg.RawBodyBase64 = &encoded
+	}
+	b, err := json.Marshal(persistedEnvelope{Message: msg, OrigHeaders: msg.OrigHeaders})
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// unmarshalEnvelope reverses marshalEnvelope, restoring RawBody from
+// raw_body_base64 and OrigHeaders from orig_headers so a later replay can
+// reconstruct a proxy-mode webhook POST.
+func unmarshalEnvelope(raw []byte) (queue.Message, error) {
+	var p persistedEnvelope
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return queue.Message{}, err
+	}
+	msg := p.Message
+	msg.OrigHeaders = p.OrigHeaders
+	if msg.RawBodyBase64 != nil && len(msg.RawBody) == 0 {
+		decoded, err := base64.StdEncoding.DecodeString(*msg.RawBodyBase64)
+		if err != nil {
+			return queue.Message{}, err
+		}
+		msg.RawBody = decoded
+	}
+	return msg, nil
 }
 
 // nullableString returns nil (SQL NULL) for an empty string, otherwise the
@@ -613,9 +649,11 @@ func (s *Store) Get(ctx context.Context, id string) (Event, bool, error) {
 	if traceID != nil {
 		e.TraceID = *traceID
 	}
-	if err := json.Unmarshal(envelopeRaw, &e.Envelope); err != nil {
+	msg, err := unmarshalEnvelope(envelopeRaw)
+	if err != nil {
 		return Event{}, false, fmt.Errorf("replaystore: unmarshal envelope for event %q: %w", id, err)
 	}
+	e.Envelope = msg
 
 	return e, true, nil
 }

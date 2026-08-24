@@ -965,6 +965,31 @@ func TestLoadAcceptsJWTAuth(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsJWTWithoutBodyHashClaim(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("JWT_SHARED_SECRET", "shared-secret")
+	yaml := strings.Replace(validJWTYAML(), "      body_hash_claim: \"body_sha256\"\n", "", 1)
+	if _, err := Load(writeConfig(t, yaml)); err == nil {
+		t.Fatal("expected jwt without body_hash_claim to be rejected")
+	}
+}
+
+func TestLoadAcceptsJWTAllowUnboundBody(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("JWT_SHARED_SECRET", "shared-secret")
+	yaml := strings.Replace(validJWTYAML(), "      body_hash_claim: \"body_sha256\"\n", "      allow_unbound_body: true\n", 1)
+	cfg, err := Load(writeConfig(t, yaml))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Endpoints["jwt_webhook"].Auth.AllowUnboundBody {
+		t.Fatalf("AllowUnboundBody not plumbed: %#v", cfg.Endpoints["jwt_webhook"].Auth)
+	}
+	if cfg.Endpoints["jwt_webhook"].Auth.BodyHashClaim != "" {
+		t.Fatalf("BodyHashClaim = %q, want empty", cfg.Endpoints["jwt_webhook"].Auth.BodyHashClaim)
+	}
+}
+
 func TestLoadRejectsJWTSchemeUnderHMACType(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("JWT_SHARED_SECRET", "shared-secret")

@@ -93,6 +93,36 @@ func TestCaptureMarshalsEnvelope(t *testing.T) {
 	}
 }
 
+func TestMarshalEnvelopePersistsRawBodyAndOrigHeaders(t *testing.T) {
+	rawBody := []byte(`<xml/>`)
+	msg := queue.Message{
+		ID:          "evt_proxy",
+		Endpoint:    "stripe",
+		Body:        map[string]any{"ignored": true},
+		RawBody:     rawBody,
+		OrigHeaders: http.Header{"Stripe-Signature": {"t=1,v1=abc"}, "Content-Type": {"application/xml"}},
+	}
+
+	encoded, err := marshalEnvelope(msg)
+	if err != nil {
+		t.Fatalf("marshalEnvelope: %v", err)
+	}
+
+	got, err := unmarshalEnvelope([]byte(encoded))
+	if err != nil {
+		t.Fatalf("unmarshalEnvelope: %v", err)
+	}
+	if string(got.RawBody) != string(rawBody) {
+		t.Fatalf("RawBody = %q, want %q", got.RawBody, rawBody)
+	}
+	if got.RawBodyBase64 == nil {
+		t.Fatal("RawBodyBase64 was not persisted")
+	}
+	if got.OrigHeaders.Get("Stripe-Signature") != "t=1,v1=abc" {
+		t.Fatalf("OrigHeaders = %#v", got.OrigHeaders)
+	}
+}
+
 // noExecOps is a pgOps whose Exec fails the test if it is ever called. It is
 // used to prove RecordOutcome validates every Delivery.Outcome before it
 // issues any SQL -- an invalid outcome must short-circuit with no write

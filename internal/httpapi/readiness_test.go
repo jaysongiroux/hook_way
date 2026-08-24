@@ -227,3 +227,56 @@ func TestStaleReadinessLogsOncePerEpisode(t *testing.T) {
 		t.Fatalf("expected exactly 1 staleness log line across 5 stale /ready requests (same episode), got %d in: %s", count, logs.String())
 	}
 }
+
+type pingCapturer struct {
+	fakeReplayCapturer
+	err error
+}
+
+func (p *pingCapturer) Ping(context.Context) error { return p.err }
+
+func TestReadinessFailsWhenReplayStoreIsDown(t *testing.T) {
+	appMetrics := metrics.New()
+	srv := NewServerWithMetrics(testConfig(), &fakePublisher{}, slog.Default(), appMetrics)
+	srv.SetReplayCapturer(&pingCapturer{err: errors.New("replay postgres down")})
+	srv.readiness.probeOnce(context.Background())
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("/ready with down replay store = %d, want 503", rec.Code)
+	}
+
+	expected := `
+# HELP hookway_replay_store_up Reachability of the replay store's Postgres connection as observed by the background readiness prober and cleanup sweep (1 up, 0 down).
+# TYPE hookway_replay_store_up gauge
+hookway_replay_store_up 0
+`
+	if err := testutil.GatherAndCompare(appMetrics.Registry(), strings.NewReader(expected), "hookway_replay_store_up"); err != nil {
+		t.Fatalf("replay store up gauge: %v", err)
+	}
+}
+
+func TestReadinessPassesWhenReplayStoreIsUp(t *testing.T) {
+	appMetrics := metrics.New()
+	srv := NewServerWithMetrics(testConfig(), &fakePublisher{}, slog.Default(), appMetrics)
+	srv.SetReplayCapturer(&pingCapturer{})
+	srv.readiness.probeOnce(context.Background())
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ready with up replay store = %d, want 200", rec.Code)
+	}
+
+	expected := `
+# HELP hookway_replay_store_up Reachability of the replay store's Postgres connection as observed by the background readiness prober and cleanup sweep (1 up, 0 down).
+# TYPE hookway_replay_store_up gauge
+hookway_replay_store_up 1
+`
+	if err := testutil.GatherAndCompare(appMetrics.Registry(), strings.NewReader(expected), "hookway_replay_store_up"); err != nil {
+		t.Fatalf("replay store up gauge: %v", err)
+	}
+}

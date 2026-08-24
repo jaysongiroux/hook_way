@@ -585,13 +585,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			"request_id", requestIDFromContext(r.Context()),
 			"trace_id", traceIDFromContext(r.Context()),
 		)
-		// Outcome UPDATE: on the stop_on_failure full-failure path, published
-		// and failed are both nil (publishRoutesStopOnFailure bails on the
-		// first failure), so deliveries is empty and the event's stored status
-		// stays "pending" -- it is still captured and replayable, only its
-		// per-destination outcome is unknown. Accepted v1 limitation. Uses
-		// r.Context() (its own fresh replayCaptureTimeout budget), not pubCtx:
-		// pubCtx may already be fully exhausted after a full-timeout publish.
+		// Outcome UPDATE: stop_on_failure returns any destinations that
+		// already succeeded in published and the failed route plus remaining
+		// unattempted routes in failed, so replay has a destination list even
+		// when the inbound request is 503. Uses r.Context() (its own fresh
+		// replayCaptureTimeout budget), not pubCtx: pubCtx may already be
+		// fully exhausted after a full-timeout publish.
 		if captureEnabled && len(activeRoutes) > 0 {
 			s.recordOutcome(r.Context(), env.ID, deliveriesFromResults(published, failed))
 		}
@@ -641,10 +640,19 @@ func (s *Server) publishRoutes(ctx context.Context, endpointName string, endpoin
 
 func (s *Server) publishRoutesStopOnFailure(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
 	published := make([]map[string]string, 0, len(routes))
-	for _, route := range routes {
+	for i, route := range routes {
 		result := s.publishRoute(ctx, endpointName, env, route, 0)
 		if result.err != nil {
-			return nil, nil, result.err
+			// Record the failed route and every not-yet-attempted route as
+			// failed so the replay store has a destination list to re-deliver
+			// against. Unattempted routes never received the event, so replay
+			// must include them.
+			failed := make([]map[string]string, 0, len(routes)-i)
+			failed = append(failed, map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue})
+			for _, remaining := range routes[i+1:] {
+				failed = append(failed, map[string]string{"destination_queue_id": remaining.Destination, "queue": remaining.Target})
+			}
+			return published, failed, result.err
 		}
 		published = append(published, map[string]string{"destination_queue_id": result.destinationID, "queue": result.queue})
 	}

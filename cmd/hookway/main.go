@@ -391,7 +391,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 			}
 		}()
 
-		replaySrv := replayapi.NewServer(cfg.Replay.Addr, cfg.Security.APIKey, replayStore, publisher, unsupportedReplayDestinations(cfg), appMetrics, logger)
+		replaySrv := replayapi.NewServer(cfg.Replay.Addr, cfg.Security.APIKey, replayStore, publisher, nil, appMetrics, logger)
 		go func() {
 			logger.Info("hookway replay API listening", "addr", cfg.Replay.Addr)
 			if err := replaySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -426,27 +426,4 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-// unsupportedReplayDestinations returns the set of destination ids the replay
-// API must never publish to, mapped to a human-readable reason -- passed
-// straight through to replayapi.NewServer's unsupported parameter.
-//
-// Today the only member is a proxy-mode webhook destination
-// (type: webhook, webhook.auth.type: proxy): the webhook engine's proxy mode
-// builds its outbound request from queue.Message's RawBody/OrigHeaders (see
-// internal/queue/webhook.go), which are json:"-" and so are never persisted
-// in the replay store's envelope column. Reconstructing a replay from that
-// stored envelope would yield RawBody=nil/OrigHeaders=nil -- an empty-body,
-// no-headers POST silently delivered to the live proxy target. replayapi
-// skips these destinations with the returned reason instead of ever
-// publishing to them (see replayOne).
-func unsupportedReplayDestinations(cfg config.Config) map[string]string {
-	unsupported := make(map[string]string)
-	for id, dest := range cfg.Destinations {
-		if dest.Type == "webhook" && dest.Webhook.Auth.Type == "proxy" {
-			unsupported[id] = "proxy-mode webhook replay is unsupported: the original raw request body/headers are not persisted"
-		}
-	}
-	return unsupported
 }

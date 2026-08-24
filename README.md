@@ -1,6 +1,6 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, or Redis / Valkey).
+Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, or another HTTP webhook).
 
 ## Quick Start
 
@@ -67,7 +67,7 @@ Endpoints can set `delivery_failure_policy`. `stop_on_failure` is the default an
 
 Hookway publishes JSON envelopes to each endpoint `destinations` route. Every route names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
 
-Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `redis_stream`, `redis_list`, `redis_pubsub`, and `redis_kv`. See `examples/destinations/` for reference configs for each type.
+Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, and `webhook`. See `examples/destinations/` for reference configs for each type.
 
 Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind endpoint queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
 
