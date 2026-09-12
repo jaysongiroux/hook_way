@@ -1,0 +1,92 @@
+# examples/destinations/temporal.yaml
+#
+# Reference config for a Temporal destination.
+#
+# Each webhook event starts one workflow execution. The route `target` is the
+# Temporal task queue; the workflow type, input shape, and workflow-id
+# derivation live in the per-route `temporal_options` block. Hookway only
+# starts workflows (no signals) and needs no worker of its own: your existing
+# workers on the task queue pick the execution up.
+#
+# An execution that already exists for the derived workflow id counts as
+# delivered (first-start-wins), so sender retries with a deterministic id are
+# idempotent.
+#
+# There is no dead-letter path: any other start failure returns a 503 so the
+# sender retries. Enable the replay store (see examples/replay.yaml) to record
+# every event with its per-destination outcome and re-publish failures.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  orchestrator:
+    type: temporal
+    temporal:
+      # Frontend gRPC address. Self-hosted: "host:7233". Temporal Cloud:
+      # "<namespace>.<account>.tmprl.cloud:7233".
+      host_port: "${TEMPORAL_ADDRESS}"
+      namespace: "${TEMPORAL_NAMESPACE}"
+      # Temporal Cloud API key. Sent as a bearer credential, so it requires
+      # tls.enabled: true. Omit for an unauthenticated self-hosted cluster.
+      # api_key: "${TEMPORAL_API_KEY}"
+      # Bound on the startup Dial (fail-fast). Default 10s.
+      connect_timeout: "10s"
+      # Bound on each start-workflow RPC. Default 5s; keep it below
+      # server.publish_timeout.
+      start_timeout: "5s"
+      # TLS. Omit or set enabled: false for plaintext (Hookway logs a startup
+      # warning). Required for Temporal Cloud. Cert paths must be mounted into
+      # the container image.
+      tls:
+        enabled: false
+        # ca_cert: "/etc/hookway/temporal-ca.pem"
+        # client_cert: "/etc/hookway/temporal-client.crt"  # mutual TLS
+        # client_key:  "/etc/hookway/temporal-client.key"  # both or neither
+        # server_name: "temporal.internal"
+        # insecure_skip_verify: false
+
+endpoints:
+  order_events:
+    enabled: true
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "orchestrator"
+        # Temporal task queue. `create:` has no meaning for Temporal.
+        target: "order-events"
+        temporal_options:
+          # Required: the workflow type name registered on the worker.
+          workflow_type: "OrderWebhookWorkflow"
+          # envelope (default): the full Hookway event envelope (id, headers,
+          # body, trace ids, ...) — the same JSON every other destination emits.
+          # body: only the decoded webhook body, for workflows that take a plain
+          # object as input. Non-JSON bodies fall back to the envelope.
+          input: "envelope"
+          # Workflow id derivation. Omit the block to use the Hookway event id.
+          # source: static | endpoint | header | body; static uses value,
+          # header/body extract path. An unresolved value falls back to the
+          # event id. prefix is prepended to whatever was resolved.
+          workflow_id:
+            source: "body"
+            path: "order.id"
+            prefix: "order-"
+          # allow_duplicate | allow_duplicate_failed_only | reject_duplicate |
+          # terminate_if_running. Omit for the server default (allow_duplicate).
+          id_reuse_policy: "reject_duplicate"
+          # Optional per-execution timeouts (Go durations). run_timeout must not
+          # exceed execution_timeout.
+          # execution_timeout: "24h"
+          # run_timeout: "1h"
+          # task_timeout: "10s"
+      - destination: "orchestrator"
+        target: "order-audit"
+        temporal_options:
+          workflow_type: "OrderAuditWorkflow"
+          input: "body"
+          # No workflow_id block: id = Hookway event id (unique per event).
+    auth:
+      type: "hmac_sha256"
+      scheme: "hmac_sha256_hex"
+      secret: "${WEBHOOK_SECRET}"
+      signature_header: "X-Hub-Signature-256"

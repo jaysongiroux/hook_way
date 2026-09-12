@@ -736,3 +736,65 @@ func (r *recordingPublisher) Close() error {
 	r.closed = true
 	return nil
 }
+
+func TestFactoryCreatesTemporalPublisherWithTargets(t *testing.T) {
+	var gotID string
+	var gotCfg config.TemporalConfig
+	var gotTargets []TemporalTarget
+	factory := NewFactory(FactoryOptions{
+		TemporalConnector: func(ctx context.Context, destinationID string, cfg config.TemporalConfig, targets []TemporalTarget) (Publisher, error) {
+			gotID = destinationID
+			gotCfg = cfg
+			gotTargets = targets
+			return &recordingPublisher{}, nil
+		},
+	})
+	pub, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"orchestrator": {
+				Type:     "temporal",
+				Temporal: config.TemporalConfig{HostPort: "localhost:7233", Namespace: "default"},
+			},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"ep": {
+				Enabled: true,
+				Destinations: []config.EndpointDestinationConfig{
+					{
+						Destination: "orchestrator", Target: "order-events",
+						TemporalOptions: config.TemporalEndpointOptions{
+							WorkflowType: "OrderWorkflow", Input: "body", IDReusePolicy: "reject_duplicate",
+							WorkflowID:       config.TemporalWorkflowIDConfig{Source: "body", Path: "order.id", Prefix: "order-"},
+							ExecutionTimeout: time.Hour,
+						},
+					},
+					{
+						Destination: "orchestrator", Target: "audit-events",
+						TemporalOptions: config.TemporalEndpointOptions{WorkflowType: "AuditWorkflow"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if pub == nil || gotID != "orchestrator" || gotCfg.HostPort != "localhost:7233" {
+		t.Fatalf("connector not wired: id=%q cfg=%#v", gotID, gotCfg)
+	}
+	if len(gotTargets) != 2 {
+		t.Fatalf("expected 2 targets, got %d", len(gotTargets))
+	}
+	// Sorted by task queue: audit-events, order-events.
+	if gotTargets[0].TaskQueue != "audit-events" || gotTargets[0].WorkflowType != "AuditWorkflow" {
+		t.Fatalf("bad target[0]: %#v", gotTargets[0])
+	}
+	want := TemporalTarget{
+		TaskQueue: "order-events", WorkflowType: "OrderWorkflow", Input: "body", IDReusePolicy: "reject_duplicate",
+		WorkflowID:       WorkflowIDSettings{Source: "body", Path: "order.id", Prefix: "order-"},
+		ExecutionTimeout: time.Hour,
+	}
+	if gotTargets[1] != want {
+		t.Fatalf("bad target[1]:\n got %#v\nwant %#v", gotTargets[1], want)
+	}
+}

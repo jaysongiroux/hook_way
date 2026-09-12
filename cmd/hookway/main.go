@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -188,11 +189,24 @@ func runEditor(args []string, stdout, stderr io.Writer) int {
 	}
 	srv := editor.NewServer(*addr, apiKey)
 	fmt.Fprintf(stdout, "hookway config API listening on %s (GET /schema, POST /validate); authentication: %s\n", *addr, authState)
+	// The bundle serves the project overview at / and the config builder at
+	// /builder, so point at the builder rather than leaving it to be found.
+	fmt.Fprintf(stdout, "overview: http://localhost%s/  builder: http://localhost%s/builder\n", hostPort(*addr), hostPort(*addr))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(stderr, "editor server stopped: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// hostPort renders a listen address as the ":port" suffix of a localhost URL,
+// so ":8090" and "0.0.0.0:8090" both print as localhost:8090. An address it
+// cannot split is returned unchanged.
+func hostPort(addr string) string {
+	if _, port, err := net.SplitHostPort(addr); err == nil && port != "" {
+		return ":" + port
+	}
+	return addr
 }
 
 // runHealthcheck returns success when the target endpoint responds with any 2xx status.
@@ -282,6 +296,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	defer publisher.Close()
 
 	app := httpapi.NewServerWithMetrics(cfg, publisher, logger, appMetrics)
+	defer app.Close()
 
 	// The replay store's connection is opened -- and its defer registered --
 	// before every other background goroutine below (the readiness prober,

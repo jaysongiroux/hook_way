@@ -93,8 +93,8 @@ func TestWebhookPublisherDefaultRetryPolicy(t *testing.T) {
 	}
 	defer pub.Close()
 
-	d := pub.delivery["orders"]
-	if d == nil {
+	d, ok := pub.delivery.lookup("orders")
+	if !ok || d == nil {
 		t.Fatal("delivery for 'orders' not found")
 	}
 	if d.retry.MaxAttempts != 3 {

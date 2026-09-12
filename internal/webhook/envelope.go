@@ -34,6 +34,10 @@ type Envelope struct {
 	RawBodyBase64      *string        `json:"raw_body_base64"`
 	SourceIP           string         `json:"source_ip"`
 	Auth               AuthInfo       `json:"auth"`
+	// Variables holds the per-request routing variables resolved for this
+	// event (endpoint `variables`), when any are declared. Additive; schema
+	// stays 1.0. Serialized so a replay can re-render a templated webhook URL.
+	Variables map[string]string `json:"variables,omitempty"`
 	// In-memory only (never serialized). Populated at intake for reverse-proxy
 	// (webhook proxy mode) so the exact original bytes/headers can be forwarded.
 	RawBody     []byte      `json:"-"`

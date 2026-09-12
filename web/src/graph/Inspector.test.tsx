@@ -30,6 +30,12 @@ function wrap() {
   );
 }
 
+// The inspector groups fields into collapsible sections; only the first one is
+// open on selection, so most fields need their section opened first.
+function openSection(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${name}`, "i") }));
+}
+
 beforeEach(() => {
   resetIdCounters();
   useGraphStore.setState({ nodes: [], edges: [], selectedId: null });
@@ -70,7 +76,8 @@ test("editing notes updates the store", () => {
   const d = createNode("destination", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [d], edges: [], selectedId: d.id });
   wrap();
-  fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "audit queue" } });
+  openSection("Notes");
+  fireEvent.change(screen.getByRole("textbox", { name: "Notes" }), { target: { value: "audit queue" } });
   expect((useGraphStore.getState().nodes[0].data as { notes?: string }).notes).toBe("audit queue");
 });
 
@@ -90,6 +97,7 @@ test("endpoint auth scheme is a dropdown constrained to the auth type", () => {
   const ep = createNode("endpoint", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [ep], edges: [], selectedId: ep.id, selectedEdgeId: null });
   wrap();
+  openSection("Authentication");
   const scheme = screen.getByLabelText("Scheme");
   expect(scheme.tagName).toBe("INPUT"); // Mantine Select renders an input
   // switching to a base64 scheme updates the store
@@ -134,6 +142,7 @@ test("endpoint routes list rows select their edge", () => {
     selectedEdgeId: null,
   });
   wrap();
+  openSection("Routes");
   fireEvent.click(screen.getByLabelText(`route to ${d.data.name}: orders`));
   expect(useGraphStore.getState().selectedEdgeId).toBe("e1");
 });
@@ -161,7 +170,38 @@ test("destination shows incoming routes and a row selects its edge", () => {
     selectedEdgeId: null,
   });
   wrap();
-  expect(screen.getByText("Incoming routes (1)")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^Incoming routes/i })).toHaveTextContent("1");
+  openSection("Incoming routes");
   fireEvent.click(screen.getByLabelText(`route from ${ep.data.name}: orders`));
   expect(useGraphStore.getState().selectedEdgeId).toBe("e1");
+});
+
+test("adding a variable to an endpoint updates the store", () => {
+  const ep = createNode("endpoint", { x: 0, y: 0 });
+  useGraphStore.setState({ nodes: [ep], edges: [], selectedId: ep.id });
+  wrap();
+  openSection("Variables");
+  fireEvent.click(screen.getByText("+ Add variable"));
+  fireEvent.change(screen.getByLabelText("Variable name"), { target: { value: "envName" } });
+  fireEvent.change(screen.getByLabelText("Values (comma-separated)"), { target: { value: "qa-gm3, portal" } });
+  const data = useGraphStore.getState().nodes[0].data as { variables?: { name: string; values: string }[] };
+  expect(data.variables).toHaveLength(1);
+  expect(data.variables![0].name).toBe("envName");
+  expect(data.variables![0].values).toBe("qa-gm3, portal");
+  expect(screen.getByLabelText("Fallback destination")).toBeInTheDocument();
+});
+
+test("a lookup variable shows provider fields and edits them", () => {
+  const ep = createNode("endpoint", { x: 0, y: 0 });
+  (ep.data as any).variables = [{
+    name: "env", source: "lookup", path: "", mode: "any", values: "", pattern: "", default: "",
+    lookup: { keySource: "body", keyPath: "", provider: "http", dynamodb: { table: "", index: "", value_attribute: "", filter_attribute: "", filter_value: "" }, http: { url: "", method: "GET", value_path: "" }, postgres: { url: "", query: "" } },
+  }];
+  useGraphStore.setState({ nodes: [ep], edges: [], selectedId: ep.id });
+  wrap();
+  openSection("Variables");
+  fireEvent.click(screen.getByRole("button", { name: /^env/i }));
+  expect(screen.getByLabelText("Provider")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("URL (with {key})"), { target: { value: "https://r/{key}" } });
+  expect((useGraphStore.getState().nodes[0].data as any).variables[0].lookup.http.url).toBe("https://r/{key}");
 });

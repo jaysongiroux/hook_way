@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"log/slog"
 	"strings"
 	"time"
@@ -22,6 +23,10 @@ type RedisKVTarget struct {
 	// the full set of supported tokens. When empty, the default template
 	// "{prefix}:{endpoint}:{id}" is used.
 	KeyTemplate string
+	// Template is set for dynamic routes (target contains {variable}
+	// placeholders); rendered targets the matcher accepts share this target's
+	// TTL and key template, with {target} rendering to the rendered name.
+	Template vars.Matcher
 }
 
 // RedisKVConfig carries all configuration consumed by RedisKVPublisher.
@@ -71,7 +76,7 @@ type RedisKVPublisher struct {
 	logger *slog.Logger
 	// targets maps the unprefixed target Name to its resolved state.
 	// Written once in the constructor; read-only during Publish.
-	targets map[string]resolvedKVTarget
+	targets *targetResolver[resolvedKVTarget]
 }
 
 // defaultKVKeyTemplate is used when RedisKVTarget.KeyTemplate is empty.
@@ -97,7 +102,7 @@ func NewRedisKVPublisher(_ context.Context, ops redisOps, cfg RedisKVConfig) (*R
 		ops:     ops,
 		destID:  cfg.DestinationID,
 		logger:  logger,
-		targets: make(map[string]resolvedKVTarget, len(cfg.Targets)),
+		targets: newTargetResolver[resolvedKVTarget](0, logger),
 	}
 
 	for _, t := range cfg.Targets {
@@ -113,11 +118,11 @@ func NewRedisKVPublisher(_ context.Context, ops redisOps, cfg RedisKVConfig) (*R
 			slog.Duration("ttl", t.TTL),
 		)
 
-		// Store the resolved target — written only here, read-only in Publish.
-		p.targets[t.Name] = resolvedKVTarget{
-			keyPrefix:   cfg.KeyPrefix,
-			ttl:         t.TTL,
-			keyTemplate: tmpl,
+		state := resolvedKVTarget{keyPrefix: cfg.KeyPrefix, ttl: t.TTL, keyTemplate: tmpl}
+		if t.Template.IsTemplate() {
+			p.targets.addTemplate(t.Template, state)
+		} else {
+			p.targets.addStatic(t.Name, state)
 		}
 	}
 
@@ -133,8 +138,8 @@ func (p *RedisKVPublisher) Publish(ctx context.Context, _, target string, msg Me
 	// targets is written only in NewRedisKVPublisher (single goroutine);
 	// this read is safe to perform concurrently across the server's publish
 	// fan-out — mirrors the established SQS race invariant comment.
-	rt, ok := p.targets[target]
-	if !ok {
+	rt, err := p.targets.resolve(ctx, target, passthroughProvision[resolvedKVTarget])
+	if err != nil {
 		return fmt.Errorf("redis_kv %q: target %q is not configured", p.destID, target)
 	}
 

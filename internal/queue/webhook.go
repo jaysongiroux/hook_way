@@ -13,9 +13,16 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
-type WebhookTarget struct{ Name string }
+type WebhookTarget struct {
+	Name string
+	// Template is set for dynamic routes (target contains {variable}
+	// placeholders); rendered targets the matcher accepts are delivered to
+	// base url + "/" + rendered target.
+	Template vars.Matcher
+}
 
 // WebhookPublisherOptions carries the cross-cutting dependencies a webhook
 // publisher needs to build (and, in async mode, own) its delivery engine.
@@ -34,9 +41,14 @@ type WebhookPublisher struct {
 	engine   *webhookDeliveryEngine // nil in sync mode
 	syncMode bool
 	destID   string
-	delivery map[string]*webhookDelivery // per target
-	metrics  WebhookMetrics              // may be nil
+	delivery *targetResolver[*webhookDelivery] // per target, static and dynamic
+	metrics  WebhookMetrics                    // may be nil
 	logger   *slog.Logger
+	// urlTemplate is the destination url parsed for {variable} placeholders.
+	// When it has any, the base url is rendered per message from
+	// msg.Variables; otherwise baseURL is used verbatim.
+	urlTemplate vars.Template
+	baseURL     string
 }
 
 func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []WebhookTarget, opts WebhookPublisherOptions) (*WebhookPublisher, error) {
@@ -76,10 +88,14 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 		dlqTarget = cfg.DeadLetter.Target
 	}
 
-	deliveries := make(map[string]*webhookDelivery, len(targets))
+	urlTemplate, err := vars.Parse(cfg.URL)
+	if err != nil {
+		return nil, fmt.Errorf("webhook %q: url template: %w", destID, err)
+	}
+	deliveries := newTargetResolver[*webhookDelivery](0, logger)
 	for _, t := range targets {
-		deliveries[t.Name] = &webhookDelivery{
-			destID: destID, target: t.Name, url: joinWebhookURL(cfg.URL, t.Name), mode: mode,
+		d := &webhookDelivery{
+			destID: destID, target: t.Name, metricTarget: t.Name, url: joinWebhookURL(cfg.URL, t.Name), mode: mode,
 			client: client,
 			retry: RetryPolicy{
 				MaxAttempts:    retryMaxAttempts,
@@ -98,9 +114,15 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 			dlqDestination: dlqDestination,
 			dlqTarget:      dlqTarget,
 		}
+		if t.Template.IsTemplate() {
+			d.metricTarget = t.Template.Raw()
+			deliveries.addTemplate(t.Template, d)
+		} else {
+			deliveries.addStatic(t.Name, d)
+		}
 	}
 
-	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger}
+	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger, urlTemplate: urlTemplate, baseURL: cfg.URL}
 	if !syncMode {
 		drain := cfg.DrainTimeout
 		if drain <= 0 {
@@ -114,10 +136,38 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 	return p, nil
 }
 
+// provisionDelivery clones a dynamic route's delivery settings for a rendered
+// target; the url is base + "/" + rendered target, exactly as for static ones.
+func (p *WebhookPublisher) provisionDelivery(_ context.Context, base *webhookDelivery, rendered string) (*webhookDelivery, error) {
+	d := *base
+	d.target = rendered
+	d.url = joinWebhookURL(p.baseURL, rendered)
+	return &d, nil
+}
+
 func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
-	d, ok := p.delivery[target]
-	if !ok {
+	d, err := p.delivery.resolve(ctx, target, p.provisionDelivery)
+	if err != nil {
 		return fmt.Errorf("webhook %q: target %q is not configured", p.destID, target)
+	}
+	if p.urlTemplate.HasPlaceholders() {
+		// Templated destination url: render the base from the event's routing
+		// variables. A missing binding is terminal for this event (it can
+		// never succeed on retry with the same envelope).
+		// The intake path already enforces this; re-check here so a replayed
+		// or tampered envelope can never steer the delivery host.
+		for _, n := range p.urlTemplate.Names() {
+			if v, ok := msg.Variables[n]; ok && !config.IsSafeName(v) {
+				return fmt.Errorf("webhook %q: variable %q has an unsafe value for a url", p.destID, n)
+			}
+		}
+		base, err := p.urlTemplate.Render(msg.Variables)
+		if err != nil {
+			return fmt.Errorf("webhook %q: render url: %w", p.destID, err)
+		}
+		rendered := *d
+		rendered.url = joinWebhookURL(base, d.target)
+		d = &rendered
 	}
 	if p.syncMode {
 		_, _, err := d.run(ctx, msg, p.metrics)
@@ -132,7 +182,7 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 			reason = "queue_full"
 		}
 		if p.metrics != nil {
-			p.metrics.WebhookDropped(p.destID, target, reason)
+			p.metrics.WebhookDropped(p.destID, d.metricTarget, reason)
 		}
 		return fmt.Errorf("webhook %q: enqueue: %w", p.destID, err)
 	}

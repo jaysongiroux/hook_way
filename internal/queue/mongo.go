@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"log/slog"
 )
 
@@ -12,6 +13,9 @@ import (
 // collection the document is inserted into.
 type MongoTarget struct {
 	Name string
+	// Template is set for dynamic routes (target contains {variable}
+	// placeholders); any rendered target the matcher accepts is valid.
+	Template vars.Matcher
 }
 
 // MongoConfig carries everything MongoPublisher needs. The database lives in the
@@ -28,20 +32,24 @@ type MongoConfig struct {
 type MongoPublisher struct {
 	ops     mongoOps
 	destID  string
-	targets map[string]struct{}
+	targets *targetResolver[struct{}]
 	logger  *slog.Logger
 }
 
 // NewMongoPublisher records the configured target (collection) names. There is
 // no DDL — collections auto-create on first insert and _id is auto-indexed.
 func NewMongoPublisher(ctx context.Context, ops mongoOps, cfg MongoConfig) (*MongoPublisher, error) {
-	targets := make(map[string]struct{}, len(cfg.Targets))
-	for _, t := range cfg.Targets {
-		targets[t.Name] = struct{}{}
-	}
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
+	}
+	targets := newTargetResolver[struct{}](0, logger)
+	for _, t := range cfg.Targets {
+		if t.Template.IsTemplate() {
+			targets.addTemplate(t.Template, struct{}{})
+		} else {
+			targets.addStatic(t.Name, struct{}{})
+		}
 	}
 	return &MongoPublisher{ops: ops, destID: cfg.DestinationID, targets: targets, logger: logger}, nil
 }
@@ -68,7 +76,7 @@ func messageToDocument(msg Message) (map[string]any, error) {
 // targets is written only in NewMongoPublisher and read-only during Publish,
 // so concurrent fan-out reads need no lock.
 func (p *MongoPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
-	if _, ok := p.targets[target]; !ok {
+	if _, err := p.targets.resolve(ctx, target, passthroughProvision[struct{}]); err != nil {
 		return fmt.Errorf("mongodb %q: target %q is not configured", p.destID, target)
 	}
 	doc, err := messageToDocument(msg)

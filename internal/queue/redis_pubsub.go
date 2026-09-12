@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"log/slog"
 )
 
@@ -13,6 +14,9 @@ import (
 type RedisPubSubTarget struct {
 	// Name is the logical target identifier and the unprefixed channel name base.
 	Name string
+	// Template is set for dynamic routes (target contains {variable}
+	// placeholders); the channel is derived from the rendered name.
+	Template vars.Matcher
 }
 
 // RedisPubSubConfig carries all configuration consumed by RedisPubSubPublisher.
@@ -63,7 +67,8 @@ type RedisPubSubPublisher struct {
 	metrics RedisPubSubMetrics
 	// targets maps the unprefixed target Name to its resolved channel name.
 	// Written once in the constructor; read-only during Publish.
-	targets map[string]string
+	targets   *targetResolver[string]
+	keyPrefix string
 }
 
 // NewRedisPubSubPublisher constructs a RedisPubSubPublisher.
@@ -81,11 +86,12 @@ func NewRedisPubSubPublisher(_ context.Context, ops redisOps, cfg RedisPubSubCon
 		logger = slog.Default()
 	}
 	p := &RedisPubSubPublisher{
-		ops:     ops,
-		destID:  cfg.DestinationID,
-		logger:  logger,
-		metrics: cfg.Metrics,
-		targets: make(map[string]string, len(cfg.Targets)),
+		ops:       ops,
+		destID:    cfg.DestinationID,
+		logger:    logger,
+		metrics:   cfg.Metrics,
+		targets:   newTargetResolver[string](0, logger),
+		keyPrefix: cfg.KeyPrefix,
 	}
 
 	for _, t := range cfg.Targets {
@@ -101,8 +107,11 @@ func NewRedisPubSubPublisher(_ context.Context, ops redisOps, cfg RedisPubSubCon
 			slog.String("channel", channel),
 		)
 
-		// Store the resolved channel — written only here, read-only in Publish.
-		p.targets[t.Name] = channel
+		if t.Template.IsTemplate() {
+			p.targets.addTemplate(t.Template, channel)
+		} else {
+			p.targets.addStatic(t.Name, channel)
+		}
 	}
 
 	return p, nil
@@ -118,8 +127,8 @@ func (p *RedisPubSubPublisher) Publish(ctx context.Context, _, target string, ms
 	// targets is written only in NewRedisPubSubPublisher (single goroutine);
 	// this read is safe to perform concurrently across the server's publish
 	// fan-out — mirrors the established SQS race invariant comment.
-	channel, ok := p.targets[target]
-	if !ok {
+	channel, err := p.targets.resolve(ctx, target, p.provisionChannel)
+	if err != nil {
 		return fmt.Errorf("redis_pubsub %q: target %q is not configured", p.destID, target)
 	}
 
@@ -144,6 +153,14 @@ func (p *RedisPubSubPublisher) Publish(ctx context.Context, _, target string, ms
 		}
 	}
 	return nil
+}
+
+// provisionChannel derives the prefixed channel for a rendered dynamic target.
+func (p *RedisPubSubPublisher) provisionChannel(_ context.Context, _ string, rendered string) (string, error) {
+	if p.keyPrefix != "" {
+		return p.keyPrefix + ":" + rendered, nil
+	}
+	return rendered, nil
 }
 
 // Ready pings the Redis server to confirm the connection is live.

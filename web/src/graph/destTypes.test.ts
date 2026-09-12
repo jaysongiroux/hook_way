@@ -16,11 +16,12 @@ DEST_TYPE_SPECS.__group_test__ = {
   ],
 };
 
-test("DEST_TYPES lists the real 12 backend types without a bare redis", () => {
+test("DEST_TYPES lists the real 13 backend types without a bare redis", () => {
   expect(DEST_TYPES).toContain("rabbitmq");
   expect(DEST_TYPES).toContain("redis_stream");
+  expect(DEST_TYPES).toContain("temporal");
   expect(DEST_TYPES).not.toContain("redis");
-  expect(DEST_TYPES).toHaveLength(12);
+  expect(DEST_TYPES).toHaveLength(13);
 });
 
 test("every type has a spec with a block name and fields", () => {
@@ -41,6 +42,7 @@ test("defaultSettings seeds enum/bool defaults", () => {
   expect(defaultSettings("rabbitmq")).toMatchObject({ url: "", exchange: "", exchange_type: "direct", durable: true, declare_queues: true, publish_timeout: "" });
   expect(defaultSettings("kafka")).toMatchObject({ acks: "all", compression: "none" });
   expect(defaultSettings("redis_stream")).toMatchObject({ mode: "single", url: "" });
+  expect(defaultSettings("temporal")).toMatchObject({ host_port: "", namespace: "", tls: { enabled: false } });
 });
 
 test("SCHEMES_BY_AUTH + defaultScheme", () => {

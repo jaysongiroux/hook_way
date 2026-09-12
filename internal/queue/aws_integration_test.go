@@ -3,14 +3,15 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"github.com/jasongiroux/hookway/internal/awsconf"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	snsservice "github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	snsservice "github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
 )
@@ -45,7 +46,7 @@ func TestAWSSQSPublishRoundTrip(t *testing.T) {
 	endpoint := startLocalStack(t)
 	ctx := context.Background()
 
-	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestAWSSNSToSQSFanout(t *testing.T) {
 	endpoint := startLocalStack(t)
 	ctx := context.Background()
 
-	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestAWSSQSReconcileUpdatesExistingQueue(t *testing.T) {
 	}
 	endpoint := startLocalStack(t)
 	ctx := context.Background()
-	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +201,7 @@ func TestAWSSQSWarnLeavesExistingQueueUnchanged(t *testing.T) {
 	}
 	endpoint := startLocalStack(t)
 	ctx := context.Background()
-	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +238,7 @@ func TestAWSSQSErrorPolicyFailsOnDrift(t *testing.T) {
 	}
 	endpoint := startLocalStack(t)
 	ctx := context.Background()
-	awsCfg, err := newAWSConfig(ctx, "us-east-1", endpoint, "test", "test")
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,9 +288,9 @@ func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicN
 	}
 	queueARN := attrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
 	if _, err := snsClient.Subscribe(ctx, &snsservice.SubscribeInput{
-		TopicArn: aws.String(topicARN),
-		Protocol: aws.String("sqs"),
-		Endpoint: aws.String(queueARN),
+		TopicArn:   aws.String(topicARN),
+		Protocol:   aws.String("sqs"),
+		Endpoint:   aws.String(queueARN),
 		Attributes: map[string]string{"RawMessageDelivery": "true"},
 	}); err != nil {
 		t.Fatal(err)

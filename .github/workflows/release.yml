@@ -56,6 +56,9 @@ jobs:
       - name: Webhook integration tests (testcontainers)
         run: make webhook-integration-test
 
+      - name: Temporal integration tests (testcontainers)
+        run: make temporal-integration-test
+
       - name: Replaystore integration tests (testcontainers)
         run: make replaystore-integration-test
 

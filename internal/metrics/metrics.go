@@ -19,6 +19,9 @@ type Metrics struct {
 	forbidden                *prometheus.CounterVec
 	replayRejected           *prometheus.CounterVec
 	filtered                 *prometheus.CounterVec
+	variableUnresolved       *prometheus.CounterVec
+	variableLookup           *prometheus.CounterVec
+	variableLookupDuration   *prometheus.HistogramVec
 	loopRejected             *prometheus.CounterVec
 	publishTotal             *prometheus.CounterVec
 	publishDuration          *prometheus.HistogramVec
@@ -83,6 +86,18 @@ func New() *Metrics {
 		Name: "hookway_filtered_total",
 		Help: "Webhook deliveries dropped by endpoint or route filters.",
 	}, []string{"endpoint", "destination_queue_id", "queue", "level"})
+	m.variableUnresolved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_variable_unresolved_total",
+		Help: "Webhook requests whose routing variables could not be resolved, by action taken (rejected or fallback).",
+	}, []string{"endpoint", "variable", "action"})
+	m.variableLookup = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_variable_lookup_total",
+		Help: "Lookup-source variable resolutions by result: hit, miss, cached, or error.",
+	}, []string{"endpoint", "variable", "provider", "result"})
+	m.variableLookupDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "hookway_variable_lookup_duration_seconds",
+		Help: "Duration of lookup-source variable resolutions, including cache hits.",
+	}, []string{"endpoint", "variable", "provider"})
 	m.loopRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_loop_rejected_total",
 		Help: "Webhook requests rejected because the delivery hop count reached the loop-protection limit.",
@@ -195,7 +210,7 @@ func New() *Metrics {
 		Name: "hookway_replay_events_purged_total", Help: "Replay-store events purged by the background retention cleanup sweep (age and/or over-count).",
 	})
 	m.registry.MustRegister(
-		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.loopRejected,
+		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,
@@ -257,6 +272,20 @@ func (m *Metrics) Filtered(endpoint, destinationQueueID, queue, level string) {
 	m.filtered.WithLabelValues(endpoint, destinationQueueID, queue, level).Inc()
 }
 
+// VariableUnresolved records a request whose routing variable could not be
+// resolved. action is "rejected" (400 returned) or "fallback" (routed to the
+// endpoint's on_unresolved_variable route).
+func (m *Metrics) VariableUnresolved(endpoint, variable, action string) {
+	m.variableUnresolved.WithLabelValues(endpoint, variable, action).Inc()
+}
+
+// VariableLookup records one lookup-source resolution. result is "hit",
+// "miss", "cached", or "error".
+func (m *Metrics) VariableLookup(endpoint, variable, provider, result string, duration time.Duration) {
+	m.variableLookup.WithLabelValues(endpoint, variable, provider, result).Inc()
+	m.variableLookupDuration.WithLabelValues(endpoint, variable, provider).Observe(duration.Seconds())
+}
+
 // LoopRejected counts an inbound request rejected by loop protection.
 func (m *Metrics) LoopRejected(endpoint, destinationQueueID, queue string) {
 	m.loopRejected.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
@@ -287,7 +316,7 @@ func (m *Metrics) RegisterConfig(cfg config.Config) {
 			continue
 		}
 		for _, route := range endpoint.DestinationRoutes() {
-			m.endpointInfo.WithLabelValues(name, route.Destination, route.Target, endpoint.Path).Set(1)
+			m.endpointInfo.WithLabelValues(name, route.Destination, route.Template, endpoint.Path).Set(1)
 		}
 	}
 	for id, destination := range cfg.Destinations {

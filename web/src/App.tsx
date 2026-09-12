@@ -1,5 +1,5 @@
 import { AppShell, Group, Text, Title, Box, Button, ScrollArea } from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+import { useDisclosure, useDocumentTitle } from "@mantine/hooks";
 import { Palette } from "./graph/Palette";
 import { Canvas } from "./graph/Canvas";
 import { Inspector } from "./graph/Inspector";
@@ -18,6 +18,7 @@ const HEADER_HEIGHT = 52;
 // canvas. The canvas gets an explicit viewport-based height because React Flow
 // needs a sized container.
 export default function App() {
+  useDocumentTitle("Hookway Config");
   usePersistence();
   const [importOpen, { open: openImport, close: closeImport }] = useDisclosure(false);
   const [exportOpen, { open: openExport, close: closeExport }] = useDisclosure(false);

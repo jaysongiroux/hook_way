@@ -26,12 +26,15 @@ var errWebhookEngineClosing = errors.New("webhook: engine closing")
 type webhookDelivery struct {
 	destID string
 	target string
-	url    string // resolved base+target
-	mode   string // "envelope" | "proxy"
-	client *http.Client
-	retry  RetryPolicy
-	auth   webhookAuth
-	logger *slog.Logger
+	// metricTarget is the label used for per-target metrics: the authored
+	// template for dynamic targets (bounded cardinality), else the target.
+	metricTarget string
+	url          string // resolved base+target
+	mode         string // "envelope" | "proxy"
+	client       *http.Client
+	retry        RetryPolicy
+	auth         webhookAuth
+	logger       *slog.Logger
 	// Dead-letter routing for terminal async failures. Empty => log-and-drop.
 	dlqDestination string
 	dlqTarget      string
@@ -205,7 +208,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 			slog.String("destination", e.destID), slog.String("target", d.target),
 			slog.String("event_id", job.msg.ID), slog.String("dlq_destination", d.dlqDestination))
 		if e.metrics != nil {
-			e.metrics.WebhookDeadLetterFailure(e.destID, d.target)
+			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
 		return
 	}
@@ -217,7 +220,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 			slog.String("event_id", job.msg.ID), slog.String("dlq_destination", d.dlqDestination),
 			slog.String("dlq_target", d.dlqTarget), slog.String("error", err.Error()))
 		if e.metrics != nil {
-			e.metrics.WebhookDeadLetterFailure(e.destID, d.target)
+			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
 		return
 	}
@@ -227,7 +230,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 		slog.Int("attempts", attempts), slog.String("dlq_destination", d.dlqDestination),
 		slog.String("dlq_target", d.dlqTarget))
 	if e.metrics != nil {
-		e.metrics.WebhookDeadLetter(e.destID, d.target, outcome)
+		e.metrics.WebhookDeadLetter(e.destID, d.metricTarget, outcome)
 	}
 }
 
@@ -263,7 +266,7 @@ func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics
 		attempts = attempt
 		if attempt > 1 {
 			if m != nil {
-				m.WebhookRetry(d.destID, d.target)
+				m.WebhookRetry(d.destID, d.metricTarget)
 			}
 			d.logger.Warn("webhook delivery retry",
 				slog.String("destination", d.destID), slog.String("target", d.target),
@@ -273,7 +276,7 @@ func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics
 		var retryAfter time.Duration
 		outcome, retryable, retryAfter = d.attempt(ctx, msg)
 		if m != nil {
-			m.WebhookDelivery(d.destID, d.target, outcome)
+			m.WebhookDelivery(d.destID, d.metricTarget, outcome)
 		}
 		if !retryable {
 			if outcome == "2xx" {

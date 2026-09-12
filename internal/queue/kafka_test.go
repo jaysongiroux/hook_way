@@ -13,6 +13,20 @@ type fakeKafkaOps struct {
 	readyErr  error
 	readyCall int
 	closed    bool
+	ensured   []KafkaTarget
+	ensureErr error
+}
+
+func (f *fakeKafkaOps) EnsureTopics(ctx context.Context, targets []KafkaTarget) error {
+	if f.ensureErr != nil {
+		return f.ensureErr
+	}
+	for _, t := range targets {
+		if t.Create {
+			f.ensured = append(f.ensured, t)
+		}
+	}
+	return nil
 }
 
 type fakeKafkaWrite struct {

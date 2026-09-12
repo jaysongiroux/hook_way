@@ -13,6 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 type sqsAPI interface {
@@ -29,6 +31,10 @@ type SQSTarget struct {
 	VisibilityTimeout time.Duration
 	MessageRetention  time.Duration
 	FIFO              *FIFOSettings
+	// Template is set for dynamic routes (Name contains {variable}
+	// placeholders). Rendered queue names the matcher accepts are resolved
+	// (and created when Create is set) on first sight with these settings.
+	Template vars.Matcher
 }
 
 type SQSConfig struct {
@@ -52,14 +58,18 @@ var sqsMutableAttrs = map[string]bool{
 type sqsTargetState struct {
 	url  string
 	fifo *FIFOSettings
+	// tmpl carries the authored target for dynamic routes so provisioning a
+	// rendered name can reuse its create flag, attributes, and FIFO settings.
+	tmpl SQSTarget
 }
 
 type SQSPublisher struct {
 	client  sqsAPI
 	destID  string
+	policy  ConflictPolicy
 	logger  *slog.Logger
-	targets map[string]sqsTargetState
-	probes  []string // resolved queue URLs used by Ready
+	targets *targetResolver[sqsTargetState]
+	probes  []string // resolved static queue URLs used by Ready
 }
 
 // NewSQSPublisher resolves (and optionally creates) every target queue up
@@ -69,21 +79,45 @@ func NewSQSPublisher(ctx context.Context, client sqsAPI, cfg SQSConfig) (*SQSPub
 	if logger == nil {
 		logger = slog.Default()
 	}
-	p := &SQSPublisher{client: client, destID: cfg.DestinationID, logger: logger, targets: map[string]sqsTargetState{}}
+	p := &SQSPublisher{client: client, destID: cfg.DestinationID, policy: cfg.Policy, logger: logger, targets: newTargetResolver[sqsTargetState](0, logger)}
 	for _, target := range cfg.Targets {
-		url, existed, err := p.resolveQueueURL(ctx, target)
+		if target.Template.IsTemplate() {
+			// Dynamic route: nothing to resolve until a rendered name arrives.
+			p.targets.addTemplate(target.Template, sqsTargetState{tmpl: target})
+			continue
+		}
+		state, err := p.provisionQueue(ctx, target)
 		if err != nil {
-			return nil, fmt.Errorf("sqs target %q: %w", target.Name, err)
+			return nil, err
 		}
-		if existed {
-			if err := p.reconcileQueue(ctx, cfg, target, url); err != nil {
-				return nil, err
-			}
-		}
-		p.targets[target.Name] = sqsTargetState{url: url, fifo: target.FIFO}
-		p.probes = append(p.probes, url)
+		p.targets.addStatic(target.Name, state)
+		p.probes = append(p.probes, state.url)
 	}
 	return p, nil
+}
+
+// provisionQueue resolves (creating when Create is set) and reconciles one
+// queue, returning its publish state. Used at startup for static targets and
+// on first sight for rendered dynamic targets.
+func (p *SQSPublisher) provisionQueue(ctx context.Context, target SQSTarget) (sqsTargetState, error) {
+	url, existed, err := p.resolveQueueURL(ctx, target)
+	if err != nil {
+		return sqsTargetState{}, fmt.Errorf("sqs target %q: %w", target.Name, err)
+	}
+	if existed {
+		if err := p.reconcileQueue(ctx, target, url); err != nil {
+			return sqsTargetState{}, err
+		}
+	}
+	return sqsTargetState{url: url, fifo: target.FIFO}, nil
+}
+
+// provisionDynamic is the resolver hook for a rendered dynamic target: the
+// template's settings with the rendered queue name.
+func (p *SQSPublisher) provisionDynamic(ctx context.Context, base sqsTargetState, rendered string) (sqsTargetState, error) {
+	target := base.tmpl
+	target.Name = rendered
+	return p.provisionQueue(ctx, target)
 }
 
 // resolveQueueURL returns the queue URL and whether it already existed. When the
@@ -110,8 +144,8 @@ func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (u
 }
 
 // reconcileQueue compares the existing queue's managed attributes against the
-// configured ones and applies cfg.Policy.
-func (p *SQSPublisher) reconcileQueue(ctx context.Context, cfg SQSConfig, target SQSTarget, url string) error {
+// configured ones and applies the destination's conflict policy.
+func (p *SQSPublisher) reconcileQueue(ctx context.Context, target SQSTarget, url string) error {
 	out, err := p.client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl: aws.String(url),
 		AttributeNames: []sqstypes.QueueAttributeName{
@@ -125,9 +159,9 @@ func (p *SQSPublisher) reconcileQueue(ctx context.Context, cfg SQSConfig, target
 		return fmt.Errorf("sqs target %q: GetQueueAttributes: %w", target.Name, err)
 	}
 	return applyConflictPolicy(ctx, reconcileParams{
-		policy:  cfg.Policy,
+		policy:  p.policy,
 		logger:  p.logger,
-		destID:  cfg.DestinationID,
+		destID:  p.destID,
 		target:  target.Name,
 		want:    sqsCreateAttributes(target),
 		got:     out.Attributes,
@@ -160,11 +194,12 @@ func sqsCreateAttributes(target SQSTarget) map[string]string {
 }
 
 func (p *SQSPublisher) Publish(ctx context.Context, destinationID, target string, msg Message) error {
-	// targets is written only in NewSQSPublisher (single goroutine); this read
-	// is safe to perform concurrently across the server's publish fan-out.
-	state, ok := p.targets[target]
-	if !ok {
-		return fmt.Errorf("sqs target %q is not configured", target)
+	state, err := p.targets.resolve(ctx, target, p.provisionDynamic)
+	if err != nil {
+		if errors.Is(err, errTargetNotConfigured) {
+			return fmt.Errorf("sqs target %q is not configured", target)
+		}
+		return err
 	}
 	body, err := json.Marshal(msg)
 	if err != nil {

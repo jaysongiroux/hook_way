@@ -37,6 +37,11 @@ type Message struct {
 	RawBodyBase64      *string        `json:"raw_body_base64,omitempty"`
 	SourceIP           string         `json:"source_ip,omitempty"`
 	Auth               any            `json:"auth,omitempty"`
+	// Variables are the per-request routing variables resolved for this event
+	// (see config.VariableConfig). Publishers use them to render templated
+	// destination settings such as the webhook url; replay re-reads them from
+	// the stored envelope.
+	Variables map[string]string `json:"variables,omitempty"`
 	// In-memory only (never serialized); carries the original request for
 	// webhook proxy mode. Other destinations ignore these.
 	RawBody     []byte      `json:"-"`

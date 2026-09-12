@@ -7,12 +7,17 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 // PostgresTarget is a single route target. For Postgres the target name is
 // stored verbatim in the row's "target" column; there is no per-target resource.
 type PostgresTarget struct {
 	Name string
+	// Template is set for dynamic routes (target contains {variable}
+	// placeholders); any rendered target the matcher accepts is valid.
+	Template vars.Matcher
 }
 
 // PostgresConfig carries everything PostgresPublisher needs. The factory builds
@@ -44,7 +49,7 @@ type PostgresPublisher struct {
 	logger    *slog.Logger
 	tableExpr string // sanitized "schema"."table"
 	insertSQL string
-	targets   map[string]struct{}
+	targets   *targetResolver[struct{}]
 }
 
 // NewPostgresPublisher ensures the destination table (and its indexes) exist via
@@ -94,9 +99,13 @@ func NewPostgresPublisher(ctx context.Context, ops pgOps, cfg PostgresConfig) (*
 
 	logger.Info("ensured table", slog.String("destination", cfg.DestinationID), slog.String("target", cfg.Table))
 
-	targets := make(map[string]struct{}, len(cfg.Targets))
+	targets := newTargetResolver[struct{}](0, logger)
 	for _, t := range cfg.Targets {
-		targets[t.Name] = struct{}{}
+		if t.Template.IsTemplate() {
+			targets.addTemplate(t.Template, struct{}{})
+		} else {
+			targets.addStatic(t.Name, struct{}{})
+		}
 	}
 
 	return &PostgresPublisher{
@@ -132,7 +141,7 @@ func buildInsertSQL(tableExpr string) string {
 // targets is written only in NewPostgresPublisher; this read is safe to perform
 // concurrently across the server's publish fan-out — mirrors the redis_stream race invariant.
 func (p *PostgresPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
-	if _, ok := p.targets[target]; !ok {
+	if _, err := p.targets.resolve(ctx, target, passthroughProvision[struct{}]); err != nil {
 		return fmt.Errorf("postgres %q: target %q is not configured", p.destID, target)
 	}
 

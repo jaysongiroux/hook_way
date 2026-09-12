@@ -12,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 type s3API interface {
@@ -24,6 +26,10 @@ type s3API interface {
 // (key prefix) under which that route's objects are written.
 type S3Target struct {
 	Name string
+	// Template is set for dynamic routes whose target contains {variable}
+	// placeholders; Name is then the authored template and any rendered
+	// target the matcher accepts is a valid folder.
+	Template vars.Matcher
 }
 
 type S3Config struct {
@@ -46,7 +52,7 @@ type S3Publisher struct {
 	sse     string
 	kmsKey  string
 	logger  *slog.Logger
-	folders map[string]struct{} // known base folders (route targets)
+	folders *targetResolver[struct{}] // known base folders (route targets), static and dynamic
 }
 
 // s3ObjectKey builds the object key for a message:
@@ -85,9 +91,13 @@ func NewS3Publisher(ctx context.Context, client s3API, cfg S3Config) (*S3Publish
 		logger.Warn("s3 destination uses aws:kms without sse_kms_key_id; falling back to the bucket default KMS key",
 			"destination", cfg.DestinationID, "bucket", cfg.Bucket)
 	}
-	folders := make(map[string]struct{}, len(cfg.Targets))
+	folders := newTargetResolver[struct{}](0, logger)
 	for _, t := range cfg.Targets {
-		folders[t.Name] = struct{}{}
+		if t.Template.IsTemplate() {
+			folders.addTemplate(t.Template, struct{}{})
+		} else {
+			folders.addStatic(t.Name, struct{}{})
+		}
 	}
 	return &S3Publisher{
 		client:  client,
@@ -127,9 +137,7 @@ func ensureS3Bucket(ctx context.Context, client s3API, cfg S3Config, logger *slo
 }
 
 func (p *S3Publisher) Publish(ctx context.Context, destinationID, target string, msg Message) error {
-	// folders is written only in NewS3Publisher (single goroutine); concurrent
-	// reads during publish fan-out are safe.
-	if _, ok := p.folders[target]; !ok {
+	if _, err := p.folders.resolve(ctx, target, passthroughProvision[struct{}]); err != nil {
 		return fmt.Errorf("s3 target %q is not configured", target)
 	}
 	body, err := json.Marshal(msg)

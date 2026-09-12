@@ -18,12 +18,14 @@
     "dexie": "^4.0.8",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.3",
     "yaml": "^2.5.1",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.4.8",
     "@testing-library/react": "^16.0.1",
+    "@types/node": "^22.20.2",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
