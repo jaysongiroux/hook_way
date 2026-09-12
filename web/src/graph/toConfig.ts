@@ -1,5 +1,5 @@
 import type { Edge } from "@xyflow/react";
-import type { HookwayNode, EndpointData, DestinationData, FilterData, AuthData } from "./model";
+import type { HookwayNode, EndpointData, DestinationData, FilterData, AuthData, VariableData, LookupData } from "./model";
 import { DEFAULT_SERVER } from "./model";
 import { DEST_TYPE_SPECS } from "./destTypes";
 import type { FieldSpec } from "./destTypes";
@@ -12,6 +12,49 @@ interface Route {
   target: string;
   create: boolean;
   rawExtra?: Record<string, unknown>;
+}
+
+// mapVariables exports the endpoint's variables as the YAML map; an empty
+// list yields undefined so the key is omitted.
+function mapVariables(vs: VariableData[] | undefined): Record<string, unknown> | undefined {
+  if (!vs || vs.length === 0) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const v of vs) {
+    if (!v.name) continue;
+    const entry: Record<string, unknown> = { source: v.source };
+    if (v.source !== "lookup" && v.path && v.path !== v.name) entry.path = v.path;
+    if (v.mode === "pattern") entry.pattern = v.pattern;
+    else if (v.mode === "values") entry.values = v.values.split(",").map((x) => x.trim()).filter((x) => x.length > 0);
+    if (v.default) entry.default = v.default;
+    if (v.source === "lookup" && v.lookup) entry.lookup = mapLookup(v.lookup);
+    out[v.name] = entry;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function mapLookup(l: LookupData): Record<string, unknown> {
+  const extra = (l.extra ?? {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...extra };
+  delete out.dynamodb;
+  delete out.http;
+  delete out.postgres;
+  const key: Record<string, unknown> = { source: l.keySource };
+  if (l.keyPath) key.path = l.keyPath;
+  out.key = key;
+  out.provider = l.provider;
+  if (l.provider === "dynamodb") {
+    const d: Record<string, unknown> = { ...((extra.dynamodb ?? {}) as Record<string, unknown>), table: l.dynamodb.table, value_attribute: l.dynamodb.value_attribute };
+    if (l.dynamodb.index) d.index = l.dynamodb.index;
+    if (l.dynamodb.filter_attribute || l.dynamodb.filter_value) d.filter = { attribute: l.dynamodb.filter_attribute, value: l.dynamodb.filter_value };
+    out.dynamodb = d;
+  } else if (l.provider === "http") {
+    const h: Record<string, unknown> = { ...((extra.http ?? {}) as Record<string, unknown>), url: l.http.url, value_path: l.http.value_path };
+    if (l.http.method && l.http.method !== "GET") h.method = l.http.method;
+    out.http = h;
+  } else {
+    out.postgres = { ...((extra.postgres ?? {}) as Record<string, unknown>), url: l.postgres.url, query: l.postgres.query };
+  }
+  return out;
 }
 
 function mapAuth(a: AuthData): Record<string, unknown> | undefined {
@@ -147,6 +190,14 @@ export function toConfig(
     };
     const auth = mapAuth(ep.auth);
     if (auth) entry.auth = auth;
+    const variables = mapVariables(ep.variables);
+    if (variables) entry.variables = variables;
+    else delete entry.variables;
+    if (ep.fallback && ep.fallback.destination) {
+      entry.on_unresolved_variable = { destination: ep.fallback.destination, target: ep.fallback.target };
+    } else {
+      delete entry.on_unresolved_variable;
+    }
     if (prefixLen > 0 && routes.length > 0) {
       entry.filters = routes[0].filters.slice(0, prefixLen).map(mapFilter);
     }

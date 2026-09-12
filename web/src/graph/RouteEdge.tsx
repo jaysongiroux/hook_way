@@ -1,5 +1,6 @@
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps, type EdgeTypes } from "@xyflow/react";
 import { useGraphStore } from "./store";
+import { DARK, EDGE } from "../tokens";
 
 const PARALLEL_GAP = 32;
 
@@ -52,13 +53,13 @@ export function RouteEdge({
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              background: selected ? "#eaf0fe" : "#fff",
-              border: `1px solid ${selected ? "#366CED" : "#d6def0"}`,
+              background: selected ? "#24365C" : DARK.surface,
+              border: `1px solid ${selected ? EDGE.selected : EDGE.labelBorder}`,
               borderRadius: 6,
               padding: "1px 6px",
               fontSize: 11,
               fontWeight: selected ? 600 : 400,
-              color: "#152033",
+              color: DARK.text,
               pointerEvents: "all",
               cursor: "pointer",
             }}

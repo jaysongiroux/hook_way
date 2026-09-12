@@ -13,9 +13,9 @@ func TestResolveFIFOGroupIDSources(t *testing.T) {
 		Body:           map[string]any{"customer": map[string]any{"id": "cust-42", "num": float64(12345), "active": true}},
 	}
 	cases := []struct {
-		name    string
-		s       FIFOSettings
-		want    string
+		name string
+		s    FIFOSettings
+		want string
 	}{
 		{"static", FIFOSettings{GroupIDSource: "static", GroupIDValue: "fixed"}, "fixed"},
 		{"endpoint", FIFOSettings{GroupIDSource: "endpoint"}, "billing"},
@@ -53,5 +53,32 @@ func TestResolveFIFODedup(t *testing.T) {
 	_, dedup, content = resolveFIFO(noKey, FIFOSettings{GroupIDSource: "endpoint", DedupUseIdempotencyKey: true, DedupContentBasedFallback: false})
 	if dedup != "" || content {
 		t.Fatalf("dedup=%q content=%v, want empty/false", dedup, content)
+	}
+}
+
+func TestResolveSourceValueNoFallback(t *testing.T) {
+	msg := Message{
+		Endpoint: "orders",
+		Headers:  map[string][]string{"X-Account": {"acct-9"}},
+		Body:     map[string]any{"order": map[string]any{"id": "o-1"}},
+	}
+	cases := []struct {
+		name, source, value, path, want string
+	}{
+		{"static", "static", "fixed", "", "fixed"},
+		{"endpoint", "endpoint", "", "", "orders"},
+		{"header hit", "header", "", "X-Account", "acct-9"},
+		{"header miss returns empty", "header", "", "X-Missing", ""},
+		{"body hit", "body", "", "order.id", "o-1"},
+		{"body miss returns empty", "body", "", "order.missing", ""},
+		{"empty source returns empty", "", "", "", ""},
+		{"unknown source returns empty", "random", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveSourceValue(msg, tc.source, tc.value, tc.path); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
 	}
 }

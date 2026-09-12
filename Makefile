@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -42,34 +42,34 @@ web-build:
 # SPA, then stage both into internal/editor/webui/ for go:embed.
 ui: wasm web-build
 	mkdir -p internal/editor/webui
-	rm -rf internal/editor/webui/assets
+	find internal/editor/webui -mindepth 1 ! -name .gitkeep -delete
 	cp -R web/dist/. internal/editor/webui/
 	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js internal/editor/webui/
 
-# ui-check fails if the embed dir still holds the "not built" placeholder,
-# guarding against shipping a binary without the real UI.
+# ui-check fails unless a real bundle is staged for go:embed, guarding against
+# shipping a release binary whose editor only serves the placeholder page.
 ui-check:
-	@if grep -q "Hookway Config UI is not built" internal/editor/webui/index.html 2>/dev/null || [ ! -d internal/editor/webui/assets ]; then \
+	@if [ ! -f internal/editor/webui/index.html ] || [ ! -d internal/editor/webui/assets ]; then \
 		echo "error: config UI not staged — run 'make ui' before building a release"; exit 1; \
 	fi
 
 test:
-	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore'
+	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore|TemporalIntegration'
 
 test-race:
-	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore'
+	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore|TemporalIntegration'
 
 integration-test:
 	$(GO) test ./internal/queue -run TestRabbitMQ -count=1
 
 aws-integration-test:
-	$(GO) test ./internal/queue -run 'TestAWS' -count=1
+	$(GO) test ./internal/queue ./internal/lookup -run 'TestAWS' -count=1
 
 redis-integration-test:
 	$(GO) test ./internal/queue -run 'TestRedis' -count=1
 
 postgres-integration-test:
-	$(GO) test ./internal/queue -run 'TestPostgres' -count=1
+	$(GO) test ./internal/queue ./internal/lookup -run 'TestPostgres' -count=1
 
 mongodb-integration-test:
 	$(GO) test ./internal/queue -run 'TestMongo' -count=1
@@ -79,6 +79,9 @@ kafka-integration-test:
 
 webhook-integration-test:
 	$(GO) test ./internal/queue -run 'TestWebhookIntegration' -count=1
+
+temporal-integration-test:
+	$(GO) test ./internal/queue -run 'TestTemporalIntegration' -count=1
 
 replaystore-integration-test:
 	$(GO) test ./internal/replaystore -run 'TestReplayStore' -count=1
@@ -115,9 +118,17 @@ validate-examples:
 		WEBHOOK_SECRET=dummy \
 		WEBHOOK_URL=https://example.com/hooks \
 		WEBHOOK_API_KEY=dummy \
+		TEMPORAL_ADDRESS=localhost:7233 \
+		TEMPORAL_NAMESPACE=default \
+		TEMPORAL_API_KEY=dummy \
+		ARCHIVE_BUCKET=archive \
+		HUB_API_KEY=dummy \
+		DIGIFI_WEBHOOK_TOKEN=dummy \
+		ROUTING_TABLE=sandbox_ephemeral_routing_data \
+		ROUTING_DB_URL=postgres://localhost:5432/routing \
 		REPLAY_DB_URL=postgres://localhost:5432/db \
 		REPLAY_API_KEY=dummy; \
-	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
+	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done
@@ -131,7 +142,7 @@ docker-build: ui
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test replaystore-integration-test lint ui-check docker-build vuln-scan
+release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint ui-check docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build

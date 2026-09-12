@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"log/slog"
 )
 
@@ -17,6 +18,10 @@ type RedisListTarget struct {
 	// the newest MaxLen elements after each LPUSH (exact trim, not approximate).
 	// Zero means unbounded (no trim).
 	MaxLen int64
+	// Template is set for dynamic routes (target contains {variable}
+	// placeholders); rendered targets the matcher accepts get this target's
+	// settings with the list key derived from the rendered name.
+	Template vars.Matcher
 }
 
 // RedisListConfig carries all configuration consumed by RedisListPublisher.
@@ -54,7 +59,8 @@ type RedisListPublisher struct {
 	logger *slog.Logger
 	// targets maps the unprefixed target Name to its resolved state.
 	// Written once in the constructor; read-only during Publish.
-	targets map[string]resolvedListTarget
+	targets   *targetResolver[resolvedListTarget]
+	keyPrefix string
 }
 
 // NewRedisListPublisher constructs a RedisListPublisher.
@@ -71,10 +77,11 @@ func NewRedisListPublisher(_ context.Context, ops redisOps, cfg RedisListConfig)
 		logger = slog.Default()
 	}
 	p := &RedisListPublisher{
-		ops:     ops,
-		destID:  cfg.DestinationID,
-		logger:  logger,
-		targets: make(map[string]resolvedListTarget, len(cfg.Targets)),
+		ops:       ops,
+		destID:    cfg.DestinationID,
+		logger:    logger,
+		targets:   newTargetResolver[resolvedListTarget](0, logger),
+		keyPrefix: cfg.KeyPrefix,
 	}
 
 	for _, t := range cfg.Targets {
@@ -91,10 +98,11 @@ func NewRedisListPublisher(_ context.Context, ops redisOps, cfg RedisListConfig)
 			slog.Int64("max_len", t.MaxLen),
 		)
 
-		// Store the resolved target — written only here, read-only in Publish.
-		p.targets[t.Name] = resolvedListTarget{
-			listKey: listKey,
-			maxLen:  t.MaxLen,
+		state := resolvedListTarget{listKey: listKey, maxLen: t.MaxLen}
+		if t.Template.IsTemplate() {
+			p.targets.addTemplate(t.Template, state)
+		} else {
+			p.targets.addStatic(t.Name, state)
 		}
 	}
 
@@ -110,8 +118,8 @@ func (p *RedisListPublisher) Publish(ctx context.Context, _, target string, msg 
 	// targets is written only in NewRedisListPublisher (single goroutine);
 	// this read is safe to perform concurrently across the server's publish
 	// fan-out — mirrors the established SQS race invariant comment.
-	rt, ok := p.targets[target]
-	if !ok {
+	rt, err := p.targets.resolve(ctx, target, p.provisionList)
+	if err != nil {
 		return fmt.Errorf("redis_list %q: target %q is not configured", p.destID, target)
 	}
 
@@ -121,6 +129,16 @@ func (p *RedisListPublisher) Publish(ctx context.Context, _, target string, msg 
 	}
 
 	return p.ops.LPushTrim(ctx, rt.listKey, string(payload), rt.maxLen)
+}
+
+// provisionList clones a dynamic route's settings for a rendered target,
+// deriving the prefixed list key from the rendered name.
+func (p *RedisListPublisher) provisionList(_ context.Context, base resolvedListTarget, rendered string) (resolvedListTarget, error) {
+	base.listKey = rendered
+	if p.keyPrefix != "" {
+		base.listKey = p.keyPrefix + ":" + rendered
+	}
+	return base, nil
 }
 
 // Ready pings the Redis server to confirm the connection is live.

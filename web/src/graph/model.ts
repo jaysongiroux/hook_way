@@ -16,15 +16,68 @@ export interface AuthData {
   signatureHeader: string;
 }
 
+// VariableData is one per-request routing variable (endpoints.<n>.variables.<name>).
+// `values` is edited as a comma-separated list; `mode` picks values vs pattern.
+export interface VariableData {
+  name: string;
+  source: "header" | "body" | "query" | "path" | "lookup";
+  path: string;
+  mode: "values" | "pattern" | "any";
+  values: string;
+  pattern: string;
+  default: string;
+  // Lookup-source settings (only when source === "lookup"). The UI edits the
+  // key, provider, and each provider's required fields; any other keys under
+  // `lookup` round-trip verbatim through `extra`.
+  lookup?: LookupData;
+}
+
+export interface LookupData {
+  keySource: "header" | "body" | "query" | "path";
+  keyPath: string;
+  provider: "dynamodb" | "http" | "postgres";
+  dynamodb: { table: string; index: string; value_attribute: string; filter_attribute: string; filter_value: string };
+  http: { url: string; method: string; value_path: string };
+  postgres: { url: string; query: string };
+  extra?: Record<string, unknown>;
+}
+
+export const LOOKUP_PROVIDERS: LookupData["provider"][] = ["dynamodb", "http", "postgres"];
+
+export function emptyLookup(): LookupData {
+  return {
+    keySource: "body",
+    keyPath: "",
+    provider: "dynamodb",
+    dynamodb: { table: "", index: "", value_attribute: "", filter_attribute: "", filter_value: "" },
+    http: { url: "", method: "GET", value_path: "" },
+    postgres: { url: "", query: "" },
+  };
+}
+
+// FallbackData is endpoints.<n>.on_unresolved_variable: the static route that
+// receives events whose variables could not be resolved.
+export interface FallbackData {
+  destination: string;
+  target: string;
+}
+
+export const VARIABLE_SOURCES: VariableData["source"][] = ["header", "body", "query", "path", "lookup"];
+export const VARIABLE_KEY_SOURCES: LookupData["keySource"][] = ["header", "body", "query", "path"];
+
 export interface EndpointData extends Record<string, unknown> {
   kind: "endpoint";
   name: string;
   path: string;
   enabled: boolean;
   auth: AuthData;
+  // Routing variables and their fallback route. Absent/empty means none.
+  variables?: VariableData[];
+  fallback?: FallbackData;
   // Verbatim endpoint-entry config the UI doesn't model (rate_limit,
   // replay_protection, max_body_bytes, delivery_failure_policy, ...), minus the
-  // managed keys (enabled/path/auth/destinations/filters). Merged on export.
+  // managed keys (enabled/path/auth/destinations/filters/variables/
+  // on_unresolved_variable). Merged on export.
   rawExtra?: Record<string, unknown>;
   notes?: string;
 }

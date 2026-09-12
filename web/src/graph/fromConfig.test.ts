@@ -279,3 +279,73 @@ test("destination raw passthrough preserves an entry-level key (on_existing_conf
   const cfg2 = toConfig(nodes, edges).config;
   expect((cfg2.destinations as any).d).toEqual(d);
 });
+
+// Variables and the fallback route are managed (not rawExtra) and round-trip.
+test("endpoint variables and on_unresolved_variable round-trip as managed data", () => {
+  const config = {
+    destinations: {
+      sink: { type: "mongodb", mongodb: { uri: "mongodb://x", database: "d" } },
+      archive: { type: "s3", s3: { region: "us-east-1", bucket: "b" } },
+    },
+    endpoints: {
+      digifi: {
+        enabled: true,
+        path: "/webhooks/{envName}/digifi",
+        variables: {
+          envName: { source: "path", values: ["qa-gm3", "portal"], default: "portal" },
+          tenant: { source: "body", path: "account.id", pattern: "^[a-z]+$" },
+        },
+        on_unresolved_variable: { destination: "archive", target: "unrouted" },
+        auth: { type: "no_auth", scheme: "no_auth" },
+        destinations: [{ destination: "sink", target: "{envName}-{tenant}", create: true }],
+      },
+    },
+  };
+  const { nodes, edges } = fromConfig(config);
+  const ep = nodes.find((n) => n.data.kind === "endpoint")!;
+  const data = ep.data as any;
+  expect(data.rawExtra).toBeUndefined();
+  expect(data.variables).toEqual([
+    { name: "envName", source: "path", path: "", mode: "values", values: "qa-gm3, portal", pattern: "", default: "portal" },
+    { name: "tenant", source: "body", path: "account.id", mode: "pattern", values: "", pattern: "^[a-z]+$", default: "" },
+  ]);
+  expect(data.fallback).toEqual({ destination: "archive", target: "unrouted" });
+  const cfg2 = toConfig(nodes, edges).config;
+  expect((cfg2.endpoints as any).digifi).toEqual(config.endpoints.digifi);
+});
+
+test("lookup variables round-trip with provider blocks and unmodelled keys preserved", () => {
+  const config = {
+    destinations: { sink: { type: "mongodb", mongodb: { uri: "mongodb://x", database: "d" } } },
+    endpoints: {
+      digifi: {
+        enabled: true,
+        path: "/webhooks/digifi",
+        variables: {
+          env: {
+            source: "lookup",
+            lookup: {
+              key: { source: "body", path: "data.object.applicationId" },
+              provider: "dynamodb",
+              timeout: "3s",
+              cache: { ttl: "10m" },
+              dynamodb: { table: "routing", index: "CreatedAtIndex", filter: { attribute: "id_type", value: "application" }, value_attribute: "env_name", region: "us-east-1" },
+            },
+            pattern: "^[a-z0-9-]+$",
+          },
+        },
+        auth: { type: "no_auth", scheme: "no_auth" },
+        destinations: [{ destination: "sink", target: "{env}-events", create: true }],
+      },
+    },
+  };
+  const { nodes, edges } = fromConfig(config);
+  const data = nodes.find((n) => n.data.kind === "endpoint")!.data as any;
+  expect(data.variables[0].source).toBe("lookup");
+  expect(data.variables[0].mode).toBe("pattern");
+  expect(data.variables[0].lookup.provider).toBe("dynamodb");
+  expect(data.variables[0].lookup.dynamodb.table).toBe("routing");
+  expect(data.variables[0].lookup.extra).toEqual({ timeout: "3s", cache: { ttl: "10m" }, dynamodb: { region: "us-east-1" } });
+  const cfg2 = toConfig(nodes, edges).config;
+  expect((cfg2.endpoints as any).digifi).toEqual(config.endpoints.digifi);
+});

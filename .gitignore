@@ -53,7 +53,9 @@ web/*.tsbuildinfo
 web/vite.config.js
 web/vite.config.d.ts
 
-# Staged config-UI bundle for go:embed (populated by `make ui`); keep only the
-# tracked placeholder so a fresh `go build` still embeds something.
+# Generated config-UI bundle for go:embed (produced by `make ui`). The whole
+# directory is build output; only .gitkeep is tracked, so the `all:webui` embed
+# pattern still compiles on a fresh checkout. With no bundle staged the editor
+# serves the tracked internal/editor/placeholder.html instead.
 internal/editor/webui/*
-!internal/editor/webui/index.html
+!internal/editor/webui/.gitkeep

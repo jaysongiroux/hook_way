@@ -699,3 +699,14 @@ func TestBulkReplayPerEventResults(t *testing.T) {
 		}
 	}
 }
+
+func TestReconstructPreservesVariables(t *testing.T) {
+	ev := replaystore.Event{ID: "evt-1", Envelope: queue.Message{ID: "evt-1", Variables: map[string]string{"envName": "qa-gm3"}}}
+	msg := reconstruct(ev, false)
+	if msg.Variables["envName"] != "qa-gm3" {
+		t.Fatalf("variables must survive reconstruction: %#v", msg.Variables)
+	}
+	if msg.ReplayOf != "evt-1" || msg.ID == "evt-1" {
+		t.Fatalf("replay identity: id=%q replay_of=%q", msg.ID, msg.ReplayOf)
+	}
+}

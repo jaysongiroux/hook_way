@@ -204,3 +204,26 @@ test("mapSettings omits a group field entirely when all its children are empty",
   expect(entry.__group_test__).toEqual({ name: "n" });
   expect(entry.__group_test__.retry).toBeUndefined();
 });
+
+test("an endpoint without variables exports neither variables nor on_unresolved_variable", () => {
+  const ep = createNode("endpoint", { x: 0, y: 0 });
+  const d = createNode("destination", { x: 0, y: 0 });
+  const { config } = toConfig([ep, d], [edge(ep.id, d.id)]);
+  const e = (config.endpoints as any)[ep.data.name as string];
+  expect(e.variables).toBeUndefined();
+  expect(e.on_unresolved_variable).toBeUndefined();
+});
+
+test("endpoint variables export as a map and a templated target passes through", () => {
+  const ep = createNode("endpoint", { x: 0, y: 0 });
+  const d = createNode("destination", { x: 0, y: 0 });
+  (ep.data as any).variables = [
+    { name: "envName", source: "header", path: "X-Env", mode: "values", values: "qa-gm3, portal", pattern: "", default: "" },
+  ];
+  (ep.data as any).fallback = { destination: d.data.name, target: "unrouted" };
+  const { config } = toConfig([ep, d], [edge(ep.id, d.id, { target: "{envName}-events", create: false })]);
+  const e = (config.endpoints as any)[ep.data.name as string];
+  expect(e.variables).toEqual({ envName: { source: "header", path: "X-Env", values: ["qa-gm3", "portal"] } });
+  expect(e.on_unresolved_variable).toEqual({ destination: d.data.name, target: "unrouted" });
+  expect(e.destinations[0].target).toBe("{envName}-events");
+});

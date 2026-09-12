@@ -10,7 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/jasongiroux/hookway/internal/awsconf"
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 type RabbitMQConnector func(ctx context.Context, destinationID string, cfg RabbitMQConfig) (Publisher, error)
@@ -45,6 +47,11 @@ type MongoConnector func(ctx context.Context, destinationID string, cfg config.M
 // NewKafkaPublisher. Callers can inject a fake in tests.
 type KafkaConnector func(ctx context.Context, destinationID string, cfg config.KafkaConfig, targets []KafkaTarget) (Publisher, error)
 
+// TemporalConnector creates a Publisher for the given Temporal destination.
+// The default connector dials the frontend via newTemporalOps then calls
+// NewTemporalPublisher. Callers can inject a fake in tests.
+type TemporalConnector func(ctx context.Context, destinationID string, cfg config.TemporalConfig, targets []TemporalTarget) (Publisher, error)
+
 // RedisTarget describes a single Redis route target. The factory builds one
 // RedisTarget per unique route.Target in collectRedisTargets and passes the
 // slice to the RedisConnector.
@@ -55,6 +62,7 @@ type RedisTarget struct {
 	TTL           time.Duration
 	KeyTemplate   string
 	Create        bool
+	Template      vars.Matcher
 }
 
 type FactoryOptions struct {
@@ -66,6 +74,7 @@ type FactoryOptions struct {
 	PostgresConnector PostgresConnector
 	MongoConnector    MongoConnector
 	KafkaConnector    KafkaConnector
+	TemporalConnector TemporalConnector
 	WebhookConnector  WebhookConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
@@ -80,6 +89,7 @@ type Factory struct {
 	postgresConnector PostgresConnector
 	mongoConnector    MongoConnector
 	kafkaConnector    KafkaConnector
+	temporalConnector TemporalConnector
 	webhookConnector  WebhookConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
@@ -95,7 +105,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 	sqsConnector := opts.SQSConnector
 	if sqsConnector == nil {
 		sqsConnector = func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error) {
-			awsCfg, err := newAWSConfig(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
+			awsCfg, err := awsconf.Load(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
 			if err != nil {
 				return nil, err
 			}
@@ -105,7 +115,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 	snsConnector := opts.SNSConnector
 	if snsConnector == nil {
 		snsConnector = func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error) {
-			awsCfg, err := newAWSConfig(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
+			awsCfg, err := awsconf.Load(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
 			if err != nil {
 				return nil, err
 			}
@@ -115,7 +125,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 	s3Connector := opts.S3Connector
 	if s3Connector == nil {
 		s3Connector = func(ctx context.Context, destinationID string, cfg S3Config) (Publisher, error) {
-			awsCfg, err := newAWSConfig(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
+			awsCfg, err := awsconf.Load(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
 			if err != nil {
 				return nil, err
 			}
@@ -145,6 +155,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 				streamTargets := make([]RedisStreamTarget, 0, len(targets))
 				for _, t := range targets {
 					streamTargets = append(streamTargets, RedisStreamTarget{
+						Template:      t.Template,
 						Name:          t.Name,
 						MaxLen:        t.MaxLen,
 						ConsumerGroup: t.ConsumerGroup,
@@ -161,8 +172,9 @@ func NewFactory(opts FactoryOptions) *Factory {
 				listTargets := make([]RedisListTarget, 0, len(targets))
 				for _, t := range targets {
 					listTargets = append(listTargets, RedisListTarget{
-						Name:   t.Name,
-						MaxLen: t.MaxLen,
+						Name:     t.Name,
+						Template: t.Template,
+						MaxLen:   t.MaxLen,
 					})
 				}
 				return NewRedisListPublisher(ctx, ops, RedisListConfig{
@@ -177,7 +189,8 @@ func NewFactory(opts FactoryOptions) *Factory {
 					// Only Name is relevant for pub/sub — channels have no
 					// max_len, TTL, consumer groups, or other options.
 					pubsubTargets = append(pubsubTargets, RedisPubSubTarget{
-						Name: t.Name,
+						Name:     t.Name,
+						Template: t.Template,
 					})
 				}
 				return NewRedisPubSubPublisher(ctx, ops, RedisPubSubConfig{
@@ -192,6 +205,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 				for _, t := range targets {
 					kvTargets = append(kvTargets, RedisKVTarget{
 						Name:        t.Name,
+						Template:    t.Template,
 						TTL:         t.TTL,
 						KeyTemplate: t.KeyTemplate,
 					})
@@ -255,6 +269,22 @@ func NewFactory(opts FactoryOptions) *Factory {
 			}), nil
 		}
 	}
+	temporalConnector := opts.TemporalConnector
+	if temporalConnector == nil {
+		logger := opts.Logger
+		temporalConnector = func(ctx context.Context, destinationID string, cfg config.TemporalConfig, targets []TemporalTarget) (Publisher, error) {
+			ops, err := newTemporalOps(ctx, destinationID, cfg, logger)
+			if err != nil {
+				return nil, fmt.Errorf("temporal destination %q: %w", destinationID, err)
+			}
+			return NewTemporalPublisher(ops, TemporalPublisherConfig{
+				DestinationID: destinationID,
+				StartTimeout:  cfg.StartTimeout,
+				Logger:        logger,
+				Targets:       targets,
+			}), nil
+		}
+	}
 	return &Factory{
 		rabbitMQConnector: connector,
 		sqsConnector:      sqsConnector,
@@ -264,6 +294,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		postgresConnector: postgresConnector,
 		mongoConnector:    mongoConnector,
 		kafkaConnector:    kafkaConnector,
+		temporalConnector: temporalConnector,
 		webhookConnector:  opts.WebhookConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
@@ -271,6 +302,9 @@ func NewFactory(opts FactoryOptions) *Factory {
 }
 
 func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, error) {
+	if err := checkDynamicRoutes(cfg); err != nil {
+		return nil, err
+	}
 	publishers := map[string]Publisher{}
 	var webhookPubs []*WebhookPublisher
 
@@ -366,6 +400,12 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "kafka":
 			publisher, err := f.kafkaConnector(ctx, id, destination.Kafka, collectKafkaTargets(cfg, id))
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "temporal":
+			publisher, err := f.temporalConnector(ctx, id, destination.Temporal, collectTemporalTargets(cfg, id))
 			if err != nil {
 				return nil, err
 			}
@@ -495,7 +535,10 @@ func collectQueueDeclarations(cfg config.Config, destinationID string) []QueueDe
 	byQueue := map[string]QueueDeclaration{}
 	for _, endpoint := range cfg.Endpoints {
 		for _, route := range endpoint.DestinationRoutes() {
-			if !endpoint.Enabled || route.Destination != destinationID {
+			if !endpoint.Enabled || route.Destination != destinationID || route.Dynamic {
+				// Dynamic routes cannot be declared up front; the routing key
+				// is passed through at publish time (validation forbids
+				// create: true on them).
 				continue
 			}
 			declaration, ok := byQueue[route.Target]
@@ -549,7 +592,7 @@ func collectQueues(cfg config.Config, destinationID string) []string {
 	var queues []string
 	for _, endpoint := range cfg.Endpoints {
 		for _, route := range endpoint.DestinationRoutes() {
-			if !endpoint.Enabled || route.Destination != destinationID {
+			if !endpoint.Enabled || route.Destination != destinationID || route.Dynamic {
 				continue
 			}
 			if _, ok := seen[route.Target]; !ok {
@@ -583,6 +626,7 @@ func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, SQSTarget{
+				Template:          routeMatcher(endpoint, route),
 				Name:              route.Target,
 				Create:            route.Create,
 				VisibilityTimeout: route.SQSOptions.VisibilityTimeout,
@@ -617,10 +661,11 @@ func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, SNSTarget{
-				Name:    route.Target,
-				Create:  route.Create,
-				Subject: route.SNSOptions.Subject,
-				FIFO:    mapFIFO(route.FIFO),
+				Template: routeMatcher(endpoint, route),
+				Name:     route.Target,
+				Create:   route.Create,
+				Subject:  route.SNSOptions.Subject,
+				FIFO:     mapFIFO(route.FIFO),
 			})
 		}
 	}
@@ -649,7 +694,7 @@ func collectS3Targets(cfg config.Config, destinationID string) []S3Target {
 				continue
 			}
 			seen[route.Target] = struct{}{}
-			targets = append(targets, S3Target{Name: route.Target})
+			targets = append(targets, S3Target{Name: route.Target, Template: routeMatcher(endpoint, route)})
 		}
 	}
 	for _, t := range deadLetterTargets(cfg, destinationID) {
@@ -677,7 +722,7 @@ func collectPostgresTargets(cfg config.Config, destinationID string) []PostgresT
 				continue
 			}
 			seen[route.Target] = struct{}{}
-			targets = append(targets, PostgresTarget{Name: route.Target})
+			targets = append(targets, PostgresTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
 		}
 	}
 	for _, t := range deadLetterTargets(cfg, destinationID) {
@@ -705,7 +750,7 @@ func collectMongoTargets(cfg config.Config, destinationID string) []MongoTarget 
 				continue
 			}
 			seen[route.Target] = struct{}{}
-			targets = append(targets, MongoTarget{Name: route.Target})
+			targets = append(targets, MongoTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
 		}
 	}
 	for _, t := range deadLetterTargets(cfg, destinationID) {
@@ -743,6 +788,7 @@ func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget 
 				}
 			}
 			targets = append(targets, KafkaTarget{
+				Template:          routeMatcher(endpoint, route),
 				Topic:             route.Target,
 				Create:            route.Create,
 				PartitionKey:      partitionKey,
@@ -758,6 +804,49 @@ func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget 
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Topic < targets[j].Topic })
+	return targets
+}
+
+// collectTemporalTargets builds one TemporalTarget per unique task queue routed
+// to destinationID. Validation guarantees routes sharing a task queue carry
+// identical temporal_options, so first-wins is safe. Dead-letter targets are
+// not merged: validation forbids a temporal destination as a webhook DLQ
+// because a dead-letter route has no workflow_type.
+func collectTemporalTargets(cfg config.Config, destinationID string) []TemporalTarget {
+	seen := map[string]struct{}{}
+	var targets []TemporalTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			opts := route.TemporalOptions
+			targets = append(targets, TemporalTarget{
+				Template:     routeMatcher(endpoint, route),
+				TaskQueue:    route.Target,
+				WorkflowType: opts.WorkflowType,
+				Input:        opts.Input,
+				WorkflowID: WorkflowIDSettings{
+					Source: opts.WorkflowID.Source,
+					Value:  opts.WorkflowID.Value,
+					Path:   opts.WorkflowID.Path,
+					Prefix: opts.WorkflowID.Prefix,
+				},
+				IDReusePolicy:    opts.IDReusePolicy,
+				ExecutionTimeout: opts.ExecutionTimeout,
+				RunTimeout:       opts.RunTimeout,
+				TaskTimeout:      opts.TaskTimeout,
+			})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].TaskQueue < targets[j].TaskQueue })
 	return targets
 }
 
@@ -777,6 +866,7 @@ func collectRedisTargets(cfg config.Config, destinationID string) []RedisTarget 
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, RedisTarget{
+				Template:      routeMatcher(endpoint, route),
 				Name:          route.Target,
 				MaxLen:        route.RedisOptions.MaxLen,
 				ConsumerGroup: route.RedisOptions.ConsumerGroup,
@@ -825,7 +915,7 @@ func collectWebhookTargets(cfg config.Config, destinationID string) []WebhookTar
 				continue
 			}
 			seen[route.Target] = struct{}{}
-			targets = append(targets, WebhookTarget{Name: route.Target})
+			targets = append(targets, WebhookTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
@@ -856,4 +946,35 @@ func mergeQueueOptions(defaults, override config.RabbitMQQueueOptions) QueueOpti
 		opts.DeadLetterRoutingKey = override.DeadLetterRoutingKey
 	}
 	return opts
+}
+
+// checkDynamicRoutes verifies every dynamic route's target template compiles
+// against its endpoint's pattern variables, so collectors can rely on
+// routeMatcher never failing. Config validation guarantees this for loaded
+// configs; hand-built configs get a clear error here instead of a panic.
+func checkDynamicRoutes(cfg config.Config) error {
+	for name, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if !route.Dynamic {
+				continue
+			}
+			if _, err := vars.CompileMatcher(route.Target, endpoint.PatternSources()); err != nil {
+				return fmt.Errorf("endpoint %q: dynamic target %q: %w", name, route.Template, err)
+			}
+		}
+	}
+	return nil
+}
+
+// routeMatcher returns the compiled matcher for a dynamic route, or the zero
+// (static) matcher for a concrete one. checkDynamicRoutes has already proven
+// the template compiles.
+func routeMatcher(endpoint config.EndpointConfig, route config.ExpandedRoute) vars.Matcher {
+	if !route.Dynamic {
+		return vars.Matcher{}
+	}
+	return mustMatcher(route.Target, endpoint.PatternSources())
 }

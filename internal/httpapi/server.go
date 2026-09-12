@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,11 +26,13 @@ import (
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/filter"
 	hooklogging "github.com/jasongiroux/hookway/internal/logging"
+	"github.com/jasongiroux/hookway/internal/lookup"
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
 	"github.com/jasongiroux/hookway/internal/ratelimit"
 	"github.com/jasongiroux/hookway/internal/replay"
 	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"github.com/jasongiroux/hookway/internal/webhook"
 )
 
@@ -43,6 +46,9 @@ type Server struct {
 	verifiers        map[string]auth.Verifier
 	endpointFilters  map[string]filter.Chain
 	routeFilters     map[string][]filter.Chain
+	endpointVars     map[string]endpointVariables
+	literalPaths     map[string]string // exact endpoint path -> endpoint name
+	patternPaths     []patternPath     // endpoints whose path has {segment} placeholders
 	trustedProxies   []*net.IPNet
 	inflight         chan struct{}
 	metrics          *metrics.Metrics
@@ -59,12 +65,26 @@ func NewServer(cfg config.Config, publisher queue.Publisher, logger *slog.Logger
 	return NewServerWithMetrics(cfg, publisher, logger, metrics.New())
 }
 
+// ServerOptions carries optional dependencies for NewServerWithOptions.
+type ServerOptions struct {
+	// LookupFactory builds lookup-source variable providers; nil means lookup.New.
+	LookupFactory LookupFactory
+}
+
 func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, appMetrics *metrics.Metrics) *Server {
+	return NewServerWithOptions(cfg, publisher, logger, appMetrics, ServerOptions{})
+}
+
+func NewServerWithOptions(cfg config.Config, publisher queue.Publisher, logger *slog.Logger, appMetrics *metrics.Metrics, opts ServerOptions) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if appMetrics == nil {
 		appMetrics = metrics.New()
+	}
+	factory := opts.LookupFactory
+	if factory == nil {
+		factory = lookup.New
 	}
 	s := &Server{
 		cfg:              cfg,
@@ -76,6 +96,8 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 		verifiers:        map[string]auth.Verifier{},
 		endpointFilters:  map[string]filter.Chain{},
 		routeFilters:     map[string][]filter.Chain{},
+		endpointVars:     map[string]endpointVariables{},
+		literalPaths:     map[string]string{},
 		metrics:          appMetrics,
 		mux:              http.NewServeMux(),
 	}
@@ -123,7 +145,24 @@ func NewServerWithMetrics(cfg config.Config, publisher queue.Publisher, logger *
 			}
 			s.routeFilters[name] = chains
 		}
+		// Compile routing variables (path pattern, specs, target and url
+		// templates) once. Same fail-closed posture as filters above. A
+		// disabled endpoint is never matched, so it gets no variables and,
+		// in particular, opens no lookup provider connections.
+		if !endpoint.Enabled {
+			continue
+		}
+		ev := compileEndpointVariables(context.Background(), logger, name, endpoint, cfg.Destinations, factory, appMetrics)
+		s.endpointVars[name] = ev
+		// A broken endpoint still registers under its real (pattern) path so
+		// matching requests reach the fail-closed 500 rather than a 404.
+		if !ev.path.IsLiteral() {
+			s.patternPaths = append(s.patternPaths, patternPath{name: name, pattern: ev.path})
+		} else {
+			s.literalPaths[endpoint.Path] = name
+		}
 	}
+	sort.Slice(s.patternPaths, func(i, j int) bool { return s.patternPaths[i].name < s.patternPaths[j].name })
 	s.trustedProxies = parseCIDRs(cfg.Security.TrustedProxies)
 	if cfg.Server.MaxInflightRequests > 0 {
 		s.inflight = make(chan struct{}, cfg.Server.MaxInflightRequests)
@@ -339,7 +378,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			HeaderAllowlist: s.cfg.Security.ForwardedHeaderAllowlist,
 		})
 	}()
-	endpointName, endpoint, ok := s.cfg.EndpointForPath(r.URL.Path)
+	endpointName, endpoint, pathVars, ok := s.matchEndpoint(r.URL.Path)
 	if !ok {
 		status = http.StatusNotFound
 		writeJSON(w, status, map[string]string{"error": "not found"})
@@ -354,7 +393,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// (config.Replay.SkipUnauthenticated). Computed once so every capture
 	// call site below stays consistent.
 	captureEnabled := s.replay != nil && !(s.cfg.Replay.SkipUnauthenticated && endpoint.Auth.Type == auth.AuthTypeNoAuth)
-	routes := endpoint.DestinationRoutes()
+	routes := endpoint.Destinations
 	if r.Method != http.MethodPost {
 		status = http.StatusMethodNotAllowed
 		w.Header().Set("Allow", http.MethodPost)
@@ -520,9 +559,12 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Route-level filter chains decide which destinations receive the payload.
 	// Filtered routes are never treated as delivery failures; dropping them from
 	// the slice keeps the delivery_failure_policy semantics untouched.
-	activeRoutes := routes
+	activeIdx := make([]int, 0, len(routes))
+	for i := range routes {
+		activeIdx = append(activeIdx, i)
+	}
 	if chains := s.routeFilters[endpointName]; len(chains) > 0 {
-		activeRoutes = make([]config.EndpointDestinationConfig, 0, len(routes))
+		activeIdx = activeIdx[:0]
 		for i, route := range routes {
 			if ok, idx := chains[i].Match(env.OrigHeaders, env.Body); !ok {
 				source, path, operator := chains[i].Describe(idx)
@@ -544,8 +586,63 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			activeRoutes = append(activeRoutes, route)
+			activeIdx = append(activeIdx, i)
 		}
+	}
+	// Routing variables: resolve from the request and render the active
+	// routes' targets. Runs after filters (a filtered request is never a
+	// variable error) and before replay capture (the stored envelope and the
+	// recorded deliveries must carry the resolved values and rendered
+	// targets). An unresolved variable that an active route needs either
+	// redirects the event to the endpoint's fallback route or is rejected as
+	// a bad request; it is never a delivery failure.
+	ev := s.endpointVars[endpointName]
+	if ev.broken {
+		releaseReplay()
+		status = http.StatusInternalServerError
+		s.logger.Error("endpoint variables failed to compile; rejecting request", "endpoint", endpointName, "event_id", env.ID)
+		writeJSON(w, status, map[string]string{"error": "internal error"})
+		return
+	}
+	var activeRoutes []resolvedRoute
+	var unresolved []string
+	if len(ev.specs) == 0 {
+		activeRoutes = staticRoutes(endpoint, activeIdx)
+	} else if len(activeIdx) > 0 {
+		var values map[string]string
+		var lookupErrs map[string]error
+		activeRoutes, values, unresolved, lookupErrs = ev.resolveRoutes(r.Context(), endpoint, activeIdx, vars.Input{
+			Headers: env.OrigHeaders, Body: env.Body, Query: r.URL.Query(), PathVars: pathVars,
+		})
+		if len(values) > 0 {
+			env.Variables = values
+		}
+		for name, lerr := range lookupErrs {
+			s.logger.Warn("variable lookup failed; treating as unresolved",
+				"endpoint", endpointName, "variable", name, "error", lerr.Error(),
+				"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID)
+		}
+	}
+	if len(unresolved) > 0 {
+		fb, hasFallback := endpoint.FallbackRoute()
+		action := "rejected"
+		if hasFallback {
+			action = "fallback"
+		}
+		for _, v := range unresolved {
+			s.metrics.VariableUnresolved(endpointName, v, action)
+		}
+		s.logger.Info("webhook routing variables unresolved",
+			"endpoint", endpointName, "variables", unresolved, "action", action,
+			"event_id", env.ID, "request_id", env.RequestID, "trace_id", env.TraceID,
+		)
+		if !hasFallback {
+			releaseReplay()
+			status = http.StatusBadRequest
+			writeJSON(w, status, map[string]string{"error": "unresolved_variable", "variable": unresolved[0]})
+			return
+		}
+		activeRoutes = []resolvedRoute{{EndpointDestinationConfig: fb, template: fb.Target}}
 	}
 	// Capture INSERT: only once auth has passed and the endpoint/route filters
 	// have decided at least one destination will actually receive this event
@@ -602,6 +699,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		"status": "accepted", "endpoint": endpointName, "destinations": published,
 		"event_id": env.ID, "request_id": env.RequestID,
 	}
+	if len(unresolved) > 0 {
+		body["unresolved_variables"] = unresolved
+	}
 	if len(failed) > 0 {
 		// Partial failure under skip_failed: release the reservation so an
 		// identical sender retry is accepted again (not rejected 409) and can
@@ -629,7 +729,7 @@ type publishRouteResult struct {
 	err           error
 }
 
-func (s *Server) publishRoutes(ctx context.Context, endpointName string, endpoint config.EndpointConfig, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
+func (s *Server) publishRoutes(ctx context.Context, endpointName string, endpoint config.EndpointConfig, env webhook.Envelope, routes []resolvedRoute) ([]map[string]string, []map[string]string, error) {
 	switch endpoint.EffectiveDeliveryFailurePolicy() {
 	case config.DeliveryFailurePolicySkipFailed:
 		return s.publishRoutesSkipFailed(ctx, endpointName, env, routes)
@@ -638,7 +738,7 @@ func (s *Server) publishRoutes(ctx context.Context, endpointName string, endpoin
 	}
 }
 
-func (s *Server) publishRoutesStopOnFailure(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
+func (s *Server) publishRoutesStopOnFailure(ctx context.Context, endpointName string, env webhook.Envelope, routes []resolvedRoute) ([]map[string]string, []map[string]string, error) {
 	published := make([]map[string]string, 0, len(routes))
 	for i, route := range routes {
 		result := s.publishRoute(ctx, endpointName, env, route, 0)
@@ -659,7 +759,7 @@ func (s *Server) publishRoutesStopOnFailure(ctx context.Context, endpointName st
 	return published, nil, nil
 }
 
-func (s *Server) publishRoutesSkipFailed(ctx context.Context, endpointName string, env webhook.Envelope, routes []config.EndpointDestinationConfig) ([]map[string]string, []map[string]string, error) {
+func (s *Server) publishRoutesSkipFailed(ctx context.Context, endpointName string, env webhook.Envelope, routes []resolvedRoute) ([]map[string]string, []map[string]string, error) {
 	workerCount := s.cfg.Server.FanoutConcurrencyLimit()
 	if workerCount > len(routes) {
 		workerCount = len(routes)
@@ -719,7 +819,7 @@ func compactRouteResults(results []map[string]string) []map[string]string {
 // as a failed route rather than crashing the process or leaving the
 // WaitGroup/results channel wedged — the deferred recover still runs, wg.Done
 // still fires, and a result is still sent.
-func (s *Server) publishRouteRecovered(ctx context.Context, endpointName string, env webhook.Envelope, route config.EndpointDestinationConfig, index int) (result publishRouteResult) {
+func (s *Server) publishRouteRecovered(ctx context.Context, endpointName string, env webhook.Envelope, route resolvedRoute, index int) (result publishRouteResult) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			s.logger.Error("panic recovered in fan-out publish worker",
@@ -739,7 +839,11 @@ func (s *Server) publishRouteRecovered(ctx context.Context, endpointName string,
 	return s.publishRoute(ctx, endpointName, env, route, index)
 }
 
-func (s *Server) publishRoute(ctx context.Context, endpointName string, env webhook.Envelope, route config.EndpointDestinationConfig, index int) publishRouteResult {
+// publishRoute delivers to one rendered route. The publisher, msg.Queue, and
+// the result (which feeds the HTTP response and the replay store) all get the
+// rendered target; metrics are labelled with the authored template so their
+// cardinality is bounded by the config.
+func (s *Server) publishRoute(ctx context.Context, endpointName string, env webhook.Envelope, route resolvedRoute, index int) publishRouteResult {
 	msg := envelopeToMessage(env)
 	msg.DestinationQueueID = route.Destination
 	msg.Queue = route.Target
@@ -753,15 +857,16 @@ func (s *Server) publishRoute(ctx context.Context, endpointName string, env webh
 			"endpoint", endpointName,
 			"destination", route.Destination,
 			"target", route.Target,
+			"target_template", route.template,
 			"event_id", msg.ID,
 			"request_id", env.RequestID,
 			"trace_id", env.TraceID,
 			"error", err.Error(),
 		)
 	} else {
-		s.metrics.MessagePublished(endpointName, route.Destination, route.Target)
+		s.metrics.MessagePublished(endpointName, route.Destination, route.template)
 	}
-	s.metrics.Publish(endpointName, route.Destination, route.Target, status, duration)
+	s.metrics.Publish(endpointName, route.Destination, route.template, status, duration)
 	return publishRouteResult{
 		index: index, destinationID: route.Destination, queue: route.Target,
 		duration: duration, err: err,
@@ -1084,4 +1189,41 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func Shutdown(ctx context.Context, srv *http.Server) error {
 	return srv.Shutdown(ctx)
+}
+
+// patternPath is an enabled endpoint whose path contains {segment}
+// placeholders, matched after the literal-path map misses.
+type patternPath struct {
+	name    string
+	pattern vars.PathPattern
+}
+
+// matchEndpoint resolves the request path to an enabled endpoint: exact
+// literal paths first (O(1), the pre-variables behaviour), then pattern paths.
+// Config validation guarantees at most one pattern can match.
+func (s *Server) matchEndpoint(path string) (string, config.EndpointConfig, map[string]string, bool) {
+	if name, ok := s.literalPaths[path]; ok {
+		return name, s.cfg.Endpoints[name], nil, true
+	}
+	for _, pp := range s.patternPaths {
+		if captured, ok := pp.pattern.Match(path); ok {
+			return pp.name, s.cfg.Endpoints[pp.name], captured, true
+		}
+	}
+	return "", config.EndpointConfig{}, nil, false
+}
+
+// Close releases resources owned by the server that are not tied to a
+// listener: the lookup-source variable providers (DynamoDB clients, HTTP
+// connection pools, Postgres pools). Safe to call once after Shutdown.
+func (s *Server) Close() error {
+	var errs []error
+	for _, ev := range s.endpointVars {
+		for _, p := range ev.providers {
+			if err := p.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return errors.Join(errs...)
 }

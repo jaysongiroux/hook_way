@@ -1,9 +1,7 @@
 package queue
 
 import (
-	"encoding/json"
-	"strconv"
-	"strings"
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 // FIFOSettings is the queue-package view of a destination's per-target FIFO
@@ -33,23 +31,31 @@ func resolveFIFO(msg Message, s FIFOSettings) (groupID, dedupID string, contentB
 }
 
 func resolveGroupID(msg Message, s FIFOSettings) string {
-	var value string
-	switch s.GroupIDSource {
-	case "static":
-		value = s.GroupIDValue
-	case "endpoint":
-		value = msg.Endpoint
-	case "header":
-		if msg.Headers != nil {
-			value = msg.Headers.Get(s.GroupIDPath)
-		}
-	case "body":
-		value = lookupBodyPath(msg.Body, s.GroupIDPath)
-	}
-	if value != "" {
+	if value := resolveSourceValue(msg, s.GroupIDSource, s.GroupIDValue, s.GroupIDPath); value != "" {
 		return value
 	}
 	return fallbackGroupID(msg, s.GroupIDFallback)
+}
+
+// resolveSourceValue extracts the raw value for a static | endpoint | header |
+// body source without applying any fallback; callers decide what an empty
+// result means. Shared by FIFO group ids, Kafka partition keys, and Temporal
+// workflow ids.
+func resolveSourceValue(msg Message, source, value, path string) string {
+	switch source {
+	case "static":
+		return value
+	case "endpoint":
+		return msg.Endpoint
+	case "header":
+		if msg.Headers != nil {
+			return msg.Headers.Get(path)
+		}
+	case "body":
+		v, _ := vars.BodyString(msg.Body, path)
+		return v
+	}
+	return ""
 }
 
 func fallbackGroupID(msg Message, fallback string) string {
@@ -60,35 +66,4 @@ func fallbackGroupID(msg Message, fallback string) string {
 		return fallback
 	}
 	return msg.Endpoint
-}
-
-// lookupBodyPath walks a dotted path (e.g. "customer.id") into a JSON-decoded
-// body and returns the leaf as a string when it is a string; otherwise "".
-func lookupBodyPath(body any, path string) string {
-	if path == "" {
-		return ""
-	}
-	current := body
-	for _, segment := range strings.Split(path, ".") {
-		m, ok := current.(map[string]any)
-		if !ok {
-			return ""
-		}
-		current, ok = m[segment]
-		if !ok {
-			return ""
-		}
-	}
-	switch v := current.(type) {
-	case string:
-		return v
-	case bool:
-		return strconv.FormatBool(v)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case json.Number:
-		return v.String()
-	default:
-		return ""
-	}
 }

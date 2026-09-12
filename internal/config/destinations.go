@@ -87,6 +87,7 @@ type DestinationConfig struct {
 	Redis              RedisConfig
 	Kafka              KafkaConfig
 	Webhook            WebhookConfig
+	Temporal           TemporalConfig
 }
 
 type RetryPolicyConfig struct {
@@ -216,6 +217,28 @@ type KafkaRetryConfig struct {
 	MaxAttempts    int
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
+}
+
+// TemporalConfig is the connection block for a temporal destination. The
+// route target is the task queue; workflow type and id derivation live in the
+// per-route TemporalEndpointOptions. ConnectTimeout bounds the startup Dial
+// (fail-fast); StartTimeout bounds each ExecuteWorkflow RPC.
+type TemporalConfig struct {
+	HostPort       string
+	Namespace      string
+	APIKey         string
+	ConnectTimeout time.Duration
+	StartTimeout   time.Duration
+	TLS            TemporalTLSConfig
+}
+
+type TemporalTLSConfig struct {
+	Enabled            bool
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
 }
 
 type rawRabbitMQQueueOptions struct {
@@ -406,6 +429,21 @@ type rawDestinationConfig struct {
 			MaxBackoff     string `yaml:"max_backoff"`
 		} `yaml:"retry"`
 	} `yaml:"kafka"`
+	Temporal struct {
+		HostPort       string `yaml:"host_port"`
+		Namespace      string `yaml:"namespace"`
+		APIKey         string `yaml:"api_key"`
+		ConnectTimeout string `yaml:"connect_timeout"`
+		StartTimeout   string `yaml:"start_timeout"`
+		TLS            struct {
+			Enabled            bool   `yaml:"enabled"`
+			CACert             string `yaml:"ca_cert"`
+			ClientCert         string `yaml:"client_cert"`
+			ClientKey          string `yaml:"client_key"`
+			ServerName         string `yaml:"server_name"`
+			InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+		} `yaml:"tls"`
+	} `yaml:"temporal"`
 }
 
 func convertDestination(fieldPrefix string, raw rawDestinationConfig) (DestinationConfig, []ValidationIssue) {
@@ -456,6 +494,14 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 		issues = append(issues, issue)
 	}
 	kafkaMaxBackoff, issue := parsePositiveDuration(fieldPrefix+".kafka.retry.max_backoff", raw.Kafka.Retry.MaxBackoff)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	temporalConnectTimeout, issue := parsePositiveDefaultDuration(fieldPrefix+".temporal.connect_timeout", raw.Temporal.ConnectTimeout, 10*time.Second)
+	if issue.Field != "" {
+		issues = append(issues, issue)
+	}
+	temporalStartTimeout, issue := parsePositiveDefaultDuration(fieldPrefix+".temporal.start_timeout", raw.Temporal.StartTimeout, 5*time.Second)
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
@@ -600,6 +646,21 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			TLS: WebhookTLSConfig{
 				CACert: raw.Webhook.TLS.CACert, ClientCert: raw.Webhook.TLS.ClientCert, ClientKey: raw.Webhook.TLS.ClientKey,
 				ServerName: raw.Webhook.TLS.ServerName, InsecureSkipVerify: raw.Webhook.TLS.InsecureSkipVerify,
+			},
+		},
+		Temporal: TemporalConfig{
+			HostPort:       raw.Temporal.HostPort,
+			Namespace:      raw.Temporal.Namespace,
+			APIKey:         raw.Temporal.APIKey,
+			ConnectTimeout: temporalConnectTimeout,
+			StartTimeout:   temporalStartTimeout,
+			TLS: TemporalTLSConfig{
+				Enabled:            raw.Temporal.TLS.Enabled,
+				CACert:             raw.Temporal.TLS.CACert,
+				ClientCert:         raw.Temporal.TLS.ClientCert,
+				ClientKey:          raw.Temporal.TLS.ClientKey,
+				ServerName:         raw.Temporal.TLS.ServerName,
+				InsecureSkipVerify: raw.Temporal.TLS.InsecureSkipVerify,
 			},
 		},
 	}, issues

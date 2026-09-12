@@ -15,6 +15,12 @@ import (
 )
 
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
+
+// IsSafeName reports whether s is a valid destination id / route target /
+// endpoint name: 1-128 characters of letters, digits, dot, underscore, hyphen.
+// Exported so the request path can check rendered variable targets.
+func IsSafeName(s string) bool { return safeName.MatchString(s) }
+
 var safeHeaderName = regexp.MustCompile("^[!#$%&'*+\\-.^_`|~0-9A-Za-z]+$")
 
 // LoopHopsHeader is the HTTP header Hookway stamps on outbound webhook
@@ -225,6 +231,8 @@ type rawConfig struct {
 		FilterResponse struct {
 			Status int `yaml:"status"`
 		} `yaml:"filter_response"`
+		Variables            map[string]rawVariableConfig `yaml:"variables"`
+		OnUnresolvedVariable *rawFallbackRouteConfig      `yaml:"on_unresolved_variable"`
 	} `yaml:"endpoints"`
 }
 
@@ -544,6 +552,8 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 		}
 		destinations, destinationIssues := convertEndpointDestinations("endpoints."+name+".destinations", endpoint.Destinations)
 		issues = append(issues, destinationIssues...)
+		variables, variableIssues := convertVariables("endpoints."+name+".variables", endpoint.Variables)
+		issues = append(issues, variableIssues...)
 		cfg.Endpoints[name] = EndpointConfig{
 			Enabled:               endpoint.Enabled,
 			Path:                  endpoint.Path,
@@ -564,8 +574,10 @@ func convert(raw rawConfig) (Config, []ValidationIssue) {
 				ExpectedAudience:   endpoint.Auth.ExpectedAudience,
 				BodyHashClaim:      endpoint.Auth.BodyHashClaim,
 				AllowUnboundBody:   endpoint.Auth.AllowUnboundBody},
-			Filters:        convertFilters(endpoint.Filters),
-			FilterResponse: FilterResponseConfig{Status: endpoint.FilterResponse.Status},
+			Filters:              convertFilters(endpoint.Filters),
+			FilterResponse:       FilterResponseConfig{Status: endpoint.FilterResponse.Status},
+			Variables:            variables,
+			OnUnresolvedVariable: convertFallback(endpoint.OnUnresolvedVariable),
 		}
 	}
 	return cfg, issues

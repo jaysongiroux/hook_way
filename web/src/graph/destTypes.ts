@@ -154,6 +154,22 @@ export const DEST_TYPE_SPECS: Record<string, DestTypeSpec> = {
       { key: "max_queue", label: "Max queue", kind: "number" },
     ],
   },
+  temporal: {
+    block: "temporal",
+    fields: [
+      { key: "host_port", label: "Host:port", placeholder: "localhost:7233" },
+      { key: "namespace", label: "Namespace", placeholder: "default" },
+      { key: "api_key", label: "API key (Temporal Cloud; requires TLS)", placeholder: "${TEMPORAL_API_KEY}" },
+      { key: "connect_timeout", label: "Connect timeout", placeholder: "10s" },
+      { key: "start_timeout", label: "Start timeout", placeholder: "5s" },
+      {
+        key: "tls",
+        label: "TLS",
+        kind: "group",
+        fields: [{ key: "enabled", label: "Enabled", kind: "bool", default: false }, ...tlsFields],
+      },
+    ],
+  },
   redis_stream: { block: "redis", fields: redisFields },
   redis_list: { block: "redis", fields: redisFields },
   redis_pubsub: { block: "redis", fields: redisFields },
@@ -161,7 +177,7 @@ export const DEST_TYPE_SPECS: Record<string, DestTypeSpec> = {
 };
 
 export const DEST_TYPES: string[] = [
-  "rabbitmq", "sqs", "sns", "s3", "postgres", "mongodb", "kafka", "webhook",
+  "rabbitmq", "sqs", "sns", "s3", "postgres", "mongodb", "kafka", "webhook", "temporal",
   "redis_stream", "redis_list", "redis_pubsub", "redis_kv",
 ];
 

@@ -445,3 +445,18 @@ func TestRun_ServeVersionFlagPrintsVersionAndCommit(t *testing.T) {
 		t.Fatalf("stdout = %q, want to contain %q", stdout.String(), want)
 	}
 }
+
+func TestHostPortRendersLocalhostSuffix(t *testing.T) {
+	cases := map[string]string{
+		":8090":          ":8090",
+		"0.0.0.0:8090":   ":8090",
+		"127.0.0.1:9000": ":9000",
+		"[::1]:8080":     ":8080",
+		"not-an-address": "not-an-address",
+	}
+	for addr, want := range cases {
+		if got := hostPort(addr); got != want {
+			t.Errorf("hostPort(%q) = %q, want %q", addr, got, want)
+		}
+	}
+}

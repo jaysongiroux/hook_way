@@ -107,7 +107,7 @@ paths.
 
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, and `postgres`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 
@@ -431,6 +431,78 @@ destinations:
         max_attempts: 3
         initial_backoff: "100ms"
         max_backoff: "2s"
+```
+
+### Temporal
+
+Temporal fields live under `destinations.<id>.temporal`. Hookway starts one workflow execution per webhook event using the official [Temporal Go SDK](https://github.com/temporalio/sdk-go). It only starts workflows (no signals, no worker of its own); your existing workers on the task queue pick the execution up.
+
+- `destinations.<id>.type`: set to `temporal`.
+- `destinations.<id>.temporal.host_port`: required frontend gRPC address, e.g. `localhost:7233` (self-hosted) or `<namespace>.<account>.tmprl.cloud:7233` (Temporal Cloud).
+- `destinations.<id>.temporal.namespace`: required Temporal namespace.
+- `destinations.<id>.temporal.api_key`: optional Temporal Cloud API key, sent as a bearer credential. Requires `tls.enabled: true`.
+- `destinations.<id>.temporal.connect_timeout`: optional duration, default `10s`. Bounds the startup Dial; the destination fails fast if the frontend is unreachable (same behaviour as the Postgres and MongoDB destinations).
+- `destinations.<id>.temporal.start_timeout`: optional duration, default `5s`. Bounds each start-workflow RPC. Keep it below `server.publish_timeout`.
+- `destinations.<id>.temporal.tls`: optional TLS settings. Omit or set `enabled: false` for plaintext. Fields mirror the Kafka TLS block:
+  - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
+  - `client_cert` / `client_key`: paths for mutual TLS. Both must be set together.
+  - `server_name`: overrides the SNI/verification hostname.
+  - `insecure_skip_verify`: dev-only; disables certificate verification.
+
+**Security note:** omitting both `tls.enabled` and `api_key` connects to the frontend in plaintext with no authentication. Hookway logs a startup warning in this case. The published image is built `FROM scratch`, so certificate paths must be mounted into the container.
+
+**`target` is the task queue.** The per-route `target` field is the Temporal task queue name. `create: true` has no meaning for Temporal and is ignored. Task queue names must not end in `.fifo`.
+
+**Per-route `temporal_options`** (required on every route that points at a `temporal` destination):
+
+- `workflow_type` (required): the workflow type name registered on the worker.
+- `input`: `envelope` (default) sends the full Hookway event envelope as the single workflow argument, the same JSON every other destination emits. `body` sends only the decoded webhook body, for workflows that expect a plain object. When the body was not JSON, `body` mode falls back to the envelope and logs a warning so a JSON-typed worker still receives an object.
+- `workflow_id`: derives the workflow id. Omit the block to use the Hookway event id (unique per event).
+  - `source`: `static` | `endpoint` | `header` | `body`. `static` uses `value`; `header`/`body` extract `path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. An unresolved value falls back to the event id.
+  - `prefix`: prepended to the resolved value, e.g. `prefix: "order-"` with `path: "order.id"` yields `order-<id>`. May contain `{variable}` placeholders declared under the endpoint's `variables` (e.g. `"{envName}-aan-"`), rendered per event.
+- `id_reuse_policy`: `allow_duplicate`, `allow_duplicate_failed_only`, `reject_duplicate`, or `terminate_if_running`. Omit for the server default (`allow_duplicate`).
+- `execution_timeout`, `run_timeout`, `task_timeout`: optional per-execution timeouts. `run_timeout` must not exceed `execution_timeout`.
+
+Routes in different endpoints that share a task queue must use identical `temporal_options`.
+
+**Duplicates count as delivered.** When the server reports that an execution with the derived workflow id already exists, Hookway logs it at debug level and returns success, so sender retries with a deterministic workflow id are idempotent (first-start-wins).
+
+**Failure handling.** There is no dead-letter path for this destination. Any other start error (frontend unreachable, `start_timeout` exceeded, unknown namespace, rejected start) fails the publish: under the default `stop_on_failure` policy the sender receives a 503 and is expected to retry; under `skip_failed` the route is marked failed and the other routes still deliver. The SDK retries transient gRPC errors internally within `start_timeout`. A stopped worker is not a failure: the start succeeds and the execution waits on the task queue. To recover events whose start still failed, enable the [replay store](#replay), which records every event with a per-destination `delivered`/`failed` outcome and can re-publish it.
+
+**Readiness.** The destination's readiness probe calls the frontend gRPC health service; a proxy that blocks it will report the destination unready even though publishes succeed.
+
+**Payload encoding.** Inputs are encoded with the SDK's default JSON data converter. Clusters that require a custom payload codec (for example, encryption at rest) are not supported yet.
+
+A temporal destination cannot be used as a webhook `dead_letter` target because a dead-letter route has no `workflow_type`.
+
+See `examples/destinations/temporal.yaml` for a complete reference config.
+
+```yaml
+destinations:
+  orchestrator:
+    type: "temporal"
+    temporal:
+      host_port: "${TEMPORAL_ADDRESS}"
+      namespace: "${TEMPORAL_NAMESPACE}"
+      connect_timeout: "10s"
+      start_timeout: "5s"
+      tls:
+        enabled: false
+
+endpoints:
+  order_events:
+    path: "/webhooks/orders"
+    destinations:
+      - destination: "orchestrator"
+        target: "order-events"
+        temporal_options:
+          workflow_type: "OrderWebhookWorkflow"
+          input: "body"
+          workflow_id:
+            source: "body"
+            path: "order.id"
+            prefix: "order-"
+          id_reuse_policy: "reject_duplicate"
 ```
 
 ### Redis / Valkey
@@ -806,7 +878,7 @@ Endpoint fields:
 Destination route fields:
 
 - `destination`: required target key under `destinations`.
-- `target`: required queue/topic/routing-key target for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`.
+- `target`: required queue/topic/routing-key target for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`, or be a template with `{variable}` placeholders declared under the endpoint's `variables` (see [Variables](#variables)); the rendered value must satisfy the same rule.
 - `create`: when true, queue layer can declare and bind this route target during startup.
 - `queue_options`: optional RabbitMQ queue arguments (only valid when the destination is `rabbitmq`). Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
 - `sqs_options`: optional SQS queue attributes (only valid when the destination is `sqs`). `visibility_timeout` and `message_retention` are durations expressed in whole seconds within the SQS-accepted bounds (visibility `0`–`12h`, retention `60s`–`14d`).
@@ -817,6 +889,7 @@ Destination route fields:
   - `ttl`: key expiry duration (e.g. `"168h"`). Valid for `redis_kv` only.
   - `key_template`: key naming template for `redis_kv`. Tokens `{prefix}`, `{target}`, `{endpoint}`, `{id}`, and `{idempotency_key}` are substituted at publish time. Valid for `redis_kv` only.
 - `kafka_options`: optional per-route Kafka settings (only valid when the destination is `kafka`). `partition_key` derives the Kafka message key using the same source model as `fifo.group_id` (`source`: `static` | `endpoint` | `header` | `body`, plus `value`/`path`/`fallback`); omit it for round-robin partition distribution. `partitions` and `replication_factor` tune the topic Hookway pre-creates for `create: true` routes; omit either (or leave at `0`) to use the broker default.
+- `temporal_options`: required per-route Temporal settings (only valid when the destination is `temporal`). `workflow_type` names the workflow to start; `input` is `envelope` (default) or `body`; `workflow_id` derives the workflow id using the same source model as `fifo.group_id` (`source`: `static` | `endpoint` | `header` | `body`, plus `value`/`path`) with an optional `prefix` and an event-id fallback; `id_reuse_policy` and the `execution_timeout`/`run_timeout`/`task_timeout` durations map onto the SDK start options. See [Temporal](#temporal).
 - `fifo`: required when `target` ends in `.fifo` (and only allowed then). Controls FIFO ordering and deduplication:
   - `group_id.source`: one of `static` | `endpoint` | `header` | `body` — where the `MessageGroupId` comes from. `static` uses `group_id.value`; `header`/`body` extract `group_id.path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. `group_id.fallback` (a literal, or `endpoint`) is used when extraction yields nothing.
   - `dedup.use_idempotency_key`: when true, use the envelope `idempotency_key` as the `MessageDeduplicationId` when present.
@@ -904,6 +977,103 @@ Auth fields:
 - `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
 - `body_hash_claim`: required for `jwt` schemes unless `allow_unbound_body` is true. Names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.
 - `allow_unbound_body`: optional; `jwt` only. When true, `body_hash_claim` may be omitted and the JWT authenticates the caller but not the payload. Do not enable this unless a gateway in front of Hookway already binds the body.
+
+### Variables
+
+Variables let one route serve many environments or tenants. An endpoint declares named variables derived from each request, and `{name}` placeholders in route targets and in a webhook destination `url` are filled per request. Without a `variables` block nothing changes: targets are plain strings, exactly as before.
+
+```yaml
+endpoints:
+  digifi:
+    path: "/webhooks/{envName}/digifi"
+    variables:
+      envName:
+        source: path                       # header | body | query | path
+        values: [qa-gm3, staging-portal, portal]
+      tenant:
+        source: body
+        path: "data.object.organizationId"
+        pattern: "^[a-z0-9]{1,24}$"
+    on_unresolved_variable:
+      destination: "archive"
+      target: "unrouted"
+    destinations:
+      - destination: "archive"
+        target: "{envName}-events"
+      - destination: "hub"                 # webhook url: https://{envName}-api.htap.sh/api/v3/digifi/webhook
+        target: "event"
+      - destination: "audit"
+        target: "{envName}-{tenant}"
+```
+
+**Declaring a variable** (`endpoints.<name>.variables.<var>`):
+
+- `source` (required): `header`, `body`, `query`, `path`, or `lookup` (see below).
+- `path`: what to read. A header name, a dotted JSON body path (`data.object.id`; arrays are not indexed), a query-string key (first value wins), or the name of a `{segment}` in the endpoint `path`. Defaults to the variable's own name. Header lookups use the raw request headers, like filters.
+- Exactly one of:
+  - `values`: the permitted values. Routes using the variable are **expanded at startup** into one concrete route per value (a Cartesian product across variables, capped at 256 routes per endpoint), so queue and topic provisioning (`create: true`), validation, metrics, and replay behave exactly as for static targets.
+  - `pattern`: an anchored regular expression (`^...$`, RE2, at most 256 characters). The target is rendered per request and the destination receives a target it has never seen; see the per-type note below.
+- `default`: used when the value is missing, empty, or not accepted. Must itself be accepted.
+
+Values are trimmed, must be 1-128 characters, and the rendered target must still match the target name rule (`^[a-zA-Z0-9._-]{1,128}$`). A variable may not smuggle a `.fifo` suffix onto a template that does not end in a literal `.fifo`; FIFO targets keep the suffix in the template. Names `prefix`, `target`, `endpoint`, `id`, and `idempotency_key` are reserved (they are `redis_kv` key-template tokens). Every declared variable must be referenced by the endpoint path, a route target, or a webhook `url`.
+
+**Lookup source.** `source: lookup` resolves the variable through an external provider keyed by a value read from the request:
+
+```yaml
+variables:
+  envByApp:
+    source: lookup
+    lookup:
+      key: { source: body, path: "data.object.applicationId" }   # header | body | query | path
+      provider: dynamodb                                          # dynamodb | http | postgres
+      dynamodb:
+        table: "sandbox_ephemeral_routing_data"
+        index: "CreatedAtIndex"                                   # optional
+        key_attribute: "id"                                       # default id
+        filter: { attribute: "id_type", value: "application" }    # optional equality filter
+        value_attribute: "env_name"
+        # region, endpoint, access_key_id, secret_access_key as for sqs; consistent_read: false
+        # (consistent_read is rejected by DynamoDB on a global secondary index; use it only with the base table or a local index)
+      timeout: "2s"                                               # default 2s per provider call
+      cache: { ttl: "5m", negative_ttl: "0s", max_entries: 10000 } # defaults
+    pattern: "^[a-z0-9-]{1,32}$"                                  # optional: values/pattern still gate the result
+```
+
+- `key` uses the same source model as a plain variable (path defaults to the variable name). The key is trimmed; an empty key or one longer than 256 characters is a miss without calling the provider.
+- `dynamodb` runs a Query on the key attribute (newest first when the index has a sort key) and applies the `filter` client-side, so a limit can never hide the matching row. It needs `dynamodb:Query` on the table and, when `index` is set, on `<table>/index/*`.
+- `http` sends a GET (or POST with `{"key": "..."}`) to `url`, which must contain exactly one `{key}` (URL-escaped, and not in the host, so a request cannot choose the resolver), with optional `headers`, and reads the dotted `value_path` from the JSON response. A 404 is a miss; any other non-2xx status or an unparsable body is an error.
+- `postgres` runs `query` with exactly one `{key}` placeholder bound as `$1` (never interpolated; `{key}` is used because `$1` would be treated as an environment reference at load) and reads the first column of the first row. No row is a miss.
+- A lookup variable may declare `values` or `pattern` to gate the returned value, or neither; the rendered target is still checked for a safe name. `default` applies on a miss or a provider error.
+- Hits are cached per variable for `cache.ttl`; misses are not cached unless `negative_ttl` is set (the row is often written moments before the first webhook arrives). Concurrent first lookups of one key make a single provider call.
+- A provider error (timeout, throttling, permissions, bad response) is logged at warn and counted under `hookway_variable_lookup_total{result="error"}` but routes exactly like a miss: `default`, then the fallback route, then 400. Results are otherwise labelled `hit`, `miss`, or `cached`; `hookway_variable_lookup_duration_seconds` records latency.
+- Lookup latency sits on the request path before publish and is bounded by `timeout`. Replays never repeat a lookup: the stored envelope already carries `variables`.
+- Environments that do not need the lookup (production, staging) should use a header, path, or `values` source instead; only the config for the shared sandbox declares lookup variables.
+
+**Where placeholders are allowed:** route `target` strings, `destinations.<id>.webhook.url`, and the Temporal route's `temporal_options.workflow_id.prefix`. Every placeholder in a webhook `url` must be declared by every endpoint that routes to that destination. A placeholder in the url **host** must be followed by a literal domain suffix (`{envName}-api.example.com`), so a request can pick at most one label under a fixed domain and never an arbitrary host. `${ENV_VAR}` references are unaffected: they are expanded at load and never treated as variables.
+
+**Path placeholders:** `path: "/webhooks/{envName}/digifi"` matches exactly one non-empty segment per placeholder and has no trailing-slash tolerance, like literal paths. Each placeholder needs a variable with `source: path`. Two enabled endpoints whose paths could match the same request (a literal where the other has a placeholder, or a parent/child pair) are a validation error, so matching never needs precedence rules.
+
+**Unresolved variables.** After filters have run, Hookway resolves the variables the remaining routes need. If one cannot be resolved (and has no `default`), or a rendered target is not a valid name:
+
+- with `on_unresolved_variable: {destination, target}` the event is published **only** to that static fallback route, the response is 202 with `unresolved_variables: [..]`, and `hookway_variable_unresolved_total{action="fallback"}` increments. The fallback destination cannot be a `webhook` or `temporal` destination and its target must be static.
+- otherwise the sender receives `400 {"error":"unresolved_variable","variable":"envName"}`, nothing is published, the replay-protection reservation is released, and `hookway_variable_unresolved_total{action="rejected"}` increments.
+
+A filtered request is never a variable error, and a variable used only by a route a route-level filter dropped is not required.
+
+**What each layer sees.** The publisher, the response `destinations[].queue`, and the replay store get the **rendered** target, so replays re-deliver to the same queue without re-resolving. The event envelope carries the resolved values under `variables` (omitted when the endpoint declares none), which is also how a templated webhook `url` is rendered on replay. Metrics keep the **authored template** as the `queue` label (`hookway_publish_total{queue="{envName}-events"}`), so cardinality is bounded by the config rather than by the request stream.
+
+**Per destination type.** Enumerated variables work with every type and expand at startup. Pattern variables render per request, and the destination resolves the rendered target on first sight (once per distinct name, cached, with concurrent first sights coalesced):
+
+- `s3` (folder), `postgres` (column value), `mongodb` (collection), `redis_list`, `redis_pubsub`, `redis_kv`, `webhook` (appended path segment), and `temporal` (task queue) need no remote work.
+- `sqs` looks the queue up by name, creates it when the route has `create: true` (with the route's `sqs_options` and `fifo` settings; a template ending in `.fifo` yields FIFO queues), and reconciles an existing queue under `on_existing_conflict`. A missing queue with `create: false` fails that publish (503, so the sender retries) and is not cached.
+- `sns` lists topics to find the ARN, creating the topic when `create: true`.
+- `kafka` creates the topic when `create: true` (with the route's partitions and replication factor); otherwise a missing topic surfaces as a write error, since broker auto-creation is disabled.
+- `redis_stream` derives the prefixed stream key and creates the consumer group when `create: true` and `redis_options.consumer_group` is set.
+- `rabbitmq` passes the rendered routing key through; the queue must be pre-bound, and `create: true` is rejected on such routes because a queue whose name is unknown cannot be declared up front.
+
+First-sight provisioning runs inside `server.publish_timeout`. The per-publisher cache of rendered targets holds 10,000 entries and evicts the oldest with a warning; an eviction only costs a re-lookup.
+
+See `examples/variables.yaml` for a complete reference config.
 
 ## Replay
 

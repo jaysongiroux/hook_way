@@ -10,6 +10,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
+
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 type snsAPI interface {
@@ -25,6 +27,10 @@ type SNSTarget struct {
 	Create  bool
 	Subject string
 	FIFO    *FIFOSettings
+	// Template is set for dynamic routes (Name contains {variable}
+	// placeholders). Rendered topic names the matcher accepts are looked up
+	// (and created when Create is set) on first sight with these settings.
+	Template vars.Matcher
 }
 
 type SNSConfig struct {
@@ -49,14 +55,16 @@ type snsTargetState struct {
 	arn     string
 	subject string
 	fifo    *FIFOSettings
+	tmpl    SNSTarget // authored target for dynamic routes
 }
 
 type SNSPublisher struct {
 	client  snsAPI
 	destID  string
+	policy  ConflictPolicy
 	logger  *slog.Logger
-	targets map[string]snsTargetState
-	probes  []string // resolved topic ARNs used by Ready
+	targets *targetResolver[snsTargetState]
+	probes  []string // resolved static topic ARNs used by Ready
 }
 
 // NewSNSPublisher resolves (and optionally creates) each topic ARN up front.
@@ -67,7 +75,7 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 	if logger == nil {
 		logger = slog.Default()
 	}
-	p := &SNSPublisher{client: client, destID: cfg.DestinationID, logger: logger, targets: map[string]snsTargetState{}}
+	p := &SNSPublisher{client: client, destID: cfg.DestinationID, policy: cfg.Policy, logger: logger, targets: newTargetResolver[snsTargetState](0, logger)}
 
 	arnByName, err := p.listTopicARNs(ctx)
 	if err != nil {
@@ -75,30 +83,58 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 	}
 
 	for _, target := range cfg.Targets {
-		arn, existed := arnByName[target.Name]
-		switch {
-		case existed:
-			p.logger.Debug("topic exists", slog.String("destination", p.destID), slog.String("target", target.Name))
-			if err := p.reconcileTopic(ctx, cfg, target, arn); err != nil {
-				return nil, err
-			}
-		case target.Create:
-			out, err := client.CreateTopic(ctx, &sns.CreateTopicInput{
-				Name:       aws.String(target.Name),
-				Attributes: snsCreateAttributes(target),
-			})
-			if err != nil {
-				return nil, fmt.Errorf("sns target %q: %w", target.Name, err)
-			}
-			arn = aws.ToString(out.TopicArn)
-			p.logger.Info("created topic", slog.String("destination", p.destID), slog.String("target", target.Name))
-		default:
-			return nil, fmt.Errorf("sns target %q: topic %q not found", target.Name, target.Name)
+		if target.Template.IsTemplate() {
+			p.targets.addTemplate(target.Template, snsTargetState{tmpl: target})
+			continue
 		}
-		p.targets[target.Name] = snsTargetState{arn: arn, subject: target.Subject, fifo: target.FIFO}
-		p.probes = append(p.probes, arn)
+		state, err := p.provisionTopic(ctx, target, arnByName)
+		if err != nil {
+			return nil, err
+		}
+		p.targets.addStatic(target.Name, state)
+		p.probes = append(p.probes, state.arn)
 	}
 	return p, nil
+}
+
+// provisionTopic finds the topic in arnByName (reconciling it), creates it
+// when Create is set, or fails. Used at startup and on first sight of a
+// rendered dynamic target.
+func (p *SNSPublisher) provisionTopic(ctx context.Context, target SNSTarget, arnByName map[string]string) (snsTargetState, error) {
+	arn, existed := arnByName[target.Name]
+	switch {
+	case existed:
+		p.logger.Debug("topic exists", slog.String("destination", p.destID), slog.String("target", target.Name))
+		if err := p.reconcileTopic(ctx, target, arn); err != nil {
+			return snsTargetState{}, err
+		}
+	case target.Create:
+		out, err := p.client.CreateTopic(ctx, &sns.CreateTopicInput{
+			Name:       aws.String(target.Name),
+			Attributes: snsCreateAttributes(target),
+		})
+		if err != nil {
+			return snsTargetState{}, fmt.Errorf("sns target %q: %w", target.Name, err)
+		}
+		arn = aws.ToString(out.TopicArn)
+		p.logger.Info("created topic", slog.String("destination", p.destID), slog.String("target", target.Name))
+	default:
+		return snsTargetState{}, fmt.Errorf("sns target %q: topic %q not found", target.Name, target.Name)
+	}
+	return snsTargetState{arn: arn, subject: target.Subject, fifo: target.FIFO}, nil
+}
+
+// provisionDynamic is the resolver hook for a rendered dynamic target. ARNs
+// cannot be derived from a name without the account id, so it re-lists topics
+// (once per new rendered name; the result is cached by the resolver).
+func (p *SNSPublisher) provisionDynamic(ctx context.Context, base snsTargetState, rendered string) (snsTargetState, error) {
+	arnByName, err := p.listTopicARNs(ctx)
+	if err != nil {
+		return snsTargetState{}, err
+	}
+	target := base.tmpl
+	target.Name = rendered
+	return p.provisionTopic(ctx, target, arnByName)
 }
 
 // listTopicARNs pages ListTopics once and maps topic name (the part after the
@@ -127,15 +163,15 @@ func (p *SNSPublisher) listTopicARNs(ctx context.Context) (map[string]string, er
 // reconcileTopic fetches the existing topic's attributes and applies the
 // configured conflict policy. SNS SetTopicAttributes sets one attribute per
 // call, so the setAttrs closure loops over the mutable differences.
-func (p *SNSPublisher) reconcileTopic(ctx context.Context, cfg SNSConfig, target SNSTarget, arn string) error {
+func (p *SNSPublisher) reconcileTopic(ctx context.Context, target SNSTarget, arn string) error {
 	out, err := p.client.GetTopicAttributes(ctx, &sns.GetTopicAttributesInput{TopicArn: aws.String(arn)})
 	if err != nil {
 		return fmt.Errorf("sns target %q: GetTopicAttributes: %w", target.Name, err)
 	}
 	return applyConflictPolicy(ctx, reconcileParams{
-		policy:  cfg.Policy,
+		policy:  p.policy,
 		logger:  p.logger,
-		destID:  cfg.DestinationID,
+		destID:  p.destID,
 		target:  target.Name,
 		want:    snsCreateAttributes(target),
 		got:     out.Attributes,
@@ -167,11 +203,12 @@ func snsCreateAttributes(target SNSTarget) map[string]string {
 }
 
 func (p *SNSPublisher) Publish(ctx context.Context, destinationID, target string, msg Message) error {
-	// targets is written only in NewSNSPublisher (single goroutine); this read
-	// is safe to perform concurrently across the server's publish fan-out.
-	state, ok := p.targets[target]
-	if !ok {
-		return fmt.Errorf("sns target %q is not configured", target)
+	state, err := p.targets.resolve(ctx, target, p.provisionDynamic)
+	if err != nil {
+		if errors.Is(err, errTargetNotConfigured) {
+			return fmt.Errorf("sns target %q is not configured", target)
+		}
+		return err
 	}
 	body, err := json.Marshal(msg)
 	if err != nil {

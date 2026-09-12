@@ -3,9 +3,12 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/jasongiroux/hookway/internal/vars"
 )
 
 // KafkaTarget describes one topic this destination routes to. PartitionKey is
@@ -16,6 +19,10 @@ type KafkaTarget struct {
 	PartitionKey      *FIFOSettings
 	Partitions        int
 	ReplicationFactor int
+	// Template is set for dynamic routes (Topic contains {variable}
+	// placeholders). Rendered topics the matcher accepts get these settings
+	// and, when Create is set, are created on first sight.
+	Template vars.Matcher
 }
 
 type KafkaPublisherConfig struct {
@@ -33,7 +40,7 @@ type KafkaPublisher struct {
 	destID         string
 	publishTimeout time.Duration
 	logger         *slog.Logger
-	targets        map[string]KafkaTarget
+	targets        *targetResolver[KafkaTarget]
 }
 
 func NewKafkaPublisher(ops kafkaOps, cfg KafkaPublisherConfig) *KafkaPublisher {
@@ -50,21 +57,43 @@ func NewKafkaPublisher(ops kafkaOps, cfg KafkaPublisherConfig) *KafkaPublisher {
 		destID:         cfg.DestinationID,
 		publishTimeout: timeout,
 		logger:         logger,
-		targets:        make(map[string]KafkaTarget, len(cfg.Targets)),
+		targets:        newTargetResolver[KafkaTarget](0, logger),
 	}
 	for _, t := range cfg.Targets {
-		p.targets[t.Topic] = t
+		if t.Template.IsTemplate() {
+			p.targets.addTemplate(t.Template, t)
+		} else {
+			p.targets.addStatic(t.Topic, t)
+		}
 	}
 	return p
+}
+
+// provisionTopic is the resolver hook for a rendered dynamic topic: the
+// template's settings with the rendered name, created when Create is set.
+func (p *KafkaPublisher) provisionTopic(ctx context.Context, base KafkaTarget, rendered string) (KafkaTarget, error) {
+	t := base
+	t.Topic = rendered
+	if t.Create {
+		ctx, cancel := context.WithTimeout(ctx, p.publishTimeout)
+		defer cancel()
+		if err := p.ops.EnsureTopics(ctx, []KafkaTarget{t}); err != nil {
+			return KafkaTarget{}, err
+		}
+	}
+	return t, nil
 }
 
 // Publish marshals msg to JSON and writes it to the target topic. When the
 // target configures a partition key it is derived via resolveGroupID and set as
 // the Kafka message key; otherwise the key is empty (round-robin).
 func (p *KafkaPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
-	t, ok := p.targets[target]
-	if !ok {
-		return fmt.Errorf("kafka %q: target %q is not configured", p.destID, target)
+	t, err := p.targets.resolve(ctx, target, p.provisionTopic)
+	if err != nil {
+		if errors.Is(err, errTargetNotConfigured) {
+			return fmt.Errorf("kafka %q: target %q is not configured", p.destID, target)
+		}
+		return fmt.Errorf("kafka %q: provision topic %q: %w", p.destID, target, err)
 	}
 	body, err := json.Marshal(msg)
 	if err != nil {

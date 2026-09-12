@@ -3,11 +3,9 @@ package queue
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
@@ -82,40 +80,12 @@ func buildSASLMechanism(c config.KafkaSASLConfig) (sasl.Mechanism, error) {
 }
 
 // buildKafkaTLSConfig assembles a *tls.Config from the configured options, or
-// returns nil when TLS is not enabled. Mirrors buildTLSConfig in rabbitmq.go.
+// returns nil when TLS is not enabled.
 func buildKafkaTLSConfig(c config.KafkaTLSConfig) (*tls.Config, error) {
 	if !c.Enabled {
 		return nil, nil
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.ServerName != "" {
-		cfg.ServerName = c.ServerName
-	}
-	if c.InsecureSkipVerify {
-		cfg.InsecureSkipVerify = true
-	}
-	if c.CACert != "" {
-		pem, err := os.ReadFile(c.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("read kafka tls ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("kafka tls ca_cert %q contained no valid certificates", c.CACert)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.ClientCert != "" || c.ClientKey != "" {
-		if c.ClientCert == "" || c.ClientKey == "" {
-			return nil, errors.New("kafka tls client_cert and client_key must both be set for mutual TLS")
-		}
-		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load kafka tls client cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	return cfg, nil
+	return newTLSConfig("kafka", tlsMaterial{CACert: c.CACert, ClientCert: c.ClientCert, ClientKey: c.ClientKey, ServerName: c.ServerName, InsecureSkipVerify: c.InsecureSkipVerify})
 }
 
 // kafkaOps is the minimal Kafka client surface the publisher depends on, so
@@ -123,15 +93,22 @@ func buildKafkaTLSConfig(c config.KafkaTLSConfig) (*tls.Config, error) {
 // (Write) and Client (Ready).
 type kafkaOps interface {
 	Write(ctx context.Context, topic string, key, value []byte) error
+	// EnsureTopics creates the create:true topics among targets (idempotent:
+	// an existing topic is success). Used at startup for static targets and
+	// on first sight for rendered dynamic targets.
+	EnsureTopics(ctx context.Context, targets []KafkaTarget) error
 	Ready(ctx context.Context) error
 	Close() error
 }
 
 // kafkaGoOps is the concrete kafkaOps backed by a kafka-go Writer (for
-// publishing) and Client (for readiness metadata checks).
+// publishing) and Client (for readiness metadata checks and topic creation).
 type kafkaGoOps struct {
-	writer *kafka.Writer
-	client *kafka.Client
+	writer  *kafka.Writer
+	client  *kafka.Client
+	destID  string
+	timeout time.Duration
+	logger  *slog.Logger
 }
 
 func (o *kafkaGoOps) Write(ctx context.Context, topic string, key, value []byte) error {
@@ -205,18 +182,30 @@ func newKafkaOps(ctx context.Context, destinationID string, cfg config.KafkaConf
 		Transport:              transport,
 	}
 	client := &kafka.Client{Addr: kafka.TCP(cfg.Brokers...), Timeout: timeout, Transport: transport}
-	ops := &kafkaGoOps{writer: writer, client: client}
-	if err := ops.ensureTopics(ctx, destinationID, timeout, targets, logger); err != nil {
+	ops := &kafkaGoOps{writer: writer, client: client, destID: destinationID, timeout: timeout, logger: logger}
+	// Dynamic (templated) targets cannot be created up front; the publisher
+	// ensures them on first sight of a rendered topic name.
+	static := make([]KafkaTarget, 0, len(targets))
+	for _, t := range targets {
+		if !t.Template.IsTemplate() {
+			static = append(static, t)
+		}
+	}
+	if err := ops.EnsureTopics(ctx, static); err != nil {
 		return nil, err
 	}
 	return ops, nil
 }
 
-// ensureTopics creates every create:true target topic up front so the first
-// publish never races broker-side auto-creation. TopicAlreadyExists is treated
-// as success (idempotent). NumPartitions/ReplicationFactor of 0 map to -1
+// EnsureTopics creates every create:true target topic so the first publish
+// never races broker-side auto-creation. TopicAlreadyExists is treated as
+// success (idempotent). NumPartitions/ReplicationFactor of 0 map to -1
 // (kafka-go "unset" → broker default).
-func (o *kafkaGoOps) ensureTopics(ctx context.Context, destinationID string, timeout time.Duration, targets []KafkaTarget, logger *slog.Logger) error {
+func (o *kafkaGoOps) EnsureTopics(ctx context.Context, targets []KafkaTarget) error {
+	destinationID, timeout, logger := o.destID, o.timeout, o.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	var specs []kafka.TopicConfig
 	for _, t := range targets {
 		if !t.Create {

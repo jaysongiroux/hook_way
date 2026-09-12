@@ -55,7 +55,8 @@ func envelopeToMessage(env webhook.Envelope) queue.Message {
 		Endpoint:    env.Endpoint, DestinationQueueID: env.DestinationQueueID, Queue: env.Queue, ReceivedAt: env.ReceivedAt,
 		Method: env.Method, Path: env.Path, Headers: env.Headers, Query: env.Query,
 		Body: env.Body, RawBodyBase64: env.RawBodyBase64, SourceIP: env.SourceIP, Auth: env.Auth,
-		RawBody: env.RawBody, OrigHeaders: env.OrigHeaders, Hops: env.Hops,
+		Variables: env.Variables,
+		RawBody:   env.RawBody, OrigHeaders: env.OrigHeaders, Hops: env.Hops,
 	}
 }
 

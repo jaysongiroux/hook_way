@@ -5,12 +5,18 @@ import (
 	"net"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/auth"
 	"github.com/jasongiroux/hookway/internal/filter"
+	"github.com/jasongiroux/hookway/internal/vars"
 )
+
+// targetLiteral constrains the literal (non-placeholder) text of a templated
+// route target; the rendered whole must additionally satisfy safeName.
+var targetLiteral = regexp.MustCompile(`^[a-zA-Z0-9._-]*$`)
 
 // pgIdentifier matches a safe, unquoted-style SQL identifier for schema/table
 // names. They are also quoted via pgx.Identifier.Sanitize at use, but we reject
@@ -130,10 +136,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", or \"webhook\""))
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", or \"temporal\""))
 		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
-			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", and \"webhook\""))
+			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" && dest.Type != "temporal" {
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", and \"temporal\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -189,6 +195,8 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				issues = append(issues, validationError(fieldPrefix+".webhook.url", "url is required for webhook destinations", "set url to an http(s) endpoint such as \"https://api.example.com/hooks\""))
 			} else if !strings.HasPrefix(w.URL, "http://") && !strings.HasPrefix(w.URL, "https://") {
 				issues = append(issues, validationError(fieldPrefix+".webhook.url", "url must be http or https", "use a URL beginning with http:// or https://"))
+			} else {
+				issues = append(issues, webhookURLTemplateIssues(fieldPrefix+".webhook.url", w.URL)...)
 			}
 			switch w.Auth.Type {
 			case "", "none", "proxy":
@@ -236,6 +244,8 @@ func (c Config) ValidationIssues() []ValidationIssue {
 						issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter.destination", fmt.Sprintf("references unknown destination %q", w.DeadLetter.Destination), "set dead_letter.destination to the id of a configured non-webhook destination"))
 					} else if dlq.Type == "webhook" {
 						issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter.destination", "dead_letter destination must not be a webhook destination", "point dead_letter.destination at a durable backend such as a rabbitmq, sqs, or s3 destination"))
+					} else if dlq.Type == "temporal" {
+						issues = append(issues, validationError(fieldPrefix+".webhook.dead_letter.destination", "dead_letter destination must not be a temporal destination (a dead-letter route has no workflow_type)", "point dead_letter.destination at a durable backend such as a rabbitmq, sqs, or s3 destination"))
 					}
 				}
 			}
@@ -272,6 +282,21 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			if k.Retry.MaxAttempts < 0 {
 				issues = append(issues, validationError(fieldPrefix+".kafka.retry.max_attempts", "must be zero (default) or a positive integer", "set a value such as 3"))
+			}
+		}
+		if dest.Type == "temporal" {
+			tc := dest.Temporal
+			if tc.HostPort == "" {
+				issues = append(issues, validationError(fieldPrefix+".temporal.host_port", "host_port is required for temporal destinations", "set host_port to the frontend gRPC address such as \"localhost:7233\""))
+			}
+			if tc.Namespace == "" {
+				issues = append(issues, validationError(fieldPrefix+".temporal.namespace", "namespace is required for temporal destinations", "set namespace to the Temporal namespace such as \"default\""))
+			}
+			if tc.APIKey != "" && !tc.TLS.Enabled {
+				issues = append(issues, validationError(fieldPrefix+".temporal.api_key", "api_key requires tls.enabled: true (the key is sent as a bearer credential)", "set temporal.tls.enabled: true, or remove api_key for an unauthenticated cluster"))
+			}
+			if (tc.TLS.ClientCert == "") != (tc.TLS.ClientKey == "") {
+				issues = append(issues, validationError(fieldPrefix+".temporal.tls.client_cert", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
 			}
 		}
 		if dest.Type == "redis_stream" || dest.Type == "redis_list" || dest.Type == "redis_pubsub" || dest.Type == "redis_kv" {
@@ -369,10 +394,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 		issues = append(issues, postgresConnValidationIssues("replay.postgres", c.Replay.Postgres)...)
 	}
-	paths := map[string]string{}
+	var endpointPaths []compiledEndpointPath
 	queueOptions := map[string]RabbitMQQueueOptions{}
 	sqsTargetSettings := map[string]sqsRouteSettings{}
 	snsTargetSettings := map[string]snsRouteSettings{}
+	temporalTargetSettings := map[string]TemporalEndpointOptions{}
 	for name, endpoint := range c.Endpoints {
 		fieldPrefix := "endpoints." + name
 		if !safeName.MatchString(name) {
@@ -380,6 +406,14 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 		if !endpoint.Enabled {
 			continue
+		}
+		pathPattern, pathOK, pathIssues := endpointPathIssues(fieldPrefix, endpoint)
+		issues = append(issues, pathIssues...)
+		issues = append(issues, variableValidationIssues(fieldPrefix, endpoint, pathPattern, c)...)
+		issues = append(issues, fallbackRouteValidationIssues(fieldPrefix, endpoint, c)...)
+		expanded := endpoint.DestinationRoutes()
+		if len(expanded) > MaxExpandedRoutes {
+			issues = append(issues, validationError(fieldPrefix+".destinations", fmt.Sprintf("variables expand to more than %d routes", MaxExpandedRoutes), "reduce the number of enumerated values or split the endpoint"))
 		}
 		switch endpoint.EffectiveDeliveryFailurePolicy() {
 		case DeliveryFailurePolicyStopOnFailure, DeliveryFailurePolicySkipFailed:
@@ -390,6 +424,34 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix+".destinations", "at least one destination is required for enabled endpoints", "add destination objects that reference destinations entries"))
 		}
 		seenRoutes := map[string]struct{}{}
+		// The fallback route carries no per-route options, yet the factory
+		// builds one target per (destination, target) across all endpoints
+		// with first-wins semantics over map iteration. Register it with
+		// zero options so a shared target that sets any is reported instead
+		// of provisioned nondeterministically.
+		if fb, ok := endpoint.FallbackRoute(); ok {
+			if dest, ok := c.Destinations[fb.Destination]; ok {
+				fbField := fieldPrefix + ".on_unresolved_variable.target"
+				key := fb.Destination + "\x00" + fb.Target
+				switch dest.Type {
+				case "sqs":
+					if prev, ok := sqsTargetSettings[key]; ok && !reflect.DeepEqual(prev, sqsRouteSettings{}) {
+						issues = append(issues, validationError(fbField, "shares an sqs target with a route that sets sqs_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
+					}
+					sqsTargetSettings[key] = sqsRouteSettings{}
+				case "sns":
+					if prev, ok := snsTargetSettings[key]; ok && !reflect.DeepEqual(prev, snsRouteSettings{}) {
+						issues = append(issues, validationError(fbField, "shares an sns target with a route that sets sns_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
+					}
+					snsTargetSettings[key] = snsRouteSettings{}
+				case "rabbitmq", "":
+					if prev, ok := queueOptions[key]; ok && prev != (RabbitMQQueueOptions{}) {
+						issues = append(issues, validationError(fbField, "shares a RabbitMQ queue with a route that sets queue_options; the fallback route carries none", "use a dedicated fallback target, or remove queue_options from the shared route"))
+					}
+					queueOptions[key] = RabbitMQQueueOptions{}
+				}
+			}
+		}
 		for i, destination := range endpoint.Destinations {
 			field := fmt.Sprintf("%s.destinations[%d]", fieldPrefix, i)
 			if destination.Destination == "" {
@@ -399,20 +461,70 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			if _, ok := c.Destinations[destination.Destination]; !ok {
 				issues = append(issues, validationError(field+".destination", "destination is not configured", "reference an existing destinations entry"))
 			}
-			if !safeName.MatchString(destination.Target) {
-				issues = append(issues, validationError(field+".target", "target name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+			tpl, tplErr := vars.Parse(destination.Target)
+			switch {
+			case tplErr != nil:
+				issues = append(issues, validationError(field+".target", "target template is malformed: "+tplErr.Error(), "use {variable} placeholders with balanced braces, e.g. \"{envName}-events\""))
+			case tpl.HasPlaceholders():
+				for _, n := range tpl.Names() {
+					if _, ok := endpoint.Variables[n]; !ok {
+						issues = append(issues, validationError(field+".target", fmt.Sprintf("references undeclared variable {%s}", n), "declare it under "+fieldPrefix+".variables"))
+					}
+				}
+				if !targetLiteral.MatchString(tpl.Literal()) {
+					issues = append(issues, validationError(field+".target", "target template literal text contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen around {variable} placeholders"))
+				}
+				// Each placeholder renders at least one character and the
+				// whole must stay within the 128-character safe-name bound.
+				if len(tpl.Literal())+len(tpl.Names()) > 128 {
+					issues = append(issues, validationError(field+".target", "target template literal text leaves no room for variable values within 128 characters", "shorten the literal text around the {variable} placeholders"))
+				}
+			default:
+				if !safeName.MatchString(destination.Target) {
+					issues = append(issues, validationError(field+".target", "target name contains unsupported characters or is empty", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+				}
 			}
-			routeKey := destination.Destination + "\x00" + destination.Target
-			if _, duplicate := seenRoutes[routeKey]; duplicate {
-				issues = append(issues, validationError(field, "destination route is duplicated", "list each destination and target pair once"))
+			// Expanded routes for this authored route: every concrete target
+			// must be a safe name, and dynamic targets are only allowed on
+			// destinations that can accept a target they have never seen.
+			var routeKeys []string
+			duplicate := false
+			for _, er := range expanded {
+				if er.Index != i {
+					continue
+				}
+				if !er.Dynamic && !safeName.MatchString(er.Target) {
+					issues = append(issues, validationError(field+".target", fmt.Sprintf("expands to invalid target %q with %s", er.Target, describeBindings(er.Bindings)), "use values that keep the rendered target within 1-128 letters, numbers, dot, underscore, or hyphen"))
+				}
+				if er.Dynamic {
+					if d, ok := c.Destinations[destination.Destination]; ok {
+						if (d.Type == "rabbitmq" || d.Type == "") && destination.Create {
+							issues = append(issues, validationError(field+".create", "create is not supported on a rabbitmq route whose target has pattern variables (the queue cannot be declared up front)", "pre-declare and bind the queues, or declare the variable with values so the routes expand at startup"))
+						}
+					}
+				}
+				key := destination.Destination + "\x00" + er.Target
+				if _, dup := seenRoutes[key]; dup {
+					msg := "destination route is duplicated"
+					if len(er.Bindings) > 0 {
+						msg += " (with " + describeBindings(er.Bindings) + ")"
+					}
+					issues = append(issues, validationError(field, msg, "list each destination and target pair once"))
+					duplicate = true
+					break
+				}
+				seenRoutes[key] = struct{}{}
+				routeKeys = append(routeKeys, key)
+			}
+			if duplicate {
 				continue
 			}
-			seenRoutes[routeKey] = struct{}{}
-			queueOptionKey := routeKey
-			if previous, ok := queueOptions[queueOptionKey]; ok && previous != destination.QueueOptions {
-				issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
-			} else {
-				queueOptions[queueOptionKey] = destination.QueueOptions
+			for _, routeKey := range routeKeys {
+				if previous, ok := queueOptions[routeKey]; ok && previous != destination.QueueOptions {
+					issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
+					break
+				}
+				queueOptions[routeKey] = destination.QueueOptions
 			}
 			issues = append(issues, queueOptionValidationIssues(field+".queue_options", destination.QueueOptions)...)
 
@@ -447,22 +559,63 @@ func (c Config) ValidationIssues() []ValidationIssue {
 						issues = append(issues, validationError(field+".kafka_options.replication_factor", "must be zero (broker default) or a positive integer", "set a replication factor such as 3, or omit for the broker default"))
 					}
 				}
+				if dest.Type != "temporal" && (destination.TemporalOptions != TemporalEndpointOptions{}) {
+					issues = append(issues, validationError(field+".temporal_options", "only valid for temporal destinations", "remove temporal_options or point destination at a temporal destination"))
+				}
+				if dest.Type == "temporal" {
+					issues = append(issues, temporalOptionsValidationIssues(field, destination)...)
+					if prefix := destination.TemporalOptions.WorkflowID.Prefix; strings.Contains(prefix, "{") {
+						if tpl, err := vars.Parse(prefix); err != nil {
+							issues = append(issues, validationError(field+".temporal_options.workflow_id.prefix", "prefix template is malformed: "+err.Error(), "use {variable} placeholders with balanced braces"))
+						} else {
+							for _, n := range tpl.Names() {
+								if _, ok := endpoint.Variables[n]; !ok {
+									issues = append(issues, validationError(field+".temporal_options.workflow_id.prefix", fmt.Sprintf("references undeclared variable {%s}", n), "declare it under "+fieldPrefix+".variables"))
+								}
+							}
+						}
+					}
+					// Cross-endpoint consistency: the factory builds one target per
+					// (destination, task queue), so routes sharing a target must agree.
+					for _, routeKey := range routeKeys {
+						if prev, ok := temporalTargetSettings[routeKey]; ok && prev != destination.TemporalOptions {
+							issues = append(issues, validationError(field+".temporal_options", "cannot differ between endpoints that share a temporal task queue", "use one task queue per endpoint when temporal options need to differ"))
+							break
+						}
+						temporalTargetSettings[routeKey] = destination.TemporalOptions
+					}
+				}
+			}
+			// A templated webhook URL renders from this endpoint's variables, so
+			// every placeholder it uses must be declared here.
+			if destOK && dest.Type == "webhook" {
+				if urlTpl, err := vars.Parse(dest.Webhook.URL); err == nil {
+					for _, n := range urlTpl.Names() {
+						if _, ok := endpoint.Variables[n]; !ok {
+							issues = append(issues, validationError(field+".destination", fmt.Sprintf("destination %q webhook.url references variable {%s} which this endpoint does not declare", destination.Destination, n), "declare the variable under "+fieldPrefix+".variables or remove the placeholder from the url"))
+						}
+					}
+				}
 			}
 			// SQS cross-endpoint consistency
 			if destOK && dest.Type == "sqs" {
 				cur := sqsRouteSettings{opts: destination.SQSOptions, fifo: destination.FIFO}
-				if prev, ok := sqsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
-					issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
-				} else {
+				for _, routeKey := range routeKeys {
+					if prev, ok := sqsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
+						issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
+						break
+					}
 					sqsTargetSettings[routeKey] = cur
 				}
 			}
 			// SNS cross-endpoint consistency
 			if destOK && dest.Type == "sns" {
 				cur := snsRouteSettings{opts: destination.SNSOptions, fifo: destination.FIFO}
-				if prev, ok := snsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
-					issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
-				} else {
+				for _, routeKey := range routeKeys {
+					if prev, ok := snsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
+						issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
+						break
+					}
 					snsTargetSettings[routeKey] = cur
 				}
 			}
@@ -486,21 +639,8 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				issues = append(issues, validationError(field+".fifo", "fifo targets require a fifo block", "add a fifo.group_id block to define ordering"))
 			}
 			if destination.FIFO != nil {
-				switch destination.FIFO.GroupID.Source {
-				case "endpoint":
-				case "static":
-					if destination.FIFO.GroupID.Value == "" {
-						issues = append(issues, validationError(field+".fifo.group_id.value", "value is required when source is static", "set a literal group id"))
-					}
-				case "header", "body":
-					if destination.FIFO.GroupID.Path == "" {
-						issues = append(issues, validationError(field+".fifo.group_id.path", "path is required when source is header or body", "set a header name or dotted body path"))
-					}
-				case "":
-					issues = append(issues, validationError(field+".fifo.group_id.source", "source is required", "use static, endpoint, header, or body"))
-				default:
-					issues = append(issues, validationError(field+".fifo.group_id.source", fmt.Sprintf("%q is not supported", destination.FIFO.GroupID.Source), "use static, endpoint, header, or body"))
-				}
+				gid := destination.FIFO.GroupID
+				issues = append(issues, sourceValueIssues(field+".fifo.group_id", gid.Source, gid.Value, gid.Path, "group id", false, "use static, endpoint, header, or body")...)
 				if !destination.FIFO.Dedup.ContentBasedFallback {
 					issues = append(issues, validationError(
 						field+".fifo.dedup.content_based_fallback",
@@ -515,16 +655,18 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix+".path", "path is required for enabled endpoints", "set a path such as \"/webhooks/billing/events\""))
 		} else if endpoint.Path[0] != '/' {
 			issues = append(issues, validationError(fieldPrefix+".path", "path must start with /", "set a path such as \"/webhooks/billing/events\""))
-		} else if other, ok := paths[endpoint.Path]; ok {
-			issues = append(issues, validationError(fieldPrefix+".path", "path duplicates endpoint "+other, "each enabled endpoint must use a unique path"))
-		} else {
-			for otherPath, otherName := range paths {
-				if endpointPathsOverlap(endpoint.Path, otherPath) {
-					issues = append(issues, validationError(fieldPrefix+".path", "path overlaps endpoint "+otherName, "avoid parent/child paths such as \"/webhooks/billing\" and \"/webhooks/billing/events\""))
+		} else if pathOK {
+			for _, other := range endpointPaths {
+				if other.raw == endpoint.Path {
+					issues = append(issues, validationError(fieldPrefix+".path", "path duplicates endpoint "+other.name, "each enabled endpoint must use a unique path"))
+					break
+				}
+				if vars.Overlap(other.pattern, pathPattern) {
+					issues = append(issues, validationError(fieldPrefix+".path", "path overlaps endpoint "+other.name, "avoid parent/child paths such as \"/webhooks/billing\" and \"/webhooks/billing/events\", and literal segments that a {placeholder} in another endpoint would also match"))
 					break
 				}
 			}
-			paths[endpoint.Path] = name
+			endpointPaths = append(endpointPaths, compiledEndpointPath{name: name, raw: endpoint.Path, pattern: pathPattern})
 		}
 		if endpoint.MaxBodyBytes < 0 {
 			issues = append(issues, validationError(fieldPrefix+".max_body_bytes", "must be positive when set", "omit to inherit server.max_body_bytes or set a positive byte limit"))
@@ -712,12 +854,380 @@ func snsSubjectValidationIssues(fieldPrefix string, subject string) []Validation
 	return issues
 }
 
-func endpointPathsOverlap(a, b string) bool {
-	shorter, longer := a, b
-	if len(shorter) > len(longer) {
-		shorter, longer = longer, shorter
+// compiledEndpointPath pairs an enabled endpoint with its parsed path pattern
+// so later endpoints can be checked for overlap.
+type compiledEndpointPath struct {
+	name    string
+	raw     string
+	pattern vars.PathPattern
+}
+
+// endpointPathIssues parses the endpoint path as a pattern and checks that
+// every {segment} placeholder is backed by a variable with source: path. It
+// returns ok=false when the path could not be parsed (emptiness and the
+// leading-slash rule are reported by the caller, so they are skipped here).
+func endpointPathIssues(fieldPrefix string, endpoint EndpointConfig) (vars.PathPattern, bool, []ValidationIssue) {
+	var issues []ValidationIssue
+	if endpoint.Path == "" || endpoint.Path[0] != '/' {
+		return vars.PathPattern{}, false, nil
 	}
-	return strings.HasPrefix(longer, shorter+"/")
+	pp, err := vars.ParsePath(endpoint.Path)
+	if err != nil {
+		return vars.PathPattern{}, false, append(issues, validationError(fieldPrefix+".path", "path is malformed: "+err.Error(), "use literal segments or whole-segment placeholders such as \"/webhooks/{envName}/digifi\""))
+	}
+	for _, seg := range pp.Names() {
+		found := false
+		for _, v := range endpoint.Variables {
+			if v.Source == string(vars.SourcePath) && effectiveVariablePath(seg, v) == seg {
+				found = true
+				break
+			}
+		}
+		if !found {
+			issues = append(issues, validationError(fieldPrefix+".path", fmt.Sprintf("placeholder {%s} has no variable with source: path", seg), "declare "+fieldPrefix+".variables."+seg+" with source: path"))
+		}
+	}
+	return pp, true, issues
+}
+
+// effectiveVariablePath returns the lookup key of a variable: its explicit
+// path, or its own name when the path is omitted.
+func effectiveVariablePath(name string, v VariableConfig) string {
+	if v.Path != "" {
+		return v.Path
+	}
+	return name
+}
+
+// variableValidationIssues validates the endpoint's variables block and that
+// every declared variable is referenced by the path, a route target, or the
+// webhook.url of a destination the endpoint routes to.
+func variableValidationIssues(fieldPrefix string, endpoint EndpointConfig, pathPattern vars.PathPattern, c Config) []ValidationIssue {
+	var issues []ValidationIssue
+	if len(endpoint.Variables) == 0 {
+		return nil
+	}
+	referenced := map[string]struct{}{}
+	for _, n := range pathPattern.Names() {
+		referenced[n] = struct{}{}
+	}
+	for _, d := range endpoint.Destinations {
+		if tpl, err := vars.Parse(d.Target); err == nil {
+			for _, n := range tpl.Names() {
+				referenced[n] = struct{}{}
+			}
+		}
+		if tpl, err := vars.Parse(d.TemporalOptions.WorkflowID.Prefix); err == nil {
+			for _, n := range tpl.Names() {
+				referenced[n] = struct{}{}
+			}
+		}
+		if dest, ok := c.Destinations[d.Destination]; ok && dest.Type == "webhook" {
+			if tpl, err := vars.Parse(dest.Webhook.URL); err == nil {
+				for _, n := range tpl.Names() {
+					referenced[n] = struct{}{}
+				}
+			}
+		}
+	}
+	names := make([]string, 0, len(endpoint.Variables))
+	for name := range endpoint.Variables {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		v := endpoint.Variables[name]
+		field := fieldPrefix + ".variables." + name
+		if !vars.ValidName(name) {
+			issues = append(issues, validationError(field, "variable name contains unsupported characters", "use letters, digits, and underscore, not starting with a digit"))
+		}
+		if _, reserved := ReservedVariableNames[name]; reserved {
+			issues = append(issues, validationError(field, "variable name is reserved (redis_kv key_template token)", "rename the variable; prefix, target, endpoint, id, and idempotency_key are reserved"))
+		}
+		path := effectiveVariablePath(name, v)
+		isLookup := v.Source == string(vars.SourceLookup)
+		switch v.Source {
+		case "":
+			issues = append(issues, validationError(field+".source", "source is required", "use header, body, query, path, or lookup"))
+		case string(vars.SourceLookup):
+			if v.Lookup == nil {
+				issues = append(issues, validationError(field+".lookup", "lookup block is required when source is lookup", "add lookup: {key: {...}, provider: dynamodb|http|postgres, ...}"))
+			} else {
+				issues = append(issues, lookupValidationIssues(field+".lookup", *v.Lookup, pathPattern, fieldPrefix)...)
+			}
+		default:
+			issues = append(issues, variableSourcePathIssues(field, v.Source, path, pathPattern, fieldPrefix)...)
+		}
+		if !isLookup && v.Lookup != nil {
+			issues = append(issues, validationError(field+".lookup", "lookup is only valid when source is lookup", "set source: lookup or remove the lookup block"))
+		}
+		hasValues, hasPattern := len(v.Values) > 0, v.Pattern != ""
+		switch {
+		case hasValues && hasPattern:
+			issues = append(issues, validationError(field, "values and pattern are mutually exclusive", "set either an enumerated values list or a pattern regex"))
+		case !hasValues && !hasPattern && !isLookup:
+			if v.Values != nil {
+				issues = append(issues, validationError(field+".values", "values must list at least one value", "add the permitted values, or use pattern instead"))
+			} else {
+				issues = append(issues, validationError(field, "either values or pattern is required", "set values: [..] for a fixed set, or pattern: \"^...$\" for an open set"))
+			}
+		}
+		if hasValues {
+			seen := map[string]struct{}{}
+			for _, val := range v.Values {
+				if !safeName.MatchString(val) {
+					issues = append(issues, validationError(field+".values", fmt.Sprintf("value %q contains unsupported characters", val), "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+				}
+				if strings.HasSuffix(val, ".fifo") {
+					issues = append(issues, validationError(field+".values", fmt.Sprintf("value %q must not end in .fifo", val), "keep the .fifo suffix literal in the route target instead"))
+				}
+				if _, dup := seen[val]; dup {
+					issues = append(issues, validationError(field+".values", fmt.Sprintf("value %q is listed more than once", val), "list each value once"))
+				}
+				seen[val] = struct{}{}
+			}
+		}
+		var compiled *regexp.Regexp
+		if hasPattern {
+			if len(v.Pattern) > 256 {
+				issues = append(issues, validationError(field+".pattern", "pattern is longer than 256 characters", "simplify the pattern"))
+			}
+			if !strings.HasPrefix(v.Pattern, "^") || !strings.HasSuffix(v.Pattern, "$") {
+				issues = append(issues, validationError(field+".pattern", "pattern must be anchored with ^ and $", "write the pattern as \"^...$\" so it matches the whole value"))
+			}
+			re, err := regexp.Compile(v.Pattern)
+			if err != nil {
+				issues = append(issues, validationError(field+".pattern", "pattern is not a valid regular expression: "+err.Error(), "use RE2 syntax"))
+			} else {
+				compiled = re
+			}
+		}
+		if v.Default != "" {
+			spec := vars.Spec{Name: name, Values: v.Values, Pattern: compiled}
+			if (hasValues || compiled != nil) && !spec.Accepts(v.Default) {
+				issues = append(issues, validationError(field+".default", fmt.Sprintf("default %q is not an accepted value", v.Default), "use one of the values, or a value matching the pattern"))
+			}
+			if !safeName.MatchString(v.Default) {
+				issues = append(issues, validationError(field+".default", "default contains unsupported characters", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+			}
+		}
+		if _, used := referenced[name]; !used {
+			issues = append(issues, validationError(field, "variable is declared but never referenced", "use {"+name+"} in the endpoint path, a route target, or a webhook url, or remove the variable"))
+		}
+	}
+	return issues
+}
+
+// variableSourcePathIssues validates a non-lookup source and its lookup key
+// (header name, dotted body path, query key, or path segment).
+func variableSourcePathIssues(field, source, path string, pathPattern vars.PathPattern, endpointPrefix string) []ValidationIssue {
+	var issues []ValidationIssue
+	switch source {
+	case string(vars.SourceHeader):
+		if !safeHeaderName.MatchString(path) {
+			issues = append(issues, validationError(field+".path", "header name contains unsupported characters", "set path to a valid HTTP header name such as X-Env"))
+		}
+	case string(vars.SourceBody):
+		for _, seg := range strings.Split(path, ".") {
+			if seg == "" {
+				issues = append(issues, validationError(field+".path", "dotted body path contains an empty segment", "use a path such as account.id"))
+				break
+			}
+		}
+	case string(vars.SourceQuery):
+		// any non-empty key is acceptable
+	case string(vars.SourcePath):
+		found := false
+		for _, seg := range pathPattern.Names() {
+			if seg == path {
+				found = true
+				break
+			}
+		}
+		if !found {
+			issues = append(issues, validationError(field+".path", fmt.Sprintf("endpoint path has no {%s} segment", path), "add {"+path+"} as a whole segment of "+endpointPrefix+".path, or change the source"))
+		}
+	default:
+		issues = append(issues, validationError(field+".source", fmt.Sprintf("%q is not supported", source), "use header, body, query, or path"))
+	}
+	return issues
+}
+
+// lookupValidationIssues validates a variable's lookup block: key extraction,
+// provider selection, and the selected provider's required fields.
+func lookupValidationIssues(field string, lc LookupConfig, pathPattern vars.PathPattern, endpointPrefix string) []ValidationIssue {
+	var issues []ValidationIssue
+	if lc.Key.Source == "" {
+		issues = append(issues, validationError(field+".key.source", "key.source is required", "use header, body, query, or path"))
+	} else if lc.Key.Source == string(vars.SourceLookup) {
+		issues = append(issues, validationError(field+".key.source", "a lookup key cannot itself come from a lookup", "use header, body, query, or path"))
+	} else {
+		issues = append(issues, variableSourcePathIssues(field+".key", lc.Key.Source, lc.Key.Path, pathPattern, endpointPrefix)...)
+	}
+	configured := 0
+	for _, set := range []bool{lc.DynamoDB != nil, lc.HTTP != nil, lc.Postgres != nil} {
+		if set {
+			configured++
+		}
+	}
+	switch lc.Provider {
+	case "":
+		issues = append(issues, validationError(field+".provider", "provider is required", "use dynamodb, http, or postgres"))
+	case "dynamodb", "http", "postgres":
+		want := map[string]bool{"dynamodb": lc.DynamoDB != nil, "http": lc.HTTP != nil, "postgres": lc.Postgres != nil}
+		if !want[lc.Provider] {
+			issues = append(issues, validationError(field+"."+lc.Provider, fmt.Sprintf("%s block is required for provider %s", lc.Provider, lc.Provider), "add the "+lc.Provider+" settings block"))
+		}
+		if configured > 1 {
+			issues = append(issues, validationError(field, "only the selected provider's block may be set", "remove the other provider blocks"))
+		}
+	default:
+		issues = append(issues, validationError(field+".provider", fmt.Sprintf("%q is not supported", lc.Provider), "use dynamodb, http, or postgres"))
+	}
+	if d := lc.DynamoDB; d != nil && lc.Provider == "dynamodb" {
+		if d.Table == "" {
+			issues = append(issues, validationError(field+".dynamodb.table", "table is required", "set the DynamoDB table name"))
+		}
+		if d.ValueAttribute == "" {
+			issues = append(issues, validationError(field+".dynamodb.value_attribute", "value_attribute is required", "set the attribute holding the variable value, e.g. env_name"))
+		}
+		if (d.FilterAttribute == "") != (d.FilterValue == "") {
+			issues = append(issues, validationError(field+".dynamodb.filter", "filter.attribute and filter.value must both be set", "set both, or remove the filter block"))
+		}
+	}
+	if h := lc.HTTP; h != nil && lc.Provider == "http" {
+		switch {
+		case h.URL == "":
+			issues = append(issues, validationError(field+".http.url", "url is required", "set a URL containing {key}, e.g. https://resolver.internal/env?id={key}"))
+		case !strings.HasPrefix(h.URL, "http://") && !strings.HasPrefix(h.URL, "https://"):
+			issues = append(issues, validationError(field+".http.url", "url must be http or https", "use a URL beginning with http:// or https://"))
+		case strings.Count(h.URL, "{key}") != 1:
+			issues = append(issues, validationError(field+".http.url", "url must contain exactly one {key} placeholder", "insert {key} where the lookup key belongs"))
+		case strings.Contains(urlAuthority(h.URL), "{key}"):
+			// The lookup key is raw request input with no values/pattern
+			// gate, so it must never pick the resolver host or port.
+			issues = append(issues, validationError(field+".http.url", "{key} must not appear in the url host", "put {key} in the path or query, e.g. https://resolver.internal/env?id={key}"))
+		}
+		switch strings.ToUpper(h.Method) {
+		case "", "GET", "POST":
+		default:
+			issues = append(issues, validationError(field+".http.method", fmt.Sprintf("%q is not supported", h.Method), "use GET or POST"))
+		}
+		if h.ValuePath == "" {
+			issues = append(issues, validationError(field+".http.value_path", "value_path is required", "set the dotted JSON path of the value in the response, e.g. env_name"))
+		}
+		for name := range h.Headers {
+			if !safeHeaderName.MatchString(name) {
+				issues = append(issues, validationError(field+".http.headers", fmt.Sprintf("header name %q contains unsupported characters", name), "use a valid HTTP header name"))
+			}
+		}
+	}
+	if p := lc.Postgres; p != nil && lc.Provider == "postgres" {
+		if p.URL == "" {
+			issues = append(issues, validationError(field+".postgres.url", "url is required", "set a postgres:// connection string"))
+		}
+		if p.Query == "" {
+			issues = append(issues, validationError(field+".postgres.query", "query is required", "set a SELECT with a {key} placeholder for the lookup key"))
+		} else if strings.Count(p.Query, "{key}") != 1 {
+			issues = append(issues, validationError(field+".postgres.query", "query must contain exactly one {key} placeholder (bound as $1, never interpolated)", "e.g. SELECT env_name FROM routing WHERE id = {key}"))
+		}
+	}
+	if lc.Cache.MaxEntries < 0 {
+		issues = append(issues, validationError(field+".cache.max_entries", "must be zero (default) or positive", "omit or set a positive number"))
+	}
+	return issues
+}
+
+// fallbackRouteValidationIssues validates on_unresolved_variable.
+func fallbackRouteValidationIssues(fieldPrefix string, endpoint EndpointConfig, c Config) []ValidationIssue {
+	fb := endpoint.OnUnresolvedVariable
+	if fb == nil {
+		return nil
+	}
+	var issues []ValidationIssue
+	field := fieldPrefix + ".on_unresolved_variable"
+	if len(endpoint.Variables) == 0 {
+		issues = append(issues, validationError(field, "has no effect without variables", "declare variables on the endpoint or remove on_unresolved_variable"))
+	}
+	if fb.Destination == "" {
+		issues = append(issues, validationError(field+".destination", "destination is required", "reference an existing destinations entry"))
+	} else if dest, ok := c.Destinations[fb.Destination]; !ok {
+		issues = append(issues, validationError(field+".destination", fmt.Sprintf("references unknown destination %q", fb.Destination), "reference an existing destinations entry"))
+	} else if dest.Type == "webhook" || dest.Type == "temporal" {
+		issues = append(issues, validationError(field+".destination", "fallback destination must not be a webhook or temporal destination", "point the fallback at a durable backend such as an s3, sqs, or postgres destination"))
+	}
+	switch {
+	case fb.Target == "":
+		issues = append(issues, validationError(field+".target", "target is required", "set a static target such as \"unrouted\""))
+	case strings.ContainsAny(fb.Target, "{}"):
+		issues = append(issues, validationError(field+".target", "target must be static (no {variable} placeholders)", "use a literal target name"))
+	case !safeName.MatchString(fb.Target):
+		issues = append(issues, validationError(field+".target", "target name contains unsupported characters", "use 1-128 letters, numbers, dot, underscore, or hyphen"))
+	case strings.HasSuffix(fb.Target, ".fifo"):
+		issues = append(issues, validationError(field+".target", "target must not be a FIFO queue", "fallback routes carry no fifo block; use a standard target"))
+	}
+	return issues
+}
+
+// webhookURLTemplateIssues checks a templated webhook url. Placeholders inside
+// the authority (host) are only allowed when the host ends with a literal
+// dotted suffix, so a request can pick at most one label under a fixed domain
+// and never the whole host.
+func webhookURLTemplateIssues(field, rawURL string) []ValidationIssue {
+	tpl, err := vars.Parse(rawURL)
+	if err != nil {
+		return []ValidationIssue{validationError(field, "url template is malformed: "+err.Error(), "use {variable} placeholders with balanced braces")}
+	}
+	if !tpl.HasPlaceholders() {
+		return nil
+	}
+	authority := urlAuthority(rawURL)
+	if !strings.Contains(authority, "{") {
+		return nil
+	}
+	authTpl, err := vars.Parse(authority)
+	if err != nil {
+		return []ValidationIssue{validationError(field, "url host template is malformed: "+err.Error(), "use {variable} placeholders with balanced braces")}
+	}
+	suffix := authTpl.LiteralSuffix()
+	host := suffix
+	if colon := strings.IndexByte(host, ':'); colon >= 0 {
+		host = host[:colon]
+	}
+	if !strings.Contains(host, ".") {
+		return []ValidationIssue{validationError(field, "a {variable} in the url host must be followed by a literal domain suffix", "write the host as \"{envName}-api.example.com\" so requests cannot choose an arbitrary host")}
+	}
+	return nil
+}
+
+// urlAuthority returns the authority (host[:port]) of a raw, possibly
+// templated URL without parsing it, so placeholders survive intact.
+func urlAuthority(rawURL string) string {
+	rest := rawURL
+	if i := strings.Index(rawURL, "://"); i >= 0 {
+		rest = rawURL[i+3:]
+	}
+	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
+		rest = rest[:slash]
+	}
+	return rest
+}
+
+// describeBindings renders enumerated bindings for error messages.
+func describeBindings(b map[string]string) string {
+	if len(b) == 0 {
+		return "no variables"
+	}
+	names := make([]string, 0, len(b))
+	for n := range b {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, n+"="+b[n])
+	}
+	return strings.Join(parts, ", ")
 }
 
 // postgresConnValidationIssues validates the fields shared by every Postgres
@@ -819,21 +1329,63 @@ func redisOptionsValidationIssues(fieldPrefix string, opts RedisEndpointOptions,
 
 // kafkaPartitionKeyValidationIssues validates the per-route partition_key block.
 // An empty source means "no partition key" (round-robin) and is always valid.
-func kafkaPartitionKeyValidationIssues(fieldPrefix string, pk KafkaPartitionKeyConfig) []ValidationIssue {
+// temporalOptionsValidationIssues validates the per-route temporal_options
+// block for a route that targets a temporal destination. field is the route
+// prefix (endpoints.<name>.destinations[<i>]).
+func temporalOptionsValidationIssues(field string, destination EndpointDestinationConfig) []ValidationIssue {
 	var issues []ValidationIssue
-	switch pk.Source {
-	case "", "endpoint":
-		// valid; empty = round-robin, endpoint = key on endpoint name
+	opts := destination.TemporalOptions
+	prefix := field + ".temporal_options"
+	if opts.WorkflowType == "" {
+		issues = append(issues, validationError(prefix+".workflow_type", "workflow_type is required for temporal routes", "set temporal_options.workflow_type to the registered workflow type name"))
+	}
+	switch opts.Input {
+	case "", "envelope", "body":
+	default:
+		issues = append(issues, validationError(prefix+".input", fmt.Sprintf("%q is not supported", opts.Input), "use \"envelope\" (default) or \"body\""))
+	}
+	issues = append(issues, sourceValueIssues(prefix+".workflow_id", opts.WorkflowID.Source, opts.WorkflowID.Value, opts.WorkflowID.Path, "workflow id", true, "use static, endpoint, header, or body, or omit to use the event id")...)
+	switch opts.IDReusePolicy {
+	case "", "allow_duplicate", "allow_duplicate_failed_only", "reject_duplicate", "terminate_if_running":
+	default:
+		issues = append(issues, validationError(prefix+".id_reuse_policy", fmt.Sprintf("%q is not supported", opts.IDReusePolicy), "use allow_duplicate, allow_duplicate_failed_only, reject_duplicate, or terminate_if_running, or omit for the server default"))
+	}
+	if opts.ExecutionTimeout > 0 && opts.RunTimeout > opts.ExecutionTimeout {
+		issues = append(issues, validationError(prefix+".run_timeout", "must not exceed execution_timeout", "lower run_timeout or raise execution_timeout"))
+	}
+	if strings.HasSuffix(destination.Target, ".fifo") {
+		issues = append(issues, validationError(field+".target", "temporal task queue names must not end in .fifo", "rename the target; FIFO semantics do not apply to temporal task queues"))
+	}
+	return issues
+}
+
+func kafkaPartitionKeyValidationIssues(fieldPrefix string, pk KafkaPartitionKeyConfig) []ValidationIssue {
+	// empty = round-robin, endpoint = key on endpoint name
+	return sourceValueIssues(fieldPrefix, pk.Source, pk.Value, pk.Path, "partition key", true, "use static, endpoint, header, or body")
+}
+
+// sourceValueIssues validates the shared source/value/path shape used by FIFO
+// group ids, Kafka partition keys, and Temporal workflow ids: static needs a
+// value, header/body need a path, endpoint stands alone, and an empty source
+// is allowed only when the option has a default (allowEmpty).
+func sourceValueIssues(field, source, value, path, noun string, allowEmpty bool, sourceHint string) []ValidationIssue {
+	var issues []ValidationIssue
+	switch source {
+	case "endpoint":
+	case "":
+		if !allowEmpty {
+			issues = append(issues, validationError(field+".source", "source is required", sourceHint))
+		}
 	case "static":
-		if pk.Value == "" {
-			issues = append(issues, validationError(fieldPrefix+".value", "value is required when source is static", "set a literal partition key"))
+		if value == "" {
+			issues = append(issues, validationError(field+".value", "value is required when source is static", "set a literal "+noun))
 		}
 	case "header", "body":
-		if pk.Path == "" {
-			issues = append(issues, validationError(fieldPrefix+".path", "path is required when source is header or body", "set a header name or dotted body path"))
+		if path == "" {
+			issues = append(issues, validationError(field+".path", "path is required when source is header or body", "set a header name or dotted body path"))
 		}
 	default:
-		issues = append(issues, validationError(fieldPrefix+".source", fmt.Sprintf("%q is not supported", pk.Source), "use static, endpoint, header, or body"))
+		issues = append(issues, validationError(field+".source", fmt.Sprintf("%q is not supported", source), sourceHint))
 	}
 	return issues
 }

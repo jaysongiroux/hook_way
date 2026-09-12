@@ -121,8 +121,17 @@ go run ./cmd/hookway editor --addr :8090
 - `POST /validate` → body is candidate YAML; returns the same `{"issues": [...]}`
   envelope as `validate --json`.
 
-Both endpoints allow any origin (CORS `*`); they expose no secrets. The API
-serves no UI assets — it is the backend a separate front-end connects to.
+Both endpoints allow any origin (CORS `*`); they expose no secrets.
+
+The same server also serves the embedded web bundle, when one was staged into
+the binary with `make ui`:
+
+- `/` → the project overview, which links to these docs and the examples.
+- `/builder` → the config builder, which reads `GET /schema` and posts to
+  `POST /validate`.
+
+Without a staged bundle both paths return a page explaining that the UI was not
+built; the API keeps working either way.
 
 Pass `--config` (or set `HOOKWAY_CONFIG`) so the editor reads `security.api_key`
 and requires `Authorization: Bearer <key>` on `GET /schema` and `POST /validate`:

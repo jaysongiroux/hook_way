@@ -18,6 +18,7 @@ import { parallelGroups } from "./routes";
 import { createNode, isNodeKind } from "./model";
 import { DND_MIME } from "./Palette";
 import { useGraphStore } from "./store";
+import { DARK, EDGE } from "../tokens";
 
 function CanvasInner() {
   const { screenToFlowPosition } = useReactFlow();
@@ -48,9 +49,13 @@ function CanvasInner() {
         width: 16,
         height: 16,
         markerUnits: "userSpaceOnUse",
-        color: sel ? "#366CED" : "#b1b1b7",
+        color: sel ? EDGE.selected : EDGE.line,
       };
-      const style = sel ? { stroke: "#366CED", strokeWidth: 2.5 } : undefined;
+      // The resting stroke is set explicitly; React Flow's own dark default is
+      // too faint to follow across the canvas.
+      const style = sel
+        ? { stroke: EDGE.selected, strokeWidth: 2.5 }
+        : { stroke: EDGE.line, strokeWidth: 1.5 };
       if (!destIds.has(e.target)) return { ...e, markerEnd, style };
       const g = groups.get(e.id);
       return {
@@ -87,6 +92,8 @@ function CanvasInner() {
   return (
     <div style={{ width: "100%", height: "100%" }} onDrop={onDrop} onDragOver={onDragOver}>
       <ReactFlow
+        colorMode="dark"
+        style={{ background: DARK.bg }}
         nodes={nodes}
         edges={routedEdges}
         nodeTypes={nodeTypes}
@@ -100,7 +107,7 @@ function CanvasInner() {
         onPaneClick={() => setSelected(null)}
         fitView
       >
-        <Background />
+        <Background color="#2A3A57" />
         <Controls />
       </ReactFlow>
     </div>

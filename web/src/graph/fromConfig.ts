@@ -1,5 +1,6 @@
 import type { Edge } from "@xyflow/react";
-import type { AuthData, HookwayNode } from "./model";
+import type { AuthData, HookwayNode, VariableData, FallbackData, LookupData } from "./model";
+import { VARIABLE_SOURCES, VARIABLE_KEY_SOURCES, LOOKUP_PROVIDERS, emptyLookup } from "./model";
 import { DEFAULT_SERVER } from "./model";
 import { DEST_TYPE_SPECS, managedKeys } from "./destTypes";
 import type { FieldSpec } from "./destTypes";
@@ -56,8 +57,71 @@ function omitKeys(obj: Record<string, unknown>, keys: string[]): Record<string, 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-const ENDPOINT_MANAGED = ["enabled", "path", "auth", "destinations", "filters"];
+const ENDPOINT_MANAGED = ["enabled", "path", "auth", "destinations", "filters", "variables", "on_unresolved_variable"];
 const ROUTE_MANAGED = ["destination", "target", "create", "filters"];
+
+function importVariables(raw: Record<string, Record<string, unknown>> | undefined): { variables?: VariableData[] } {
+  if (!raw || Object.keys(raw).length === 0) return {};
+  const variables: VariableData[] = Object.entries(raw).map(([name, v]) => {
+    const values = Array.isArray(v.values) ? (v.values as unknown[]).map(String) : [];
+    const source = VARIABLE_SOURCES.includes(v.source as VariableData["source"]) ? (v.source as VariableData["source"]) : "header";
+    const mode: VariableData["mode"] =
+      v.pattern !== undefined && values.length === 0 ? "pattern" : values.length === 0 && source === "lookup" ? "any" : "values";
+    const out: VariableData = {
+      name,
+      source,
+      path: String(v.path ?? ""),
+      mode,
+      values: values.join(", "),
+      pattern: String(v.pattern ?? ""),
+      default: String(v.default ?? ""),
+    };
+    if (source === "lookup" && v.lookup && typeof v.lookup === "object") {
+      out.lookup = importLookup(v.lookup as Record<string, unknown>);
+    }
+    return out;
+  });
+  return { variables };
+}
+
+const LOOKUP_MANAGED = ["key", "provider", "dynamodb", "http", "postgres"];
+
+function importLookup(raw: Record<string, unknown>): LookupData {
+  const l = emptyLookup();
+  const key = (raw.key ?? {}) as Record<string, unknown>;
+  if (VARIABLE_KEY_SOURCES.includes(key.source as LookupData["keySource"])) l.keySource = key.source as LookupData["keySource"];
+  l.keyPath = String(key.path ?? "");
+  if (LOOKUP_PROVIDERS.includes(raw.provider as LookupData["provider"])) l.provider = raw.provider as LookupData["provider"];
+  const d = (raw.dynamodb ?? {}) as Record<string, unknown>;
+  const f = (d.filter ?? {}) as Record<string, unknown>;
+  l.dynamodb = {
+    table: String(d.table ?? ""),
+    index: String(d.index ?? ""),
+    value_attribute: String(d.value_attribute ?? ""),
+    filter_attribute: String(f.attribute ?? ""),
+    filter_value: String(f.value ?? ""),
+  };
+  const h = (raw.http ?? {}) as Record<string, unknown>;
+  l.http = { url: String(h.url ?? ""), method: String(h.method ?? "GET"), value_path: String(h.value_path ?? "") };
+  const p = (raw.postgres ?? {}) as Record<string, unknown>;
+  l.postgres = { url: String(p.url ?? ""), query: String(p.query ?? "") };
+  // Preserve unmodelled lookup keys (timeout, cache, region, headers, ...) and
+  // unmodelled keys inside each provider block.
+  const extra = omitKeys(raw, LOOKUP_MANAGED) ?? {};
+  const dExtra = omitKeys(d, ["table", "index", "value_attribute", "filter"]);
+  const hExtra = omitKeys(h, ["url", "method", "value_path"]);
+  const pExtra = omitKeys(p, ["url", "query"]);
+  if (dExtra) extra.dynamodb = dExtra;
+  if (hExtra) extra.http = hExtra;
+  if (pExtra) extra.postgres = pExtra;
+  if (Object.keys(extra).length > 0) l.extra = extra;
+  return l;
+}
+
+function importFallback(raw: Record<string, unknown> | undefined): { fallback?: FallbackData } {
+  if (!raw) return {};
+  return { fallback: { destination: String(raw.destination ?? ""), target: String(raw.target ?? "") } };
+}
 
 function importAuth(a: Record<string, unknown> | undefined): AuthData {
   const raw = (a ?? {}) as Record<string, unknown>;
@@ -149,6 +213,8 @@ export function fromConfig(config: Record<string, unknown>): {
         path: String(ep.path ?? ""),
         enabled: ep.enabled === undefined ? true : Boolean(ep.enabled),
         auth: importAuth(ep.auth as Record<string, unknown>),
+        ...importVariables(ep.variables as Record<string, Record<string, unknown>> | undefined),
+        ...importFallback(ep.on_unresolved_variable as Record<string, unknown> | undefined),
         ...(epRawExtra ? { rawExtra: epRawExtra } : {}),
       },
     });
