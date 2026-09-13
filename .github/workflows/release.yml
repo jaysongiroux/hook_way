@@ -83,6 +83,7 @@ jobs:
         run: make docker-build
 
       - name: Vulnerability scan
+        id: trivy
         uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: hookway:local
@@ -94,7 +95,7 @@ jobs:
 
       - name: Upload vulnerability scan artifact
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && steps.trivy.outcome != 'skipped' }}
         with:
           name: trivy-results
           path: trivy-results.sarif

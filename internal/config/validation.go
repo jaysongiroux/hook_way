@@ -399,6 +399,38 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	sqsTargetSettings := map[string]sqsRouteSettings{}
 	snsTargetSettings := map[string]snsRouteSettings{}
 	temporalTargetSettings := map[string]TemporalEndpointOptions{}
+	rabbitFallbackFields := map[string]string{}
+	sqsFallbackFields := map[string]string{}
+	snsFallbackFields := map[string]string{}
+	// Register every fallback before validating authored routes. Endpoints are
+	// stored in a map, so doing this inside the main loop made the reported
+	// conflict depend on map iteration order.
+	for name, endpoint := range c.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		fb, ok := endpoint.FallbackRoute()
+		if !ok {
+			continue
+		}
+		dest, ok := c.Destinations[fb.Destination]
+		if !ok {
+			continue
+		}
+		field := "endpoints." + name + ".on_unresolved_variable.target"
+		key := fb.Destination + "\x00" + fb.Target
+		switch dest.Type {
+		case "sqs":
+			sqsTargetSettings[key] = sqsRouteSettings{}
+			sqsFallbackFields[key] = field
+		case "sns":
+			snsTargetSettings[key] = snsRouteSettings{}
+			snsFallbackFields[key] = field
+		case "rabbitmq", "":
+			queueOptions[key] = RabbitMQQueueOptions{}
+			rabbitFallbackFields[key] = field
+		}
+	}
 	for name, endpoint := range c.Endpoints {
 		fieldPrefix := "endpoints." + name
 		if !safeName.MatchString(name) {
@@ -424,34 +456,6 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix+".destinations", "at least one destination is required for enabled endpoints", "add destination objects that reference destinations entries"))
 		}
 		seenRoutes := map[string]struct{}{}
-		// The fallback route carries no per-route options, yet the factory
-		// builds one target per (destination, target) across all endpoints
-		// with first-wins semantics over map iteration. Register it with
-		// zero options so a shared target that sets any is reported instead
-		// of provisioned nondeterministically.
-		if fb, ok := endpoint.FallbackRoute(); ok {
-			if dest, ok := c.Destinations[fb.Destination]; ok {
-				fbField := fieldPrefix + ".on_unresolved_variable.target"
-				key := fb.Destination + "\x00" + fb.Target
-				switch dest.Type {
-				case "sqs":
-					if prev, ok := sqsTargetSettings[key]; ok && !reflect.DeepEqual(prev, sqsRouteSettings{}) {
-						issues = append(issues, validationError(fbField, "shares an sqs target with a route that sets sqs_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
-					}
-					sqsTargetSettings[key] = sqsRouteSettings{}
-				case "sns":
-					if prev, ok := snsTargetSettings[key]; ok && !reflect.DeepEqual(prev, snsRouteSettings{}) {
-						issues = append(issues, validationError(fbField, "shares an sns target with a route that sets sns_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
-					}
-					snsTargetSettings[key] = snsRouteSettings{}
-				case "rabbitmq", "":
-					if prev, ok := queueOptions[key]; ok && prev != (RabbitMQQueueOptions{}) {
-						issues = append(issues, validationError(fbField, "shares a RabbitMQ queue with a route that sets queue_options; the fallback route carries none", "use a dedicated fallback target, or remove queue_options from the shared route"))
-					}
-					queueOptions[key] = RabbitMQQueueOptions{}
-				}
-			}
-		}
 		for i, destination := range endpoint.Destinations {
 			field := fmt.Sprintf("%s.destinations[%d]", fieldPrefix, i)
 			if destination.Destination == "" {
@@ -521,7 +525,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			for _, routeKey := range routeKeys {
 				if previous, ok := queueOptions[routeKey]; ok && previous != destination.QueueOptions {
-					issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
+					if fallbackField, isFallback := rabbitFallbackFields[routeKey]; isFallback {
+						issues = append(issues, validationError(fallbackField, "shares a RabbitMQ queue with a route that sets queue_options; the fallback route carries none", "use a dedicated fallback target, or remove queue_options from the shared route"))
+					} else {
+						issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
+					}
 					break
 				}
 				queueOptions[routeKey] = destination.QueueOptions
@@ -602,7 +610,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				cur := sqsRouteSettings{opts: destination.SQSOptions, fifo: destination.FIFO}
 				for _, routeKey := range routeKeys {
 					if prev, ok := sqsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
-						issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
+						if fallbackField, isFallback := sqsFallbackFields[routeKey]; isFallback {
+							issues = append(issues, validationError(fallbackField, "shares an sqs target with a route that sets sqs_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
+						} else {
+							issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
+						}
 						break
 					}
 					sqsTargetSettings[routeKey] = cur
@@ -613,7 +625,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 				cur := snsRouteSettings{opts: destination.SNSOptions, fifo: destination.FIFO}
 				for _, routeKey := range routeKeys {
 					if prev, ok := snsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
-						issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
+						if fallbackField, isFallback := snsFallbackFields[routeKey]; isFallback {
+							issues = append(issues, validationError(fallbackField, "shares an sns target with a route that sets sns_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
+						} else {
+							issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
+						}
 						break
 					}
 					snsTargetSettings[routeKey] = cur
