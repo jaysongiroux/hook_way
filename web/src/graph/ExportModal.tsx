@@ -2,6 +2,7 @@ import { Modal, Code, Group, Button, Alert, ScrollArea } from "@mantine/core";
 import { useGraphStore } from "./store";
 import { toConfig, ExportError } from "./toConfig";
 import { toYaml } from "./toYaml";
+import { BUILDER_FLOATING_CLASS, BUILDER_FLOATING_HEADER_CLASS, BUILDER_OVERLAY_CLASS } from "../builderStyles";
 
 export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const nodes = useGraphStore((s) => s.nodes);
@@ -39,7 +40,14 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Export config" size="lg">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Export config"
+      size="lg"
+      classNames={{ content: BUILDER_FLOATING_CLASS, header: BUILDER_FLOATING_HEADER_CLASS }}
+      overlayProps={{ className: BUILDER_OVERLAY_CLASS }}
+    >
       {error ? (
         <Alert color="red" title="Cannot export">{error}</Alert>
       ) : (

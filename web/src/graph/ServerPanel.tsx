@@ -1,5 +1,6 @@
 import { Drawer, Stack, Text, TextInput, NumberInput } from "@mantine/core";
 import { useGraphStore } from "./store";
+import { BUILDER_FLOATING_CLASS, BUILDER_FLOATING_HEADER_CLASS, BUILDER_OVERLAY_CLASS } from "../builderStyles";
 
 // The managed keys of the top-level `server:` block. Unknown server keys the UI
 // doesn't list here still ride along untouched (setServerConfig merges patches).
@@ -30,7 +31,14 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
   const serverConfig = useGraphStore((s) => s.serverConfig);
   const setServerConfig = useGraphStore((s) => s.setServerConfig);
   return (
-    <Drawer opened={opened} onClose={onClose} position="right" title="Server settings">
+    <Drawer
+      opened={opened}
+      onClose={onClose}
+      position="right"
+      title="Server settings"
+      classNames={{ content: BUILDER_FLOATING_CLASS, header: BUILDER_FLOATING_HEADER_CLASS }}
+      overlayProps={{ className: BUILDER_OVERLAY_CLASS }}
+    >
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           The top-level <Text span ff="monospace">server:</Text> block. <Text span ff="monospace">addr</Text> and{" "}

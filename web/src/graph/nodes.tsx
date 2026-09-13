@@ -13,7 +13,12 @@ function useSelectionRing(id: string, color: string): CSSProperties {
   return selected ? { outline: `2px solid ${color}`, outlineOffset: 2 } : {};
 }
 
-const CARD: CSSProperties = { minWidth: 150, background: DARK.surface };
+const CARD: CSSProperties = {
+  minWidth: 160,
+  background: "linear-gradient(150deg, #1D2C47 0%, #172238 100%)",
+  borderWidth: 1,
+  boxShadow: "0 12px 30px rgba(0, 0, 0, 0.3)",
+};
 
 export function EndpointNode({ id, data }: NodeProps<HookwayNode>) {
   const d = data as EndpointData;

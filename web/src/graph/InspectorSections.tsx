@@ -36,9 +36,9 @@ export function Sections({ sections }: { sections: SectionSpec[] }) {
       // leaves a freshly opened section clipped to a stale height.
       transitionDuration={0}
       styles={{
-        item: { border: `1px solid ${BORDER}` },
-        control: { paddingInline: 8 },
-        content: { paddingInline: 8, paddingBottom: 8 },
+        item: { border: `1px solid ${BORDER}`, marginBottom: 8 },
+        control: { paddingInline: 10, minHeight: 42 },
+        content: { paddingInline: 10, paddingTop: 10, paddingBottom: 10 },
       }}
     >
       {sections.map((s) => (

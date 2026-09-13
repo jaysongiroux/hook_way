@@ -18,7 +18,7 @@ import { parallelGroups } from "./routes";
 import { createNode, isNodeKind } from "./model";
 import { DND_MIME } from "./Palette";
 import { useGraphStore } from "./store";
-import { DARK, EDGE } from "../tokens";
+import { EDGE } from "../tokens";
 
 function CanvasInner() {
   const { screenToFlowPosition } = useReactFlow();
@@ -93,7 +93,7 @@ function CanvasInner() {
     <div style={{ width: "100%", height: "100%" }} onDrop={onDrop} onDragOver={onDragOver}>
       <ReactFlow
         colorMode="dark"
-        style={{ background: DARK.bg }}
+        style={{ background: "#0B111B" }}
         nodes={nodes}
         edges={routedEdges}
         nodeTypes={nodeTypes}
@@ -107,7 +107,7 @@ function CanvasInner() {
         onPaneClick={() => setSelected(null)}
         fitView
       >
-        <Background color="#2A3A57" />
+        <Background color="#2A3A57" gap={22} size={1} />
         <Controls />
       </ReactFlow>
     </div>

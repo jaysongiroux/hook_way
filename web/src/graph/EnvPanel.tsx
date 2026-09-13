@@ -3,6 +3,7 @@ import { useGraphStore } from "./store";
 import { toConfig } from "./toConfig";
 import { toYaml } from "./toYaml";
 import { scanEnvVars } from "./envScan";
+import { BUILDER_FLOATING_CLASS, BUILDER_FLOATING_HEADER_CLASS, BUILDER_OVERLAY_CLASS } from "../builderStyles";
 
 export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const nodes = useGraphStore((s) => s.nodes);
@@ -17,7 +18,14 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
     vars = [];
   }
   return (
-    <Drawer opened={opened} onClose={onClose} position="right" title="Environment variables">
+    <Drawer
+      opened={opened}
+      onClose={onClose}
+      position="right"
+      title="Environment variables"
+      classNames={{ content: BUILDER_FLOATING_CLASS, header: BUILDER_FLOATING_HEADER_CLASS }}
+      overlayProps={{ className: BUILDER_OVERLAY_CLASS }}
+    >
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Set these before running Hookway. Referenced via <Code>${"{VAR}"}</Code> in the config.

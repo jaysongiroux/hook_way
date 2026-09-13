@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Modal, Textarea, Button, Group, Alert } from "@mantine/core";
 import { useGraphStore } from "./store";
 import { fromYaml } from "./fromYaml";
+import { BUILDER_FLOATING_CLASS, BUILDER_FLOATING_HEADER_CLASS, BUILDER_OVERLAY_CLASS } from "../builderStyles";
 
 export function ImportModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const [text, setText] = useState("");
@@ -20,7 +21,14 @@ export function ImportModal({ opened, onClose }: { opened: boolean; onClose: () 
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Import config" size="lg">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Import config"
+      size="lg"
+      classNames={{ content: BUILDER_FLOATING_CLASS, header: BUILDER_FLOATING_HEADER_CLASS }}
+      overlayProps={{ className: BUILDER_OVERLAY_CLASS }}
+    >
       {error && <Alert color="red" title="Could not parse" mb="sm">{error}</Alert>}
       <Textarea
         label="Config YAML"

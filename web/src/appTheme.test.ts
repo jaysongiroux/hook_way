@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DARK } from "./tokens";
+import { BUILDER_CSS, BUILDER_FLOATING_CLASS, BUILDER_ROOT_CLASS } from "./builderStyles";
 
 const read = (rel: string) => readFileSync(resolve(__dirname, "..", rel), "utf8");
 
@@ -24,4 +25,11 @@ test("the app forces the dark colour scheme for the builder too", () => {
 // light unless it is told the colour mode.
 test("the builder canvas runs in dark colour mode", () => {
   expect(read("src/graph/Canvas.tsx")).toContain('colorMode="dark"');
+});
+
+test("the builder finishes third-party controls with its dark surface system", () => {
+  expect(BUILDER_CSS).toContain(`.${BUILDER_ROOT_CLASS}`);
+  expect(BUILDER_CSS).toContain(".mantine-Input-input");
+  expect(BUILDER_CSS).toContain(`.${BUILDER_ROOT_CLASS} .react-flow__controls-button`);
+  expect(BUILDER_CSS).toContain(`.${BUILDER_FLOATING_CLASS}`);
 });

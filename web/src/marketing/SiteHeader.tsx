@@ -2,6 +2,7 @@ import { Anchor, Box, Container, Group, Text } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { DOC_LINKS, GITHUB_REPO } from "./links";
 import { DARK } from "../tokens";
+import { BrandIcon } from "../BrandIcon";
 
 const CONFIG_DOC = DOC_LINKS.find((d) => d.path === "docs/configuration.md")!;
 
@@ -21,7 +22,7 @@ export function SiteHeader() {
       <Container size="lg">
         <Group h={60} justify="space-between">
           <Group gap={8}>
-            <Box style={{ width: 10, height: 10, borderRadius: 3, background: DARK.accent }} />
+            <BrandIcon size={28} />
             <Text fw={700} c={DARK.text} size="md">
               Hookway
             </Text>

@@ -10,8 +10,10 @@ import { ImportModal } from "./graph/ImportModal";
 import { usePersistence } from "./graph/usePersistence";
 import { useGraphStore } from "./graph/store";
 import { clearGraph } from "./graph/persistence";
+import { BrandIcon } from "./BrandIcon";
+import { BUILDER_CSS, BUILDER_ROOT_CLASS, BUILDER_TOOLBAR_CLASS } from "./builderStyles";
 
-const HEADER_HEIGHT = 52;
+const HEADER_HEIGHT = 60;
 
 // App is the enterprise three-pane shell: header (toolbar), left navbar
 // (palette), right aside (inspector placeholder — Milestone 5), and the main
@@ -26,63 +28,83 @@ export default function App() {
   const [serverOpen, { open: openServer, close: closeServer }] = useDisclosure(false);
 
   return (
-    <AppShell
-      header={{ height: HEADER_HEIGHT }}
-      navbar={{ width: 220, breakpoint: "sm" }}
-      aside={{ width: 300, breakpoint: "md" }}
-      padding={0}
-    >
-      <AppShell.Header>
-        <Group h="100%" px="md" justify="space-between">
-          <Title order={4} c="brand.6">
-            Hookway Config
-          </Title>
-          <Group gap="xs">
-            <Button size="xs" variant="subtle" onClick={openImport}>Import</Button>
-            <Button size="xs" variant="subtle" onClick={openExport}>Export</Button>
-            <Button size="xs" variant="subtle" onClick={openEnv}>Environment</Button>
-            <Button size="xs" variant="subtle" onClick={openServer}>Server</Button>
-            <Button
-              size="xs"
-              variant="subtle"
-              color="red"
-              onClick={() => {
-                useGraphStore.getState().clear();
-                void clearGraph();
-              }}
-            >
-              Clear
-            </Button>
+    <>
+      <style>{BUILDER_CSS}</style>
+      <AppShell
+        className={BUILDER_ROOT_CLASS}
+        header={{ height: HEADER_HEIGHT }}
+        navbar={{ width: 232, breakpoint: "sm" }}
+        aside={{ width: 320, breakpoint: "md" }}
+        padding={0}
+      >
+        <AppShell.Header>
+          <Group h="100%" px={18} justify="space-between">
+            <Group gap={8}>
+              <BrandIcon size={30} />
+              <Title order={4} c="white" style={{ letterSpacing: -0.3 }}>
+                Hookway Config
+              </Title>
+            </Group>
+            <Group gap={2} className={BUILDER_TOOLBAR_CLASS}>
+              <Button size="xs" variant="subtle" onClick={openImport}>
+                Import
+              </Button>
+              <Button size="xs" variant="subtle" onClick={openExport}>
+                Export
+              </Button>
+              <Button size="xs" variant="subtle" onClick={openEnv}>
+                Environment
+              </Button>
+              <Button size="xs" variant="subtle" onClick={openServer}>
+                Server
+              </Button>
+              <Button
+                size="xs"
+                variant="subtle"
+                className="hookway-clear-action"
+                onClick={() => {
+                  useGraphStore.getState().clear();
+                  void clearGraph();
+                }}
+              >
+                Clear
+              </Button>
+            </Group>
           </Group>
-        </Group>
-      </AppShell.Header>
+        </AppShell.Header>
 
-      <AppShell.Navbar p="md">
-        <Text fw={600} size="sm" tt="uppercase" c="dimmed" mb="sm">
-          Palette
-        </Text>
-        <Palette />
-      </AppShell.Navbar>
+        <AppShell.Navbar p="md">
+          <Box mb="md">
+            <Text fw={700} size="xs" tt="uppercase" c="white" style={{ letterSpacing: 1.2 }}>
+              Palette
+            </Text>
+            <Text size="xs" c="dimmed" mt={3}>
+              Drag a block onto the canvas
+            </Text>
+          </Box>
+          <Palette />
+        </AppShell.Navbar>
 
-      <AppShell.Aside p={0}>
-        <ScrollArea h="100%" type="auto" px="md" py="md">
-          <Text fw={600} size="sm" tt="uppercase" c="dimmed" mb="sm">
-            Inspector
-          </Text>
-          <Inspector />
-        </ScrollArea>
-      </AppShell.Aside>
+        <AppShell.Aside p={0}>
+          <ScrollArea h="100%" type="auto" px="md" py="md" scrollbarSize={8}>
+            <Text fw={700} size="xs" tt="uppercase" c="white" mb="md" style={{ letterSpacing: 1.2 }}>
+              Inspector
+            </Text>
+            <Inspector />
+          </ScrollArea>
+        </AppShell.Aside>
 
-      <AppShell.Main>
-        <Box style={{ height: `calc(100vh - ${HEADER_HEIGHT}px)` }}>
-          <Canvas />
-        </Box>
-      </AppShell.Main>
+        <AppShell.Main>
+          <Box style={{ height: `calc(100vh - ${HEADER_HEIGHT}px)` }}>
+            <Canvas />
+          </Box>
+        </AppShell.Main>
 
-      <ImportModal opened={importOpen} onClose={closeImport} />
-      <ExportModal opened={exportOpen} onClose={closeExport} />
-      <EnvPanel opened={envOpen} onClose={closeEnv} />
-      <ServerPanel opened={serverOpen} onClose={closeServer} />
-    </AppShell>
+        <ImportModal opened={importOpen} onClose={closeImport} />
+        <ExportModal opened={exportOpen} onClose={closeExport} />
+        <EnvPanel opened={envOpen} onClose={closeEnv} />
+        <ServerPanel opened={serverOpen} onClose={closeServer} />
+      </AppShell>
+    </>
   );
 }

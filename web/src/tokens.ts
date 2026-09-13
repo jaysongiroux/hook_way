@@ -1,6 +1,5 @@
-// Dark surface tokens for the marketing page only. The builder keeps the light
-// Mantine theme, so these are applied explicitly rather than by switching the
-// provider's colour scheme.
+// Shared dark surface tokens. The marketing page applies these explicitly;
+// the builder layers its denser editor surfaces on top in builderStyles.ts.
 //
 // Every pair below was checked with contrastRatio (see tokens.test.ts) rather
 // than by eye. Measured against the canvas: white 16.3:1, muted 6.4:1,
