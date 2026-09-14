@@ -4,7 +4,9 @@ Scratch/working space for the V2 redesign: a typed-port node graph replacing V1'
 hardcoded request pipeline.
 
 **Branch:** `v2` (branched from `main` @ `242c358`)
-**Status:** design complete; all 11 implementation chunks written. Nothing implemented, nothing committed.
+**Status:** implementation preflight underway; all 11 chunks written. Chunk 0 is pending
+source/traffic evidence; no V2 runtime chunk accepted yet. See
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments, verification and plan corrections.
 
 **Chunk sequence** (`plans/00-INDEX.md` has the dependency graph and per-chunk gates):
 
@@ -59,10 +61,12 @@ configs) into a V2 conformance suite is a first-class plan item, not a nice-to-h
 | `02-design.md` | The V2 design — port lattice, node catalog, fan-out/error semantics, goja sandbox |
 | `03-scalability.md` | Write-amplification budget and the rules that keep it O(1) per event |
 | `plans/` | **Implementation chunks 0-10.** Start at `plans/00-INDEX.md` |
+| `IMPLEMENTATION.md` | Orchestration, dependency gates, verified progress and required plan corrections |
 | `spikes/` | Spike findings (created by Chunk 0) |
 | `OPEN-QUESTIONS.md` | Unresolved questions and pending spikes |
 
 ## Ground rules for this directory
 
-- Nothing here is committed until explicitly asked.
+- The user authorized Git writes on 2026-09-14. Stay on `v2`, leave `main` untouched,
+  and never sign commits. See `IMPLEMENTATION.md` for the review workflow.
 - Open questions live in `OPEN-QUESTIONS.md` and get promoted into decisions above once answered.

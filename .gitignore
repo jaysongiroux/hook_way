@@ -59,3 +59,6 @@ web/vite.config.d.ts
 # serves the tracked internal/editor/placeholder.html instead.
 internal/editor/webui/*
 !internal/editor/webui/.gitkeep
+
+# Real webhook captures used only by the V2 signature compatibility spike.
+v2/spikes/fixtures/

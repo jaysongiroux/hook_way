@@ -1,6 +1,7 @@
 # Chunk 0: Spikes
 
-**Status:** not started
+**Status:** in progress; evidence gate pending. See `../IMPLEMENTATION.md` and
+`../spikes/` for verified findings and missing inputs.
 **Depends on:** nothing
 **Unlocks:** Chunk 1 (gate only — spike findings may amend the port lattice)
 **Verification gate:** two findings documents exist and each answers its questions with
