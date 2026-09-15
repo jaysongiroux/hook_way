@@ -30,7 +30,7 @@ intended reason before implementation; workers must report that evidence.
 | 3 Minimal serving | Accepted through `a468a52` | Signed live request delivered with 202; invalid signature rejected |
 | 4 Gates and conformance | Accepted through `d7316df`; I9/I15 skipped until Chunk 8 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Accepted through `a722076` | All 13 types deliver through V2; integration gates pass |
-| 6 Proxy and transforms | Implemented; local unsigned commit after gate | Upstream response, method, path, query and transforms verified |
+| 6 Proxy and transforms | Accepted through `cd0288c` | Upstream response, method, path, query and transforms verified |
 | 7 Code node | Waiting for 6 | C1-C7 individually exercised; race and dependency checks pass |
 | 8 Secrets and observability | Waiting for 6 | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
 | 9 V2 cutover and V1 removal | Waiting for 7 and 8 | V2 feature/conformance gates pass before V1 removal |

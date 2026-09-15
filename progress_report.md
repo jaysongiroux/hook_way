@@ -29,13 +29,12 @@ agent can resume without reading chat history.
 - Chunk 5 destinations, fan-out, `on_error`, and SNS/SQS MessageAttributes is
   accepted at unsigned `a722076`.
 - Chunk 6 sync proxy and transforms (`http_request`, `respond`, `xml_prune`,
-  `body_format: xml`) is implemented in the working tree; local unsigned commit
-  pending the Chunk 6 gate.
+  `body_format: xml`) is accepted at unsigned `cd0288c`.
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 6 gate green; unsigned local commit next. Do not push.
-Do not start Chunk 7 until the Chunk 6 commit exists.
+**Status:** Chunk 6 accepted at unsigned `cd0288c`. Next chunk is 7 (goja code
+node). Do not push.
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
@@ -66,8 +65,7 @@ Do not start Chunk 7 until the Chunk 6 commit exists.
 `xml_prune` (UG excluded). `http_request.auth.oauth2` not in this chunk.
 I9/I15 still skipped until Chunk 8.
 
-**Exact next step:** One unsigned local commit for Chunk 6. Then Chunk 7
-(`v2/plans/07-code-node-goja.md`). Do not push.
+**Exact next step:** Chunk 7 (`v2/plans/07-code-node-goja.md`). Do not push.
 
 ## Orchestrator — Chunk 5 gate (retained)
 

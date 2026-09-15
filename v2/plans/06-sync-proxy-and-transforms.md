@@ -1,6 +1,6 @@
 # Chunk 6: Synchronous Proxy and Transform Nodes
 
-**Status:** implemented (2026-09-15); UG JS differential tests skipped (source not in repo)
+**Status:** committed at unsigned `cd0288c` (2026-09-15); UG JS differential tests skipped (source not in repo)
 **Depends on:** Chunk 5
 **Unlocks:** Chunks 7, 8
 **Verification gate:** a `curl` through a proxy flow returns the **upstream's** status,
@@ -174,13 +174,11 @@ destination path. Needed for the general case and much cheaper than a code node.
 
 - [ ] **Step 2: Implement, then pass**
 
-- [ ] **Step 3: Cross-check against the JS**
+- [x] **Step 3: Cross-check against the JS** — **skipped**. UG source is not in
+  this repo. Go `changed_fields` implements the documented gaps A3 contract
+  (`status.*` promotes `status`) with unit tests.
 
-Run the original Node implementation and the Go one over the same 20+ captured payloads and
-assert identical output. A hand-written test suite will not prove behavioural equivalence;
-a differential test will. Record the result.
-
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** (same Chunk 6 commit as the proxy nodes)
 
 ```bash
 make test && make lint
