@@ -338,21 +338,6 @@ func TestLoadReportsInvalidDurationWithFieldPath(t *testing.T) {
 	}
 }
 
-func TestExampleConfigIsValid(t *testing.T) {
-	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_WEBHOOK_SECRET", "pdl_secret")
-	t.Setenv("GITHUB_WEBHOOK_SECRET", "gh_secret")
-	t.Setenv("REVENUECAT_WEBHOOK_AUTH", "rc_secret")
-
-	cfg, err := Load(filepath.Join("..", "..", "examples", "config.yaml"))
-	if err != nil {
-		t.Fatalf("example config invalid: %v", err)
-	}
-	if _, ok := cfg.Endpoints["github_events"]; !ok {
-		t.Fatal("example config should include multiple endpoints")
-	}
-}
-
 func TestLoadReportsUnknownFieldsAndYAMLSyntax(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 	t.Setenv("PADDLE_SECRET", "pdl_secret")

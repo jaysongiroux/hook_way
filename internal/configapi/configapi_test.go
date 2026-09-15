@@ -6,30 +6,45 @@ import (
 	"testing"
 )
 
+func TestValidate_RejectsV1Config(t *testing.T) {
+	for _, src := range []string{
+		"schema_version: 1\nendpoints: {}\n",
+		"endpoints:\n  github:\n    path: /webhooks/github\n",
+	} {
+		resp := Validate([]byte(src))
+		if len(resp.Issues) != 1 {
+			t.Fatalf("src %q: issues = %#v, want the migration error", src, resp.Issues)
+		}
+		iss := resp.Issues[0]
+		if iss.Severity != "error" || !strings.Contains(iss.Message, "schema_version 1 (endpoints:) is no longer supported") {
+			t.Fatalf("src %q: issue = %#v", src, iss)
+		}
+		if !strings.Contains(iss.Suggestion, "schema_version: 2") || !strings.Contains(iss.Suggestion, "flows:") || !strings.Contains(iss.Suggestion, "docs/configuration.md") {
+			t.Fatalf("src %q: suggestion = %q", src, iss.Suggestion)
+		}
+	}
+}
+
 func TestValidate_ValidConfigMarshalsEmptyIssuesArray(t *testing.T) {
-	resp := Validate([]byte(`server:
+	resp := Validate([]byte(`schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
   billing:
-    type: "rabbitmq"
-    rabbitmq:
-      url: "amqp://guest:guest@localhost:5672/"
-      exchange: "webhooks"
-      exchange_type: "direct"
-      durable: true
-endpoints:
+    type: "webhook"
+    webhook:
+      url: "https://example.test/hooks"
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `))
 	out, _ := json.Marshal(resp)
 	if string(out) != `{"issues":[]}` {
@@ -38,7 +53,7 @@ endpoints:
 }
 
 func TestValidate_InvalidConfigSetsErrorSeverity(t *testing.T) {
-	resp := Validate([]byte("server:\n  max_body_bytes: 1048576\n"))
+	resp := Validate([]byte("schema_version: 2\nserver:\n  max_body_bytes: 1048576\n"))
 	if len(resp.Issues) == 0 {
 		t.Fatal("expected at least one issue")
 	}
@@ -60,7 +75,8 @@ func TestSchema_ReturnsValidJSON(t *testing.T) {
 	}
 }
 
-const configMissingEnvVar = `server:
+const configMissingEnvVar = `schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -71,18 +87,16 @@ destinations:
       exchange: "webhooks"
       exchange_type: "direct"
       durable: true
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 
 func TestValidateWithEnv_MissingVarIsWarningSeverity(t *testing.T) {
@@ -107,7 +121,7 @@ func TestValidateWithEnv_NoExpandSkipsMissingVarEntirely(t *testing.T) {
 }
 
 func TestValidateWithEnv_ExpandTrueStillReportsStructuralErrors(t *testing.T) {
-	resp := ValidateWithEnv([]byte("server:\n  max_body_bytes: 1048576\n"), true)
+	resp := ValidateWithEnv([]byte("schema_version: 2\nserver:\n  max_body_bytes: 1048576\n"), true)
 	if len(resp.Issues) == 0 {
 		t.Fatal("expected at least one structural issue")
 	}
@@ -118,7 +132,8 @@ func TestValidateWithEnv_ExpandTrueStillReportsStructuralErrors(t *testing.T) {
 	}
 }
 
-const configWebhookURLMissingEnvVar = `server:
+const configWebhookURLMissingEnvVar = `schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -126,17 +141,16 @@ destinations:
     type: "webhook"
     webhook:
       url: "${DEFINITELY_UNSET_HOOKWAY_TEST_WEBHOOK_URL}"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "forward"
-        target: "test-target"
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: forward, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 
 // TestValidateWithEnv_MissingWebhookURLDowngradesFormatCheckToWarning is the
@@ -175,7 +189,8 @@ func TestValidateWithEnv_MissingWebhookURLDowngradesFormatCheckToWarning(t *test
 	_ = sawURLIssue // downgraded-to-warning or absent are both acceptable per spec
 }
 
-const configWebhookURLGenuinelyInvalid = `server:
+const configWebhookURLGenuinelyInvalid = `schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -183,17 +198,16 @@ destinations:
     type: "webhook"
     webhook:
       url: "ftp://x"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "forward"
-        target: "test-target"
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: forward, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 
 // TestValidateWithEnv_GenuineURLFormatErrorStaysError guards against
@@ -306,23 +320,23 @@ func TestValidate_ExfilBoundary_SetEnvVarValueNeverLeaks(t *testing.T) {
 // raw value in the issue message — when (and only when) envRef is NOT
 // expanded against the environment.
 func exfilBoundaryConfig(envRef string) string {
-	return `server:
+	return `schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
   exfil:
     type: "` + envRef + `"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "exfil"
-        target: "test-target"
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: exfil, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 }
 

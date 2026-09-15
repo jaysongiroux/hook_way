@@ -6,6 +6,7 @@
 # AWS credential chain (IAM role, environment, ~/.aws). Set both to use
 # static credentials, or set endpoint to http://localhost:4566 for LocalStack.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -27,52 +28,28 @@ destinations:
       # access_key_id: "AKIA..."
       # secret_access_key: "..."
 
-endpoints:
+flows:
   # FIFO queue: the .fifo suffix selects FIFO mode. A fifo: block is required
   # for FIFO targets and must define group_id (ordering key).
   orders:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "jobs"
-        target: "orders-jobs.fifo"         # .fifo suffix → FIFO queue
-        create: true                        # auto-create the queue at startup
-        sqs_options:
-          visibility_timeout: "30s"         # how long a consumer has to process
-          message_retention: "96h"          # how long SQS retains undelivered messages
-        fifo:
-          group_id:
-            # Route messages to the same group by customer id from the body.
-            # source options: endpoint | static | header | body
-            source: "body"
-            path: "customer.id"
-            # fallback: use when the path is absent — can be a literal or "endpoint"
-            fallback: "endpoint"
-          dedup:
-            # Use the idempotency header from the provider as the dedup id when present.
-            use_idempotency_key: true
-            # Fall back to content-based deduplication when no idempotency id is available.
-            content_based_fallback: true
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_ts_colon"
-      secret: "${ORDERS_WEBHOOK_SECRET}"
-      signature_header: "X-Signature"
-      timestamp_tolerance: "5m"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Signature, timestamp_tolerance: "5m"}
+      - {id: env, type: envelope, body_format: json}
+      # V1 route set sqs_options (visibility_timeout 30s, message_retention 96h)
+      # and fifo.group_id from body.customer.id with endpoint fallback plus
+      # idempotency/content-based dedup; those fields are not on the V2 publish node.
+      - {id: out, type: publish, destination: jobs, target: orders-jobs.fifo, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
 
   # Standard (non-FIFO) queue: omit the .fifo suffix and the fifo: block.
   notifications:
-    enabled: true
-    path: "/webhooks/notifications"
-    destinations:
-      - destination: "jobs"
-        target: "notification-jobs"
-        create: true
-        sqs_options:
-          visibility_timeout: "60s"
-          message_retention: "24h"
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${NOTIFY_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/notifications, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${NOTIFY_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # V1 route set sqs_options visibility_timeout 60s, message_retention 24h.
+      - {id: out, type: publish, destination: jobs, target: notification-jobs, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

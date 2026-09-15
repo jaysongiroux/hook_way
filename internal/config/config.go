@@ -53,7 +53,7 @@ type ServerConfig struct {
 	ShutdownTimeout time.Duration
 	// PublishTimeout bounds how long a webhook request's fan-out publish is
 	// allowed to run once detached from the inbound request context (see
-	// internal/httpapi Server.handleWebhook). Defaults to 10s when omitted,
+	// FlowServer publish). Defaults to 10s when omitted,
 	// matching the WriteTimeout/ShutdownTimeout defaults so a synchronous
 	// publish can't outlive the response write or a graceful shutdown; an
 	// explicitly-set non-positive value is rejected at load time. Config

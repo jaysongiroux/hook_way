@@ -7,6 +7,7 @@
 # (which selects the partition) — reuse the same source model as FIFO group ids:
 # static | endpoint | header | body, with an optional fallback.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -45,33 +46,16 @@ destinations:
         initial_backoff: "100ms"
         max_backoff: "2s"
 
-endpoints:
+flows:
   webhook_events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "events"
-        # Kafka topic name.
-        target: "billing-events"
-        # Pre-creates the topic via an admin CreateTopics call at startup
-        # (idempotent). Omit if topics are pre-provisioned.
-        create: true
-        kafka_options:
-          # Keyed messages preserve per-key ordering within the topic.
-          # Omit partition_key entirely for round-robin distribution.
-          partition_key:
-            source: "body"        # static | endpoint | header | body
-            path: "account.id"    # for header/body
-            fallback: "endpoint"  # literal value, or "endpoint"
-          # Optional topic settings used when Hookway pre-creates this topic
-          # (create: true). Omit either to use the broker default.
-          # partitions: 6
-          # replication_factor: 3
-      - destination: "events"
-        target: "audit-events"
-        # No partition_key → round-robin across partitions.
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/events, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # Kafka topic name. V1 route set kafka_options.partition_key from
+      # body.account.id with endpoint fallback (not a publish-node field).
+      - {id: out1, type: publish, destination: events, target: billing-events, create: true}
+      # No partition_key → round-robin across partitions.
+      - {id: out2, type: publish, destination: events, target: audit-events}
+    edges: [in>body, body>auth, auth>env, env>out1, env>out2]

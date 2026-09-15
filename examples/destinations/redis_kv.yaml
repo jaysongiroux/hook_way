@@ -19,7 +19,7 @@
 #     {prefix}          → the redis.key_prefix value (requires redis.key_prefix
 #                         to be set; renders as "" when key_prefix is absent)
 #     {target}          → the route target name (the "target:" field below)
-#     {endpoint}        → the endpoint name (the enclosing endpoints key)
+#     {endpoint}        → the flow name (the enclosing flows key)
 #     {id}              → the event id (msg.ID)
 #     {idempotency_key} → the idempotency key (msg.IdempotencyKey)
 #   Unknown tokens are left as-is in the rendered key.
@@ -35,6 +35,7 @@
 #
 # Valkey is fully supported; point redis.url at a Valkey node.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -85,39 +86,20 @@ destinations:
       #   # Dev only — disables certificate verification; never use in production:
       #   # insecure_skip_verify: false
 
-endpoints:
+flows:
   # Webhook events stored as SET key-value pairs with a TTL. Each delivery
   # overwrites the key at that computed path; old entries expire automatically.
   webhook_events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "events"
-        # Base name used as the {endpoint} placeholder in key_template. Must
-        # match ^[a-zA-Z0-9._-]{1,128}$
-        target: "webhooks.kv"
-        # When true: at startup Hookway verifies the Redis connection is
-        # reachable (idempotent — safe to leave enabled in production).
-        create: true
-        redis_options:
-          # Key expiry duration (Go duration string). Keys are stored with SET
-          # EX so they expire automatically after this window. Bounds the
-          # keyspace and prevents unbounded growth. 168h = 7 days.
-          # NOTE: ttl is ONLY valid for redis_kv destinations.
-          ttl: "168h"
-          # Template for the Redis storage key. Supported tokens:
-          #   {prefix}          — redis.key_prefix (empty string if not set)
-          #   {target}          — the route target name (the "target:" field above)
-          #   {endpoint}        — the endpoint name (the enclosing endpoints key)
-          #   {id}              — the event id (msg.ID)
-          #   {idempotency_key} — the idempotency key (msg.IdempotencyKey)
-          #   Unknown tokens are left as-is in the rendered key.
-          # NOTE: key_template is ONLY valid for redis_kv destinations.
-          key_template: "{prefix}:{endpoint}:{id}"
-          # NOTE: max_len and consumer_group are NOT valid for redis_kv —
-          # validation will reject them.
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/events, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # Base name used as the {endpoint} placeholder in key_template. Must
+      # match ^[a-zA-Z0-9._-]{1,128}$
+      # V1 route set redis_options.ttl: 168h and
+      # key_template: "{prefix}:{endpoint}:{id}" (not publish-node fields).
+      # NOTE: max_len and consumer_group are NOT valid for redis_kv —
+      # validation will reject them.
+      - {id: out, type: publish, destination: events, target: webhooks.kv, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

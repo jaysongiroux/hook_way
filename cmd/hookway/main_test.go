@@ -34,7 +34,7 @@ func TestRunValidateAcceptsValidConfig(t *testing.T) {
 func TestRunValidateRejectsInvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid.yaml")
-	if err := os.WriteFile(path, []byte("server:\n  addr: ''\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("schema_version: 2\nserver:\n  addr: ''\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -118,6 +118,45 @@ func TestRun_SchemaNodesListsCatalog(t *testing.T) {
 	}
 }
 
+func TestRunValidateRejectsV1Config(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "v1.yaml")
+	body := `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: webhook
+    webhook: {url: "https://example.test/hooks"}
+endpoints:
+  github:
+    enabled: true
+    path: /webhooks/github
+    destinations:
+      - destination: primary
+        target: q
+    auth:
+      type: hmac_sha256
+      scheme: hmac_sha256_hex
+      secret: s
+      signature_header: X-Sig
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"validate", "--config", path}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "schema_version 1 (endpoints:) is no longer supported") {
+		t.Fatalf("stderr = %q, want V1 migration error", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "docs/configuration.md") {
+		t.Fatalf("stderr = %q, want docs pointer", stderr.String())
+	}
+}
+
 func TestRunValidateV2Examples(t *testing.T) {
 	t.Setenv("WEBHOOK_URL", "https://example.test/hooks")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
@@ -163,31 +202,27 @@ func TestRunValidateV2Examples(t *testing.T) {
 func TestEditorAPIKeyFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := `server:
+	body := `schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 security:
   api_key: "admin-key"
 destinations:
   billing:
-    type: "rabbitmq"
-    rabbitmq:
-      url: "amqp://guest:guest@localhost:5672/"
-      exchange: "webhooks"
-      exchange_type: "direct"
-      durable: true
-endpoints:
+    type: "webhook"
+    webhook:
+      url: "https://example.test/hooks"
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -215,7 +250,8 @@ func TestEditorAPIKeyNoConfigIsUnauthenticated(t *testing.T) {
 // configMissingEnvVarYAML is otherwise-valid except its rabbitmq url
 // references an environment variable that is (deliberately) never set in
 // these tests.
-const configMissingEnvVarYAML = `server:
+const configMissingEnvVarYAML = `schema_version: 2
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -226,18 +262,16 @@ destinations:
       exchange: "webhooks"
       exchange_type: "direct"
       durable: true
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 
 func TestRun_ValidateJSONMissingEnvVarIsWarningAndExitsZero(t *testing.T) {
@@ -318,7 +352,7 @@ func TestRun_ValidateJSONEmitsIssuesEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
 	// Missing server.addr → a validation issue.
-	if err := os.WriteFile(path, []byte("server:\n  max_body_bytes: 1048576\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("schema_version: 2\nserver:\n  max_body_bytes: 1048576\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -380,7 +414,8 @@ func TestRunServe_MetricsBindFailureIsFatal(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := fmt.Sprintf(`server:
+	body := fmt.Sprintf(`schema_version: 2
+server:
   addr: %q
   max_body_bytes: 1048576
 metrics:
@@ -392,16 +427,15 @@ destinations:
     type: "webhook"
     webhook:
       url: "https://example.invalid/hooks"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "notify"
-        target: "orders"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: notify, target: orders}
+    edges: [in>body, body>auth, auth>env, env>out]
 `, serverAddr, metricsAddr)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -442,7 +476,8 @@ func TestRunServe_ReplayEnabledWithoutAPIKeyFailsFast(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := fmt.Sprintf(`server:
+	body := fmt.Sprintf(`schema_version: 2
+server:
   addr: %q
   max_body_bytes: 1048576
 destinations:
@@ -450,16 +485,15 @@ destinations:
     type: "webhook"
     webhook:
       url: "https://example.invalid/hooks"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "notify"
-        target: "orders"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: notify, target: orders}
+    edges: [in>body, body>auth, auth>env, env>out]
 replay:
   enabled: true
   addr: ":0"

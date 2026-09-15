@@ -20,6 +20,7 @@
 # timestamp_tolerance is used as JWT clock leeway (exp/nbf). It is optional
 # for JWT schemes (unlike HMAC timestamped schemes where it is required).
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -35,26 +36,15 @@ destinations:
       publish_timeout: "5s"
       declare_queues: true
 
-endpoints:
+flows:
   # RS256: Bearer token signed with an RSA private key. Hookway verifies with
   # the matching PEM-encoded RSA public key.
   # Set JWT_PUBLIC_KEY to the PEM-encoded RSA public key from your identity provider.
   jwt_webhook:
-    enabled: true
-    path: "/webhooks/jwt"
-    destinations:
-      - destination: "primary"
-        target: "jwt-events"
-        create: true
-    auth:
-      type: "jwt"
-      scheme: "jwt_rs256"
-      secret: "${JWT_PUBLIC_KEY}"
-      signature_header: "Authorization"
-      # Clock leeway for exp/nbf checks (optional for JWT schemes).
-      timestamp_tolerance: "1m"
-      # Enforce iss and aud claims to prevent token misuse across services.
-      expected_issuer: "https://your-idp.example.com"
-      expected_audience: "hookway"
-      # Bind the token to the request body: the claim must equal hex(SHA-256(body)).
-      body_hash_claim: "body_sha256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/jwt, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: jwt_rs256, secret: "${JWT_PUBLIC_KEY}", signature_header: Authorization, timestamp_tolerance: "1m", expected_issuer: "https://your-idp.example.com", expected_audience: hookway, body_hash_claim: body_sha256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: jwt-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

@@ -1,9 +1,10 @@
 # examples/destinations/rabbitmq.yaml
 #
 # Reference config showing the full RabbitMQ destination option surface.
-# One endpoint fans out to two destinations: a primary exchange with dead-letter
+# One flow fans out to two destinations: a primary exchange with dead-letter
 # support and an audit exchange with minimal options.
 
+schema_version: 2
 server:
   addr: ":8080"
   read_timeout: "5s"
@@ -74,42 +75,21 @@ destinations:
       declare_queues: true
       publisher_channels: 4
 
-endpoints:
+flows:
   paddle_billing:
-    enabled: true
-    path: "/webhooks/paddle"
     # stop_on_failure publishes routes in order and returns 503 on first failure.
     # Use skip_failed when audit/secondary destinations should not block intake.
     delivery_failure_policy: "stop_on_failure"
-    destinations:
-      - destination: "primary"
-        target: "paddle-webhooks"
-        create: true
-        queue_options:
-          # Billing events are high value; keep them longer and allow a
-          # deeper backlog than the global queue_defaults above.
-          message_ttl: "72h"
-          max_length: 500000
-          dead_letter_routing_key: "paddle.dead"
-      - destination: "audit"
-        target: "paddle-audit-webhooks"
-        create: true
-        queue_options:
-          message_ttl: "168h"
-    max_body_bytes: 2097152
-    rate_limit:
-      enabled: true
-      requests_per_minute: 500
-      burst: 1000
-      key_by: "ip"
-    replay_protection:
-      enabled: true
-      ttl: "10m"
-      max_entries: 50000
-    auth:
-      type: "hmac_sha256"
-      # Paddle signs <timestamp>:<body> in the Paddle-Signature header.
-      scheme: "hmac_sha256_ts_colon"
-      secret: "${PADDLE_WEBHOOK_SECRET}"
-      signature_header: "Paddle-Signature"
-      timestamp_tolerance: "5m"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/paddle, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 500, burst: 1000, key_by: ip}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${PADDLE_WEBHOOK_SECRET}", signature_header: Paddle-Signature, timestamp_tolerance: "5m"}
+      - {id: guard, type: replay_guard, ttl: "10m", max_entries: 50000}
+      - {id: env, type: envelope, body_format: json}
+      # V1 per-route queue_options (primary: message_ttl 72h, max_length 500000,
+      # dead_letter_routing_key paddle.dead; audit: message_ttl 168h) are not
+      # publish-node fields. V1 also set per-flow max_body_bytes: 2097152.
+      - {id: out1, type: publish, destination: primary, target: paddle-webhooks, create: true}
+      - {id: out2, type: publish, destination: audit, target: paddle-audit-webhooks, create: true}
+    edges: [in>rl, rl>body, body>auth, auth>guard, guard>env, env>out1, env>out2]

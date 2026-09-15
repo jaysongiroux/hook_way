@@ -26,20 +26,22 @@ type ValidateResponse struct {
 }
 
 // Validate parses and validates raw YAML config bytes, returning structured
-// issues. V1 issues are severity "error". V2 policy lint may emit "warning".
+// issues. schema_version other than 2 is a migration error (severity "error").
+// V2 policy lint may emit "warning".
 //
 // This is the function internal/editor's POST /validate calls. It must NEVER
 // expand ${VAR} references against the process environment: the editor
 // accepts candidate config from an untrusted HTTP client, and expanding env
 // here would let that client fish for server-side secrets/URLs by observing
-// which fields end up populated. It delegates straight to
-// config.ValidateBytes, which is non-expanding by construction (see that
-// function's doc comment) — do not route this through ValidateWithEnv(...,
-// true).
+// which fields end up populated. It delegates to flowconfig.ValidateBytes
+// (non-expanding) — do not route this through ValidateWithEnv(..., true).
 func Validate(data []byte) ValidateResponse {
 	version, err := flowconfig.DetectSchemaVersion(data)
-	if err != nil || version != 2 {
-		return errorSeverity(config.NewService().ValidateBytes(data))
+	if err != nil {
+		return preserveSeverity(flowconfig.ValidateBytes(data))
+	}
+	if version != 2 {
+		return errorSeverity([]config.ValidationIssue{flowconfig.V1UnsupportedIssue()})
 	}
 	return preserveSeverity(flowconfig.ValidateBytes(data))
 }
@@ -80,10 +82,12 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 		})
 	}
 	var structural ValidateResponse
-	if err == nil && version == 2 {
+	if err != nil {
 		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
+	} else if version != 2 {
+		structural = errorSeverity([]config.ValidationIssue{flowconfig.V1UnsupportedIssue()})
 	} else {
-		structural = errorSeverity(config.NewService().ValidateBytes([]byte(expanded)))
+		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
 	}
 
 	var parsed any

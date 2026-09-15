@@ -16,6 +16,7 @@
 #
 # Valkey is fully supported; point redis.url at a Valkey node.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -66,30 +67,19 @@ destinations:
       #   # Dev only — disables certificate verification; never use in production:
       #   # insecure_skip_verify: false
 
-endpoints:
+flows:
   # Webhook events routed to a Redis list. Consumers use BRPOP/RPOP on the
   # list key to dequeue and process messages in FIFO order.
   webhook_events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "events"
-        # List key (without the key_prefix, if set). Must match
-        # ^[a-zA-Z0-9._-]{1,128}$
-        target: "webhooks.list"
-        # When true: at startup Hookway ensures the list exists (idempotent).
-        create: true
-        redis_options:
-          # Approximate maximum number of entries to retain in the list.
-          # After each LPUSH, Hookway trims the list to max_len entries via
-          # LTRIM, dropping the oldest entries from the tail. This caps memory
-          # usage without a separate background job. Set to 0 (or omit) for
-          # an unbounded list.
-          # NOTE: consumer_group, ttl, and key_template are NOT valid for
-          # redis_list — validation will reject them.
-          max_len: 50000
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/events, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # List key (without the key_prefix, if set). Must match
+      # ^[a-zA-Z0-9._-]{1,128}$
+      # V1 route set redis_options.max_len: 50000 (not a publish-node field).
+      # NOTE: consumer_group, ttl, and key_template are NOT valid for
+      # redis_list — validation will reject them.
+      - {id: out, type: publish, destination: events, target: webhooks.list, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

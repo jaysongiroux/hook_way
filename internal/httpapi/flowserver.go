@@ -31,7 +31,6 @@ import (
 )
 
 // FlowServer serves schema_version 2 flows through the graph executor.
-// V1 Server stays untouched until Chunk 9.
 type FlowServer struct {
 	cfg            flowconfig.Config
 	v1cfg          config.Config
@@ -171,10 +170,14 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			logger.Error("flow failed to compile; path will return 500 not 404",
 				"flow", name, "error", compileErr)
 		}
+		hasNoAuth := flowHasNoAuth(fc)
+		if hasNoAuth {
+			logger.Warn("flow uses no_auth; requests are accepted without verification", "flow", name)
+		}
 		s.flows[name] = mountedFlow{
 			name: name, methods: methodSet(methods), allow: strings.Join(methods, ", "),
 			flow: compiled, destByNode: destByNode, destIDs: uniqueDestIDs(destByNode),
-			hasNoAuth: flowHasNoAuth(fc), broken: compileErr != nil || compiled == nil,
+			hasNoAuth: hasNoAuth, broken: compileErr != nil || compiled == nil,
 		}
 		pattern, err := vars.ParsePath(path)
 		if err != nil {

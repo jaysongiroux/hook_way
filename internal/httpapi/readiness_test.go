@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,24 +16,24 @@ import (
 
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jasongiroux/hookway/internal/replaystore"
 )
 
-// countingReadyPublisher records how many times Ready is invoked so tests can
-// prove /ready is served from cache rather than probing per request.
-type countingReadyPublisher struct {
-	fakePublisher
-	readyCalls atomic.Int64
-}
-
-func (c *countingReadyPublisher) Ready(ctx context.Context) error {
-	c.readyCalls.Add(1)
-	return c.fakePublisher.Ready(ctx)
+func newReadyFlowServer(t *testing.T, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics) *FlowServer {
+	t.Helper()
+	if logger == nil {
+		logger = slog.Default()
+	}
+	srv, err := NewFlowServer(loadFlowCfg(t, testFlowYAML), pub, logger, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv
 }
 
 func TestReadyServedFromCacheNotPerRequest(t *testing.T) {
 	pub := &countingReadyPublisher{}
-	srv := NewServer(testConfig(), pub, slog.Default())
-	// One probe cycle populates the cache.
+	srv := newReadyFlowServer(t, pub, nil, nil)
 	srv.readiness.probeOnce(context.Background())
 	if got := pub.readyCalls.Load(); got != 1 {
 		t.Fatalf("Ready calls after one probe = %d, want 1", got)
@@ -52,8 +51,37 @@ func TestReadyServedFromCacheNotPerRequest(t *testing.T) {
 	}
 }
 
+func TestReadyPublicErrorIsGeneric(t *testing.T) {
+	var logs bytes.Buffer
+	pub := &fakePublisher{readyErr: errors.New("rabbitmq dial tcp secret-url failed")}
+	srv := newReadyFlowServer(t, pub, slog.New(slog.NewJSONHandler(&logs, nil)), nil)
+	srv.readiness.probeOnce(context.Background())
+	for _, path := range []string{"/ready", "/readyz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s status = %d", path, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "rabbitmq") || !strings.Contains(rec.Body.String(), "not ready") {
+			t.Fatalf("%s leaked readiness detail: %s", path, rec.Body.String())
+		}
+	}
+	if !strings.Contains(logs.String(), "rabbitmq dial tcp") {
+		t.Fatalf("internal readiness reason not logged: %s", logs.String())
+	}
+	for _, path := range []string{"/health", "/healthz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want liveness OK while not ready", path, rec.Code)
+		}
+	}
+}
+
 func TestReadinessNotReadyUntilFirstProbe(t *testing.T) {
-	srv := NewServer(testConfig(), &fakePublisher{}, slog.Default())
+	srv := newReadyFlowServer(t, &fakePublisher{}, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -63,10 +91,8 @@ func TestReadinessNotReadyUntilFirstProbe(t *testing.T) {
 }
 
 func TestStaleCachedResultCountsAsNotReady(t *testing.T) {
-	srv := NewServer(testConfig(), &fakePublisher{}, slog.Default())
-	// A nil-error result whose timestamp is far older than 3×interval must
-	// still be treated as not ready (prober wedged / not running).
-	srv.readiness.result.Store(&readinessResult{err: nil, checkedAt: time.Now().Add(-time.Hour)})
+	srv := newReadyFlowServer(t, &fakePublisher{}, nil, nil)
+	srv.readiness.result.Store(&readinessResult{checkedAt: time.Now().Add(-time.Hour)})
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -74,8 +100,9 @@ func TestStaleCachedResultCountsAsNotReady(t *testing.T) {
 		t.Fatalf("/readyz with stale cache = %d, want 503", rec.Code)
 	}
 
-	// A fresh nil-error result is ready.
-	srv.readiness.result.Store(&readinessResult{err: nil, checkedAt: time.Now()})
+	srv.readiness.result.Store(&readinessResult{
+		dest: map[string]error{"*": nil}, checkedAt: time.Now(),
+	})
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
@@ -88,7 +115,33 @@ func TestReadinessGaugePerDestination(t *testing.T) {
 	up := &fakePublisher{}
 	down := &fakePublisher{readyErr: errors.New("down destination unavailable")}
 	rp := queue.NewRoutingPublisher(map[string]queue.Publisher{"up_dest": up, "down_dest": down})
-	srv := NewServerWithMetrics(testConfig(), rp, slog.Default(), appMetrics)
+	src := `
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1024
+destinations:
+  up_dest:
+    type: webhook
+    webhook: {url: "https://up.test"}
+  down_dest:
+    type: webhook
+    webhook: {url: "https://down.test"}
+flows:
+  both:
+    nodes:
+      - {id: in, type: http_trigger, path: /both, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope}
+      - {id: a, type: publish, destination: up_dest, target: a}
+      - {id: b, type: publish, destination: down_dest, target: b}
+    edges: [in>body, body>auth, auth>env, env>a, env>b]
+`
+	srv, err := NewFlowServer(loadFlowCfg(t, src), rp, slog.Default(), appMetrics)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv.readiness.probeOnce(context.Background())
 
 	expected := `
@@ -101,17 +154,16 @@ hookway_destination_ready{destination_queue_id="up_dest"} 1
 		t.Fatalf("destination readiness gauge mismatch: %v", err)
 	}
 
-	// One destination down => aggregate not ready.
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("/ready with a down destination = %d, want 503", rec.Code)
+		t.Fatalf("/ready with a down destination on the only flow = %d, want 503", rec.Code)
 	}
 }
 
 func TestReadinessProberExitsOnContextCancel(t *testing.T) {
-	srv := NewServer(testConfig(), &fakePublisher{}, slog.Default())
+	srv := newReadyFlowServer(t, &fakePublisher{}, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := srv.StartReadinessProbe(ctx)
 	cancel()
@@ -122,14 +174,8 @@ func TestReadinessProberExitsOnContextCancel(t *testing.T) {
 	}
 }
 
-// TestReadinessProbeConvergesImmediatelyOnStart drives the real
-// StartReadinessProbe/run path end-to-end (no seeding the cache directly via
-// probeOnce/result.Store) with a fake publisher that reports ready, and
-// asserts /ready flips to 200 shortly after start. This guards run()'s
-// immediate probe-before-the-first-ticker-fire: without it, /ready would stay
-// 503 (errNotProbed) until a full readiness_interval elapsed.
 func TestReadinessProbeConvergesImmediatelyOnStart(t *testing.T) {
-	srv := NewServer(testConfig(), &fakePublisher{}, slog.Default())
+	srv := newReadyFlowServer(t, &fakePublisher{}, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := srv.StartReadinessProbe(ctx)
 
@@ -157,20 +203,11 @@ func TestReadinessProbeConvergesImmediatelyOnStart(t *testing.T) {
 	}
 }
 
-// TestStaleReadinessLogsWarningDistinctFromProbeFailure guards item 3 from the
-// final review: a /ready 503 caused by a stale (never-refreshed) cached result
-// must produce a server-side log signal distinguishing it from an ordinary
-// destination-down probe failure, since the public response body is the same
-// generic "not ready" either way.
 func TestStaleReadinessLogsWarningDistinctFromProbeFailure(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	srv := NewServer(testConfig(), &fakePublisher{}, logger)
-
-	// Seed a fresh, healthy result directly (bypassing probeOnce, so no
-	// "readiness probe failed" log is emitted), then age it past the
-	// staleness threshold.
-	srv.readiness.result.Store(&readinessResult{err: nil, checkedAt: time.Now().Add(-time.Hour)})
+	srv := newReadyFlowServer(t, &fakePublisher{}, logger, nil)
+	srv.readiness.result.Store(&readinessResult{checkedAt: time.Now().Add(-time.Hour)})
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
@@ -185,12 +222,12 @@ func TestStaleReadinessLogsWarningDistinctFromProbeFailure(t *testing.T) {
 	if !strings.Contains(logs.String(), "stale") {
 		t.Fatalf("expected a log line about staleness, got: %s", logs.String())
 	}
-	var rec2 map[string]any
 	found := false
 	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
 		if line == "" {
 			continue
 		}
+		var rec2 map[string]any
 		if err := json.Unmarshal([]byte(line), &rec2); err != nil {
 			t.Fatalf("log line not valid JSON: %v (%s)", err, line)
 		}
@@ -203,15 +240,11 @@ func TestStaleReadinessLogsWarningDistinctFromProbeFailure(t *testing.T) {
 	}
 }
 
-// TestStaleReadinessLogsOncePerEpisode ensures repeated /ready polling against
-// the same stale cached result does not spam a WARN line on every request —
-// only once per staleness episode (i.e. until a fresh probe result replaces
-// it).
 func TestStaleReadinessLogsOncePerEpisode(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	srv := NewServer(testConfig(), &fakePublisher{}, logger)
-	srv.readiness.result.Store(&readinessResult{err: nil, checkedAt: time.Now().Add(-time.Hour)})
+	srv := newReadyFlowServer(t, &fakePublisher{}, logger, nil)
+	srv.readiness.result.Store(&readinessResult{checkedAt: time.Now().Add(-time.Hour)})
 
 	for i := 0; i < 5; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -229,15 +262,18 @@ func TestStaleReadinessLogsOncePerEpisode(t *testing.T) {
 }
 
 type pingCapturer struct {
-	fakeReplayCapturer
 	err error
 }
 
+func (p *pingCapturer) Capture(context.Context, replaystore.Event) error { return nil }
+func (p *pingCapturer) RecordOutcome(context.Context, string, []replaystore.Delivery) error {
+	return nil
+}
 func (p *pingCapturer) Ping(context.Context) error { return p.err }
 
 func TestReadinessFailsWhenReplayStoreIsDown(t *testing.T) {
 	appMetrics := metrics.New()
-	srv := NewServerWithMetrics(testConfig(), &fakePublisher{}, slog.Default(), appMetrics)
+	srv := newReadyFlowServer(t, &fakePublisher{}, slog.Default(), appMetrics)
 	srv.SetReplayCapturer(&pingCapturer{err: errors.New("replay postgres down")})
 	srv.readiness.probeOnce(context.Background())
 
@@ -260,7 +296,7 @@ hookway_replay_store_up 0
 
 func TestReadinessPassesWhenReplayStoreIsUp(t *testing.T) {
 	appMetrics := metrics.New()
-	srv := NewServerWithMetrics(testConfig(), &fakePublisher{}, slog.Default(), appMetrics)
+	srv := newReadyFlowServer(t, &fakePublisher{}, slog.Default(), appMetrics)
 	srv.SetReplayCapturer(&pingCapturer{})
 	srv.readiness.probeOnce(context.Background())
 

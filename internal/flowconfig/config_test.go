@@ -1,6 +1,7 @@
 package flowconfig
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,6 +28,28 @@ func TestDetectSchemaVersion(t *testing.T) {
 				t.Errorf("= %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoadBytesRejectsV1Configs(t *testing.T) {
+	wantMsg := "schema_version 1 (endpoints:) is no longer supported"
+	wantHint := "schema_version: 2"
+	cases := []string{
+		"schema_version: 1\nendpoints: {}\n",
+		"endpoints:\n  github:\n    path: /webhooks/github\n",
+		"server:\n  addr: \":8080\"\n",
+	}
+	for _, src := range cases {
+		_, issues := LoadBytes([]byte(src), "test", false)
+		if len(issues) != 1 {
+			t.Fatalf("src %q: issues = %+v, want exactly the migration error", src, issues)
+		}
+		if issues[0].Field != "schema_version" || !strings.Contains(issues[0].Message, wantMsg) {
+			t.Fatalf("src %q: issue = %+v, want %q", src, issues[0], wantMsg)
+		}
+		if !strings.Contains(issues[0].Suggestion, wantHint) || !strings.Contains(issues[0].Suggestion, "docs/configuration.md") {
+			t.Fatalf("src %q: suggestion = %q", src, issues[0].Suggestion)
+		}
 	}
 }
 
@@ -64,6 +87,20 @@ flows:
 	}
 	if len(cfg.Flows["github"].Nodes) != 5 {
 		t.Errorf("got %d nodes, want 5", len(cfg.Flows["github"].Nodes))
+	}
+}
+
+func TestExampleConfigIsValid(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("GITHUB_WEBHOOK_SECRET", "gh_secret")
+	cfg, issues := Load(filepath.Join("..", "..", "examples", "config.yaml"))
+	for _, iss := range issues {
+		if iss.Severity != config.SeverityWarning {
+			t.Fatalf("example config invalid: %+v", issues)
+		}
+	}
+	if _, ok := cfg.Flows["github_events"]; !ok {
+		t.Fatal("example config should include github_events")
 	}
 }
 

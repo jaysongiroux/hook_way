@@ -1,25 +1,18 @@
 # examples/variables.yaml
 #
-# Reference config for routing VARIABLES: per-request values derived from the
-# request (URL path segment, header, query string, or JSON body) that fill
-# {name} placeholders in route targets and in a webhook destination url.
+# Reference config for routing VARIABLES: per-request values that fill {name}
+# placeholders in publish targets and in a webhook destination url.
 #
 # The scenario: one Hookway instance in front of several environments
 # (qa-gm3, staging-portal, portal, ...). DigiFi is given one webhook URL per
 # environment, e.g. https://hooks.example.com/webhooks/qa-gm3/digifi, and each
 # event lands in that environment's queue and Hub.
 #
-# Two kinds of variables:
-#   values:  [..]   enumerated. Routes are EXPANDED at startup into one concrete
-#                   route per value, so queue/topic provisioning, validation, and
-#                   replay work exactly as for static targets.
-#   pattern: "^..$" open set constrained by an anchored regex. Targets are
-#                   rendered per request and resolved by the destination on
-#                   first sight: sqs/sns/kafka/redis_stream look the resource
-#                   up (and create it when the route has create: true); the
-#                   other types need no remote work. rabbitmq passes the
-#                   routing key through but cannot create: true such routes.
+# Path placeholders on http_trigger (e.g. {envName}) are copied onto
+# envelope.Vars automatically. Body fields can be copied with a transform
+# field_map node. Unresolved templates fail closed at publish.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -48,70 +41,25 @@ destinations:
       uri: "${MONGODB_URI}"
       database: "webhooks"
 
-endpoints:
+flows:
   digifi:
-    enabled: true
-    # {envName} must be a whole path segment. Endpoint paths that could match
-    # the same request (literal vs placeholder, parent/child) are rejected.
-    path: "/webhooks/{envName}/digifi"
-    variables:
-      envName:
-        source: path            # header | body | query | path
-        # path: envName         # defaults to the variable name: the header name,
-                                # dotted body path, query key, or path segment
-        values: [qa-gm3, staging-portal, portal]
-        # default: "portal"     # used when the value is missing or not accepted
-      tenant:
-        source: body
-        path: "data.object.organizationId"
-        pattern: "^[a-z0-9]{1,24}$"   # anchored; the rendered target must also be a
-                                      # valid name (letters, digits, . _ -; max 128)
-      # Lookup source: the environment is not in the payload, so resolve it
-      # from the routing table the ephemeral proxy writes. One variable per id
-      # type; route filters on eventType pick which one an event needs.
-      envByApp:
-        source: lookup
-        lookup:
-          key: { source: body, path: "data.object.applicationId" }
-          provider: dynamodb            # dynamodb | http | postgres
-          dynamodb:
-            table: "${ROUTING_TABLE}"
-            index: "CreatedAtIndex"
-            filter: { attribute: "id_type", value: "application" }
-            value_attribute: "env_name"
-            region: "us-east-1"
-          timeout: "2s"
-          cache: { ttl: "5m" }
-        pattern: "^[a-z0-9-]{1,32}$"
-        # Alternatives:
-        # provider: http
-        # http: { url: "https://resolver.internal/env?id={key}", value_path: "env_name" }
-        # provider: postgres
-        # postgres: { url: "${ROUTING_DB_URL}", query: "SELECT env_name FROM routing WHERE id = {key}" }
-    # Where an event goes when a variable an active route needs cannot be
-    # resolved (missing, empty, not in values, pattern mismatch, no default).
-    # Without this block the sender receives 400 {"error":"unresolved_variable"}.
-    on_unresolved_variable:
-      destination: "archive"
-      target: "unrouted"
-    destinations:
-      # Enumerated variable: expands to qa-gm3-events, staging-portal-events,
-      # portal-events at startup.
-      - destination: "archive"
-        target: "{envName}-events"
-      # Templated webhook url + static target -> https://qa-gm3-api.htap.sh/api/v3/digifi/webhook/event
-      - destination: "hub"
-        target: "event"
-      # Pattern variable: one collection per tenant, created on first insert.
-      - destination: "audit"
-        target: "{envName}-{tenant}"
-      # Lookup variable, needed only by events this filter admits.
-      - destination: "archive"
-        target: "{envByApp}-applicationEvents"
-        filters:
-          - { source: body, path: "eventType", operator: "regex", value: "^(application|task|document)\\." }
-    auth:
-      type: "header_exact"
-      scheme: "exact"
-      signature_header: "X-DigiFi-Token"
-      secret: "${DIGIFI_WEBHOOK_TOKEN}"
+    nodes:
+      - {id: in, type: http_trigger, path: "/webhooks/{envName}/digifi", methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: "${DIGIFI_WEBHOOK_TOKEN}", signature_header: X-DigiFi-Token}
+      - {id: env, type: envelope, body_format: json}
+      - id: map
+        type: transform
+        kind: field_map
+        mappings:
+          - from: body.data.object.organizationId
+            to: vars.tenant
+      # Enumerated V1 values for envName and the tenant pattern are omitted;
+      # path vars are accepted as-is and unresolved templates fail closed at publish.
+      # V1 on_unresolved_variable (archive / unrouted) has no V2 node equivalent.
+      # DynamoDB lookup variable envByApp is omitted until the lookup node grows
+      # those fields (index, filter, value_attribute, region).
+      - {id: out_archive, type: publish, destination: archive, target: "{envName}-events"}
+      - {id: out_hub, type: publish, destination: hub, target: event}
+      - {id: out_audit, type: publish, destination: audit, target: "{envName}-{tenant}"}
+    edges: [in>body, body>auth, auth>env, env>map, map>out_archive, map>out_hub, map>out_audit]

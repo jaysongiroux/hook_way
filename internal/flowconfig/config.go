@@ -65,9 +65,7 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 		return Config{}, []config.ValidationIssue{v2Issue("config", fmt.Sprintf("invalid YAML syntax in %s: %v", source, err), "")}
 	}
 	if version != 2 {
-		issues = append(issues, v2Issue("schema_version",
-			fmt.Sprintf("schema_version must be 2, got %d", version),
-			"set schema_version: 2"))
+		return Config{}, []config.ValidationIssue{V1UnsupportedIssue()}
 	}
 
 	shared, sharedIssues := config.DecodeSharedYAML(data, source, "schema_version", "flows")
@@ -244,6 +242,14 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 		}
 	}
 	return issues
+}
+
+// V1UnsupportedIssue is the migration error for schema_version 1, an absent
+// version (DetectSchemaVersion reports 1), or any other non-2 document.
+func V1UnsupportedIssue() config.ValidationIssue {
+	return v2Issue("schema_version",
+		"schema_version 1 (endpoints:) is no longer supported",
+		"set schema_version: 2 and rewrite endpoints: as flows:; see docs/configuration.md")
 }
 
 func v2Issue(field, message, suggestion string) config.ValidationIssue {

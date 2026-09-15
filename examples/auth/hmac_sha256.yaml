@@ -12,6 +12,7 @@
 # Timestamped schemes (hmac_sha256_ts_*) require timestamp_tolerance.
 # Non-timestamped schemes ignore timestamp_tolerance.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -27,49 +28,26 @@ destinations:
       publish_timeout: "5s"
       declare_queues: true
 
-endpoints:
+flows:
   # Paddle-style: timestamped HMAC-SHA256, colon-separated payload.
   paddle_billing:
-    enabled: true
-    path: "/webhooks/paddle"
-    destinations:
-      - destination: "primary"
-        target: "paddle-webhooks"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_ts_colon"
-      secret: "${PADDLE_WEBHOOK_SECRET}"
-      signature_header: "Paddle-Signature"
-      timestamp_tolerance: "5m"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/paddle, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${PADDLE_WEBHOOK_SECRET}", signature_header: Paddle-Signature, timestamp_tolerance: "5m"}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: paddle-webhooks, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
 
   # GitHub-style: raw hex HMAC-SHA256, no timestamp.
   github_events:
-    enabled: true
-    path: "/webhooks/github"
-    destinations:
-      - destination: "primary"
-        target: "github-webhooks"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
-      # GitHub sends a stable delivery UUID; use it for idempotency.
-      idempotency_header: "X-GitHub-Delivery"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      # V1 idempotency_header: X-GitHub-Delivery (no V2 field)
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: github-webhooks, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
 
-  # Stripe-style: timestamped HMAC-SHA256, dot-separated payload.
-  stripe_billing:
-    enabled: false
-    path: "/webhooks/stripe"
-    destinations:
-      - destination: "primary"
-        target: "stripe-events"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_ts_dot"
-      secret: "${STRIPE_WEBHOOK_SECRET}"
-      signature_header: "Stripe-Signature"
-      timestamp_tolerance: "5m"
+  # Disabled V1 example stripe_billing (hmac_sha256_ts_dot / Stripe-Signature) was dropped.

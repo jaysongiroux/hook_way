@@ -35,18 +35,20 @@
 #
 # LOOP PROTECTION: every outbound delivery is stamped with an X-Hookway-Hops
 # header (incremented per Hookway hop). If this URL points back at a Hookway
-# endpoint, that endpoint rejects the request with 400 once the count reaches
+# flow, that flow rejects the request with 400 once the count reaches
 # security.loop_protection.max_hops (default 3). See docs/configuration.md.
-security:
-  loop_protection:
-    max_hops: 2
 
+schema_version: 2
 server:
   addr: ":8088"
   max_body_bytes: 1048576
   # fanout_concurrency controls the webhook delivery worker-pool size (shared
   # across ALL webhook destinations in this server).
   fanout_concurrency: 8
+
+security:
+  loop_protection:
+    max_hops: 2
 
 destinations:
   forward:
@@ -143,15 +145,14 @@ destinations:
   #     exchange_type: "direct"
   #     declare_queues: true   # declares the dead-letter target queue on startup
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "forward"
-        # target is passed in the X-Hookway-Target header on envelope deliveries
-        # and is used in log fields / metrics labels.
-        target: "orders"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      # target is passed in the X-Hookway-Target header on envelope deliveries
+      # and is used in log fields / metrics labels.
+      - {id: out, type: publish, destination: forward, target: orders}
+    edges: [in>body, body>auth, auth>env, env>out]

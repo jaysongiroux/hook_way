@@ -18,6 +18,7 @@
 # Valkey is fully supported: it speaks the same RESP protocol.
 # Point redis.url at a Valkey node and no other change is needed.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -68,33 +69,18 @@ destinations:
       #   # Dev only — disables certificate verification; never use in production:
       #   # insecure_skip_verify: false
 
-endpoints:
+flows:
   # Webhook events routed to a Redis stream. Consumer groups let multiple
   # worker processes share the work without duplicating messages.
   webhook_events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "events"
-        # Stream key (without the key_prefix, if set). Must match
-        # ^[a-zA-Z0-9._-]{1,128}$
-        target: "webhooks.stream"
-        # When true: at startup Hookway creates the stream and the consumer
-        # group named in redis_options.consumer_group (idempotent — safe to
-        # leave enabled in production).
-        create: true
-        redis_options:
-          # Approximate maximum number of entries in the stream.
-          # XADD uses MAXLEN ~ so the actual length may slightly exceed this
-          # value; that is normal and keeps trimming efficient.
-          # Set to 0 (or omit) for an unbounded stream.
-          max_len: 100000
-          # Name of the consumer group Hookway creates when create: true.
-          # Workers subscribe via XREADGROUP using this group name.
-          # Only valid for redis_stream destinations.
-          consumer_group: "hookway-workers"
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/events, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # Stream key (without the key_prefix, if set). Must match
+      # ^[a-zA-Z0-9._-]{1,128}$
+      # V1 route set redis_options.max_len: 100000 and consumer_group:
+      # hookway-workers (not publish-node fields).
+      - {id: out, type: publish, destination: events, target: webhooks.stream, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

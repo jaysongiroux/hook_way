@@ -16,6 +16,7 @@
 # AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to
 # http://localhost:4566 to use LocalStack during development.
 
+schema_version: 2
 server:
   addr: ":8087"
   max_body_bytes: 1048576
@@ -53,18 +54,17 @@ destinations:
       # sse_kms_key_id: KMS key ARN or alias. Only used when sse is "aws:kms".
       # sse_kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/abcd-1234"
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "events"
-        # target is the S3 key prefix (base folder). Objects are written under:
-        #   <target>/yyyy/mm/dd/<timestamp>-<id>.json
-        # e.g. orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
-        target: "orders"
-        # Note: bucket auto-creation is a destination-level setting (s3.create
-        # above), not a per-route option. S3 has no per-target "create".
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      # target is the S3 key prefix (base folder). Objects are written under:
+      #   <target>/yyyy/mm/dd/<timestamp>-<id>.json
+      # e.g. orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
+      # Note: bucket auto-creation is a destination-level setting (s3.create
+      # above), not a per-route option. S3 has no per-target "create".
+      - {id: out, type: publish, destination: events, target: orders}
+    edges: [in>body, body>auth, auth>env, env>out]

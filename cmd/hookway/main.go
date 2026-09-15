@@ -74,18 +74,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 // runValidate checks config syntax and semantic validation without opening network connections.
 //
 // Env-expansion behavior across the two output modes and --no-env:
-//   - plain validate (no flags): config.NewService().Validate → config.Load,
-//     which expands ${VAR} strictly and HARD-fails (nonzero exit, no output
-//     other than the error) on any referenced-but-unset variable. Unchanged
-//     by this function's other additions.
+//   - plain validate (no flags): flowconfig.LoadBytes with expansion, which
+//     expands ${VAR} strictly and HARD-fails (nonzero exit) on any
+//     referenced-but-unset variable. schema_version other than 2 is a
+//     migration error.
 //   - validate --json: configapi.ValidateWithEnv(data, true) also expands
 //     ${VAR}, but a missing variable is reported as a "config.env.<NAME>"
 //     issue at severity "warning" (exit 0 if it's the only issue) rather than
 //     aborting — CI commonly validates without production secrets set.
 //   - --no-env (either mode): skips expansion entirely, so ${VAR} is left as
-//     an opaque literal and only structural/syntax issues can appear. Plain
-//     --no-env uses config.NewService().ValidateBytes (the same non-expanding
-//     path ValidateWithEnv(_, false) delegates to) instead of Load.
+//     an opaque literal and only structural/syntax issues can appear.
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -126,33 +124,20 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	if isV2 {
-		var issues []config.ValidationIssue
-		if *noEnv {
-			issues = flowconfig.ValidateBytes(data)
-		} else {
-			var cfg flowconfig.Config
-			cfg, issues = flowconfig.LoadBytes(data, path, true)
-			issues = append(issues, flowconfig.Lint(cfg)...)
-		}
-		return printValidateResult(issues, *strict, path, stdout, stderr)
-	}
-
-	if *noEnv {
-		if issues := config.NewService().ValidateBytes(data); len(issues) > 0 {
-			fmt.Fprintln(stderr, config.ConfigValidationError{Issues: issues})
-			return 1
-		}
-		fmt.Fprintf(stdout, "config valid (no-env): %s\n", path)
-		return 0
-	}
-
-	if err := config.NewService().Validate(path); err != nil {
-		fmt.Fprintln(stderr, err)
+	if !isV2 {
+		fmt.Fprintln(stderr, config.ConfigValidationError{Issues: []config.ValidationIssue{flowconfig.V1UnsupportedIssue()}})
 		return 1
 	}
-	fmt.Fprintf(stdout, "config valid: %s\n", path)
-	return 0
+
+	var issues []config.ValidationIssue
+	if *noEnv {
+		issues = flowconfig.ValidateBytes(data)
+	} else {
+		var cfg flowconfig.Config
+		cfg, issues = flowconfig.LoadBytes(data, path, true)
+		issues = append(issues, flowconfig.Lint(cfg)...)
+	}
+	return printValidateResult(issues, *strict, path, stdout, stderr)
 }
 
 func printValidateResult(issues []config.ValidationIssue, strict bool, path string, stdout, stderr io.Writer) int {
@@ -227,9 +212,21 @@ func editorAPIKey(configFlag string) (string, error) {
 	if err != nil {
 		return "", nil // no config ⇒ unauthenticated (standalone editor)
 	}
-	cfg, err := config.Load(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
+	}
+	version, err := flowconfig.DetectSchemaVersion(data)
+	if err != nil {
+		return "", err
+	}
+	if version != 2 {
+		iss := flowconfig.V1UnsupportedIssue()
+		return "", fmt.Errorf("%s: %s", iss.Message, iss.Suggestion)
+	}
+	cfg, issues := flowconfig.Load(path)
+	if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
+		return "", config.ConfigValidationError{Issues: blocking}
 	}
 	return cfg.Security.APIKey, nil
 }
@@ -340,28 +337,23 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		schemaVersion = v
 	}
 
-	var cfg config.Config
-	var v2cfg flowconfig.Config
-	if schemaVersion == 2 {
-		var issues []config.ValidationIssue
-		v2cfg, issues = flowconfig.Load(path)
-		if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
-			appMetrics.ConfigLoadFailure("load")
-			logger.Error("config load failed", "error", config.ConfigValidationError{Issues: blocking})
-			return 1
-		}
-		for _, issue := range flowconfig.Lint(v2cfg) {
-			logger.Warn("config lint", "field", issue.Field, "message", issue.Message)
-		}
-		cfg = v2cfg.ServingConfig()
-	} else {
-		cfg, err = config.Load(path)
-		if err != nil {
-			appMetrics.ConfigLoadFailure("load")
-			logger.Error("config load failed", "error", err)
-			return 1
-		}
+	if schemaVersion != 2 {
+		appMetrics.ConfigLoadFailure("load")
+		iss := flowconfig.V1UnsupportedIssue()
+		logger.Error("config load failed", "error", iss.Message, "suggestion", iss.Suggestion)
+		return 1
 	}
+
+	v2cfg, issues := flowconfig.Load(path)
+	if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
+		appMetrics.ConfigLoadFailure("load")
+		logger.Error("config load failed", "error", config.ConfigValidationError{Issues: blocking})
+		return 1
+	}
+	for _, issue := range flowconfig.Lint(v2cfg) {
+		logger.Warn("config lint", "field", issue.Field, "message", issue.Message)
+	}
+	cfg := v2cfg.ServingConfig()
 	level, err := hooklogging.ParseLevel(cfg.Logging.Level)
 	if err != nil {
 		// Unreachable in practice: cfg.ValidationIssues() already rejected an
@@ -387,23 +379,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	defer publisher.Close()
 
-	var app interface {
-		HTTPServer() *http.Server
-		MetricsServer() *http.Server
-		StartReadinessProbe(context.Context) <-chan struct{}
-		Close() error
-		SetReplayCapturer(httpapi.ReplayCapturer)
+	flowApp, err := httpapi.NewFlowServer(v2cfg, publisher, logger, appMetrics)
+	if err != nil {
+		logger.Error("v2 flow server failed", "error", err)
+		return 1
 	}
-	if schemaVersion == 2 {
-		flowApp, err := httpapi.NewFlowServer(v2cfg, publisher, logger, appMetrics)
-		if err != nil {
-			logger.Error("v2 flow server failed", "error", err)
-			return 1
-		}
-		app = flowApp
-	} else {
-		app = httpapi.NewServerWithMetrics(cfg, publisher, logger, appMetrics)
-	}
+	app := flowApp
 	defer app.Close()
 
 	// The replay store's connection is opened -- and its defer registered --

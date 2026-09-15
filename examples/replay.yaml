@@ -1,3 +1,4 @@
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -16,21 +17,6 @@ destinations:
       publish_timeout: "5s"
       declare_queues: true
 
-endpoints:
-  github_events:
-    enabled: true
-    path: "/webhooks/github"
-    destinations:
-      - destination: "primary"
-        target: "github-webhooks"
-        create: true
-
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
-
 # Webhook-replay: captures every accepted event into Postgres and serves a
 # protected API (on its own listener) to list/inspect/re-deliver them. See
 # docs/configuration.md § Replay and docs/security.md § Replay.
@@ -43,3 +29,13 @@ replay:
   cleanup_interval: 1h
   postgres:
     url: ${REPLAY_DB_URL}
+
+flows:
+  github_events:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: github-webhooks, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

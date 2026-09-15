@@ -13,6 +13,7 @@
 # `on_existing_conflict` is NOT valid for mongodb destinations — the field is
 # rejected at config validation time. Do not set it on mongodb entries.
 
+schema_version: 2
 server:
   addr: ":8089"
   max_body_bytes: 1048576
@@ -34,14 +35,13 @@ destinations:
       #   server_name: ""              # override SNI/verification hostname
       #   insecure_skip_verify: false  # dev-only; disables cert verification; never use in production
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "archive"
-        # target is the Mongo COLLECTION name (within database "webhooks" above).
-        target: "events"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      # target is the Mongo COLLECTION name (within database "webhooks" above).
+      - {id: out, type: publish, destination: archive, target: events}
+    edges: [in>body, body>auth, auth>env, env>out]

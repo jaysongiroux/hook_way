@@ -16,6 +16,7 @@
 # sender retries. Enable the replay store (see examples/replay.yaml) to record
 # every event with its per-destination outcome and re-publish failures.
 
+schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -47,46 +48,19 @@ destinations:
         # server_name: "temporal.internal"
         # insecure_skip_verify: false
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "orchestrator"
-        # Temporal task queue. `create:` has no meaning for Temporal.
-        target: "order-events"
-        temporal_options:
-          # Required: the workflow type name registered on the worker.
-          workflow_type: "OrderWebhookWorkflow"
-          # envelope (default): the full Hookway event envelope (id, headers,
-          # body, trace ids, ...) — the same JSON every other destination emits.
-          # body: only the decoded webhook body, for workflows that take a plain
-          # object as input. Non-JSON bodies fall back to the envelope.
-          input: "envelope"
-          # Workflow id derivation. Omit the block to use the Hookway event id.
-          # source: static | endpoint | header | body; static uses value,
-          # header/body extract path. An unresolved value falls back to the
-          # event id. prefix is prepended to whatever was resolved.
-          workflow_id:
-            source: "body"
-            path: "order.id"
-            prefix: "order-"
-          # allow_duplicate | allow_duplicate_failed_only | reject_duplicate |
-          # terminate_if_running. Omit for the server default (allow_duplicate).
-          id_reuse_policy: "reject_duplicate"
-          # Optional per-execution timeouts (Go durations). run_timeout must not
-          # exceed execution_timeout.
-          # execution_timeout: "24h"
-          # run_timeout: "1h"
-          # task_timeout: "10s"
-      - destination: "orchestrator"
-        target: "order-audit"
-        temporal_options:
-          workflow_type: "OrderAuditWorkflow"
-          input: "body"
-          # No workflow_id block: id = Hookway event id (unique per event).
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # Temporal task queue. `create:` has no meaning for Temporal.
+      # V1 temporal_options on this route: workflow_type OrderWebhookWorkflow,
+      # input envelope, workflow_id from body.order.id with prefix order-,
+      # id_reuse_policy reject_duplicate (not publish-node fields).
+      - {id: out1, type: publish, destination: orchestrator, target: order-events}
+      # V1 temporal_options: workflow_type OrderAuditWorkflow, input body;
+      # no workflow_id block (id = Hookway event id).
+      - {id: out2, type: publish, destination: orchestrator, target: order-audit}
+    edges: [in>body, body>auth, auth>env, env>out1, env>out2]

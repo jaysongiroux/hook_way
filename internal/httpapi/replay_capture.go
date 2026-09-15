@@ -20,7 +20,7 @@ import (
 const replayCaptureTimeout = 5 * time.Second
 
 // ReplayCapturer is the seam httpapi depends on for webhook-replay capture --
-// just the two write operations handleWebhook needs, so this package depends
+// just the two write operations FlowServer needs, so this package depends
 // only on replaystore's exported types (Event/Delivery/Outcome*) and never on
 // its concrete Postgres-backed Store. A nil Server.replay means capture is
 // disabled: every call site below guards on it before doing any work.
@@ -31,9 +31,7 @@ type ReplayCapturer interface {
 
 // SetReplayCapturer wires a replay store into the server after construction
 // (main.go, once config.Replay.Enabled and the store connects) or a test's
-// fake. Capture stays disabled (Server.replay == nil) until this is called;
-// NewServerWithMetrics's signature is unchanged so existing callers/tests are
-// unaffected.
+// fake. Capture stays disabled (Server.replay == nil) until this is called.
 func (s *Server) SetReplayCapturer(c ReplayCapturer) {
 	s.replay = c
 	if pinger, ok := c.(interface{ Ping(context.Context) error }); ok {
@@ -63,7 +61,7 @@ func envelopeToMessage(env webhook.Envelope) queue.Message {
 // captureEvent inserts a captured event into the replay store. It is
 // strictly best-effort: an error or panic from s.replay.Capture is caught,
 // logged, metered (hookway_replay_capture_failures_total{op="insert"}), and
-// swallowed here -- it never propagates to handleWebhook, so a replay-store
+// swallowed here -- it never propagates to FlowServer, so a replay-store
 // outage can never change the webhook's response or block it beyond this
 // bounded, synchronous call.
 //
@@ -137,10 +135,9 @@ func (s *Server) recordOutcome(reqCtx context.Context, id string, deliveries []r
 	}
 }
 
-// deliveriesFromResults converts handleWebhook's published/failed
+// deliveriesFromResults converts FlowServer's published/failed
 // []map[string]string route-result slices (keys "destination_queue_id" and
-// "queue", see publishRoutes) into replaystore.Delivery values for
-// RecordOutcome.
+// "queue") into replaystore.Delivery values for RecordOutcome.
 func deliveriesFromResults(published, failed []map[string]string) []replaystore.Delivery {
 	deliveries := make([]replaystore.Delivery, 0, len(published)+len(failed))
 	for _, p := range published {
