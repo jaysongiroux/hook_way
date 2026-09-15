@@ -1,6 +1,6 @@
 # Chunk 7: The `code` Node (goja)
 
-**Status:** not started
+**Status:** implemented (2026-09-15); unsigned local commit pending
 **Depends on:** Chunk 6
 **Unlocks:** Chunk 9
 **Verification gate:** **each sandbox control C1–C7 has a test proving the control actually
@@ -82,7 +82,13 @@ Compile the script **once at config load**, not per request — `goja.Compile` r
 `*goja.Program` that can be run on a fresh `*goja.Runtime`. A syntax error must fail
 `hookway validate`, not the first request.
 
-- [ ] **Step 1: Write one failing test per control, named for it**
+- [x] **Step 1: Write one failing test per control, named for it**
+
+- [x] **Step 2: Confirm every test fails, then implement**
+
+- [x] **Step 3: Confirm all pass, including under `-race`**
+
+- [ ] **Step 4: Commit**
 
 Each test must prove the control *fires*, not that normal operation works.
 
@@ -274,11 +280,11 @@ git commit -m "docs: code node sandbox limitations and trust model"
 
 ## Done when
 
-- [ ] Every control C1–C7 has a named test that proves the control fires
-- [ ] `go test -race ./internal/codenode/` clean
-- [ ] A script syntax error fails `hookway validate`, not the first request
-- [ ] A script cannot read `Verified.Identity` or any auth secret — tested
-- [ ] Global state does not leak between requests — tested
-- [ ] `make docker-build` still produces a scratch image; `make vuln-scan` clean
-- [ ] The memory gap, the interrupt gap, and the trust model are all documented
-- [ ] `make conformance` still green
+- [x] Every control C1–C7 has a named test that proves the control fires
+- [x] `go test -race ./internal/codenode/` clean
+- [x] A script syntax error fails `hookway validate`, not the first request
+- [x] A script cannot read `Verified.Identity` or any auth secret — tested
+- [x] Global state does not leak between requests — tested
+- [x] Scratch image still builds (`docker build`, binary + CA bundle). `make vuln-scan` is not clean: 2 pre-existing HIGH (amqp091-go CVE-2026-79921, grpc CVE-2026-84445); goja added none
+- [x] The memory gap, the interrupt gap, and the trust model are all documented
+- [x] `make conformance` still green

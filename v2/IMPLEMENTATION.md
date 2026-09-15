@@ -31,7 +31,7 @@ intended reason before implementation; workers must report that evidence.
 | 4 Gates and conformance | Accepted through `d7316df`; I9/I15 skipped until Chunk 8 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Accepted through `a722076` | All 13 types deliver through V2; integration gates pass |
 | 6 Proxy and transforms | Accepted through `cd0288c` | Upstream response, method, path, query and transforms verified |
-| 7 Code node | Waiting for 6 | C1-C7 individually exercised; race and dependency checks pass |
+| 7 Code node | Implemented; local unsigned commit after gate | C1-C7 individually exercised; race and dependency checks pass |
 | 8 Secrets and observability | Waiting for 6 | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
 | 9 V2 cutover and V1 removal | Waiting for 7 and 8 | V2 feature/conformance gates pass before V1 removal |
 | 10 Web UI | Waiting for 9 | Export validates; import/export round-trip and visual checks pass |
@@ -219,6 +219,20 @@ do not claim that an unavailable skill was invoked.
 - `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
   transform/conformance, WASM validator build, `make validate-examples`,
   `make test-all`: PASS. V1 still serves. UG JS differential tests skipped.
+
+## Chunk 7 local gate — 2026-09-15
+
+- `code` node compiles JS at config load (syntax errors fail `hookway validate`).
+  Runtime wraps the script in a function so top-level `return` is legal.
+- C1–C7 named tests in `internal/codenode` prove timeout, stack bound, no host
+  objects, input/output size refusal, fresh VM per request, and panic isolation.
+- Script I/O is `{body, vars, headers}` copies (D15). `Verified`, raw bytes,
+  `Upstream`, and secrets are not exposed. XML bodies are rejected.
+- goja `v0.0.0-20260911104922-fabc3b8078ad`, pure Go / no cgo.
+- Memory gap, interrupt gap, and trust model documented in `docs/security.md`
+  and `docs/configuration.md`. Lint timeout warning points at those docs.
+- Scratch image still builds (`docker build` → binary + CA bundle). Trivy
+  HIGH on pre-existing amqp091-go and grpc; goja added none.
 
 ## Chunk 5 local gate — 2026-09-15
 

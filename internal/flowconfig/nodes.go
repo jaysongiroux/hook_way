@@ -148,6 +148,15 @@ type nodeDefinition struct {
 }
 
 func define[T any](name string, in, out graph.PortType, detached bool, validate func(T) error, build func(string, T) graph.Node) nodeDefinition {
+	return defineErr(name, in, out, detached, validate, func(id string, opts T) (graph.Node, error) {
+		if build != nil {
+			return build(id, opts), nil
+		}
+		return stubNode{name: name}, nil
+	})
+}
+
+func defineErr[T any](name string, in, out graph.PortType, detached bool, validate func(T) error, build func(string, T) (graph.Node, error)) nodeDefinition {
 	return nodeDefinition{
 		name: name, in: in, out: out, detached: detached,
 		newOptions: func() any { return new(T) },
@@ -161,10 +170,7 @@ func define[T any](name string, in, out graph.PortType, detached bool, validate 
 					return nil, fmt.Errorf("node %q (%s): %w", nc.ID, name, err)
 				}
 			}
-			if build != nil {
-				return build(nc.ID, opts), nil
-			}
-			return stubNode{name: name}, nil
+			return build(nc.ID, opts)
 		},
 	}
 }
@@ -225,7 +231,7 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		define("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) graph.Node {
 			return newTransformNode(id, o, opts.Logger)
 		}),
-		define("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, nil),
+		defineErr("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, newCodeNode),
 		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
 		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) graph.Node {
 			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)

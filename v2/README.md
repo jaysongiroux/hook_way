@@ -4,8 +4,8 @@ Scratch/working space for the V2 redesign: a typed-port node graph replacing V1'
 hardcoded request pipeline.
 
 **Branch:** `v2` (branched from `main` @ `242c358`)
-**Status:** implementation underway; Chunks 1–5 accepted; Chunk 6 proxy and
-transforms implemented. External universal-gateway and DigiFi
+**Status:** implementation underway; Chunks 1–6 accepted; Chunk 7 code node
+in progress. External universal-gateway and DigiFi
 migration work was removed from scope on 2026-09-14. See
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments, verification and plan corrections.
 
@@ -34,7 +34,7 @@ clean break (D4) removed — it is the most skippable and most regretted item in
 |---|---|---|---|
 | D1 | What V2 optimizes for | Replace `../universal-gateway` **and** be a real production tool | 2026-09-14 |
 | D2 | Graph topology model | **Typed ports** — every concern is a node, edges carry typed payloads, illegal wiring is a load-time type error | 2026-09-14 |
-| D3 | Code node engine | **Sandboxed JS via goja** (new dependency, pure Go, no cgo) | 2026-09-14 |
+| D3 | Code node engine | **Sandboxed JS via goja** `v0.0.0-20260911104922-fabc3b8078ad` (pure Go, no cgo; `FROM scratch` stays intact). Scripts compile at config load. | 2026-09-14 |
 | D4 | V1 config compatibility | **Clean break.** No converter, no dual loader. V2 is the only format. | 2026-09-14 |
 | D5 | Code layout | **In-place on the `v2` branch.** One binary, `internal/graph` added, `handleWebhook` replaced. | 2026-09-14 |
 | D6 | UI scope (Q7) | **Config generator only.** Retarget `web/src/graph/` to the node model, still export-to-YAML. No n8n-style live editor, no server-side flow CRUD. | 2026-09-14 |
@@ -46,6 +46,7 @@ clean break (D4) removed — it is the most skippable and most regretted item in
 | D12 | I17 reservation release | **Optional `graph.Compensator` interface.** Executor collects compensations from nodes that succeeded; the **server** invokes them when `err != nil \|\| any delivery failed`, on a detached context. Rejected: context accumulator (a node unit-tested alone would silently no-op) and payload-carried callbacks (lost on the error path). Requires `Flow.Run` to return a populated `Terminal` on error. | 2026-09-14 |
 | D13 | Destination node vocabulary | **One `publish` node referencing the shared top-level `destinations:` map.** Keeps connection ownership and reuse in the existing destination factory while each graph node supplies its target and delivery options. | 2026-09-14 |
 | D14 | XML prune DOM | **In-tree tree over `encoding/xml`**, not a third-party DOM library. Parent-aware rewrites use recursive child slices; `Document` implements `graph.BodyCloner`. Universal-gateway `pipeline.js` is not in this repo, so predicates are the documented V2 contract (tested with synthetic MISMO-shaped fixtures covering all five rules, including orphaned `RELATIONSHIP`s). Non-UTF-8 charset declarations fail closed. | 2026-09-15 |
+| D15 | Code node I/O | Script input is a **deep copy** of `{body, vars, headers}` (headers redacted). Return `{body, vars}` only. Scripts cannot see `Verified`, raw bytes, `Upstream`, or secrets. XML bodies are rejected (use `transform` `xml_prune`). | 2026-09-15 |
 
 Rejected alternatives for D2: *free DAG* (invariants become linter warnings) and
 *constrained spine* (invariants unrepresentable, but auth can never branch and the

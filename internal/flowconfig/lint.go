@@ -50,8 +50,8 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			if err == nil && strings.TrimSpace(opts.Timeout) == "" {
 				issues = append(issues, v2Warning(
 					fmt.Sprintf("%s.nodes[%d].timeout", prefix, i),
-					"code node has no explicit timeout; the 1s default applies and goja has no memory cap",
-					"set timeout explicitly",
+					"code node has no explicit timeout; the 1s default applies and goja has no memory cap (docs/security.md#code-node)",
+					"set timeout explicitly; see docs/security.md#code-node",
 				))
 			}
 		case "read_body":

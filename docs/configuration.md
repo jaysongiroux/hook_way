@@ -917,6 +917,27 @@ Replay protection is in-process schema/config for MVP. In multi-node deployments
 
 In schema_version 2 the same process-local cache is the `replay_guard` node. That is weakness W5, kept deliberately by decision D11 (no shared state on the hot path): N pods means N allowed replays. Consumers should still dedupe on `idempotency_key`, which is the documented retry contract. `rate_limit` is likewise pod-scoped; N pods means N× the configured RPM.
 
+## Code node (schema_version 2)
+
+`code` runs JavaScript on a goja VM compiled at config load. A syntax error fails `hookway validate`, not the first request. Known transforms (`changed_fields`, `field_map`, `xml_prune`) belong on `transform`, not in JS.
+
+```js
+// `input` is provided; return an object {body, vars}.
+// There is no I/O, no require, no timers, and no access to other flows.
+return { body: input.body, vars: { computed: String(input.body.id).toUpperCase() } };
+```
+
+Input is a deep copy of `{body, vars, headers}`. Sensitive headers are redacted. The script cannot see `Verified`, raw request bytes, `Upstream`, or auth secrets. Return `{body, vars}`; omitted keys keep the previous envelope values. XML bodies are rejected — use `transform` `xml_prune`.
+
+Options:
+
+- `script`: required JavaScript. Top-level `return` is allowed (the runtime wraps the script in a function).
+- `timeout`: optional duration, default `1s` (C1). A missing timeout is a lint warning because goja has no memory cap. See [Security § Code node](security.md#code-node).
+- `max_output_bytes`: optional, default `1048576` (C5). Oversize output is refused, not truncated.
+- `max_call_stack`: optional, default `1000` (C2).
+
+The interrupt is checked between JavaScript statements. A pathological regex may run until it finishes; use `filter` instead. Per-request VMs are not pooled (C6).
+
 Fan-out is at-least-once per destination, not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With `stop_on_failure`, if one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`. With `skip_failed`, partial success is acknowledged with `202` and failed routes are reported in the response.
 
 ### Filtering

@@ -30,24 +30,37 @@ agent can resume without reading chat history.
   accepted at unsigned `a722076`.
 - Chunk 6 sync proxy and transforms (`http_request`, `respond`, `xml_prune`,
   `body_format: xml`) is accepted at unsigned `cd0288c`.
+- Chunk 7 goja `code` node (C1–C7) is implemented; local unsigned commit pending.
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 6 accepted at unsigned `cd0288c`. Next chunk is 7 (goja code
-node). Do not push.
+**Status:** Chunk 7 implemented; local unsigned commit next. Do not push.
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
-- Finished remaining Chunk 6 work: `body_format: xml`, `transform` kind
-  `xml_prune` (five ordered rules, per-rule counts), `http_request.body`
-  `raw|transformed`, and an httptest XML proxy flow.
-- Recorded D14: in-tree XML DOM over `encoding/xml`; UG `pipeline.js` is not
-  in this repo, so predicates are the documented V2 contract plus synthetic
-  MISMO-shaped fixtures (including orphaned relationships).
+- Added `internal/codenode` sandboxed goja runtime with named C1–C7 tests.
+- Wired `code` node: compile at load, `{body, vars, headers}` copies, no
+  `Verified`/secrets/XML, return `{body, vars}`.
+- Documented memory gap, interrupt gap, and trusted-operator model (D3 pin,
+  D15). Lint timeout warning points at `docs/security.md#code-node`.
+
+**Chunk 7 gate (local, 2026-09-15):**
+
+- `make test`, `make lint`, `make conformance`: PASS (I9/I15 SKIP)
+- `go test -race ./internal/codenode ./internal/flowconfig`: PASS
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- `CGO_ENABLED=0 go build ./cmd/hookway`; goja `CgoFiles` empty
+- Docker `FROM scratch` image `hookway:chunk7` built (binary + CA bundle only)
+- Trivy HIGH/CRITICAL: 2 pre-existing (amqp091-go CVE-2026-79921, grpc
+  CVE-2026-84445). goja introduced no new HIGH/CRITICAL findings.
+
+**Exact next step:** Unsigned local commit for Chunk 7, then Chunk 8. Do not push.
+
+## Orchestrator — Chunk 6 gate (retained)
+
+**Status:** accepted at unsigned `cd0288c`.
 
 **Chunk 6 gate (local, 2026-09-15):**
-
-- `make test`, `make lint`, `make conformance`: PASS (I9/I15 SKIP until Chunk 8)
 - `go test -race` graph/flowconfig/httpapi/transform/conformance: PASS
 - WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
 - `make validate-examples`: PASS (`examples/v2/proxy.yaml` valid with no-rate_limit warning)

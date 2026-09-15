@@ -47,7 +47,7 @@ var validNodeYAML = map[string]string{
 	"filter":       "conditions: [{source: body, path: event, operator: eq, value: created}]\non_no_match: drop\n",
 	"lookup":       "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n",
 	"transform":    "kind: changed_fields\nfrom: body.previous\nto: body.current\nname: changed_fields\n",
-	"code":         "script: 'return input.body'\ntimeout: 1s\nmax_output_bytes: 1048576\nmax_call_stack: 1000\n",
+	"code":         "script: 'return {body: input.body}'\ntimeout: 1s\nmax_output_bytes: 1048576\nmax_call_stack: 1000\n",
 	"switch":       "cases: [{port: matched, when: {source: body, path: event, operator: eq, value: created}}]\ndefault: unmatched\n",
 	"http_request": "url: https://example.test/{rest}\nforward_method: true\nforward_query: true\nforward_headers: [X-Request-ID]\ntimeout: 5s\nheaders: {X-Service: hookway}\nerror_on_status: [5xx]\n",
 	"publish":      "destination: primary\ntarget: '{route}-queue'\ncreate: true\nmessage_attributes: {event: '{body.event}'}\n",
@@ -105,6 +105,7 @@ func TestEveryOptionContractRoundTripsAndRejectsUnknownFields(t *testing.T) {
 		"http_request": true,
 		"respond":      true,
 		"transform":    true,
+		"code":         true,
 	}
 	for _, def := range defs {
 		t.Run(def.name, func(t *testing.T) {

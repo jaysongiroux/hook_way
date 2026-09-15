@@ -127,6 +127,18 @@ The optional replay store and its API (see [Configuration § Replay](configurati
 - **Failed and unattempted routes are replayable.** On `stop_on_failure`, the first failed destination and any routes not yet attempted are recorded as `failed` delivery rows, so `POST /replay/events/{id}/replay` has a destination list even when the inbound webhook returned `503`.
 - **Proxy-mode webhook replay.** Capture persists the original raw body (`raw_body_base64`) and unredacted request headers (`orig_headers`) in the replay store so a proxy-mode webhook destination can be reconstructed on replay. Those fields are store-only — they are not published to other destinations.
 
+## Code node
+
+A `code` node runs operator-authored JavaScript (goja) on the request envelope. **Flow authors are trusted operators.** They can already point destinations at arbitrary URLs and disable auth. The sandbox defends against accidents — infinite loops, unbounded recursion, accidental host I/O — not against a hostile tenant. **If Hookway is ever multi-tenant or hosted, this design does not hold; move the code node to WASM with real resource isolation rather than hardening goja further.**
+
+Controls C1–C7 bound wall-clock time, call stack, host access, input/output size, per-request isolation, and panics. See [Configuration § Code node](configuration.md#code-node-schema_version-2).
+
+**Memory gap.** goja has no hard memory cap. Controls C1–C7 bound time, call stack, host access, and payload size, but a script doing `let a=[]; while(1) a.push(1)` allocates until the timeout interrupts it — which may be after significant allocation. Hookway is a single process, so that pressure is shared with every other flow. Mitigate with per-pod memory limits plus liveness restart, and deploy split by trust domain for untrusted flows.
+
+**Interrupt gap.** A single long-running native operation (a pathological regex) may not be interruptible between statements. Prefer the `filter` node over complex regexes in `code`.
+
+A `code` node with no explicit `timeout` is a config warning; the 1s default still applies. Set `timeout` deliberately.
+
 ## Production Hardening
 
 - Terminate TLS at a trusted load balancer or reverse proxy. Enable `trusted_proxy_headers` only with `trusted_proxies` set to your proxy/ingress CIDRs so forwarded client IPs cannot be spoofed.
