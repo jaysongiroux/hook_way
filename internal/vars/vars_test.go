@@ -214,6 +214,26 @@ func TestPathPattern(t *testing.T) {
 	}
 }
 
+func TestPathPatternGreedyRest(t *testing.T) {
+	p, err := ParsePath("/proxy/{rest...}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IsLiteral() || !reflect.DeepEqual(p.Names(), []string{"rest"}) {
+		t.Fatalf("names: %v literal=%v", p.Names(), p.IsLiteral())
+	}
+	vars, ok := p.Match("/proxy/v1/orders/123")
+	if !ok || vars["rest"] != "v1/orders/123" {
+		t.Fatalf("greedy match: %v %v", vars, ok)
+	}
+	if _, ok := p.Match("/proxy"); ok {
+		t.Fatal("/proxy should not match a greedy remainder that requires a capture")
+	}
+	if _, err := ParsePath("/proxy/{rest...}/tail"); err == nil {
+		t.Fatal("greedy placeholder must be the final segment")
+	}
+}
+
 func TestPathOverlap(t *testing.T) {
 	mk := func(s string) PathPattern {
 		p, err := ParsePath(s)

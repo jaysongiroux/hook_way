@@ -404,41 +404,49 @@ func BodyString(body any, dotted string) (string, bool) {
 
 // seg is one segment of a PathPattern: a literal or a {name} capture.
 type seg struct {
-	lit  string
-	name string
+	lit    string
+	name   string
+	greedy bool
 }
 
 // PathPattern is an endpoint path whose segments may be {name} placeholders.
-// Matching is exact on segment count; a placeholder captures exactly one
-// non-empty segment. No trailing-slash normalisation is applied, matching the
-// exact-path behaviour hookway had before variables.
+// Matching is exact on segment count, except a final {name...} greedy
+// placeholder which captures the remaining path (possibly several segments).
+// A non-greedy placeholder captures exactly one non-empty segment. No
+// trailing-slash normalisation is applied, matching the exact-path behaviour
+// hookway had before variables.
 type PathPattern struct {
 	raw  string
 	segs []seg
 }
 
 // ParsePath parses p. It must start with "/", contain no empty segments, and
-// any placeholder must be an entire segment with a unique valid name.
+// any placeholder must be an entire segment with a unique valid name. A
+// greedy {name...} capture is allowed only as the final segment.
 func ParsePath(p string) (PathPattern, error) {
 	if p == "" || p[0] != '/' {
 		return PathPattern{}, errors.New("path must start with /")
 	}
 	pp := PathPattern{raw: p}
 	seen := map[string]struct{}{}
-	for i, s := range strings.Split(p[1:], "/") {
+	parts := strings.Split(p[1:], "/")
+	for i, s := range parts {
 		if s == "" {
 			return PathPattern{}, fmt.Errorf("path segment %d is empty", i+1)
 		}
 		if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
-			name := s[1 : len(s)-1]
-			if !ValidName(name) {
+			name, greedy, ok := parsePathPlaceholder(s)
+			if !ok {
 				return PathPattern{}, fmt.Errorf("invalid path placeholder %q", s)
+			}
+			if greedy && i != len(parts)-1 {
+				return PathPattern{}, fmt.Errorf("greedy path placeholder %s must be the final segment", s)
 			}
 			if _, dup := seen[name]; dup {
 				return PathPattern{}, fmt.Errorf("path placeholder {%s} appears more than once", name)
 			}
 			seen[name] = struct{}{}
-			pp.segs = append(pp.segs, seg{name: name})
+			pp.segs = append(pp.segs, seg{name: name, greedy: greedy})
 			continue
 		}
 		if strings.ContainsAny(s, "{}") {
@@ -447,6 +455,18 @@ func ParsePath(p string) (PathPattern, error) {
 		pp.segs = append(pp.segs, seg{lit: s})
 	}
 	return pp, nil
+}
+
+func parsePathPlaceholder(s string) (name string, greedy bool, ok bool) {
+	inner := s[1 : len(s)-1]
+	if strings.HasSuffix(inner, "...") {
+		inner = strings.TrimSuffix(inner, "...")
+		greedy = true
+	}
+	if !ValidName(inner) {
+		return "", false, false
+	}
+	return inner, greedy, true
 }
 
 // String returns the authored path.
@@ -472,11 +492,21 @@ func (p PathPattern) Match(path string) (map[string]string, bool) {
 		return nil, false
 	}
 	parts := strings.Split(path[1:], "/")
-	if len(parts) != len(p.segs) {
+	greedy := len(p.segs) > 0 && p.segs[len(p.segs)-1].greedy
+	if greedy {
+		if len(parts) < len(p.segs) {
+			return nil, false
+		}
+	} else if len(parts) != len(p.segs) {
 		return nil, false
 	}
 	var captured map[string]string
-	for i, s := range p.segs {
+	limit := len(p.segs)
+	if greedy {
+		limit--
+	}
+	for i := 0; i < limit; i++ {
+		s := p.segs[i]
 		if s.name == "" {
 			if parts[i] != s.lit {
 				return nil, false
@@ -490,6 +520,16 @@ func (p PathPattern) Match(path string) (map[string]string, bool) {
 			captured = map[string]string{}
 		}
 		captured[s.name] = parts[i]
+	}
+	if greedy {
+		rest := strings.Join(parts[limit:], "/")
+		if rest == "" {
+			return nil, false
+		}
+		if captured == nil {
+			captured = map[string]string{}
+		}
+		captured[p.segs[limit].name] = rest
 	}
 	return captured, true
 }

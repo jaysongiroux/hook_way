@@ -1,0 +1,116 @@
+package flowconfig
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/jasongiroux/hookway/internal/graph"
+)
+
+func mustAuthNode(t *testing.T, body string) graph.Node {
+	t.Helper()
+	reg, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("auth")
+	node, err := spec.New(nodeConfigFromYAML(t, "auth", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return node
+}
+
+func TestAuthVerifiesRawBytesNotReserialized(t *testing.T) {
+	const secret = "shh"
+	raw := []byte("{\n  \"z\": 1,\n  \"a\": 2\n}")
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(raw)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	node := mustAuthNode(t, "scheme: hmac_sha256_hex\nsecret: shh\nsignature_header: X-Sig\n")
+	in := graph.RawRequest{
+		Head: graph.RequestHead{Header: http.Header{"X-Sig": []string{sig}}},
+		Body: raw,
+	}
+	out, err := node.Run(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Run() = %v; I6 requires verification against the raw bytes", err)
+	}
+	if out.PortType() != graph.PortVerified {
+		t.Errorf("PortType() = %s, want Verified", out.PortType())
+	}
+}
+
+func TestAuthUnknownSchemeFailsClosed(t *testing.T) {
+	reg, _ := NewRegistry()
+	spec, _ := reg.Lookup("auth")
+	node, err := spec.New(nodeConfigFromYAML(t, "auth",
+		"scheme: not_a_real_scheme\nsecret: s\nsignature_header: X-S\n"))
+	if err != nil {
+		return
+	}
+	if _, err := node.Run(context.Background(), graph.RawRequest{}); err == nil {
+		t.Fatal("unknown scheme accepted a request; must fail closed (I11)")
+	}
+}
+
+func TestAuthInvalidSignatureDoesNotLeakSecret(t *testing.T) {
+	node := mustAuthNode(t, "scheme: hmac_sha256_hex\nsecret: super-secret-value\nsignature_header: X-Sig\n")
+	_, err := node.Run(context.Background(), graph.RawRequest{
+		Head: graph.RequestHead{Header: http.Header{"X-Sig": []string{"sha256=deadbeef"}}},
+		Body: []byte(`{"ok":true}`),
+	})
+	if err == nil {
+		t.Fatal("invalid signature accepted")
+	}
+	if strings.Contains(err.Error(), "super-secret-value") {
+		t.Fatalf("error leaked secret: %v", err)
+	}
+	var ne graph.NodeError
+	if !errors.As(err, &ne) || ne.Status != http.StatusUnauthorized {
+		t.Errorf("status = %+v, want 401", err)
+	}
+}
+
+func TestAuthQueryParamSource(t *testing.T) {
+	const secret = "shh"
+	raw := []byte(`{"a":1}`)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(raw)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	node := mustAuthNode(t, "scheme: hmac_sha256_hex\nsecret: shh\nsource: {kind: query, key: authID}\n")
+	_, err := node.Run(context.Background(), graph.RawRequest{
+		Head: graph.RequestHead{Query: url.Values{"authID": []string{sig}}},
+		Body: raw,
+	})
+	if err != nil {
+		t.Fatalf("query-param auth: %v", err)
+	}
+}
+
+func TestNoAuthProducesVerified(t *testing.T) {
+	reg, err := NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("no_auth")
+	node, err := spec.New(nodeConfigFromYAML(t, "no_auth", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := node.Run(context.Background(), graph.RawRequest{Body: []byte("x")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.PortType() != graph.PortVerified {
+		t.Errorf("PortType() = %s, want Verified", out.PortType())
+	}
+}

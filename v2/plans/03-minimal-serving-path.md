@@ -1,6 +1,6 @@
 # Chunk 3: Minimal Serving Path — First Traffic
 
-**Status:** not started
+**Status:** implemented; local serving gate passed
 **Depends on:** Chunk 2 (config format, registry, stub nodes)
 **Unlocks:** Chunks 4, 5, 6
 **Verification gate:** a running V2 binary accepts a real signed webhook by `curl`,

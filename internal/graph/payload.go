@@ -22,9 +22,11 @@ type RequestHead struct {
 	Query     url.Values
 	Header    http.Header
 	SourceIP  string
-	Hops      int
-	RequestID string
-	TraceID   string
+	Hops        int
+	RequestID   string
+	TraceID     string
+	Traceparent string
+	EventID     string
 }
 
 func (RequestHead) PortType() PortType { return PortRequestHead }
@@ -57,6 +59,9 @@ type Envelope struct {
 	Body     any
 	Vars     map[string]string
 	Upstream *UpstreamResponse
+	// Extra holds node-private data such as the captured webhook event.
+	// Clone requires BodyCloner (or a JSON-cloneable body type).
+	Extra any
 }
 
 func (Envelope) PortType() PortType { return PortEnvelope }

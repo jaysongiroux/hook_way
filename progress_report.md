@@ -23,41 +23,45 @@ agent can resume without reading chat history.
   invariant I6 remains unchanged.
 - D13 is settled: one `publish` node references the shared top-level destinations map.
 - Chunk 1 graph core is independently accepted at 91.7% statement coverage.
-- Chunk 2 configuration and validation is **implemented and locally gated**. This
-  commit records that work so Chunk 3 can start from a committed baseline.
+- Chunk 2 configuration and validation is accepted at unsigned `9db929f`.
+- Chunk 3 minimal serving path is **implemented and locally gated** (live curl 202/401).
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 2 committed on `v2`. Next chunk is 3 (minimal serving path).
+**Status:** Chunk 3 implemented on `v2`. Next chunk is 4 (gates and conformance).
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
-- Closed the three shared-config review findings: continue conversion after recoverable
-  YAML type errors, emit dotted unknown-field paths, and set explicit `Severity: "error"`
-  on shared V2 issues.
-- Finished the interrupted node-catalog review: runtime constructors now reject the same
-  invalid options the generated schemas advertise (negative bounds, unsupported
-  `secret_ref` providers / `source.kind` values, empty source keys). `auth` and `respond`
-  schemas now encode exclusive contracts via `oneOf`.
-- Implemented the rest of Chunk 2: `flowconfig.LoadBytes` / `DetectSchemaVersion`, policy
-  lint, CLI/config API routing by `schema_version`, `hookway schema --nodes`, `--strict`,
-  and `examples/v2/*`.
+- Committed Chunk 2 as unsigned `9db929f`.
+- Implemented Chunk 3 serving path: `http_trigger`, `read_body`, `auth`/`no_auth`,
+  `envelope`, `publish`; `internal/httpapi/flowserver.go`; CLI `runServe` routes on
+  `schema_version`. `{rest...}` greedy path capture added in `internal/vars`.
+  `graph.NodeError` carries HTTP status so the server does not string-match errors.
+- `rate_limit` is a pass-through identity node until Chunk 4. `body_format: xml`
+  still returns `errNotImplemented`.
+- Publisher factory is reused via `flowconfig.Config.ServingConfig()`, which projects
+  publish nodes onto synthetic V1 endpoints so webhook targets are collected.
 
-**Chunk 2 gate (local, 2026-09-15):**
+**Chunk 3 gate (local, 2026-09-15):**
 
-- `hookway validate --config examples/v2/github.yaml` → exit 0, `config valid`
-- `hookway validate --config examples/v2/invalid-gate-order.yaml` → exit 1, names
-  `RequestHead` and `RawRequest`
-- `hookway validate --config examples/v2/invalid-many.yaml` → exit 1, lists unknown type,
-  duplicate id, dangling non-Terminal leaf, and missing destination
-- `hookway validate --config examples/v2/github.yaml --json` → valid JSON issues array
-- `hookway schema --nodes` → 17 node types
-- `hookway validate --config examples/config.yaml` → exit 0 with Makefile env vars
-- `go test -race` on config/flowconfig/configapi/cmd/hookway/graph/wasm bridge: PASS
-- `make lint`, `make validate-examples`, `make test`, `git diff --check`: PASS
+- Live: `HOOKWAY_CONFIG=examples/v2/github.yaml GITHUB_WEBHOOK_SECRET=testsecret WEBHOOK_URL=https://example.com/hooks go run ./cmd/hookway`
+  - valid `X-Hub-Signature-256` POST `/webhooks/github` → **202** `status=accepted`
+  - `sha256=deadbeef` → **401**
+- httptest: publish failure **503**, oversize **413**, unknown path **404**, wrong
+  method **405** with `Allow`, panicking `read_body` **500**
+- `make test`, `make lint`, `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
 
-**Exact next step:** Chunk 3 — wrap `internal/auth` and `internal/webhook` for a live
-signed request that returns 202. V1 `handleWebhook` must keep working until Chunk 9.
+**Files:** `internal/flowconfig/node_*.go`, `internal/httpapi/flowserver.go`,
+`internal/graph/error.go`, `internal/graph/payload.go`, `internal/vars/vars.go`,
+`cmd/hookway/main.go`, docs.
+
+**Risks:** `rate_limit` does not limit yet. `secret_ref` is fail-closed until Chunk 8.
+Async webhook enqueue can 202 while downstream delivery to `WEBHOOK_URL` still fails
+in the background (same V1 async contract).
+
+**Exact next step:** Chunk 4 — implement gate nodes (`loop_guard`, `ip_allowlist`,
+real `rate_limit`, `replay_guard`, `filter`) and the I1-I18 conformance suite.
+Track deferred I9/I15 until Chunk 8.
 
 ## Subagent — Chunk 1 implementation (`spike_s2`)
 

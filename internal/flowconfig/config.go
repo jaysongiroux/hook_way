@@ -92,6 +92,36 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	return cfg, issues
 }
 
+// ServingConfig projects this V2 document onto V1's config.Config so the
+// existing destination factory can collect webhook targets from publish nodes.
+func (c Config) ServingConfig() config.Config {
+	cfg := config.Config{
+		Server: c.Server, Security: c.Security, Metrics: c.Metrics,
+		Logging: c.Logging, Replay: c.Replay, Destinations: c.Destinations,
+		Endpoints: map[string]config.EndpointConfig{},
+	}
+	for name, fc := range c.Flows {
+		path := "/"
+		var dests []config.EndpointDestinationConfig
+		for _, nc := range fc.Nodes {
+			switch nc.Type {
+			case "http_trigger":
+				if opts, err := decodeOptions[HTTPTriggerOptions](nc); err == nil && opts.Path != "" {
+					path = opts.Path
+				}
+			case "publish":
+				if opts, err := decodeOptions[PublishOptions](nc); err == nil && opts.Destination != "" {
+					dests = append(dests, config.EndpointDestinationConfig{
+						Destination: opts.Destination, Target: opts.Target, Create: opts.Create,
+					})
+				}
+			}
+		}
+		cfg.Endpoints[name] = config.EndpointConfig{Enabled: true, Path: path, Destinations: dests}
+	}
+	return cfg
+}
+
 // ValidateBytes is the non-expanding V2 validation entry used by the CLI JSON
 // path and the editor. It includes policy lint.
 func ValidateBytes(data []byte) []config.ValidationIssue {

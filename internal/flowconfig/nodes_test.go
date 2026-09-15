@@ -84,18 +84,30 @@ func TestPublishIsOnlyDetachedType(t *testing.T) {
 }
 
 func TestEveryOptionContractRoundTripsAndRejectsUnknownFields(t *testing.T) {
-	if len(nodeDefinitions) != len(wantedCatalog) {
-		t.Fatalf("definitions=%d, want %d", len(nodeDefinitions), len(wantedCatalog))
+	defs := catalog(RegistryOptions{})
+	if len(defs) != len(wantedCatalog) {
+		t.Fatalf("definitions=%d, want %d", len(defs), len(wantedCatalog))
 	}
-	for _, def := range nodeDefinitions {
+	implemented := map[string]bool{
+		"http_trigger": true,
+		"rate_limit":   true,
+		"read_body":    true,
+		"auth":         true,
+		"no_auth":      true,
+		"envelope":     true,
+		"publish":      true,
+	}
+	for _, def := range defs {
 		t.Run(def.name, func(t *testing.T) {
 			nc := nodeConfigFromYAML(t, def.name, validNodeYAML[def.name])
 			node, err := def.spec().New(nc)
 			if err != nil {
 				t.Fatalf("valid options rejected: %v", err)
 			}
-			if _, err := node.Run(context.Background(), zeroPayload(def.in)); !errors.Is(err, errNotImplemented) || !strings.Contains(err.Error(), def.name) {
-				t.Fatalf("stub error = %v", err)
+			if !implemented[def.name] {
+				if _, err := node.Run(context.Background(), zeroPayload(def.in)); !errors.Is(err, errNotImplemented) || !strings.Contains(err.Error(), def.name) {
+					t.Fatalf("stub error = %v", err)
+				}
 			}
 
 			first := def.newOptions()

@@ -18,8 +18,8 @@ func NodeSchemas() map[string]NodeSchema {
 	reflector.Anonymous = true
 	reflector.DoNotReference = true
 	reflector.RequiredFromJSONSchemaTags = true
-	out := make(map[string]NodeSchema, len(nodeDefinitions))
-	for _, def := range nodeDefinitions {
+	out := make(map[string]NodeSchema, 17)
+	for _, def := range catalog(RegistryOptions{}) {
 		schema := reflector.Reflect(def.newOptions())
 		switch def.name {
 		case "auth":

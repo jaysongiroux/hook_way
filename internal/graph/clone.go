@@ -55,6 +55,13 @@ func clonePayload(p Payload) (out Payload, err error) {
 			u.Body = slices.Clone(u.Body)
 			v.Upstream = &u
 		}
+		if v.Extra != nil {
+			extra, err := cloneBody(v.Extra, 0)
+			if err != nil {
+				return nil, err
+			}
+			v.Extra = extra
+		}
 		return v, nil
 	default:
 		return nil, fmt.Errorf("graph: unsupported payload %T; payloads must be concrete values", p)

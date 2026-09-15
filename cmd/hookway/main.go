@@ -179,6 +179,20 @@ func printValidateResult(issues []config.ValidationIssue, strict bool, path stri
 	return 0
 }
 
+func blockingValidationIssues(issues []config.ValidationIssue) []config.ValidationIssue {
+	var blocking []config.ValidationIssue
+	for _, issue := range issues {
+		severity := issue.Severity
+		if severity == "" {
+			severity = config.SeverityError
+		}
+		if severity != config.SeverityWarning {
+			blocking = append(blocking, issue)
+		}
+	}
+	return blocking
+}
+
 // runSchema prints the JSON Schema describing the Hookway config to stdout.
 func runSchema(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
@@ -315,11 +329,38 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		logger.Error("config path required", "error", err)
 		return 1
 	}
-	cfg, err := config.Load(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		appMetrics.ConfigLoadFailure("load")
 		logger.Error("config load failed", "error", err)
 		return 1
+	}
+	schemaVersion := 1
+	if v, detectErr := flowconfig.DetectSchemaVersion(data); detectErr == nil {
+		schemaVersion = v
+	}
+
+	var cfg config.Config
+	var v2cfg flowconfig.Config
+	if schemaVersion == 2 {
+		var issues []config.ValidationIssue
+		v2cfg, issues = flowconfig.Load(path)
+		if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
+			appMetrics.ConfigLoadFailure("load")
+			logger.Error("config load failed", "error", config.ConfigValidationError{Issues: blocking})
+			return 1
+		}
+		for _, issue := range flowconfig.Lint(v2cfg) {
+			logger.Warn("config lint", "field", issue.Field, "message", issue.Message)
+		}
+		cfg = v2cfg.ServingConfig()
+	} else {
+		cfg, err = config.Load(path)
+		if err != nil {
+			appMetrics.ConfigLoadFailure("load")
+			logger.Error("config load failed", "error", err)
+			return 1
+		}
 	}
 	level, err := hooklogging.ParseLevel(cfg.Logging.Level)
 	if err != nil {
@@ -346,7 +387,23 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	defer publisher.Close()
 
-	app := httpapi.NewServerWithMetrics(cfg, publisher, logger, appMetrics)
+	var app interface {
+		HTTPServer() *http.Server
+		MetricsServer() *http.Server
+		StartReadinessProbe(context.Context) <-chan struct{}
+		Close() error
+		SetReplayCapturer(httpapi.ReplayCapturer)
+	}
+	if schemaVersion == 2 {
+		flowApp, err := httpapi.NewFlowServer(v2cfg, publisher, logger, appMetrics)
+		if err != nil {
+			logger.Error("v2 flow server failed", "error", err)
+			return 1
+		}
+		app = flowApp
+	} else {
+		app = httpapi.NewServerWithMetrics(cfg, publisher, logger, appMetrics)
+	}
 	defer app.Close()
 
 	// The replay store's connection is opened -- and its defer registered --

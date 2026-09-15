@@ -1,5 +1,6 @@
 # Minimal valid V2 webhook ingest flow. Used by `hookway validate` and the
-# Chunk 2 verification gate.
+# Chunk 3 serving gate (signed POST → 202). Requires GITHUB_WEBHOOK_SECRET and
+# WEBHOOK_URL in the environment. `rate_limit` is a pass-through until Chunk 4.
 schema_version: 2
 server:
   addr: ":8080"

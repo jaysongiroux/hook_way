@@ -4,10 +4,10 @@ Scratch/working space for the V2 redesign: a typed-port node graph replacing V1'
 hardcoded request pipeline.
 
 **Branch:** `v2` (branched from `main` @ `242c358`)
-**Status:** implementation underway; Chunk 1 accepted; Chunk 2 config/validation is
-implemented. External universal-gateway and DigiFi migration work was removed from
-scope on 2026-09-14. See [`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments,
-verification and plan corrections.
+**Status:** implementation underway; Chunk 1 accepted; Chunk 2 committed; Chunk 3
+minimal serving path is implemented. External universal-gateway and DigiFi
+migration work was removed from scope on 2026-09-14. See
+[`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments, verification and plan corrections.
 
 **Chunk sequence** (`plans/00-INDEX.md` has the dependency graph and per-chunk gates):
 

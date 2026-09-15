@@ -1,0 +1,79 @@
+package flowconfig
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/jasongiroux/hookway/internal/graph"
+)
+
+type fakePublisher struct {
+	lastTarget string
+	lastEnv    graph.Envelope
+	err        error
+}
+
+func (f *fakePublisher) Publish(_ context.Context, _, renderedTarget string, env graph.Envelope) error {
+	f.lastTarget = renderedTarget
+	f.lastEnv = env
+	return f.err
+}
+
+type staticResolver struct{ pub Publisher }
+
+func (s staticResolver) Resolve(string) (Publisher, error) { return s.pub, nil }
+
+func mustPublishNode(t *testing.T, body string, resolver PublisherResolver) graph.Node {
+	t.Helper()
+	reg, err := NewRegistryWithOptions(RegistryOptions{Publishers: resolver})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("publish")
+	node, err := spec.New(nodeConfigFromYAML(t, "publish", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return node
+}
+
+func TestPublishLabelsWithTemplateNotRenderedTarget(t *testing.T) {
+	fake := &fakePublisher{}
+	node := mustPublishNode(t, "destination: primary\ntarget: \"{route}-queue\"\n",
+		staticResolver{pub: fake})
+
+	env := graph.Envelope{Vars: map[string]string{"route": "env-4711"}}
+	out, err := node.Run(context.Background(), env)
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+
+	if fake.lastTarget != "env-4711-queue" {
+		t.Errorf("published to %q, want the RENDERED target env-4711-queue", fake.lastTarget)
+	}
+	term := out.(graph.Terminal)
+	if term.Deliveries[0].Target != "{route}-queue" {
+		t.Errorf("Delivery.Target = %q, want the TEMPLATE {route}-queue: "+
+			"metric labels must be bounded by config, not data (R3)",
+			term.Deliveries[0].Target)
+	}
+}
+
+func TestPublishRecordsFailure(t *testing.T) {
+	fake := &fakePublisher{err: errors.New("broker down")}
+	node := mustPublishNode(t, "destination: primary\ntarget: github-webhooks\n",
+		staticResolver{pub: fake})
+	out, err := node.Run(context.Background(), graph.Envelope{})
+	if err == nil {
+		t.Fatal("expected publish error")
+	}
+	var ne graph.NodeError
+	if !errors.As(err, &ne) || ne.Status != 503 {
+		t.Errorf("status = %+v, want 503", err)
+	}
+	term := out.(graph.Terminal)
+	if term.Deliveries[0].Err == nil {
+		t.Fatal("delivery error not recorded")
+	}
+}

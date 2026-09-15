@@ -26,8 +26,8 @@ intended reason before implementation; workers must report that evidence.
 |---|---|---|
 | 0 Spikes | Closed for current scope; external migration work excluded by user | Existing Hookway design constraints retained |
 | 1 Graph core | Accepted through `59975bd` | Race tests, 91.7% coverage, illegal gate wiring rejected |
-| 2 Config and validation | Implemented; local gate passed | Valid configs accepted; all invalid-config problems reported |
-| 3 Minimal serving | In progress | Signed live request delivered with 202; invalid signature rejected |
+| 2 Config and validation | Accepted through `9db929f` | Valid configs accepted; all invalid-config problems reported |
+| 3 Minimal serving | Implemented; local curl gate passed | Signed live request delivered with 202; invalid signature rejected |
 | 4 Gates and conformance | Waiting for 3 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Waiting for 4 | All 13 types deliver through V2; integration gates pass |
 | 6 Proxy and transforms | Waiting for 5 | Upstream response, method, path, query and transforms verified |
@@ -160,6 +160,20 @@ do not claim that an unavailable skill was invoked.
   duplicate id, dangling non-Terminal leaf, and missing destination. `schema --nodes`
   lists 17 types. V1 `examples/config.yaml` still validates.
 - `make test`, `make lint`, `make validate-examples`, `git diff --check`: PASS.
-- Work is committed with this Chunk 2 change. Chunk 3 (first live 202) is the next
-  implementation slice.
+- Implementation is in unsigned commit `9db929f`.
+
+## Chunk 3 local gate — 2026-09-15
+
+- Five runtime nodes: `http_trigger`, `read_body`, `auth`/`no_auth`, `envelope`,
+  `publish`. `rate_limit` is an identity pass-through so `examples/v2/github.yaml`
+  can serve until Chunk 4 implements actual limiting.
+- `FlowServer` is a new HTTP path (V1 `server.go` unchanged). `runServe` routes on
+  `schema_version`. Publish failures map to 503 via `graph.NodeError`. Compensation
+  is invoked on the error path even though no Compensator exists yet.
+- Live curl against `examples/v2/github.yaml` (with `GITHUB_WEBHOOK_SECRET=testsecret`
+  and `WEBHOOK_URL=https://example.com/hooks`): valid GitHub HMAC → HTTP 202
+  `{"status":"accepted",...}`; `sha256=deadbeef` → HTTP 401. httptest covers 413,
+  404, 405+Allow, panicking node 500, and publish-failure 503.
+- `make test`, `make lint`, WASM validator build: PASS. V1 handler tests still pass.
+- Next: Chunk 4 gates and I1-I18 conformance (`v2/plans/04-gates-and-processing.md`).
 
