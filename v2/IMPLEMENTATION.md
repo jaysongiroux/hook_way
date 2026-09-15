@@ -24,8 +24,8 @@ intended reason before implementation; workers must report that evidence.
 
 | Chunk | State | Unlock condition |
 |---|---|---|
-| 0 Spikes | Findings reviewed; gate pending source and captured traffic | Evidence for S1 and S2; required design decisions resolved |
-| 1 Graph core | Waiting for 0 | Race tests, >85% graph coverage, illegal gate wiring rejected |
+| 0 Spikes | Closed for current scope; external migration work excluded by user | Existing Hookway design constraints retained |
+| 1 Graph core | In progress | Race tests, >85% graph coverage, illegal gate wiring rejected |
 | 2 Config and validation | Waiting for 1 | Valid configs accepted; all invalid-config problems reported |
 | 3 Minimal serving | Waiting for 2 | Signed live request delivered with 202; invalid signature rejected |
 | 4 Gates and conformance | Waiting for 3 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
@@ -33,7 +33,7 @@ intended reason before implementation; workers must report that evidence.
 | 6 Proxy and transforms | Waiting for 5 | Upstream response, method, path, query and transforms verified |
 | 7 Code node | Waiting for 6 | C1-C7 individually exercised; race and dependency checks pass |
 | 8 Secrets and observability | Waiting for 6 | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
-| 9 Migration and V1 removal | Waiting for 7 and 8 | Seven handlers match captured traffic before V1 removal |
+| 9 V2 cutover and V1 removal | Waiting for 7 and 8 | V2 feature/conformance gates pass before V1 removal |
 | 10 Web UI | Waiting for 9 | Export validates; import/export round-trip and visual checks pass |
 
 S1 and S2 are independent. Chunks 4 and 5 may overlap only after shared interfaces
@@ -50,18 +50,18 @@ Chunks 7 and 8 can overlap with coordinated registry changes. UI remains last.
 
 ## Open evidence and plan reconciliation
 
-1. The documented `../universal-gateway` source directory is absent. Source location
-   and raw DigiFi captures have been requested. S1 requires at least 20 real captures
-   with raw body, timestamp and signature; synthetic fixtures cannot close that gate.
-2. Chunk 2 refers to Q11, which is absent from `OPEN-QUESTIONS.md`: one `publish`
-   node referencing shared destinations versus 13 named destination nodes. Later
-   chunks assume the former. Resolve and align the catalog before Chunk 2.
+1. The user removed universal-gateway and DigiFi work from the implementation scope on
+   2026-09-14. Their source, captured-traffic, parity, and migration-config gates no
+   longer block Hookway V2. Preserve Hookway's raw-byte authentication invariant I6;
+   do not add a provider-specific exception.
+2. Q11 is resolved by D13: one `publish` node references shared destinations. The design
+   catalog and open-question record now match the later implementation plans.
 3. Chunk 4 explicitly skips I9 and I15 until Chunk 8. Report this honestly; the full
    I1-I18 gate cannot be called complete while those tests are skipped.
 4. Design section 9 calls Q5-Q8 unresolved, although README decisions D6-D9 and
    `OPEN-QUESTIONS.md` settle them. The locked decisions take precedence.
-5. An I6 exception or port-type change needs the specific discussion required by
-   Chunk 0. Do not silently change either to get past a missing-evidence gate.
+5. No I6 exception is in scope. A port-type change still requires design review because
+   all later chunks depend on strict equality.
 
 ## Corrections required before dispatching implementation
 
@@ -130,6 +130,6 @@ do not claim that an unavailable skill was invoked.
   or live handler equivalence. `git diff --check` also passed.
 - Plan-audit findings above checked against actual code and plan examples. These are
   acceptance requirements for future workers, not fixes already implemented.
-- Next dispatch remains Chunk 1, after the Chunk 0 gate is resolved. No V2 production
-  code has been written. Source/SDK access and raw sandbox captures are the immediate
-  missing inputs; see `spikes/S1-digifi-signature.md` for the exact capture requirements.
+- The user excluded universal-gateway and DigiFi work after this preflight. Chunk 1 is
+  now dispatched. The findings remain historical design notes and are not implementation
+  dependencies. No V2 production code had been written at dispatch time.

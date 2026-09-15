@@ -1,0 +1,110 @@
+package graph
+
+import (
+	"net/http"
+	"net/url"
+)
+
+// Payload is the value carried on a graph edge. Implementations are the five
+// request phases; each reports the PortType it corresponds to so the executor
+// can assert at runtime what the compiler already proved statically.
+type Payload interface {
+	PortType() PortType
+}
+
+// RequestHead is the pre-body phase: everything known about a request before
+// its body has been buffered. Gate nodes consume and produce this, which is
+// what makes "gates run before the body is read" (I1-I4) a type property.
+type RequestHead struct {
+	Method    string
+	Path      string
+	PathVars  map[string]string
+	Query     url.Values
+	Header    http.Header
+	SourceIP  string
+	Hops      int
+	RequestID string
+	TraceID   string
+}
+
+func (RequestHead) PortType() PortType { return PortRequestHead }
+
+// RawRequest adds unverified body bytes. Head is a named field rather than an
+// embedded type to make phase boundaries explicit. Go struct embedding does
+// not itself make the containing type assignable to the embedded type.
+type RawRequest struct {
+	Head RequestHead
+	Body []byte
+}
+
+func (RawRequest) PortType() PortType { return PortRawRequest }
+
+// Verified is a RawRequest whose signature has been checked against the raw
+// bytes (I6 -- never against a re-serialized body). Identity names the
+// credential that passed, for logging and replay attribution.
+type Verified struct {
+	Raw      RawRequest
+	Identity string
+}
+
+func (Verified) PortType() PortType { return PortVerified }
+
+// Envelope is the publishable phase: a verified request plus its parsed body
+// and resolved variables. Upstream is populated by an http_request node and
+// consumed by a respond node, which is how synchronous proxying works.
+type Envelope struct {
+	V        Verified
+	Body     any
+	Vars     map[string]string
+	Upstream *UpstreamResponse
+}
+
+func (Envelope) PortType() PortType { return PortEnvelope }
+
+// UpstreamResponse is an upstream HTTP reply captured by an http_request node.
+type UpstreamResponse struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+// Terminal is a leaf result. Response is nil unless a respond node ran, in
+// which case the server writes it; otherwise the caller gets the default
+// 202 plus the Deliveries summary, matching V1.
+//
+// Terminal is ALWAYS populated by Run, including when Run returns an error.
+// V1 returns the already-succeeded and still-unattempted destination lists
+// even on a 503 (server.go:322) so replay has a complete picture, and the
+// caller needs Deliveries to decide whether to compensate (see
+// NeedsCompensation).
+type Terminal struct {
+	Response   *Response
+	Deliveries []Delivery
+	// Compensations lists nodes that reserved something and ran
+	// successfully, in reverse execution order. Run does not invoke them:
+	// the decision depends on the delivery outcome, not just on whether Run
+	// errored. See NeedsCompensation and RunCompensations.
+	Compensations []Compensation
+}
+
+func (Terminal) PortType() PortType { return PortTerminal }
+
+// Response is an explicit reply produced by a respond node.
+type Response struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+// Delivery records one destination outcome. NodeID and Target are used as
+// metric labels, so Target must be the CONFIGURED template (for example
+// "{route}-applicationServiceQueue"), never the rendered value -- see
+// scalability rule R3. The rendered value belongs in logs and span attributes.
+type Delivery struct {
+	NodeID string
+	Target string
+	Err    error
+	// Unattempted distinguishes a destination skipped after failure from a
+	// successful publish. Err can be nil in either case.
+	Unattempted bool
+}

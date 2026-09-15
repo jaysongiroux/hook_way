@@ -20,7 +20,7 @@ weaknesses W1-W5), `v2/README.md` (decisions D1-D11).
 | 6 | [Sync proxy + transforms](06-sync-proxy-and-transforms.md) | `curl` through a proxy flow returns the **upstream's** status/headers/body | yes |
 | 7 | [Code node (goja)](07-code-node-goja.md) | Each sandbox control C1-C7 has a test proving the control actually fires | yes |
 | 8 | [Secrets + observability](08-secrets-and-observability.md) | Secret rotation works with no restart; `/ready` reports per-flow; per-node metrics present | yes |
-| 9 | [Migration configs](09-migration-configs.md) | All 7 universal-gateway handlers run as V2 flows against captured traffic | yes |
+| 9 | [V2 cutover](09-migration-configs.md) | Hookway V2 feature/conformance gates pass; V1 is removed | yes |
 | 10 | [Web UI](10-web-ui.md) | UI exports a config that `hookway validate` accepts | yes |
 
 ```
@@ -33,7 +33,7 @@ weaknesses W1-W5), `v2/README.md` (decisions D1-D11).
                     │           └─> 6 sync proxy + transforms
                     │                 ├─> 7 code node (goja)
                     │                 └─> 8 secrets + observability
-                    │                       └─> 9 migration configs
+                    │                       └─> 9 V2 cutover
                     │                             └─> 10 web UI
                     └─> (4 and 5 may overlap if two people are working)
 ```
@@ -56,7 +56,7 @@ weaknesses W1-W5), `v2/README.md` (decisions D1-D11).
   (gaps doc A1/A6). It ships before goja because it is the higher-value capability and has
   no security surface.
 - **10 last**, per instruction. The UI generates configs, so it needs the config format
-  final — which it is not until chunk 9 has exercised every node against real traffic.
+  final — which it is not until chunk 9 has completed the V2 cutover checks.
 
 ## Staleness warning
 

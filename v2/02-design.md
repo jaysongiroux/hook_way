@@ -74,9 +74,13 @@ transform     : Envelope    -> Envelope      kind: changed_fields|field_map|xml_
 code          : Envelope    -> Envelope      goja — see §6
 switch        : Envelope    -> Envelope      labeled out-ports, first match wins
 http_request  : Envelope    -> Envelope      upstream call; response into envelope
-sns|sqs|...   : Envelope    -> Terminal      the 13 existing destination types
+publish       : Envelope    -> Terminal      destination id, target, delivery options
 respond       : Envelope    -> Terminal      status, headers, body, passthrough
 ```
+
+`publish` references an entry in the shared top-level `destinations:` map. The existing
+destination factory owns and reuses connections for all 13 destination types; graph nodes
+do not embed or construct broker connections. This is decision D13.
 
 `http_request -> Envelope` (not `Terminal`) is what makes the sync proxies work: the
 upstream response lands in a slot on the envelope, and a downstream `respond` node
@@ -259,14 +263,9 @@ The registry doing double duty is the payoff for the UI: node types + their JSON
 means the graph editor can render property panels generically instead of hand-coding a
 form per node type, which is what `web/src/graph/*Form.tsx` does today.
 
-## 9. Open design questions
+## 9. Settled implementation choices
 
-Carried from `OPEN-QUESTIONS.md`, still unresolved:
-
-- **Q5 execution durability** — in-memory per-request, or per-node checkpoints so replay
-  can resume mid-graph? Per-node records make the observability story much stronger and
-  multiply store writes per event.
-- **Q6 readiness** — V1's global AND-aggregation (W1) gets worse under a general executor.
-  Per-flow readiness is the obvious fix and should probably land in V2.
-- **Q7 UI scope** — does `web/src/graph/` become a real editor in this effort?
-- **Q8 secrets** — a secret is now a node property; is `secret_ref` indirection in scope?
+Execution durability, readiness, UI scope and secret indirection are settled by decisions
+D6–D11 in `README.md`. Destination vocabulary is settled by D13: one `publish` node
+references the shared destination map. Remaining implementation questions and verification
+gates are tracked in `IMPLEMENTATION.md` and `OPEN-QUESTIONS.md`.

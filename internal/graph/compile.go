@@ -1,0 +1,297 @@
+package graph
+
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+)
+
+// CompileError aggregates every problem found in one flow, so a single
+// `hookway validate` run reports all of them rather than the first.
+type CompileError struct {
+	Flow     string
+	Problems []string
+}
+
+func (e *CompileError) Error() string {
+	return fmt.Sprintf("flow %q: %d problem(s):\n  - %s",
+		e.Flow, len(e.Problems), strings.Join(e.Problems, "\n  - "))
+}
+
+// bound is a node config paired with its spec and constructed instance.
+type bound struct {
+	id     string
+	spec   NodeSpec
+	node   Node
+	target string
+}
+
+// Flow is a compiled, executable graph. It is immutable after Compile and safe
+// for concurrent use across requests.
+type Flow struct {
+	name  string
+	root  string
+	nodes map[string]*bound
+	out   map[string][]Edge
+	order []string // deterministic node order, for stable error and metric output
+}
+
+func (f *Flow) Name() string { return f.name }
+func (f *Flow) Root() string { return f.root }
+
+func (f *Flow) NodeIDs() []string { return append([]string(nil), f.order...) }
+
+// Compile turns a flow config into an executable graph, or reports every
+// structural problem it finds. Checks, in order:
+//
+//  1. every node type is registered
+//  2. node ids are unique
+//  3. exactly one trigger (In == PortNone) exists
+//  4. every edge endpoint names a real node
+//  5. every edge is type-compatible: to.In.Accepts(from.Out)
+//  6. every non-root node is reachable from the root
+//  7. every leaf produces PortTerminal
+//  8. the graph is acyclic
+//
+// Check 5 enforces phase compatibility, preventing gates after read_body and
+// Envelope creation without an auth transition in the trusted registry. Check 7
+// rejects dangling branches. Types do not enforce gate presence, I8 filter
+// ordering or I9 capture timing; these need policy/topology and executor checks.
+func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
+	ce := &CompileError{Flow: name}
+	f := &Flow{name: name, nodes: map[string]*bound{}, out: map[string][]Edge{}}
+	if reg == nil {
+		ce.Problems = append(ce.Problems, "node registry is nil")
+		return nil, ce
+	}
+
+	// (1) and (2): track identity independently from successful construction.
+	seenIDs := map[string]bool{}
+	for _, nc := range fc.Nodes {
+		if !validID(nc.ID) {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("node id %q is empty or invalid", nc.ID))
+		}
+		if seenIDs[nc.ID] {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("duplicate node id %q", nc.ID))
+			continue
+		}
+		seenIDs[nc.ID] = true
+		if nc.Type == "" {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q has no type", nc.ID))
+			continue
+		}
+		spec, ok := reg.Lookup(nc.Type)
+		if !ok {
+			known := reg.Types()
+			sort.Strings(known)
+			ce.Problems = append(ce.Problems,
+				fmt.Sprintf("node %q: unknown node type %q (known types: %s)",
+					nc.ID, nc.Type, strings.Join(known, ", ")))
+			continue
+		}
+		node, err := construct(spec, nc)
+		if err != nil {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q (%s): %v", nc.ID, nc.Type, err))
+			continue
+		}
+		target, err := configuredTarget(node)
+		if err != nil {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q: %v", nc.ID, err))
+			continue
+		}
+		f.nodes[nc.ID] = &bound{id: nc.ID, spec: spec, node: node, target: target}
+		f.order = append(f.order, nc.ID)
+	}
+
+	// (3): exactly one trigger.
+	var roots []string
+	for _, id := range f.order {
+		if f.nodes[id].spec.In == PortNone {
+			roots = append(roots, id)
+		}
+	}
+	switch {
+	case len(roots) == 0:
+		ce.Problems = append(ce.Problems, "no trigger node (none has an input port of None)")
+	case len(roots) > 1:
+		sort.Strings(roots)
+		ce.Problems = append(ce.Problems,
+			fmt.Sprintf("more than one trigger node: %s", strings.Join(roots, ", ")))
+	default:
+		f.root = roots[0]
+	}
+
+	// (4) and (5): endpoints exist and are type-compatible.
+	edges, err := ParseEdges(fc.Edges)
+	if err != nil {
+		ce.Problems = append(ce.Problems, err.Error())
+	}
+	inbound := map[string]int{}
+	seenEdges := map[Edge]bool{}
+	for _, e := range edges {
+		if seenEdges[e] {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("duplicate edge %s", e))
+			continue
+		}
+		seenEdges[e] = true
+		if e.FromPort != "" {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: labelled outputs are not supported yet", e))
+		}
+		from, fromOK := f.nodes[e.From]
+		to, toOK := f.nodes[e.To]
+		if !fromOK {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: unknown node %q", e, e.From))
+		}
+		if !toOK {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: unknown node %q", e, e.To))
+			continue
+		}
+		if !fromOK {
+			continue
+		}
+		if from.spec.Out == PortTerminal {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: Terminal node cannot have successors", e))
+		}
+		if !to.spec.In.Accepts(from.spec.Out) {
+			ce.Problems = append(ce.Problems, fmt.Sprintf(
+				"edge %s: type mismatch -- %q (%s) produces %s but %q (%s) consumes %s",
+				e, e.From, from.spec.Type, from.spec.Out, e.To, to.spec.Type, to.spec.In))
+			continue
+		}
+		f.out[e.From] = append(f.out[e.From], e)
+		inbound[e.To]++
+	}
+	for _, id := range f.order {
+		if inbound[id] > 1 {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q has multiple incoming edges: reconvergence needs explicit merge or exclusive-branch semantics", id))
+		}
+	}
+
+	// (6): reachability from the root.
+	if f.root != "" {
+		seen := map[string]bool{}
+		f.walk(f.root, seen)
+		for _, id := range f.order {
+			if id != f.root && !seen[id] {
+				ce.Problems = append(ce.Problems,
+					fmt.Sprintf("node %q is unreachable from trigger %q", id, f.root))
+			}
+		}
+	}
+
+	// (7): leaves must be Terminal.
+	for _, id := range f.order {
+		if len(f.out[id]) == 0 && f.nodes[id].spec.Out != PortTerminal {
+			ce.Problems = append(ce.Problems, fmt.Sprintf(
+				"node %q (%s) has no outgoing edge but produces %s, not Terminal: "+
+					"events reaching it would be silently dropped",
+				id, f.nodes[id].spec.Type, f.nodes[id].spec.Out))
+		}
+	}
+
+	// (8): acyclicity.
+	if cycle := f.findCycle(); cycle != nil {
+		ce.Problems = append(ce.Problems, fmt.Sprintf("cycle: %s", strings.Join(cycle, " -> ")))
+	}
+
+	if len(ce.Problems) > 0 {
+		return nil, ce
+	}
+	return f, nil
+}
+
+func configuredTarget(node Node) (target string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("destination metadata panicked: %v", p)
+		}
+	}()
+	if n, ok := node.(DeliveryTarget); ok {
+		target = n.DeliveryTarget()
+	}
+	return target, nil
+}
+
+// Constructors are extension points; a bad one must fail the load, not crash it.
+func construct(spec NodeSpec, config NodeConfig) (node Node, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("constructor panicked: %v", p)
+		}
+	}()
+	node, err = spec.New(config)
+	if err == nil && nilNode(node) {
+		err = fmt.Errorf("constructor returned nil node")
+	}
+	return node, err
+}
+
+func nilNode(node Node) bool {
+	if node == nil {
+		return true
+	}
+	v := reflect.ValueOf(node)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func, reflect.Interface, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
+func (f *Flow) walk(id string, seen map[string]bool) {
+	for _, e := range f.out[id] {
+		if seen[e.To] {
+			continue
+		}
+		seen[e.To] = true
+		f.walk(e.To, seen)
+	}
+}
+
+// findCycle returns one cycle as a node path, or nil. Iterative-free DFS with
+// three colours: unvisited, on the current stack, done.
+func (f *Flow) findCycle() []string {
+	const (
+		white = 0
+		grey  = 1
+		black = 2
+	)
+	colour := map[string]int{}
+	var stack []string
+	var cycle []string
+
+	var visit func(string) bool
+	visit = func(id string) bool {
+		colour[id] = grey
+		stack = append(stack, id)
+		for _, e := range f.out[id] {
+			switch colour[e.To] {
+			case grey:
+				for i, s := range stack {
+					if s == e.To {
+						cycle = append(append([]string(nil), stack[i:]...), e.To)
+						return true
+					}
+				}
+				cycle = []string{e.To, e.To}
+				return true
+			case white:
+				if visit(e.To) {
+					return true
+				}
+			}
+		}
+		stack = stack[:len(stack)-1]
+		colour[id] = black
+		return false
+	}
+
+	for _, id := range f.order {
+		if colour[id] == white && visit(id) {
+			return cycle
+		}
+	}
+	return nil
+}

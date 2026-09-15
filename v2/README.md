@@ -4,8 +4,9 @@ Scratch/working space for the V2 redesign: a typed-port node graph replacing V1'
 hardcoded request pipeline.
 
 **Branch:** `v2` (branched from `main` @ `242c358`)
-**Status:** implementation preflight underway; all 11 chunks written. Chunk 0 is pending
-source/traffic evidence; no V2 runtime chunk accepted yet. See
+**Status:** implementation underway; all 11 chunks written. External universal-gateway
+and DigiFi migration work was removed from scope on 2026-09-14; graph-core work is active.
+No V2 runtime chunk has been accepted yet. See
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments, verification and plan corrections.
 
 **Chunk sequence** (`plans/00-INDEX.md` has the dependency graph and per-chunk gates):
@@ -21,7 +22,7 @@ source/traffic evidence; no V2 runtime chunk accepted yet. See
 | 6 | Sync proxy + transforms | `curl` returns the upstream's response |
 | 7 | Code node (goja) | Each sandbox control C1-C7 provably fires |
 | 8 | Secrets + observability | Rotation with no restart; per-flow `/ready` |
-| 9 | Migration configs | All 7 handlers match the Lambdas on real traffic; **V1 deleted** |
+| 9 | V2 cutover | Hookway feature/conformance gates pass; **V1 deleted** |
 | 10 | Web UI | Export passes `hookway validate` |
 
 Chunk 3 is where V2 first serves traffic. Chunk 4 restores the invariant regression net the
@@ -43,6 +44,7 @@ clean break (D4) removed — it is the most skippable and most regretted item in
 | D10 | Replay capture writes (Q9) | **Port `replaystore` to V2 unchanged.** Keep V1's INSERT + UPDATE. No batching, no WAL, no spool. Batching is written down as a deferred optimization with an explicit trigger. | 2026-09-14 |
 | D11 | Shared state scope (Q10) | **Pod scope only.** No Redis on the hot path; `rate_limit` and `replay_guard` stay in-process and approximate. W5 persists, documented. | 2026-09-14 |
 | D12 | I17 reservation release | **Optional `graph.Compensator` interface.** Executor collects compensations from nodes that succeeded; the **server** invokes them when `err != nil \|\| any delivery failed`, on a detached context. Rejected: context accumulator (a node unit-tested alone would silently no-op) and payload-carried callbacks (lost on the error path). Requires `Flow.Run` to return a populated `Terminal` on error. | 2026-09-14 |
+| D13 | Destination node vocabulary | **One `publish` node referencing the shared top-level `destinations:` map.** Keeps connection ownership and reuse in the existing destination factory while each graph node supplies its target and delivery options. | 2026-09-14 |
 
 Rejected alternatives for D2: *free DAG* (invariants become linter warnings) and
 *constrained spine* (invariants unrepresentable, but auth can never branch and the

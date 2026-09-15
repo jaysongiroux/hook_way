@@ -1,7 +1,8 @@
 # Chunk 0: Spikes
 
-**Status:** in progress; evidence gate pending. See `../IMPLEMENTATION.md` and
-`../spikes/` for verified findings and missing inputs.
+**Status:** closed for the current implementation scope. External universal-gateway and
+DigiFi work was excluded by the user on 2026-09-14. Existing findings remain in
+`../spikes/`; Hookway's provider-neutral design constraints still apply.
 **Depends on:** nothing
 **Unlocks:** Chunk 1 (gate only — spike findings may amend the port lattice)
 **Verification gate:** two findings documents exist and each answers its questions with

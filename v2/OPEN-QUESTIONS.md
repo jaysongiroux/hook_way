@@ -31,16 +31,12 @@ Promoted into `README.md`'s decision table once answered.
 
 ## Blocking implementation, not the design
 
-- **Chunk 0 evidence:** the documented `../universal-gateway` checkout is absent,
-  and no real DigiFi captures are available. Source location and at least 20 raw
-  sandbox body/timestamp/signature captures have been requested. S1 and S2 findings
-  must distinguish provisional reasoning from verified migration compatibility.
-- **Q11 — Destination node vocabulary (before Chunk 2).** The design lists 13 node
-  types; Chunk 2 and later plans assume one `publish` node referencing the existing
-  shared `destinations:` block. Recommendation: use `publish`, retaining connection
-  sharing and type-specific destination options. Await schema decision and align
-  the design catalog before implementation. Either vocabulary could technically
-  share connections; this is a configuration vocabulary choice.
+- **External migration evidence:** closed for the current implementation scope. The user
+  directed us to ignore universal-gateway and DigiFi mentions on 2026-09-14. Hookway's
+  provider-neutral raw-byte authentication invariant remains unchanged.
+- **Q11 — Destination node vocabulary.** Resolved by D13: one `publish` node references
+  the existing shared `destinations:` block, retaining connection ownership and reuse in
+  the destination factory.
 
 ## Independent spikes (not blocking V2 design)
 

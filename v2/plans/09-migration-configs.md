@@ -1,4 +1,10 @@
-# Chunk 9: universal-gateway Migration Configs and V1 Removal
+# Chunk 9: V2 Cutover and V1 Removal
+
+> **Scope update (2026-09-14):** the user excluded universal-gateway and DigiFi work.
+> Ignore the external-handler configuration and captured-traffic tasks below. Before this
+> chunk starts, rewrite its gate around Hookway's V2 feature parity, I1–I18 conformance,
+> existing destination integrations, proxy/transform behavior, configuration examples,
+> and removal of the V1 runtime. No external source or provider fixture is required.
 
 **Status:** not started
 **Depends on:** Chunk 8 (and Chunk 7 if any handler needs a `code` node)
