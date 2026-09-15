@@ -25,8 +25,8 @@ intended reason before implementation; workers must report that evidence.
 | Chunk | State | Unlock condition |
 |---|---|---|
 | 0 Spikes | Closed for current scope; external migration work excluded by user | Existing Hookway design constraints retained |
-| 1 Graph core | In progress | Race tests, >85% graph coverage, illegal gate wiring rejected |
-| 2 Config and validation | Waiting for 1 | Valid configs accepted; all invalid-config problems reported |
+| 1 Graph core | Accepted through `59975bd` | Race tests, 91.7% coverage, illegal gate wiring rejected |
+| 2 Config and validation | Ready for implementation | Valid configs accepted; all invalid-config problems reported |
 | 3 Minimal serving | Waiting for 2 | Signed live request delivered with 202; invalid signature rejected |
 | 4 Gates and conformance | Waiting for 3 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Waiting for 4 | All 13 types deliver through V2; integration gates pass |
@@ -133,3 +133,20 @@ do not claim that an unavailable skill was invoked.
 - The user excluded universal-gateway and DigiFi work after this preflight. Chunk 1 is
   now dispatched. The findings remain historical design notes and are not implementation
   dependencies. No V2 production code had been written at dispatch time.
+
+## Chunk 1 acceptance — 2026-09-15
+
+- Implemented typed ports, payloads, registry, compiler, sequential default executor,
+  detached destination contexts, outcome aggregation, panic isolation, payload cloning,
+  and D12 compensation collection.
+- Independent review found and fixed delivery-metadata spoofing, non-detached delivery
+  injection, outcome-only failures that did not stop successors, and under-counted edge
+  parse diagnostics. Acceptance added executor ownership of response/delivery boundaries
+  and attempted state.
+- `go test -race -shuffle=on -count=5 ./internal/graph/...`: PASS.
+- `go test -cover ./internal/graph/...`: PASS, 91.7% statement coverage.
+- Illegal gate-after-body wiring tests: PASS and name `RequestHead` and `RawRequest`.
+- `make test`, `make lint`, and `git diff --check`: PASS after final changes.
+- Implementation is in `0d4cdd3`; review fixes are in unsigned commit `59975bd`.
+- Chunk 2 is unlocked. Its preflight and implementation slices are recorded in the root
+  `progress_report.md`.
