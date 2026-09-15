@@ -22,19 +22,40 @@ agent can resume without reading chat history.
 - External gateway/provider migration work is excluded by user direction. Raw-byte auth
   invariant I6 remains unchanged.
 - D13 is settled: one `publish` node references the shared top-level destinations map.
-- Chunk 1 graph core is independently accepted at 91.7% statement coverage.
-- Chunk 2 configuration and validation is accepted at unsigned `9db929f`.
-- Chunk 3 minimal serving path is accepted at unsigned `a468a52`.
-- Chunk 4 gates and I1-I18 conformance is accepted at unsigned `d7316df`.
-- Chunk 5 destinations, fan-out, `on_error`, and SNS/SQS MessageAttributes is
-  accepted at unsigned `a722076`.
-- Chunk 6 sync proxy and transforms (`http_request`, `respond`, `xml_prune`,
-  `body_format: xml`) is accepted at unsigned `cd0288c`.
-- Chunk 7 goja `code` node (C1–C7) is accepted at unsigned `2b9b94d`.
-- Chunk 8 secrets, per-node metrics, per-flow readiness, and V2 replay (I9/I15)
-  is accepted at unsigned `d97b40e`.
+- Chunks 1–8 accepted as recorded below. Chunk 9 V2 cutover is independently accepted
+  at unsigned `740da1d`. Web/WASM graph export remains V1 until Chunk 10; CLI rejects it.
 
 ## Orchestrator — current handoff
+
+**Status:** Chunk 9 accepted at unsigned `740da1d`. Next chunk is 10 (web UI).
+Do not push.
+
+**Accomplished in this window (Cursor, 2026-09-15):**
+
+- `schema_version` other than 2 (including absent / `endpoints:`) is a migration
+  error naming `endpoints:`, `schema_version: 2`, `flows:`, and
+  `docs/configuration.md`. CLI validate/serve, configapi, and editorAPIKey are
+  V2-only.
+- Checked-in examples rewritten as `schema_version: 2` flows.
+- V1 `handleWebhook` / `NewServer*` removed. `Server` remains as helpers
+  (`sourceIP`, request/trace ids, metrics, panic recovery, replay capture).
+  Unique V1 coverage ported onto `FlowServer` (request-id/traceparent, metrics
+  listener + API key, XFF, header allowlist, inflight, header_exact, no_auth
+  warning, generic `/ready` error).
+- Docs describe flows/nodes. Editor still exports V1 YAML (called out in
+  `docs/cli.md`); CLI rejects it until Chunk 10.
+- Accidental `hookway-wasm` binary from `8e35c8f` removed from the tree.
+
+**Chunk 9 gate (local, 2026-09-15):**
+
+- `make test`, `make lint`, `make conformance`, `make validate-examples`: PASS
+- I1–I18: PASS, no skips
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- Full `make test-all` not re-run (optional)
+
+**Exact next step:** Chunk 10 (`v2/plans/10-web-ui.md`). Do not push.
+
+## Orchestrator — Chunk 8 gate (retained)
 
 **Status:** Chunk 8 accepted at unsigned `d97b40e`. Next chunk is 9 (V2 cutover
 and V1 removal). Do not push.

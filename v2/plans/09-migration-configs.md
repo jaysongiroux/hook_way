@@ -1,197 +1,139 @@
 # Chunk 9: V2 Cutover and V1 Removal
 
-> **Scope update (2026-09-14):** the user excluded universal-gateway and DigiFi work.
-> Ignore the external-handler configuration and captured-traffic tasks below. Before this
-> chunk starts, rewrite its gate around Hookway's V2 feature parity, I1–I18 conformance,
-> existing destination integrations, proxy/transform behavior, configuration examples,
-> and removal of the V1 runtime. No external source or provider fixture is required.
+> **Scope (locked 2026-09-14, restated 2026-09-15):** universal-gateway and
+> DigiFi work is excluded. There is no captured-traffic harness, no seven
+> handler YAMLs, and no IAM trust-domain split. The gate is Hookway V2 feature
+> parity (existing destination types, proxy/transform, I1–I18), replacement of
+> checked-in V1 examples, and removal of the V1 runtime.
 
-**Status:** not started
-**Depends on:** Chunk 8 (and Chunk 7 if any handler needs a `code` node)
+**Status:** accepted
+**Depends on:** Chunk 8
 **Unlocks:** Chunk 10
-**Verification gate:** all seven universal-gateway handlers run as V2 flows and produce
-byte-identical downstream output to the Lambdas on captured traffic.
+**Verification gate:** `schema_version: 1` / `endpoints:` configs fail with a
+migration error; V2 examples validate; I1–I18 pass; `handleWebhook` is gone;
+`make test && make lint && make conformance && make validate-examples` green.
 
 ```bash
-hookway validate --config examples/v2/universal-gateway.yaml   # exit 0
-go test ./internal/conformance/ -v
-go test ./v2/replay/ -v        # differential tests against captured traffic
-make test-all
+hookway validate --config examples/config.yaml          # V2, exit 0
+hookway validate --config /tmp/v1.yaml                  # migration error, exit 1
+go test ./internal/conformance/ -v                      # I1–I18, no skips
+make test && make lint && make validate-examples
 ```
 
-**Goal:** Turn Chunk 0's paper graphs into real, validated, traffic-tested configs — then
-delete V1.
+**Goal:** V2 is the only request path. Leaving two pipelines in one binary is
+how a security fix lands on only one of them (D4, D5).
 
 ## Re-read before starting
 
-- Re-read `v2/spikes/S2-lattice-validation.md`. Its seven YAML blocks are the starting
-  point for this chunk. Where the implementation diverged from the spike, the spike is
-  wrong — update it.
-- Re-read `v2/spikes/S1-digifi-signature.md`. If DigiFi needed an I6 exception, confirm it
-  landed and is documented as a scoped exception rather than a general capability.
-- Check `docs/universal-gateway-migration-gaps.md` §2's table of seven handlers against
-  what `../universal-gateway` actually contains today. That doc is dated 2026-08-27 and
-  the source may have moved.
+- I1–I18 already live in `internal/conformance` on `FlowServer`. Do not delete
+  a V1 test that is the only coverage of a behaviour the conformance suite
+  does not exercise; port it onto `FlowServer` first.
+- `FlowServer.v1()` reuses helper methods on `Server` (`sourceIP`,
+  `requestID`, `captureEvent`, `handleLive`, metrics). Extract or keep those
+  helpers; do not delete `server.go` wholesale.
+- `flowconfig.ServingConfig()` still projects flows onto
+  `config.EndpointConfig` so `queue.Factory` can provision targets. Keep the
+  Go types. Stop loading user YAML `endpoints:`.
+- Web/WASM still emit V1 `endpoints:` (Chunk 10). CLI/serve/validate must
+  reject that YAML. Leave `web/src/graph/` for Chunk 10.
 
 ---
 
-## Task 1: Write all seven flows
+## Task 1: Reject V1 configs
 
-**Files:** `examples/v2/universal-gateway.yaml` (or one file per handler — prefer one file
-per handler for reviewability, plus a combined one for the real deployment)
+**Files:** `internal/flowconfig/config.go`, `internal/configapi/configapi.go`,
+`cmd/hookway/main.go`, tests
 
-Work from the spike, the gaps doc §2, and the handler source. The seven, with the gap each
-one exercises:
+A `schema_version` other than 2 — including absent, which `DetectSchemaVersion`
+still reports as 1 — is a **migration error**, not a V1 validate/serve path.
 
-| Flow | Shape | Exercises |
-|---|---|---|
-| `digifi_router` | webhook → SNS | A2 dynamic target, A3 changed-field diff, A4 MessageAttributes, A7 vendor HMAC |
-| `qualia_router` | webhook → SQS | A5 query-param auth |
-| `clearedge_router` | webhook → SQS | A2 with regex id-type discrimination |
-| `salesforce_router_proxy` | sync proxy | A1 response passthrough, A6 any-method + greedy path |
-| `salesforce_digifi_proxy` | sync proxy | A1, A6, upstream OAuth |
-| `digifi_router_proxy` | sync proxy | A1, A6 |
-| `docmagic_xml_proxy` | sync proxy + XML | A1, A3 XML prune, `body_format: xml` |
+The message must mention `endpoints:`, `schema_version: 2`, `flows:`, and
+`docs/configuration.md`.
 
-- [ ] **Step 1: Write each flow and validate it**
+- [x] **Step 1: Failing tests** — LoadBytes / CLI validate / configapi
+  Validate / serve refuse `schema_version: 1`, absent version, and an
+  `endpoints:` document, with the migration text.
 
-```bash
-for f in examples/v2/ug-*.yaml; do
-  echo "== $f"; hookway validate --config "$f" || echo "FAILED: $f"
-done
-```
+- [x] **Step 2: Implement** — `runValidate` and `runServe` are V2-only.
+  `editorAPIKey` loads V2 (or DecodeSharedYAML after the version check).
+  `configapi.Validate` returns the migration issue instead of
+  `config.ValidateBytes`.
 
-Every one must reach exit 0 before moving on. A flow that does not validate is not a flow.
-
-- [ ] **Step 2: Resolve the IAM blast-radius question (gaps doc B1)**
-
-This is a **deployment** decision this chunk must not skip. universal-gateway has seven-plus
-narrowly-scoped IAM roles, deliberately tightened in staging and production versus sandbox.
-Hookway is one process with one role, which must be the **union** — a bug in any one flow's
-handling reaches every destination the gateway can write to.
-
-The mitigation the gaps doc recommends is deploying **several Hookway instances split by
-trust domain** rather than one. Decide the split, write it down in
-`v2/09-deployment.md`, and make the configs match it (one config file per instance). Do not
-leave this as an implicit single-instance deployment.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add examples/v2/ v2/09-deployment.md
-git commit -m "feat(examples): all seven universal-gateway handlers as V2 flows"
-```
+- [x] **Step 3: Commit** (may land with Task 2)
 
 ---
 
-## Task 2: Differential testing against captured traffic
+## Task 2: V2 examples replace V1 examples
 
-**Files:** `v2/replay/` — a test harness plus scrubbed fixtures
+**Files:** `examples/*.yaml`, `examples/destinations/*.yaml`,
+`examples/auth/*.yaml`, `Makefile` `CONFIG` / `validate-examples`,
+`examples/README.md`
 
-This is the real verification and the reason this chunk exists. Per the gaps doc §5 there is
-**no production baseline** — both staging and production SAM deploys are commented out — so
-correctness has to be established from captured sandbox traffic and the 127 Jest handler
-tests, not from production parity.
+Every previously-V1 example becomes a `schema_version: 2` flow that still
+demonstrates the same destination or auth surface. `examples/v2/` stays as
+the github/proxy/invalid fixtures.
 
-- [ ] **Step 1: Capture traffic for each of the seven paths**
+`make validate-examples` validates the converted files plus valid
+`examples/v2/*.yaml`.
 
-Record request bytes, headers, and the **downstream effect** (the SQS/SNS message actually
-published, including message attributes; or the proxy response actually returned). Scrub
-PII before anything lands on disk, and gitignore the raw captures.
+Keep `config.Load` and `endpoints.go` **as Go types / destination validation
+fixtures** used by `internal/config` tests and `ServingConfig`. That is not
+a user config path.
 
-- [ ] **Step 2: Build a differential harness**
+- [x] **Step 1: Convert examples and `make validate-examples`**
 
-For each captured request: replay it against a V2 Hookway with a recording destination
-fake, then compare the published message against what the Lambda produced.
-
-Compare **byte-for-byte where possible**. Where it is not (timestamps, generated event ids,
-`request_id`), normalize those specific fields explicitly and list them in the harness — a
-fuzzy comparison that ignores whole objects will hide real divergence.
-
-- [ ] **Step 3: Port the Jest cases that encode real behaviour**
-
-There are roughly 127 Jest test cases across the handlers. Do not port them mechanically —
-most are framework plumbing. Port the ones that encode **behaviour you would otherwise
-lose**: id extraction edge cases, the regex discrimination boundaries, the `status.*`
-promotion rule, XML prune ordering.
-
-- [ ] **Step 4: Commit**
-
-```bash
-make test && make lint
-git add v2/replay/
-git commit -m "test(migration): differential harness comparing V2 flows to the Lambdas"
-```
+- [x] **Step 2: Commit** (may land with Task 1)
 
 ---
 
-## Task 3: Remove V1
+## Task 3: Remove the V1 request pipeline
 
-**Files:** delete `internal/httpapi/server.go` and its tests; delete V1-only parts of
-`internal/config`; modify `cmd/hookway/main.go`, `examples/`, `docs/`
+**Files:** `internal/httpapi/server.go` and V1 handler tests; `cmd/hookway/main.go`
 
-Decision D4 is a clean break, and D5 is in-place replacement. V1 has been kept alive
-through Chunks 2–8 specifically so it could keep serving while V2 was built. Once Task 2
-proves V2 equivalence, V1 is dead weight — and leaving two request paths in one binary is
-how you get a security fix applied to only one of them.
+1. Confirm I1–I18 conformance tests exist and are not skipped.
+2. Port any V1-only coverage the conformance suite does not have onto
+   `FlowServer` (request-id / traceparent, metrics listener + API key,
+   forwarded-for source IP, readiness cache tests).
+3. Move shared test fakes (`fakePublisher`) out of `handlers_test.go`.
+4. Delete `handleWebhook` and `NewServer*`. Keep helper methods `FlowServer`
+   still calls.
+5. Delete V1-only files: `handlers_test.go`, `hardening_test.go`,
+   `filter_handlers_test.go`, `variables_handlers_test.go`,
+   `loop_handlers_test.go`, `lookup_handlers_test.go`,
+   `panic_recovery_test.go`, `replay_capture_test.go`, and V1-only helpers
+   `variables.go` / `lookup.go` if unused.
+6. `grep` production code for `httpapi.NewServer` / `handleWebhook`.
 
-- [ ] **Step 1: Confirm nothing still depends on V1**
+Do **not** delete `internal/config/endpoints.go` or the destination half of
+`validation.go`.
 
-```bash
-grep -rn 'httpapi.NewServer\|config.Load(' --include='*.go' . | grep -v _test.go
-```
+- [x] **Step 1: Port unique tests, then delete V1 handler path**
 
-Every remaining call site must be either deleted or migrated.
+- [x] **Step 2: Docs** — `README.md`, `docs/configuration.md` (node-based
+  structure, not a search-and-replace of `endpoints.<name>`), `docs/cli.md`,
+  `docs/security.md`, `docs/production-readiness.md`, `docs/dockerhub/README.md`.
 
-- [ ] **Step 2: Delete, in this order**
-
-1. `internal/httpapi/server.go` and `handlers_test.go`, `hardening_test.go`,
-   `replay_capture_test.go`, `panic_recovery_test.go`, `filter_handlers_test.go`,
-   `variables_handlers_test.go`, `loop_handlers_test.go`, `lookup_handlers_test.go`
-2. V1-only config: `internal/config/endpoints.go`, the endpoint half of `validation.go`,
-   and their tests. **Keep** `ServerConfig`, `SecurityConfig`, `ReplayConfig`,
-   `DestinationConfig`, `duration.go`, and the env expansion — `flowconfig` uses all of them
-3. `schema_version` routing in `cmd/hookway/main.go` — version 2 becomes the only path, and
-   a version 1 config gets a clear error pointing at the migration
-4. `examples/config.yaml` and the other V1 examples, replaced by V2 equivalents
-
-**Before deleting any test file, check whether it covers an invariant the conformance suite
-does not.** That is the actual risk of this task. Work through
-`v2/00-v1-baseline.md` §2 and confirm each of I1–I18 has a conformance test; anything only
-covered by a V1 test must be ported first.
-
-- [ ] **Step 3: Update all documentation**
-
-`README.md`, `docs/configuration.md` (94 KB — the endpoint sections all change),
-`docs/cli.md`, `docs/security.md`, `docs/production-readiness.md`, `docs/dockerhub/README.md`.
-
-`docs/configuration.md` is the big one. Budget real time for it; a node-based config needs a
-different structure, not a search-and-replace.
-
-- [ ] **Step 4: Verify the whole suite**
+- [x] **Step 3: Verify**
 
 ```bash
-make test-all && make conformance && make lint && make validate-examples && make docker-build && make vuln-scan
+make test && make lint && make conformance && make validate-examples
+GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm
 ```
 
-- [ ] **Step 5: Commit**
-
-```bash
-git add -A
-git commit -m "refactor: remove V1 endpoint pipeline, V2 is the only path"
-```
+Optional if Docker is available: `make docker-build && make vuln-scan` and
+`make test-all`.
 
 ---
 
 ## Done when
 
-- [ ] All seven flows validate with exit 0
-- [ ] The differential harness shows byte-identical downstream output on captured traffic,
-      with every normalized field explicitly listed
-- [ ] The IAM trust-domain deployment split is decided and written in `v2/09-deployment.md`
-- [ ] Every invariant I1–I18 has a conformance test **before** any V1 test is deleted
-- [ ] V1 is gone: no `handleWebhook`, no `endpoints:` config path
-- [ ] A `schema_version: 1` config produces a clear migration error
-- [ ] All docs updated, including the 94 KB `docs/configuration.md`
-- [ ] `make test-all`, `make conformance`, `make validate-examples`, `make docker-build`,
-      `make vuln-scan` all green
+- [x] A `schema_version: 1` config produces a clear migration error
+- [x] V1 examples are gone or rewritten as V2; `make validate-examples` green
+- [x] Every invariant I1–I18 has a conformance test **before** V1 handler tests
+      are deleted
+- [x] V1 is gone from the serve path: no `handleWebhook`, no user `endpoints:`
+      config path
+- [x] Docs describe flows/nodes, not the V1 endpoint pipeline
+- [x] `make test`, `make lint`, `make conformance`, `make validate-examples` green
+- [x] Web graph export remains V1 until Chunk 10 (called out, not silently
+      broken in CLI)

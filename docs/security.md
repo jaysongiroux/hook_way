@@ -1,10 +1,10 @@
 # Security
 
-Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, or SNS). Auth **type** selects the verifier family (`hmac_sha256`, `header_exact`, `jwt`, or `no_auth`); **scheme** selects the header layout within that family. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The full scheme list lives in [Configuration](configuration.md#endpoints).
+Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, or SNS). An `auth` node selects the verifier family (`hmac_sha256`, `header_exact`, `jwt`, or `no_auth` via a `no_auth` node); **scheme** selects the header layout within that family. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The full scheme list lives in [Configuration](configuration.md#auth).
 
 ## Auth Schemes
 
-Each endpoint builds its verifier once at startup from `auth.type` and `auth.scheme` (HMAC schemes default to `hmac_sha256_ts_colon` when omitted). An unknown or mismatched type/scheme pair fails closed — the endpoint rejects every request rather than accepting unverified traffic.
+Each `auth` node builds its verifier once at startup from `scheme` (HMAC schemes default to `hmac_sha256_ts_colon` when omitted). An unknown scheme fails closed — the flow rejects every request rather than accepting unverified traffic.
 
 ### `hmac_sha256_ts_colon` (timestamped, `hmac_sha256`)
 
@@ -20,15 +20,15 @@ Verify a Bearer JWT read from `signature_header` (typically `Authorization`). Ea
 
 ### `no_auth` (`no_auth`)
 
-Accepts every request without verification. Hookway logs a startup warning for any endpoint using it. Reserve it for trusted internal traffic where authentication is enforced upstream.
+Accepts every request without verification. Hookway logs a startup warning for any flow using it. Reserve it for trusted internal traffic where authentication is enforced upstream.
 
 ### `exact` (`header_exact`)
 
-For providers that authenticate with a static shared secret sent in a request header (e.g. RevenueCat `Authorization`), set `auth.type` to `header_exact` and `auth.scheme` to `exact`. Hookway reads `signature_header` and compares its value to `secret` using a constant-time equality check. The raw body is not part of verification.
+For providers that authenticate with a static shared secret sent in a request header (e.g. RevenueCat `Authorization`), set `scheme` to `exact` on an `auth` node. Hookway reads `signature_header` and compares its value to `secret` using a constant-time equality check. The raw body is not part of verification.
 
-Set `auth.remove_bearer: true` when the provider sends a `Bearer` or `bearer` prefix but your configured `secret` stores only the token value. Hookway strips the prefix (case-insensitively) and any following whitespace before comparing.
+Set `remove_bearer: true` when the provider sends a `Bearer` or `bearer` prefix but your configured `secret` stores only the token value. Hookway strips the prefix (case-insensitively) and any following whitespace before comparing.
 
-Because the header value is identical on every request, replay protection and idempotency fall back to a SHA-256 hash of the raw body when `idempotency_header` is not set. Configure `idempotency_header` when the provider sends a per-delivery header.
+Because the header value is identical on every request, use a `replay_guard` key derived from the raw body (or a provider delivery id) rather than the static auth header.
 
 For HMAC schemes the body is not parsed, trimmed, normalized, or re-serialized before verification, and the endpoint secret is used as a raw string (not base64-decoded).
 
@@ -38,13 +38,13 @@ Put secrets in environment variables and reference them from YAML with `${ENV_NA
 
 ## Request Handling
 
-- Only configured endpoint paths are accepted for ingress.
+- Only configured flow paths are accepted for ingress.
 - Empty bodies are rejected.
 - Body size is capped by `server.max_body_bytes`.
 - Server timeouts are configured from YAML.
 - Shutdown handles `SIGINT` and `SIGTERM`.
 - `/healthz` reports process liveness for container healthchecks.
-- `/ready` reports per-flow readiness derived from unique destination probes (schema version 2). Schema version 1 still AND-aggregates every destination. Readiness is maintained by a background prober (`server.readiness_interval` / `readiness_timeout`) and served from cache, so kubelet probes never trigger a live broker fan-out.
+- `/ready` reports per-flow readiness derived from unique destination probes. The HTTP status is 200 while at least one flow is ready. Set `server.readiness_require_all: true` for 503 if any flow is unready. Readiness is maintained by a background prober (`server.readiness_interval` / `readiness_timeout`) and served from cache, so kubelet probes never trigger a live broker fan-out.
 - `/readyz` reports the same cached readiness state as `/ready`.
 - `/health` is a liveness alias for `/healthz` and does NOT report readiness, so infrastructure treating `/health` as a liveness probe will not restart pods on transient destination outages.
 
@@ -77,17 +77,17 @@ By default this is a denylist (fail-open): headers not matched above are forward
 
 ## Idempotency
 
-Each published envelope carries an `idempotency_key` (also set as the AMQP `x-idempotency-key` header) so consumers can deduplicate at-least-once deliveries. The key is taken from the per-endpoint `auth.idempotency_header` (e.g. GitHub's `X-GitHub-Delivery`) when configured. For `hmac_sha256` endpoints without that header, Hookway hashes the verified signature header value, which is stable across provider retries of the same event. For `header_exact` endpoints without `idempotency_header`, Hookway hashes the raw body instead, because the auth header value is static across requests.
+Each published envelope has a unique `id` (UUIDv7) so consumers can deduplicate at-least-once deliveries. `idempotency_key` is included when the envelope carries one (also set as the AMQP `x-idempotency-key` header).
 
-For fan-out endpoints, delivery is not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With the default `delivery_failure_policy: stop_on_failure`, Hookway publishes routes sequentially; if an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations can see the same event again and must dedupe by `idempotency_key`. With `delivery_failure_policy: skip_failed`, Hookway attempts every route and acknowledges partial success with `202` when at least one destination succeeds; that partial-success `202` also releases the replay reservation (see below), so an identical sender retry is accepted again rather than rejected, and can redeliver to the destinations that failed the first time. That retry re-delivers to the destinations that already succeeded too; consumers dedupe that duplicate by `idempotency_key`, identical to the retry contract `stop_on_failure` already relies on.
+For fan-out flows, delivery is not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With the default `delivery_failure_policy: stop_on_failure`, Hookway publishes sequentially; if an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations can see the same event again and must dedupe by `id` / `idempotency_key`. With `delivery_failure_policy: skip_failed`, Hookway attempts every publish and acknowledges partial success with `202` when at least one destination succeeds; that partial-success `202` also releases the replay reservation (see below), so an identical sender retry is accepted again rather than rejected, and can redeliver to the destinations that failed the first time. That retry re-delivers to the destinations that already succeeded too; consumers dedupe that duplicate, identical to the retry contract `stop_on_failure` already relies on.
 
 ## Availability Model
 
-Hookway does not durably spool requests locally. With `stop_on_failure`, a webhook is acknowledged with `202 Accepted` only after every endpoint destination route confirms the publish; if a broker is unavailable after retries, Hookway responds `503 Service Unavailable` and relies on the provider's own retry policy to redeliver. With `skip_failed`, Hookway acknowledges partial success with `202` and includes failed routes in `failed_destinations`; if every route fails, it returns `503`. Under load shedding (`server.max_inflight_requests`) it also responds `503` with `Retry-After`. Operate behind providers that retry on 5xx, and size each destination's `publisher_channels`, per-request `server.fanout_concurrency`, and global `max_inflight_requests` for expected burst volume. The replay reservation is released on a full-failure `503` and on a partial-failure `202` (`skip_failed` only), so a legitimate provider retry is never permanently rejected as a replay while destinations still need the event; it is kept only when every destination has confirmed the publish.
+Hookway does not durably spool requests locally. With `stop_on_failure`, a webhook is acknowledged with `202 Accepted` only after every `publish` node in the flow confirms; if a broker is unavailable after retries, Hookway responds `503 Service Unavailable` and relies on the provider's own retry policy to redeliver. With `skip_failed`, Hookway acknowledges partial success with `202` and includes failed routes in `failed_destinations`; if every route fails, it returns `503`. Under load shedding (`server.max_inflight_requests`) it also responds `503` with `Retry-After`. Operate behind providers that retry on 5xx, and size each destination's `publisher_channels`, per-request `server.fanout_concurrency`, and global `max_inflight_requests` for expected burst volume. The replay reservation is released on a full-failure `503` and on a partial-failure `202` (`skip_failed` only), so a legitimate provider retry is never permanently rejected as a replay while destinations still need the event; it is kept only when every destination has confirmed the publish.
 
 The webhook publish itself runs detached from the inbound HTTP request's context (`server.publish_timeout`, default `10s`, matching `write_timeout`/`shutdown_timeout`): once the request body is read and the signature verified, a sender disconnect or client-side timeout no longer aborts the in-flight fan-out, since that work is already committed to being delivered. The detached publish is still bounded by `server.publish_timeout` so a stalled destination cannot hang a delivery indefinitely; exceeding it fails the publish (surfaced as `503`) the same as any other publish error. Config validation requires `publish_timeout <= shutdown_timeout` and `publish_timeout <= write_timeout`: a sync-mode publish that outlives either would make a clean shutdown falsely report failure, or make the sender see a spurious timeout and retry after the response can no longer be written.
 
-**Readiness (schema version 2):** `/ready` and `/readyz` report **per flow**. Each unique destination is probed once per interval (O(unique destinations), not O(flows × destinations)). A flow is ready when every destination its `publish` nodes reference is ready. The HTTP status is **200 while at least one flow is ready**, so a saturated DocMagic queue cannot take an unrelated DigiFi flow out of load-balancer rotation (this is the W1 / D9 fix). Set `server.readiness_require_all: true` to restore V1 AND-aggregation (503 if any flow is unready). When replay capture is enabled, a down replay store marks every flow unready. Schema version 1 still AND-joins every destination. An async webhook destination reports not-ready once its delivery queue reaches 90% of capacity. `/health`/`/healthz` stay liveness-only and never reflect destination or replay-store readiness.
+**Readiness:** `/ready` and `/readyz` report **per flow**. Each unique destination is probed once per interval (O(unique destinations), not O(flows × destinations)). A flow is ready when every destination its `publish` nodes reference is ready. The HTTP status is **200 while at least one flow is ready**, so one saturated destination cannot take an unrelated flow out of load-balancer rotation (D9). Set `server.readiness_require_all: true` for 503 if any flow is unready. When replay capture is enabled, a down replay store marks every flow unready. An async webhook destination reports not-ready once its delivery queue reaches 90% of capacity. `/health`/`/healthz` stay liveness-only and never reflect destination or replay-store readiness.
 
 ## Logging
 
@@ -121,7 +121,7 @@ The optional replay store and its API (see [Configuration § Replay](configurati
 
 - **Separate listener.** The replay API is served on `replay.addr`, a dedicated listener distinct from the public webhook port (`server.addr`). Keep `replay.addr` off the internet-facing network path and behind the same network controls (firewalls, private subnets, VPN) you'd use for any admin-plane traffic — it is not designed to be reachable from the same network as webhook senders.
 - **Mandatory authentication.** `replay.enabled: true` requires a non-empty `security.api_key`; config validation rejects the config otherwise. This is enforced (not merely recommended) because the replay API is not read-only — `POST /replay/replay` and `POST /replay/events/{id}/replay` re-inject stored payloads into live destinations, so an unauthenticated instance of this API would let anyone replay arbitrary captured traffic. Callers authenticate the same way as the metrics endpoint: `Authorization: Bearer <security.api_key>`.
-- **Capture scope.** Only events that pass the endpoint's own authentication are ever captured — a request that fails auth verification is rejected before capture, so the replay store cannot become a side channel for unauthenticated payloads. Set `replay.skip_unauthenticated: true` to additionally exclude `no_auth` endpoints from capture, since those endpoints have no caller identity to attribute a captured event to.
+- **Capture scope.** Only events that pass the flow's own authentication are ever captured — a request that fails auth verification is rejected before capture, so the replay store cannot become a side channel for unauthenticated payloads. Set `replay.skip_unauthenticated: true` to additionally exclude `no_auth` flows from capture, since those flows have no caller identity to attribute a captured event to.
 - **Best-effort capture, readiness-gated store.** Writing a captured event (or its delivery outcome) to the replay store is strictly best-effort: a store error or panic is caught, logged, and counted in `hookway_replay_capture_failures_total{op}` — it never blocks the webhook response or changes its status code. When replay is enabled, the store's reachability is AND-joined into every flow's readiness (and exposed as `hookway_replay_store_up`) so a store outage does not silently accept events that cannot be captured. Schema version 2 still keeps unrelated *destination* failures from sidelining healthy flows. `/health`/`/healthz` stay liveness-only.
 - **Replay identity and idempotency.** A replayed event is published as a new event: a fresh event id, `replay_of` set to the original event's id, and hop count reset to `0`. The `reprocess` flag on both replay endpoints controls dedup behavior — `false` (default) preserves the original `idempotency_key`, so a consumer that already processed the original delivery treats the replay as a no-op; `true` generates a fresh idempotency key so consumers process it as a new event. Choose `reprocess: true` deliberately — it is what makes an operator-triggered replay actually reach a consumer that already deduplicated the first delivery.
 - **Failed and unattempted routes are replayable.** On `stop_on_failure`, the first failed destination and any routes not yet attempted are recorded as `failed` delivery rows, so `POST /replay/events/{id}/replay` has a destination list even when the inbound webhook returned `503`.
@@ -145,11 +145,11 @@ A `code` node with no explicit `timeout` is a config warning; the 1s default sti
 - Keep RabbitMQ durable exchanges/queues enabled for production and configure dead-letter queues for failed consumers.
 - Use `amqps://` for broker connections. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `destinations.<id>.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
 - Run at least two replicas, but treat rate limiting and replay protection as process-local until a shared backend is added.
-- Keep `server.max_body_bytes` tight per endpoint and set `server.max_inflight_requests` to bound memory and shed load under flood.
+- Keep `server.max_body_bytes` tight per flow and set `server.max_inflight_requests` to bound memory and shed load under flood.
 - Tune `destinations.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
 - Tune `server.fanout_concurrency` to bound per-request goroutines and concurrent publishes across fan-out routes (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
 - If `replay` is enabled, keep `replay.addr` off the internet-facing network path (private port/network, same as `metrics.addr`) and always set `security.api_key` — config validation already requires it, but treat the key with the same care as any credential capable of re-injecting webhook traffic. A replay-store outage reports the pod not-ready so traffic is shed until the store is reachable again.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
 - Set `security.forwarded_header_allowlist` so only intended headers reach consumers and logs.
-- Rotate webhook secrets per endpoint and keep old/new overlap short during provider-side rotations.
+- Rotate webhook secrets per flow and keep old/new overlap short during provider-side rotations. Use `secret_ref` overlap for in-process rotation.

@@ -51,7 +51,7 @@ For local-only manual testing, generate the configured `signature_header` over t
 ts + ":" + raw_body
 ```
 
-For `header_exact` endpoints (e.g. RevenueCat), set `auth.remove_bearer: true` when the provider sends `Authorization: Bearer <token>` but your secret holds only `<token>`. Otherwise configure `secret` to match the full header value exactly.
+For `header_exact` flows (e.g. RevenueCat), set `remove_bearer: true` on the `auth` node when the provider sends `Authorization: Bearer <token>` but your secret holds only `<token>`. Otherwise configure `secret` to match the full header value exactly.
 
 ## Tests
 

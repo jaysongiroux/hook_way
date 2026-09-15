@@ -46,7 +46,7 @@ The repo wrapper is:
 make validate
 ```
 
-Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping endpoint paths, unsupported backends, unsupported delivery failure policies, missing destination routes, unknown destination ids, duplicate destination/queue routes, conflicting queue options for shared queues, unsupported auth types, unsafe queue names, invalid header names, invalid IP allowlist entries, and missing endpoint secrets.
+Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping flow paths, unsupported backends, unsupported delivery failure policies, missing publish destinations, unknown destination ids, unsupported auth schemes, unsafe queue names, invalid header names, invalid IP allowlist entries, and missing secrets. A `schema_version: 1` / `endpoints:` document is a migration error (exit 1) pointing at `docs/configuration.md`.
 
 Plain `validate` expands `${VAR}` references against the process environment (same as serving) and hard-fails — nonzero exit, no other output — if any referenced variable is unset.
 
@@ -132,6 +132,11 @@ the binary with `make ui`:
 
 Without a staged bundle both paths return a page explaining that the UI was not
 built; the API keeps working either way.
+
+The builder graph (`web/src/graph/`) still exports V1 `endpoints:` YAML. `hookway
+validate` and `hookway serve` reject that document with a migration error until
+the web UI is retargeted (Chunk 10). Use the `examples/` flow configs as the
+source of truth for serving.
 
 Pass `--config` (or set `HOOKWAY_CONFIG`) so the editor reads `security.api_key`
 and requires `Authorization: Bearer <key>` on `GET /schema` and `POST /validate`:

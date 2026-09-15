@@ -7,7 +7,7 @@ It is designed for production webhook ingress where the receiving service should
 ## Features
 
 - Webhook verification: HMAC (SHA-256/SHA-1, multiple header layouts), static header match, and JWT Bearer tokens
-- Destinations: RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, and Webhook — with fan-out to multiple destinations per endpoint
+- Destinations: RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, and Webhook — with fan-out to multiple destinations per flow
   - Redis Streams (redis_stream): durable, replayable, consumer-group fan-out via XADD
   - Redis Lists (redis_list): LPUSH work-queue with optional LTRIM cap
   - Redis Pub/Sub (redis_pubsub): fire-and-forget channel broadcast via PUBLISH (lossy; not durable)

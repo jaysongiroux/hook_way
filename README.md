@@ -38,9 +38,9 @@ go run ./cmd/hookway --config examples/config.yaml
 
 ## HTTP Endpoints
 
-- Configured endpoint paths, such as `POST /webhooks/paddle`, accept webhook events.
+- Configured flow paths, such as `POST /webhooks/paddle`, accept webhook events.
 - `GET /healthz` confirms the process is alive.
-- `GET /ready` reports per-flow readiness derived from unique destination probes. Schema version 2 returns 200 while at least one flow is ready (one down destination does not sideline unrelated flows). Set `server.readiness_require_all: true` for V1 AND-aggregation (503 if any flow is unready). Schema version 1 still AND-aggregates every destination. Served from cache, not probed per request.
+- `GET /ready` reports per-flow readiness derived from unique destination probes. It returns 200 while at least one flow is ready (one down destination does not sideline unrelated flows). Set `server.readiness_require_all: true` for 503 if any flow is unready. Served from cache, not probed per request.
 - `GET /readyz` reports the same cached readiness state as `/ready`.
 - `GET /health` is a liveness alias for `/healthz` (it does NOT report readiness), so infrastructure treating `/health` as a liveness probe will not restart pods on transient destination outages.
 - `GET /metrics` exposes Prometheus metrics when enabled.
@@ -61,11 +61,11 @@ Successful webhook response:
 }
 ```
 
-Endpoints can set `delivery_failure_policy`. `stop_on_failure` is the default and publishes routes sequentially until one fails. `skip_failed` attempts every route and returns `202` when at least one destination succeeds, with `failed_destinations` listing any skipped failures.
+Flows can set `delivery_failure_policy`. `stop_on_failure` is the default and publishes sequentially until one fails. `skip_failed` attempts every `publish` node and returns `202` when at least one destination succeeds, with `failed_destinations` listing any skipped failures.
 
 ## Consuming Messages
 
-Hookway publishes JSON envelopes to each endpoint `destinations` route. Every route names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
+Hookway publishes JSON envelopes from each flow `publish` node. Every publish names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
 
 Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for reference configs for each type.
 

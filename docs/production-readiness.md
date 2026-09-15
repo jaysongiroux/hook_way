@@ -206,7 +206,8 @@ This produces three separate operational problems:
 1. `auth.secret_file:` (and `secrets:` as a list) alongside `secret:`. Accept a list
    and try each — this alone makes rotation zero-downtime.
 2. `SIGHUP` → re-load, re-validate, and atomically swap verifiers/filters/limiters.
-   The `Server` already builds all of these once in `NewServerWithMetrics`; the
+   The `FlowServer` already builds verifiers, filters, and limiters once at
+   construction; the
    refactor is to move them behind an `atomic.Pointer` swap rather than plain fields.
 3. Reject a reload that fails validation and keep serving the old config, with a
    `hookway_config_reload_total{result}` metric.
@@ -217,9 +218,10 @@ This produces three separate operational problems:
 
 ### P1-1. No readiness drain on `SIGTERM`
 
-`cmd/hookway/main.go:411-427`: on receiving a signal, the process logs and goes
-straight into `httpapi.Shutdown`. Meanwhile `handleReady` (`internal/httpapi/server.go:309`)
-keeps serving `ready` from the prober cache right up until the listener closes.
+`cmd/hookway/main.go`: on receiving a signal, the process logs and goes
+straight into `httpapi.Shutdown`. Meanwhile `handleReady`
+(`internal/httpapi/flowserver.go`) keeps serving `ready` from the prober cache
+right up until the listener closes.
 
 Kubernetes endpoint removal is asynchronous — kube-proxy, the ingress controller, and
 any service mesh each learn about the terminating pod on their own schedule, typically
@@ -488,14 +490,12 @@ the building blocks exist.
 **Fix:** support `key_by: ip | endpoint | header:<name> | body:<jsonpath>`; reword the
 error regardless.
 
-### P2-6. Readiness AND-aggregation couples unrelated endpoints
+### P2-6. Readiness AND-aggregation couples unrelated flows (mitigated in V2)
 
-`internal/httpapi/readiness.go:129-158` joins per-destination readiness with AND
-semantics. `docs/security.md:90` documents the trade-off thoroughly and the reasoning
-is defensible — but at enterprise scale, one saturated low-priority destination (an
-audit sink at 90% queue depth) pulling the pod out of rotation for *every* endpoint,
-including endpoints that never route to it, is an availability incident waiting to
-happen. The blast radius is disproportionate to the trigger.
+V2 `/ready` reports per flow and returns 200 while at least one flow is ready
+(D9). `server.readiness_require_all: true` restores 503-if-any-unready. A
+saturated low-priority destination still marks *its* flows unready; it no
+longer takes unrelated flows out of rotation by default.
 
 **Fix:** add `critical: true|false` per destination (default `true` to preserve current
 behaviour) and exclude non-critical destinations from the readiness join. Optionally

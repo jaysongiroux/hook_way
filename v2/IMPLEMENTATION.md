@@ -33,7 +33,7 @@ intended reason before implementation; workers must report that evidence.
 | 6 Proxy and transforms | Accepted through `cd0288c` | Upstream response, method, path, query and transforms verified |
 | 7 Code node | Accepted through `2b9b94d` | C1-C7 individually exercised; race and dependency checks pass |
 | 8 Secrets and observability | Accepted through `d97b40e` | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
-| 9 V2 cutover and V1 removal | Waiting for 7 and 8 | V2 feature/conformance gates pass before V1 removal |
+| 9 V2 cutover and V1 removal | Accepted through `740da1d` | V2-only serve; V1 YAML rejected; handleWebhook gone |
 | 10 Web UI | Waiting for 9 | Export validates; import/export round-trip and visual checks pass |
 
 S1 and S2 are independent. Chunks 4 and 5 may overlap only after shared interfaces
@@ -259,6 +259,23 @@ do not claim that an unavailable skill was invoked.
 - `make aws-integration-test`: PASS (queue + lookup + secretref LocalStack)
 - Full `make test-all` not re-run; broker packages were unchanged.
 - V1 still serves. Next: Chunk 9 V2 cutover (`v2/plans/09-migration-configs.md`).
+
+## Chunk 9 local gate — 2026-09-15 (`740da1d`)
+
+- Serve/validate/editor auth load `schema_version: 2` only. Absent version,
+  explicit 1, and `endpoints:` documents return
+  `schema_version 1 (endpoints:) is no longer supported` with a pointer at
+  `schema_version: 2`, `flows:`, and `docs/configuration.md`.
+- Examples under `examples/` (except `examples/v2/` fixtures) are V2 flows.
+  `config.Load` / `endpoints.go` remain Go types for destination tests and
+  `ServingConfig`.
+- `handleWebhook` and `NewServer*` are gone. `FlowServer` is the request path.
+  Shared helpers stay on `Server` via `FlowServer.v1()`. Unique V1 tests were
+  ported before the V1 handler files were deleted. I1–I18 remain on
+  `FlowServer` with no skips.
+- Web/WASM still emit V1 `endpoints:` (Chunk 10). CLI rejects that YAML.
+- `make test`, `make lint`, `make conformance`, `make validate-examples`, WASM
+  validator build: PASS. Do not push.
 
 ## Chunk 5 local gate — 2026-09-15
 

@@ -2,14 +2,14 @@
 
 Hookway reads one YAML config file. Set it with `HOOKWAY_CONFIG` or pass `--config`; the flag wins. YAML string values support `${ENV_NAME}` expansion.
 
-Startup parses and validates the config before connecting to its destinations or serving traffic. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping endpoint paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
+Startup parses and validates the config before connecting to its destinations or serving traffic. The file must set `schema_version: 2` and define `flows:` (not `endpoints:`). A `schema_version: 1` document, an omitted version, or an `endpoints:` config fails with a migration error pointing here. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping flow paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
 
 Example validation output:
 
 ```txt
 config validation failed
 - server.addr: listen address is required Suggestion: set server.addr to a host:port such as ":8080"
-- endpoints.paddle_billing.auth.secret: secret is required Suggestion: reference an environment variable such as ${WEBHOOK_SECRET}
+- schema_version: schema_version 1 (endpoints:) is no longer supported Suggestion: set schema_version: 2 and rewrite endpoints: as flows:; see docs/configuration.md
 ```
 
 ## Server
@@ -22,8 +22,8 @@ config validation failed
 - `server.publish_timeout`: optional duration, default `10s` (matches `write_timeout`/`shutdown_timeout`). Same non-positive restriction as `read_timeout`. Bounds the fan-out publish for a single webhook request; the publish runs detached from the inbound request's cancellation (a sender disconnect or timeout does not abort in-flight publishes) but is still bounded by this deadline so a stalled destination cannot hang a delivery indefinitely. Config validation rejects `publish_timeout` greater than `shutdown_timeout` (a slow synchronous publish could otherwise make a clean SIGTERM shutdown time out and report failure) or greater than `write_timeout` (a sync-mode response can't be written after `write_timeout` elapses, so the sender would see a spurious timeout and retry). Lower `publish_timeout` or raise the other value to resolve either error.
 - `server.max_body_bytes`: required positive integer.
 - `server.max_inflight_requests`: optional integer. Omitted or explicit `0` defaults to `256`, capping concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. Explicit `-1` disables the limit (unlimited in-flight requests). Any other negative value is rejected. Health, readiness, and metrics endpoints are never subject to this limit.
-- `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for endpoints using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
-- `server.readiness_require_all`: optional boolean, default `false` for schema version 2. When false, `/ready` returns 200 with a per-flow body while at least one flow is ready. When true, `/ready` returns 503 if any flow is unready (V1 AND-aggregation). Schema version 1 always AND-aggregates.
+- `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for flows using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
+- `server.readiness_require_all`: optional boolean, default `false`. When false, `/ready` returns 200 with a per-flow body while at least one flow is ready. When true, `/ready` returns 503 if any flow is unready.
 
 ## Secret references (schema_version 2)
 
@@ -102,10 +102,7 @@ This mechanism relies on the header surviving each hop; a loop that transits an 
 
 ## Rate Limit
 
-- `rate_limit.enabled`: boolean.
-- `rate_limit.requests_per_minute`: positive integer when enabled.
-- `rate_limit.burst`: positive integer when enabled.
-- `rate_limit.key_by`: must be `ip` for MVP.
+There is no process-global `rate_limit:` block. Put a `rate_limit` node in each flow (typically before `read_body`). See [Flows § Trigger, gates, and body](#trigger-gates-and-body). A flow without one is a lint warning.
 
 ## Metrics
 
@@ -222,7 +219,7 @@ SQS fields live under `destinations.<id>.sqs`. Credentials are optional: when bo
 - `destinations.<id>.sqs.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
 - `destinations.<id>.sqs.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
 
-Per-endpoint SQS queue settings are configured on the route via `sqs_options` and (for `.fifo` targets) `fifo` — see Destination route fields below.
+Per-flow SQS queue attributes belong on the destination (or a dedicated destination per queue). `.fifo` targets still require FIFO-capable destination configuration.
 
 ```yaml
 destinations:
@@ -247,7 +244,7 @@ SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint o
 - `destinations.<id>.sns.endpoint`: optional endpoint override (LocalStack).
 - `destinations.<id>.sns.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
 
-Per-endpoint SNS topic settings are configured on the route via `sns_options` and (for `.fifo` targets) `fifo`.
+Per-flow SNS topic settings belong on the destination. `.fifo` targets still require FIFO-capable destination configuration.
 
 ### AWS S3
 
@@ -509,20 +506,15 @@ destinations:
       tls:
         enabled: false
 
-endpoints:
+flows:
   order_events:
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "orchestrator"
-        target: "order-events"
-        temporal_options:
-          workflow_type: "OrderWebhookWorkflow"
-          input: "body"
-          workflow_id:
-            source: "body"
-            path: "order.id"
-            prefix: "order-"
-          id_reuse_policy: "reject_duplicate"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: orchestrator, target: order-events}
+    edges: [in>body, body>auth, auth>env, env>out]
 ```
 
 ### Redis / Valkey
@@ -795,147 +787,112 @@ Immutable conflicts — the FIFO-vs-standard nature of a queue/topic — always 
 
 When `create: true` and the target does not exist, it is created with the configured attributes (no reconcile needed).
 
-## Endpoints
+## Flows
 
-Endpoints define the public webhook paths and target queues. Endpoint names are internal stable identifiers; the HTTP path comes from `path`, not from the endpoint name.
+A flow is the request pipeline. Flow names are internal identifiers; the public HTTP path comes from the `http_trigger` node, not from the flow name. Config files must set `schema_version: 2`. `endpoints:` is rejected.
 
 ```yaml
-endpoints:
-  paddle_billing:
-    enabled: true
-    path: "/webhooks/paddle/billing"
-    delivery_failure_policy: "stop_on_failure"
-    destinations:
-      - destination: "billing"
-        target: "billing-events"
-        create: true
-        queue_options:
-          message_ttl: "72h"
-      - destination: "audit"
-        target: "billing-audit-events"
-        create: true
-    max_body_bytes: 2097152
-    rate_limit:
-      enabled: true
-      requests_per_minute: 60
-      burst: 10
-      key_by: "ip"
-    replay_protection:
-      enabled: true
-      ttl: "10m"
-      max_entries: 50000
-    ip_allowlist:
-      - "203.0.113.10"
-      - "198.51.100.0/24"
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_ts_colon"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "Paddle-Signature"
-      timestamp_tolerance: "5m"
-
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  billing:
+    type: webhook
+    webhook: {url: "https://example.test/hooks"}
+flows:
   github_events:
-    enabled: true
-    path: "/webhooks/github/events"
-    destinations:
-      - destination: "billing"
-        target: "github-events"
-        create: true
-    rate_limit:
-      enabled: false
-    replay_protection:
-      enabled: true
-      ttl: "5m"
-      max_entries: 25000
-    ip_allowlist:
-      - "192.30.252.0/22"
-      - "185.199.108.0/22"
-      - "140.82.112.0/20"
-      - "143.55.64.0/20"
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
-      idempotency_header: "X-GitHub-Delivery"
-
-  revenuecat_billing:
-    enabled: true
-    path: "/webhooks/revenuecat/billing"
-    destinations:
-      - destination: "billing"
-        target: "revenuecat-events"
-        create: true
-    replay_protection:
-      enabled: true
-      ttl: "10m"
-      max_entries: 50000
-    auth:
-      type: "header_exact"
-      scheme: "exact"
-      secret: "${REVENUECAT_WEBHOOK_AUTH}"
-      signature_header: "Authorization"
-      # Strip a leading Bearer/bearer prefix before comparing to secret.
-      remove_bearer: true
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: github-events, create: true}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 ```
 
-Set `REVENUECAT_WEBHOOK_AUTH` to the token value only when `remove_bearer` is true (e.g. `rc-secret`). Omit `remove_bearer` or set it to `false` when the secret must match the full header value exactly (e.g. `Bearer rc-secret`).
+Nodes are wired by `edges` (`from>to`). Illegal port wiring fails `hookway validate`. Typical order: `http_trigger` → pre-body gates (`loop_guard`, `ip_allowlist`, `rate_limit`) → `read_body` → `auth` or `no_auth` → `envelope` → `filter` / `transform` / `lookup` / `code` / `http_request` → `publish` and/or `respond`.
 
-Endpoint fields:
+Flow fields:
 
-- `enabled`: only enabled endpoints are registered.
-- `path`: public HTTP path; must start with `/` and be unique among enabled endpoints. Parent/child overlaps such as `/webhooks/paddle` and `/webhooks/paddle/billing` are rejected to avoid ambiguous webhook routing.
-- `delivery_failure_policy`: optional route failure behavior. Defaults to `stop_on_failure`. Use `skip_failed` when partial delivery is acceptable.
-- `destinations`: required list of destination route objects. Each route is published once. With `skip_failed`, multiple routes fan out concurrently up to `server.fanout_concurrency`; with `stop_on_failure`, routes publish sequentially in config order.
-- `max_body_bytes`: optional positive endpoint override. Omit or set `0` to inherit `server.max_body_bytes`.
-- `rate_limit`: optional endpoint override. Omit to inherit global `rate_limit`; set `enabled: false` to disable endpoint-specific limiting in later HTTP code.
-- `replay_protection`: optional endpoint replay cache settings.
-- `ip_allowlist`: optional list of IP addresses or CIDR ranges accepted for this endpoint.
-- `auth`: endpoint authentication settings.
-- `filters`: optional endpoint-level filter chain. All conditions must pass or the payload is not published to any destination. See [Filtering](#filtering).
-- `filter_response`: optional. Controls the response when the endpoint filter chain rejects a payload. `status: 0` (default) returns a silent `202` ack with no destinations; a non-2xx status (e.g. `422`) is returned to the sender instead. Has no effect without `filters`.
+- `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on `idempotency_key`.
+- `nodes` / `edges`: required.
 
-Destination route fields:
+### Trigger, gates, and body
 
-- `destination`: required target key under `destinations`.
-- `target`: required queue/topic/routing-key target for this destination; must match `^[a-zA-Z0-9._-]{1,128}$`, or be a template with `{variable}` placeholders declared under the endpoint's `variables` (see [Variables](#variables)); the rendered value must satisfy the same rule.
-- `create`: when true, queue layer can declare and bind this route target during startup.
-- `queue_options`: optional RabbitMQ queue arguments (only valid when the destination is `rabbitmq`). Same fields as `destinations.<id>.rabbitmq.queue_defaults`; route values override defaults. Use this for source-specific or destination-specific retention/backlog policy. Routes sharing one queue within one destination must use identical queue options.
-- `sqs_options`: optional SQS queue attributes (only valid when the destination is `sqs`). `visibility_timeout` and `message_retention` are durations expressed in whole seconds within the SQS-accepted bounds (visibility `0`–`12h`, retention `60s`–`14d`).
-- `sns_options`: optional SNS settings (only valid when the destination is `sns`). `subject` sets the SNS message Subject (≤100 printable-ASCII characters; not permitted on FIFO topics).
-- `redis_options`: optional per-route Redis settings (only valid when the destination is a `redis_*` type). Not all fields apply to all Redis types — validation enforces the coupling:
-  - `max_len`: approximate maximum number of entries in the stream or list. Hookway uses `XADD MAXLEN ~` (stream) for efficient approximate trimming. `0` or omit for unbounded. Valid for `redis_stream` and `redis_list`.
-  - `consumer_group`: name of the consumer group Hookway creates at startup when `create: true`. Valid for `redis_stream` only.
-  - `ttl`: key expiry duration (e.g. `"168h"`). Valid for `redis_kv` only.
-  - `key_template`: key naming template for `redis_kv`. Tokens `{prefix}`, `{target}`, `{endpoint}`, `{id}`, and `{idempotency_key}` are substituted at publish time. Valid for `redis_kv` only.
-- `kafka_options`: optional per-route Kafka settings (only valid when the destination is `kafka`). `partition_key` derives the Kafka message key using the same source model as `fifo.group_id` (`source`: `static` | `endpoint` | `header` | `body`, plus `value`/`path`/`fallback`); omit it for round-robin partition distribution. `partitions` and `replication_factor` tune the topic Hookway pre-creates for `create: true` routes; omit either (or leave at `0`) to use the broker default.
-- `temporal_options`: required per-route Temporal settings (only valid when the destination is `temporal`). `workflow_type` names the workflow to start; `input` is `envelope` (default) or `body`; `workflow_id` derives the workflow id using the same source model as `fifo.group_id` (`source`: `static` | `endpoint` | `header` | `body`, plus `value`/`path`) with an optional `prefix` and an event-id fallback; `id_reuse_policy` and the `execution_timeout`/`run_timeout`/`task_timeout` durations map onto the SDK start options. See [Temporal](#temporal).
-- `fifo`: required when `target` ends in `.fifo` (and only allowed then). Controls FIFO ordering and deduplication:
-  - `group_id.source`: one of `static` | `endpoint` | `header` | `body` — where the `MessageGroupId` comes from. `static` uses `group_id.value`; `header`/`body` extract `group_id.path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. `group_id.fallback` (a literal, or `endpoint`) is used when extraction yields nothing.
-  - `dedup.use_idempotency_key`: when true, use the envelope `idempotency_key` as the `MessageDeduplicationId` when present.
-  - `dedup.content_based_fallback`: must be `true` for FIFO targets so messages without an idempotency key are still deduplicated via the resource's content-based deduplication.
-- `filters`: optional route-level filter chain. When it fails, only this route is skipped — the payload can still reach other routes. A skipped route is never counted as a delivery failure. See [Filtering](#filtering).
+- `http_trigger`: `path` (must start with `/`, unique among flows; `{name}` captures a path segment into envelope vars) and `methods` (default `[POST]`; `ANY` skips 405).
+- `loop_guard`: rejects inbound `X-Hookway-Hops` at `max_hops` with 400.
+- `ip_allowlist`: `cidrs` list of IPs or CIDR ranges; mismatch is 403. Source IP honors `security.trusted_proxy_headers` / `trusted_proxies`.
+- `rate_limit`: pod-scoped token bucket (`rpm`, optional `burst`, `key_by: ip`). N pods means N× the configured RPM (D11).
+- `read_body`: `max_bytes` (omit to inherit `server.max_body_bytes`); oversize is 413.
+- `replay_guard`: process-local replay cache (`ttl`, `max_entries`, `key` template). N pods means N allowed replays (W5). The reservation is released on retryable publish failure so a broker outage does not become a permanent `409`.
 
-Delivery failure policies:
+### Auth
 
-- `stop_on_failure` (default): publish routes sequentially in config order. The first failed route stops later routes from starting and Hookway returns `503`.
-- `skip_failed`: publish every route. Hookway returns `202` when at least one route succeeds and includes `failed_destinations` in the response. If every route fails, Hookway returns `503`.
+Each flow builds its verifier once at startup from the `auth` (or `no_auth`) node. An unknown scheme fails closed.
 
-In schema_version 2 the same policies are `flows.<name>.delivery_failure_policy`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on `idempotency_key`.
+- `scheme`: wire format. Built-in schemes:
+  - `hmac_sha256_ts_colon` (`hmac_sha256`): timestamped `ts=<unix>;h1=<hex>` over `ts + ":" + raw_body`. *Example: Paddle `Paddle-Signature`.*
+  - `hmac_sha256_ts_dot` (`hmac_sha256`): `t=<unix>,v1=<hex>` over `t + "." + raw_body`. *Example: Stripe `Stripe-Signature`.*
+  - `hmac_sha256_hex` (`hmac_sha256`): prefixed hex HMAC-SHA256 over the raw body. *Example: GitHub `X-Hub-Signature-256`.*
+  - `hmac_sha256_base64` (`hmac_sha256`): raw base64 HMAC-SHA256. *Example: Shopify `X-Shopify-Hmac-SHA256`.*
+  - `hmac_sha1_hex` (`hmac_sha256`): prefixed hex HMAC-SHA1. *Example: GitHub legacy `X-Hub-Signature`.*
+  - `exact` (`header_exact`): constant-time compare of `signature_header` to `secret`. Use `remove_bearer: true` to strip a leading `Bearer` prefix. *Example: RevenueCat `Authorization`.*
+  - `basic` (`header_exact`): HTTP Basic against the configured `user:pass` secret.
+  - `no_auth`: accepts every request. Hookway logs a startup warning. Reserve it for trusted internal traffic.
+  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): Bearer JWT from `signature_header`. `body_hash_claim` binds the token to the raw body unless `allow_unbound_body: true`.
+- `secret` or `secret_ref`: required except for `no_auth`. See [Secret references](#secret-references-schema_version-2).
+- `signature_header`: header Hookway reads; not required for `no_auth`.
+- `timestamp_tolerance`: default `5m`; required for timestamped HMAC and JWT.
 
-`publish.message_attributes` attaches SNS/SQS MessageAttributes. Values may be strings (templated from envelope variables), numbers, YAML arrays (`String.Array`), or `{data_type, value}` maps. `String.Array` is required for subscription filter policies such as `fields_changed`. Attribute names are at most 256 bytes, values at most 256 KiB, and at most 10 attributes per message (AWS limits). Oversized values fail the publish rather than being silently dropped.
+HMAC schemes verify the **raw** body bytes. New providers are added by registering a scheme in `internal/auth`.
 
-Endpoint rate-limit fields match global rate-limit fields. `key_by` must be `ip` for MVP.
+### Envelope and publish
 
-Replay protection fields:
+- `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
+- `publish`: `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
+- `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
+- `http_request`: outbound request; see the proxy examples under `examples/v2/`.
+- `transform`: `changed_fields`, `field_map`, `xml_prune`.
+- `lookup`: resolve a variable from dynamodb / http / postgres (injected at serve time).
+- `code`: sandboxed JavaScript; see [Code node](#code-node-schema_version-2).
+- `switch`: labelled fan-out on `Envelope.Branch`.
 
-- `enabled`: enables endpoint replay protection in later HTTP code.
-- `ttl`: positive duration for replay cache entries.
-- `max_entries`: positive per-process entry cap.
+`stop_on_failure` (default) publishes `publish` successors sequentially and returns `503` on the first failure. `skip_failed` attempts every publish and returns `202` when at least one succeeds, with `failed_destinations` listing skipped failures.
 
-Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node. The reservation is only committed after a successful publish, so a transient broker outage does not turn a provider's legitimate retry into a permanent `409 replay detected`.
+### Filtering
 
-In schema_version 2 the same process-local cache is the `replay_guard` node. That is weakness W5, kept deliberately by decision D11 (no shared state on the hot path): N pods means N allowed replays. Consumers should still dedupe on `idempotency_key`, which is the documented retry contract. `rate_limit` is likewise pod-scoped; N pods means N× the configured RPM.
+A `filter` node is a list of AND-combined conditions. Place it after `envelope` and before every `publish` to drop the whole event, or on only some outgoing edges to skip a branch. `on_no_match: drop` (default) is a silent `202` with no destinations; `on_no_match: reject` returns 422. A dropped branch is never a delivery failure.
+
+```yaml
+- id: filt
+  type: filter
+  on_no_match: drop
+  conditions:
+    - source: header        # header | body
+      path: X-GitHub-Event  # header name, or dotted body path such as repository.private
+      operator: eq
+      value: "push"
+```
+
+- `source`: `header` reads the unredacted request header named by `path`. `body` walks a dotted JSON path (no array indexing).
+- `operator`: `eq`/`ne` (type-aware); `gt`/`gte`/`lt`/`lte` (numeric); `contains`/`prefix`/`suffix`; `regex` (RE2, compiled at load); `exists`/`not_exists`.
+- `value`: comparison value. Omit for `exists`/`not_exists`.
+
+Header values are strings, so numeric/bool operators parse them (`"42"` matches `eq: 42`). A missing or incomparable value fails the condition, including `ne`. A non-JSON body fails every `body` condition except `not_exists`. Drops are counted by `hookway_filtered_total` and logged at Info with the failing condition — never the header or body value. When a body-sourced condition fails because the body did not parse as JSON, `level` is `body_unparsed`.
+
+Config files pass through `os.ExpandEnv` before parsing, so `$name` inside a `regex` value is expanded. Escape or avoid literal `$`-prefixed tokens.
+
+See `examples/filters.yaml`.
+
+### Variables
+
+Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a body field to `vars.tenant`. `lookup` resolves an external key. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. Unresolved templates fail closed at publish.
+
+A placeholder in a webhook `url` **host** must be followed by a literal domain suffix (`{envName}-api.example.com`) so a request cannot choose an arbitrary host. `${ENV_VAR}` references expand at load and are not request variables.
+
+See `examples/variables.yaml`.
 
 ## Code node (schema_version 2)
 
@@ -958,177 +915,13 @@ Options:
 
 The interrupt is checked between JavaScript statements. A pathological regex may run until it finishes; use `filter` instead. Per-request VMs are not pooled (C6).
 
-Fan-out is at-least-once per destination, not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With `stop_on_failure`, if one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`. With `skip_failed`, partial success is acknowledged with `202` and failed routes are reported in the response.
-
-### Filtering
-
-Filters gate a payload based on its headers and JSON body before it reaches a destination. A filter chain is a list of conditions combined with **AND** — every condition must pass. Filters attach at two levels:
-
-- **Endpoint** (`endpoints.<name>.filters`): evaluated first, after authentication and body parsing. If the chain fails, nothing is published. The response is controlled by `filter_response` (default: a silent `202` ack).
-- **Route** (`endpoints.<name>.destinations[].filters`): evaluated per destination. A route whose chain fails is dropped from delivery; other routes still receive the payload. Route filtering **always** acks (`202`) — `filter_response` applies only to the endpoint chain. When every route is filtered out, the response is a normal `202` with an empty `destinations` list.
-
-Each condition has four fields:
-
-```yaml
-filters:
-  - source: header        # header | body
-    path: X-GitHub-Event  # header name, or dotted body path such as repository.private
-    operator: eq
-    value: "push"
-```
-
-- `source`: `header` reads the request header named by `path` (case-insensitive; the first value wins for multi-valued headers). `body` walks `path` as a dotted path into the parsed JSON body (e.g. `repository.private`). Array indexing is not supported.
-- `operator`: see the table below.
-- `value`: the comparison value. Its type (string, number, boolean) selects the comparison mode for `eq`/`ne`. Omit `value` for `exists`/`not_exists`.
-
-Operators:
-
-| Operator | Value type | Meaning |
-|---|---|---|
-| `eq`, `ne` | string, number, boolean | equal / not equal (type-aware) |
-| `gt`, `gte`, `lt`, `lte` | number | numeric comparison |
-| `contains`, `prefix`, `suffix` | string | substring / prefix / suffix |
-| `regex` | string | Go RE2 match; the pattern is compiled and validated at config load |
-| `exists`, `not_exists` | (none) | value present / absent at `path` |
-
-**Type coercion.** Header values are always strings, so numeric and boolean operators parse them (`"42"` matches `eq: 42`; `"true"`/`"1"` match `eq: true`). Body values keep their JSON type: a numeric operator on a JSON number compares directly, and a body string `"42"` is also parsed for `eq: 42`, but a JSON number does **not** match a string `value` such as `"42"`. When a value is missing or its type cannot be coerced to the operator's type, the condition **fails** (it never errors) — including `ne`, which requires the value to be present, comparable, and different. A non-JSON request body makes every `body` condition fail except `not_exists`, which passes. A JSON `null` leaf counts as present: `exists` passes, comparisons fail.
-
-**Header source.** Filters read the original, unredacted request headers, so behaviour does not change when `security.redacted_header_denylist` or `forwarded_header_allowlist` are adjusted.
-
-**Env expansion caveat.** Config files are passed through `os.ExpandEnv` before parsing, so `$name` or `${...}` sequences inside any value — including a `regex` value — are replaced with environment variables (usually empty). Anchors and character classes such as `^refs/heads/\w+$` are unaffected; escape or avoid literal `$`-prefixed tokens.
-
-Drops are counted by `hookway_filtered_total{endpoint, destination_queue_id, queue, level}` (`level` is `endpoint` or `route`) and logged at Info with the failing condition's index, source, path, and operator — never the header or body value.
-
-**Body filters require a JSON-parseable body.** `source: body` conditions read the parsed JSON body; a request whose body did not parse as JSON (e.g. form-encoded or plain-text payloads) fails every `body` condition except `not_exists`, exactly as described above. To make that silent-looking drop visible to operators, when the *failing* condition is body-sourced and the body did not parse as JSON, `level` is `body_unparsed` instead of `endpoint`/`route`, and a `"body filter evaluated against unparsed body"` warning is logged with the endpoint and filter index. This is purely a visibility signal — match semantics and the delivery outcome are unchanged. A `header` condition failing against a non-JSON body, or a `body` condition legitimately failing against present JSON, is not flagged this way.
-
-Auth fields:
-
-- `type`: authentication family; `hmac_sha256` for HMAC body signatures (the digest is chosen per-scheme — most use SHA-256, `hmac_sha1_hex` uses SHA-1), `header_exact` for static header secrets, `jwt` for Bearer JSON Web Tokens, `no_auth` to disable verification entirely.
-- `scheme`: the wire format *within* the auth type. Scheme names describe the mechanism (digest, encoding, and whether the header carries a signed timestamp), not any provider. Optional for `hmac_sha256`, defaults to `hmac_sha256_ts_colon`. Built-in schemes:
-  - `hmac_sha256_ts_colon` (`hmac_sha256`): timestamped, labeled header `ts=<unix>;h1=<hex_hmac>` validated over `ts + ":" + raw_body`; requires `timestamp_tolerance`. *Example: Paddle's `Paddle-Signature`.*
-  - `hmac_sha256_ts_dot` (`hmac_sha256`): timestamped, labeled header `t=<unix>,v1=<hex_hmac>` validated over `t + "." + raw_body`; requires `timestamp_tolerance`. Extra comma-separated pairs are ignored. *Example: Stripe's `Stripe-Signature` (its legacy `v0=` pair is ignored).*
-  - `hmac_sha256_hex` (`hmac_sha256`): prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (so `timestamp_tolerance` is not required); the header carries a `<prefix>=<hex>` value. *Example: GitHub's `X-Hub-Signature-256: sha256=<hex>`.*
-  - `hmac_sha256_base64` (`hmac_sha256`): raw **base64** HMAC-SHA256 over the exact raw body (no prefix, no timestamp). *Example: Shopify's `X-Shopify-Hmac-SHA256`.*
-  - `hmac_sha1_hex` (`hmac_sha256`): prefixed hex HMAC-**SHA1** over the exact raw body; for legacy integrations that have not migrated to SHA-256. *Example: GitHub's legacy `X-Hub-Signature: sha1=<hex>`.*
-  - `exact` (`header_exact`): constant-time equality check between `signature_header` and `secret`; body is not verified. Use `remove_bearer: true` to strip a leading `Bearer`/`bearer` prefix before comparing. *Example: a static token such as RevenueCat's `Authorization` header.*
-  - `basic` (`header_exact`): HTTP Basic — `Authorization: Basic <base64(user:pass)>`; constant-time compare against the configured `user:pass` `secret`; body not verified.
-  - `no_auth` (`no_auth`): **accepts every request without verification.** Not recommended — Hookway logs a startup warning for any endpoint using it. Reserve it for trusted internal traffic where authentication is enforced upstream (e.g. a private network or gateway). `secret` and `signature_header` are not required for this scheme.
-  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm — a token whose `alg` does not match (including `alg: none`) is rejected, defeating algorithm-confusion attacks. `secret` holds the key: the shared HMAC secret for `jwt_hs256`, or a PEM-encoded public key for `jwt_rs256` (RSA) / `jwt_es256` (EC P-256). `exp` is required; `timestamp_tolerance` is the clock-skew leeway. Optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. `body_hash_claim` is required: it names a claim carrying the hex SHA-256 of the raw body, binding the token to the payload. Set `allow_unbound_body: true` to opt out (the JWT then authenticates the caller but not the body).
-  - New providers are added by registering a scheme in `internal/auth`, without changing the request path or config shape.
-- `secret`: required (except for `no_auth`); reference an environment variable such as `${WEBHOOK_SECRET}`. For `jwt_rs256` and `jwt_es256`, this must be a PEM-encoded public key (e.g. `${JWT_PUBLIC_KEY}`).
-- `signature_header`: required HTTP header Hookway reads for verification (signature or static secret); not required for `no_auth`. For `jwt` schemes, set to `Authorization` (the JWT is read as `Bearer <token>`).
-- `remove_bearer`: optional; when `true` on `header_exact` endpoints, strips a leading `Bearer`/`bearer` prefix (case-insensitive) and following whitespace from the header value before comparing to `secret`. Ignored for `hmac_sha256` endpoints (config validation rejects it).
-- `timestamp_tolerance`: optional duration, default `5m`; required (and enforced positive) only for timestamped HMAC schemes (e.g. `hmac_sha256_ts_colon`) and `jwt` schemes, where it is the clock-skew leeway for `exp`/`nbf` validation. If set explicitly on any scheme, it must be a positive duration — omit the field to use the default, or a negative/zero value is rejected at config load.
-- `idempotency_header`: optional header carrying a stable provider delivery/event id (e.g. `X-GitHub-Delivery`). Its value becomes the envelope `idempotency_key` and the AMQP `x-idempotency-key` header so consumers can deduplicate. When omitted on `hmac_sha256` endpoints, Hookway falls back to a hash of the verified signature. When omitted on `header_exact` endpoints, Hookway falls back to a hash of the raw body.
-- `expected_issuer`: optional; for `jwt` schemes, enforces the `iss` claim must match this value.
-- `expected_audience`: optional; for `jwt` schemes, enforces the `aud` claim must match this value.
-- `body_hash_claim`: required for `jwt` schemes unless `allow_unbound_body` is true. Names a JWT claim containing the hex-encoded SHA-256 hash of the raw request body. Hookway rejects any request where the body does not match the hash in the token, binding the JWT to the exact payload and preventing body-swap attacks.
-- `allow_unbound_body`: optional; `jwt` only. When true, `body_hash_claim` may be omitted and the JWT authenticates the caller but not the payload. Do not enable this unless a gateway in front of Hookway already binds the body.
-
-### Variables
-
-Variables let one route serve many environments or tenants. An endpoint declares named variables derived from each request, and `{name}` placeholders in route targets and in a webhook destination `url` are filled per request. Without a `variables` block nothing changes: targets are plain strings, exactly as before.
-
-```yaml
-endpoints:
-  digifi:
-    path: "/webhooks/{envName}/digifi"
-    variables:
-      envName:
-        source: path                       # header | body | query | path
-        values: [qa-gm3, staging-portal, portal]
-      tenant:
-        source: body
-        path: "data.object.organizationId"
-        pattern: "^[a-z0-9]{1,24}$"
-    on_unresolved_variable:
-      destination: "archive"
-      target: "unrouted"
-    destinations:
-      - destination: "archive"
-        target: "{envName}-events"
-      - destination: "hub"                 # webhook url: https://{envName}-api.htap.sh/api/v3/digifi/webhook
-        target: "event"
-      - destination: "audit"
-        target: "{envName}-{tenant}"
-```
-
-**Declaring a variable** (`endpoints.<name>.variables.<var>`):
-
-- `source` (required): `header`, `body`, `query`, `path`, or `lookup` (see below).
-- `path`: what to read. A header name, a dotted JSON body path (`data.object.id`; arrays are not indexed), a query-string key (first value wins), or the name of a `{segment}` in the endpoint `path`. Defaults to the variable's own name. Header lookups use the raw request headers, like filters.
-- Exactly one of:
-  - `values`: the permitted values. Routes using the variable are **expanded at startup** into one concrete route per value (a Cartesian product across variables, capped at 256 routes per endpoint), so queue and topic provisioning (`create: true`), validation, metrics, and replay behave exactly as for static targets.
-  - `pattern`: an anchored regular expression (`^...$`, RE2, at most 256 characters). The target is rendered per request and the destination receives a target it has never seen; see the per-type note below.
-- `default`: used when the value is missing, empty, or not accepted. Must itself be accepted.
-
-Values are trimmed, must be 1-128 characters, and the rendered target must still match the target name rule (`^[a-zA-Z0-9._-]{1,128}$`). A variable may not smuggle a `.fifo` suffix onto a template that does not end in a literal `.fifo`; FIFO targets keep the suffix in the template. Names `prefix`, `target`, `endpoint`, `id`, and `idempotency_key` are reserved (they are `redis_kv` key-template tokens). Every declared variable must be referenced by the endpoint path, a route target, or a webhook `url`.
-
-**Lookup source.** `source: lookup` resolves the variable through an external provider keyed by a value read from the request:
-
-```yaml
-variables:
-  envByApp:
-    source: lookup
-    lookup:
-      key: { source: body, path: "data.object.applicationId" }   # header | body | query | path
-      provider: dynamodb                                          # dynamodb | http | postgres
-      dynamodb:
-        table: "sandbox_ephemeral_routing_data"
-        index: "CreatedAtIndex"                                   # optional
-        key_attribute: "id"                                       # default id
-        filter: { attribute: "id_type", value: "application" }    # optional equality filter
-        value_attribute: "env_name"
-        # region, endpoint, access_key_id, secret_access_key as for sqs; consistent_read: false
-        # (consistent_read is rejected by DynamoDB on a global secondary index; use it only with the base table or a local index)
-      timeout: "2s"                                               # default 2s per provider call
-      cache: { ttl: "5m", negative_ttl: "0s", max_entries: 10000 } # defaults
-    pattern: "^[a-z0-9-]{1,32}$"                                  # optional: values/pattern still gate the result
-```
-
-- `key` uses the same source model as a plain variable (path defaults to the variable name). The key is trimmed; an empty key or one longer than 256 characters is a miss without calling the provider.
-- `dynamodb` runs a Query on the key attribute (newest first when the index has a sort key) and applies the `filter` client-side, so a limit can never hide the matching row. It needs `dynamodb:Query` on the table and, when `index` is set, on `<table>/index/*`.
-- `http` sends a GET (or POST with `{"key": "..."}`) to `url`, which must contain exactly one `{key}` (URL-escaped, and not in the host, so a request cannot choose the resolver), with optional `headers`, and reads the dotted `value_path` from the JSON response. A 404 is a miss; any other non-2xx status or an unparsable body is an error.
-- `postgres` runs `query` with exactly one `{key}` placeholder bound as `$1` (never interpolated; `{key}` is used because `$1` would be treated as an environment reference at load) and reads the first column of the first row. No row is a miss.
-- A lookup variable may declare `values` or `pattern` to gate the returned value, or neither; the rendered target is still checked for a safe name. `default` applies on a miss or a provider error.
-- Hits are cached per variable for `cache.ttl`; misses are not cached unless `negative_ttl` is set (the row is often written moments before the first webhook arrives). Concurrent first lookups of one key make a single provider call.
-- A provider error (timeout, throttling, permissions, bad response) is logged at warn and counted under `hookway_variable_lookup_total{result="error"}` but routes exactly like a miss: `default`, then the fallback route, then 400. Results are otherwise labelled `hit`, `miss`, or `cached`; `hookway_variable_lookup_duration_seconds` records latency.
-- Lookup latency sits on the request path before publish and is bounded by `timeout`. Replays never repeat a lookup: the stored envelope already carries `variables`.
-- Environments that do not need the lookup (production, staging) should use a header, path, or `values` source instead; only the config for the shared sandbox declares lookup variables.
-
-**Where placeholders are allowed:** route `target` strings, `destinations.<id>.webhook.url`, and the Temporal route's `temporal_options.workflow_id.prefix`. Every placeholder in a webhook `url` must be declared by every endpoint that routes to that destination. A placeholder in the url **host** must be followed by a literal domain suffix (`{envName}-api.example.com`), so a request can pick at most one label under a fixed domain and never an arbitrary host. `${ENV_VAR}` references are unaffected: they are expanded at load and never treated as variables.
-
-**Path placeholders:** `path: "/webhooks/{envName}/digifi"` matches exactly one non-empty segment per placeholder and has no trailing-slash tolerance, like literal paths. Each placeholder needs a variable with `source: path`. Two enabled endpoints whose paths could match the same request (a literal where the other has a placeholder, or a parent/child pair) are a validation error, so matching never needs precedence rules.
-
-**Unresolved variables.** After filters have run, Hookway resolves the variables the remaining routes need. If one cannot be resolved (and has no `default`), or a rendered target is not a valid name:
-
-- with `on_unresolved_variable: {destination, target}` the event is published **only** to that static fallback route, the response is 202 with `unresolved_variables: [..]`, and `hookway_variable_unresolved_total{action="fallback"}` increments. The fallback destination cannot be a `webhook` or `temporal` destination and its target must be static.
-- otherwise the sender receives `400 {"error":"unresolved_variable","variable":"envName"}`, nothing is published, the replay-protection reservation is released, and `hookway_variable_unresolved_total{action="rejected"}` increments.
-
-A filtered request is never a variable error, and a variable used only by a route a route-level filter dropped is not required.
-
-**What each layer sees.** The publisher, the response `destinations[].queue`, and the replay store get the **rendered** target, so replays re-deliver to the same queue without re-resolving. The event envelope carries the resolved values under `variables` (omitted when the endpoint declares none), which is also how a templated webhook `url` is rendered on replay. Metrics keep the **authored template** as the `queue` label (`hookway_publish_total{queue="{envName}-events"}`), so cardinality is bounded by the config rather than by the request stream.
-
-**Per destination type.** Enumerated variables work with every type and expand at startup. Pattern variables render per request, and the destination resolves the rendered target on first sight (once per distinct name, cached, with concurrent first sights coalesced):
-
-- `s3` (folder), `postgres` (column value), `mongodb` (collection), `redis_list`, `redis_pubsub`, `redis_kv`, `webhook` (appended path segment), and `temporal` (task queue) need no remote work.
-- `sqs` looks the queue up by name, creates it when the route has `create: true` (with the route's `sqs_options` and `fifo` settings; a template ending in `.fifo` yields FIFO queues), and reconciles an existing queue under `on_existing_conflict`. A missing queue with `create: false` fails that publish (503, so the sender retries) and is not cached.
-- `sns` lists topics to find the ARN, creating the topic when `create: true`.
-- `kafka` creates the topic when `create: true` (with the route's partitions and replication factor); otherwise a missing topic surfaces as a write error, since broker auto-creation is disabled.
-- `redis_stream` derives the prefixed stream key and creates the consumer group when `create: true` and `redis_options.consumer_group` is set.
-- `rabbitmq` passes the rendered routing key through; the queue must be pre-bound, and `create: true` is rejected on such routes because a queue whose name is unknown cannot be declared up front.
-
-First-sight provisioning runs inside `server.publish_timeout`. The per-publisher cache of rendered targets holds 10,000 entries and evicts the oldest with a warning; an eviction only costs a re-lookup.
-
-See `examples/variables.yaml` for a complete reference config.
-
 ## Replay
 
 `replay` configures an optional store of accepted inbound events (Postgres-backed) and a protected HTTP API to list, inspect, and re-deliver them. Disabled (the zero value) by default: nothing is captured, no listener is started, and no Postgres connection is required.
 
 - `replay.enabled`: optional boolean, default `false`.
 - `replay.addr`: required when enabled. The dedicated listener address for the replay API, e.g. `":9091"`. Separate from `server.addr` so the replay API is never accidentally exposed on the public webhook port.
-- `replay.skip_unauthenticated`: optional boolean, default `false`. When true, skips capture for endpoints whose `auth.type` is `no_auth`, since such endpoints have no caller identity to attribute a captured event to.
+- `replay.skip_unauthenticated`: optional boolean, default `false`. When true, skips capture for flows whose graph includes a `no_auth` node, since those flows have no caller identity to attribute a captured event to.
 - `replay.ttl`: optional duration, default `0` (keep forever). Bounds how long a captured event is retained before the background cleanup sweep deletes it.
 - `replay.max_events`: optional non-negative integer, default `0` (no cap). Caps the total number of retained events; the cleanup sweep evicts the oldest events first once the cap is exceeded.
 - `replay.cleanup_interval`: optional duration, default `1h` when `replay.enabled` is true and the field is left unset. How often the background sweep runs to enforce `ttl` and `max_events`.
@@ -1153,7 +946,7 @@ replay:
 
 **Authentication:** the replay API is protected by [`security.api_key`](#securityapi_key) (`Authorization: Bearer <key>`), the same key used by the metrics endpoint and config API. Config validation **requires** a non-empty `security.api_key` whenever `replay.enabled` is true — an unauthenticated API that can re-inject traffic into destinations is rejected at config load rather than silently left open.
 
-**Capture requires authentication to pass.** Only events that pass the endpoint's own authentication are captured — a request rejected by auth (bad signature, expired token, etc.) is never written to the replay store. `replay.skip_unauthenticated` additionally excludes `no_auth` endpoints from capture even though such requests do pass "authentication" (there being none to fail).
+**Capture requires authentication to pass.** Only events that pass the flow's own authentication are captured — a request rejected by auth (bad signature, expired token, etc.) is never written to the replay store. `replay.skip_unauthenticated` additionally excludes `no_auth` flows from capture even though such requests do pass "authentication" (there being none to fail).
 
 ### Replay API
 
