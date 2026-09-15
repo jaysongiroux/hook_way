@@ -1,0 +1,23 @@
+# Minimal valid V2 webhook ingest flow. Used by `hookway validate` and the
+# Chunk 2 verification gate.
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "${WEBHOOK_URL}"
+
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: github-webhooks}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]

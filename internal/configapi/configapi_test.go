@@ -325,3 +325,40 @@ endpoints:
       signature_header: "X-Signature"
 `
 }
+
+func TestValidate_V2PreservesLintWarningSeverity(t *testing.T) {
+	src := `
+schema_version: 2
+server: {addr: ":8080", max_body_bytes: 1024}
+destinations:
+  primary: {type: webhook, webhook: {url: "https://example.test/hooks"}}
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: s, signature_header: X-S}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: t}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	resp := Validate([]byte(src))
+	if len(resp.Issues) == 0 {
+		t.Fatal("expected lint warnings on an unthrottled flow")
+	}
+	found := false
+	for _, iss := range resp.Issues {
+		if strings.Contains(iss.Message, "unthrottled") {
+			found = true
+			if iss.Severity != "warning" {
+				t.Fatalf("unthrottled severity = %q, want warning", iss.Severity)
+			}
+		}
+		if iss.Severity == "" {
+			t.Fatalf("issue %q has empty severity", iss.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("issues = %#v", resp.Issues)
+	}
+}

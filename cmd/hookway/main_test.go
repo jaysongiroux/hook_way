@@ -98,6 +98,68 @@ func TestRun_SchemaPrintsJSONSchema(t *testing.T) {
 	}
 }
 
+func TestRun_SchemaNodesListsCatalog(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"schema", "--nodes"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr: %s)", code, stderr.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("node schema output not valid JSON: %v", err)
+	}
+	for _, name := range []string{"http_trigger", "publish", "respond", "auth", "read_body"} {
+		if _, ok := doc[name]; !ok {
+			t.Errorf("schema --nodes missing %s", name)
+		}
+	}
+	if len(doc) != 17 {
+		t.Fatalf("schema --nodes listed %d types, want 17", len(doc))
+	}
+}
+
+func TestRunValidateV2Examples(t *testing.T) {
+	t.Setenv("WEBHOOK_URL", "https://example.test/hooks")
+	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
+
+	root := filepath.Join("..", "..", "examples", "v2")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"validate", "--config", filepath.Join(root, "github.yaml")}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("github.yaml code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "config valid") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"validate", "--config", filepath.Join(root, "invalid-gate-order.yaml")}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("invalid-gate-order.yaml exited 0")
+	}
+	joined := stderr.String()
+	if !strings.Contains(joined, "RequestHead") || !strings.Contains(joined, "RawRequest") {
+		t.Fatalf("stderr = %q, want both port types", joined)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"validate", "--config", filepath.Join(root, "invalid-many.yaml")}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("invalid-many.yaml exited 0")
+	}
+	joined = stderr.String()
+	for _, want := range []string{"not_a_real_node", "duplicate", "missing-dest"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("invalid-many missing %q in %q", want, joined)
+		}
+	}
+	if !strings.Contains(joined, "Terminal") && !strings.Contains(joined, "silently dropped") {
+		t.Errorf("invalid-many missing dangling leaf diagnostic in %q", joined)
+	}
+}
+
 func TestEditorAPIKeyFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")

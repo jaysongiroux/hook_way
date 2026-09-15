@@ -26,8 +26,8 @@ intended reason before implementation; workers must report that evidence.
 |---|---|---|
 | 0 Spikes | Closed for current scope; external migration work excluded by user | Existing Hookway design constraints retained |
 | 1 Graph core | Accepted through `59975bd` | Race tests, 91.7% coverage, illegal gate wiring rejected |
-| 2 Config and validation | Ready for implementation | Valid configs accepted; all invalid-config problems reported |
-| 3 Minimal serving | Waiting for 2 | Signed live request delivered with 202; invalid signature rejected |
+| 2 Config and validation | Implemented; local gate passed | Valid configs accepted; all invalid-config problems reported |
+| 3 Minimal serving | In progress | Signed live request delivered with 202; invalid signature rejected |
 | 4 Gates and conformance | Waiting for 3 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Waiting for 4 | All 13 types deliver through V2; integration gates pass |
 | 6 Proxy and transforms | Waiting for 5 | Upstream response, method, path, query and transforms verified |
@@ -148,5 +148,18 @@ do not claim that an unavailable skill was invoked.
 - Illegal gate-after-body wiring tests: PASS and name `RequestHead` and `RawRequest`.
 - `make test`, `make lint`, and `git diff --check`: PASS after final changes.
 - Implementation is in `0d4cdd3`; review fixes are in unsigned commit `59975bd`.
-- Chunk 2 is unlocked. Its preflight and implementation slices are recorded in the root
-  `progress_report.md`.
+
+## Chunk 2 local gate — 2026-09-15
+
+- Shared YAML seam continues conversion after recoverable type errors, reports nested
+  unknown fields with dotted paths, and returns explicit `Severity: "error"`.
+- 17-node catalog constructors match advertised schema bounds/enums; `auth`/`respond`
+  schemas encode exclusive contracts.
+- `hookway validate` routes by `schema_version`. Valid V2 example exits 0. Illegal
+  gate-after-body names `RequestHead` and `RawRequest`. `invalid-many` lists unknown type,
+  duplicate id, dangling non-Terminal leaf, and missing destination. `schema --nodes`
+  lists 17 types. V1 `examples/config.yaml` still validates.
+- `make test`, `make lint`, `make validate-examples`, `git diff --check`: PASS.
+- Work is committed with this Chunk 2 change. Chunk 3 (first live 202) is the next
+  implementation slice.
+

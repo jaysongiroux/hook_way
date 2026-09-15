@@ -1,0 +1,23 @@
+# Expected to fail validation: a gate node is wired after read_body.
+# The error must name both RequestHead and RawRequest (invariants I1-I4).
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1024
+
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.test/hooks"
+
+flows:
+  bad:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: s, signature_header: X-S}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: t}
+    edges: [in>body, body>rl, rl>auth, auth>env, env>out]

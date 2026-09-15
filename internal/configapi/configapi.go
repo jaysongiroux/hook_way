@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/flowconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,7 +26,7 @@ type ValidateResponse struct {
 }
 
 // Validate parses and validates raw YAML config bytes, returning structured
-// issues. All issues are currently severity "error".
+// issues. V1 issues are severity "error". V2 policy lint may emit "warning".
 //
 // This is the function internal/editor's POST /validate calls. It must NEVER
 // expand ${VAR} references against the process environment: the editor
@@ -36,7 +37,11 @@ type ValidateResponse struct {
 // function's doc comment) — do not route this through ValidateWithEnv(...,
 // true).
 func Validate(data []byte) ValidateResponse {
-	return errorSeverity(config.NewService().ValidateBytes(data))
+	version, err := flowconfig.DetectSchemaVersion(data)
+	if err != nil || version != 2 {
+		return errorSeverity(config.NewService().ValidateBytes(data))
+	}
+	return preserveSeverity(flowconfig.ValidateBytes(data))
 }
 
 // ValidateWithEnv validates raw YAML config bytes like Validate, but when
@@ -63,6 +68,7 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 	if !expand {
 		return Validate(data)
 	}
+	version, err := flowconfig.DetectSchemaVersion(data)
 	expanded, missing := config.ExpandEnvLenient(string(data))
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range config.MissingEnvIssues(missing) {
@@ -73,20 +79,13 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 			Severity:   "warning",
 		})
 	}
-	structural := errorSeverity(config.NewService().ValidateBytes([]byte(expanded)))
+	var structural ValidateResponse
+	if err == nil && version == 2 {
+		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
+	} else {
+		structural = errorSeverity(config.NewService().ValidateBytes([]byte(expanded)))
+	}
 
-	// A field whose raw scalar was a missing ${VAR} reference is left, by
-	// ExpandEnvLenient's contract, as the opaque literal "${VAR}" rather than
-	// "". That satisfies emptiness ("is required") checks, but a FORMAT
-	// validator (e.g. webhook.url's http(s)-prefix check) still trips on the
-	// literal and raises its own severity:"error" structural issue for the
-	// exact same unset variable that's already reported above as a
-	// "config.env.*" warning. Downgrade those duplicate, missing-var-caused
-	// structural issues to "warning" too, so CI without production secrets
-	// set still exits 0. Detect them by re-parsing the (lenient-expanded)
-	// YAML generically and checking whether the issue's own field still
-	// literally contains "${" — a genuine format error on a field with no
-	// env-var reference at all won't match, and stays "error".
 	var parsed any
 	canCorrelate := yaml.Unmarshal([]byte(expanded), &parsed) == nil
 	for _, iss := range structural.Issues {
@@ -177,6 +176,23 @@ func parseFieldSegment(seg string) (name string, idx int, hasIdx bool) {
 
 // errorSeverity wraps raw config issues as JSON Issues, all at severity
 // "error".
+func preserveSeverity(issues []config.ValidationIssue) ValidateResponse {
+	out := ValidateResponse{Issues: []Issue{}}
+	for _, iss := range issues {
+		severity := iss.Severity
+		if severity == "" {
+			severity = "error"
+		}
+		out.Issues = append(out.Issues, Issue{
+			Field:      iss.Field,
+			Message:    iss.Message,
+			Suggestion: iss.Suggestion,
+			Severity:   severity,
+		})
+	}
+	return out
+}
+
 func errorSeverity(issues []config.ValidationIssue) ValidateResponse {
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range issues {

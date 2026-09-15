@@ -174,32 +174,12 @@ type ReplayConfig struct {
 }
 
 type rawConfig struct {
-	Server struct {
-		Addr                string `yaml:"addr"`
-		ReadTimeout         string `yaml:"read_timeout"`
-		WriteTimeout        string `yaml:"write_timeout"`
-		IdleTimeout         string `yaml:"idle_timeout"`
-		ShutdownTimeout     string `yaml:"shutdown_timeout"`
-		PublishTimeout      string `yaml:"publish_timeout"`
-		MaxBodyBytes        int64  `yaml:"max_body_bytes"`
-		MaxInflightRequests int    `yaml:"max_inflight_requests"`
-		FanoutConcurrency   int    `yaml:"fanout_concurrency"`
-		ReadinessInterval   string `yaml:"readiness_interval"`
-		ReadinessTimeout    string `yaml:"readiness_timeout"`
-	} `yaml:"server"`
-	Security  SecurityConfig  `yaml:"security"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Logging   LoggingConfig   `yaml:"logging"`
-	Replay    struct {
-		Enabled             bool              `yaml:"enabled"`
-		Addr                string            `yaml:"addr"`
-		SkipUnauthenticated bool              `yaml:"skip_unauthenticated"`
-		TTL                 string            `yaml:"ttl"`
-		MaxEvents           int64             `yaml:"max_events"`
-		CleanupInterval     string            `yaml:"cleanup_interval"`
-		Postgres            rawPostgresConfig `yaml:"postgres"`
-	} `yaml:"replay"`
+	Server       rawServerConfig                 `yaml:"server"`
+	Security     SecurityConfig                  `yaml:"security"`
+	RateLimit    RateLimitConfig                 `yaml:"rate_limit"`
+	Metrics      MetricsConfig                   `yaml:"metrics"`
+	Logging      LoggingConfig                   `yaml:"logging"`
+	Replay       rawReplayConfig                 `yaml:"replay"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 	Endpoints    map[string]struct {
 		Enabled               bool                           `yaml:"enabled"`
@@ -363,6 +343,13 @@ func ExpandEnvLenient(raw string) (expanded string, missing []string) {
 	return expandEnvCollect(raw, false)
 }
 
+// ExpandEnvStrict is the load-time expander used by V1 Load and V2 LoadBytes
+// when environment substitution is requested. Unset variables are reported in
+// missing and expanded is empty in that case.
+func ExpandEnvStrict(raw string) (expanded string, missing []string) {
+	return expandEnvStrict(raw)
+}
+
 // expandEnvCollect does the actual ${VAR}/$VAR substitution against the
 // process environment. When zeroMissing is true, a missing variable expands
 // to "" and the returned expanded string is only meaningful when missing is
@@ -473,73 +460,16 @@ func maxInflightRequests(raw int) int {
 }
 
 func convert(raw rawConfig) (Config, []ValidationIssue) {
-	var issues []ValidationIssue
-	read, issue := parsePositiveDefaultDuration("server.read_timeout", raw.Server.ReadTimeout, 5*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	write, issue := parsePositiveDefaultDuration("server.write_timeout", raw.Server.WriteTimeout, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	idle, issue := parsePositiveDefaultDuration("server.idle_timeout", raw.Server.IdleTimeout, 60*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	shutdown, issue := parsePositiveDefaultDuration("server.shutdown_timeout", raw.Server.ShutdownTimeout, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	publish, issue := parsePositiveDefaultDuration("server.publish_timeout", raw.Server.PublishTimeout, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	readinessInterval, issue := parsePositiveDefaultDuration("server.readiness_interval", raw.Server.ReadinessInterval, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	readinessTimeout, issue := parsePositiveDefaultDuration("server.readiness_timeout", raw.Server.ReadinessTimeout, 5*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	replayTTL, issue := parseDuration("replay.ttl", raw.Replay.TTL, 0)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	replayCleanupInterval, issue := parseDuration("replay.cleanup_interval", raw.Replay.CleanupInterval, 0)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	if raw.Replay.Enabled && replayCleanupInterval == 0 {
-		replayCleanupInterval = time.Hour
-	}
+	shared, issues := convertShared(rawSharedConfig{
+		Server: raw.Server, Security: raw.Security, Metrics: raw.Metrics,
+		Logging: raw.Logging, Replay: raw.Replay, Destinations: raw.Destinations,
+	})
 	cfg := Config{
-		Server: ServerConfig{
-			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
-			IdleTimeout: idle, ShutdownTimeout: shutdown, PublishTimeout: publish, MaxBodyBytes: raw.Server.MaxBodyBytes,
-			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests), FanoutConcurrency: raw.Server.FanoutConcurrency,
-			ReadinessInterval: readinessInterval, ReadinessTimeout: readinessTimeout,
-		},
-		Security:  raw.Security,
+		Server: shared.Server, Security: shared.Security,
 		RateLimit: raw.RateLimit,
-		Metrics:   raw.Metrics,
-		Logging:   raw.Logging,
-		Replay: ReplayConfig{
-			Enabled:             raw.Replay.Enabled,
-			Addr:                raw.Replay.Addr,
-			SkipUnauthenticated: raw.Replay.SkipUnauthenticated,
-			TTL:                 replayTTL,
-			MaxEvents:           raw.Replay.MaxEvents,
-			CleanupInterval:     replayCleanupInterval,
-			Postgres:            convertPostgresConfig(raw.Replay.Postgres),
-		},
-		Destinations: map[string]DestinationConfig{},
+		Metrics:   shared.Metrics, Logging: shared.Logging, Replay: shared.Replay,
+		Destinations: shared.Destinations,
 		Endpoints:    map[string]EndpointConfig{},
-	}
-	for id, rawDest := range raw.Destinations {
-		dest, destIssues := convertDestination("destinations."+id, rawDest)
-		issues = append(issues, destIssues...)
-		cfg.Destinations[id] = dest
 	}
 	for name, endpoint := range raw.Endpoints {
 		tolerance, issue := parsePositiveDefaultDuration("endpoints."+name+".auth.timestamp_tolerance", endpoint.Auth.TimestampTolerance, 5*time.Minute)

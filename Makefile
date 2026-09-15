@@ -131,6 +131,11 @@ validate-examples:
 	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
+	done; \
+	for f in examples/v2/*.yaml; do \
+		case $$f in *invalid-*) continue ;; esac; \
+		echo "validating $$f"; \
+		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done
 
 run:

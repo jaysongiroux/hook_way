@@ -17,6 +17,7 @@ import (
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/configapi"
 	"github.com/jasongiroux/hookway/internal/editor"
+	"github.com/jasongiroux/hookway/internal/flowconfig"
 	"github.com/jasongiroux/hookway/internal/httpapi"
 	hooklogging "github.com/jasongiroux/hookway/internal/logging"
 	"github.com/jasongiroux/hookway/internal/metrics"
@@ -58,7 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runHealthcheck(args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "schema" {
-		return runSchema(stdout, stderr)
+		return runSchema(args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "editor" {
 		return runEditor(args[1:], stdout, stderr)
@@ -91,6 +92,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	configFlag := flags.String("config", "", "path to Hookway YAML config")
 	jsonOut := flags.Bool("json", false, "emit validation results as JSON")
 	noEnv := flags.Bool("no-env", false, "skip ${VAR} environment expansion; check syntax and structure only")
+	strict := flags.Bool("strict", false, "treat lint warnings as errors")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -100,12 +102,15 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "read config: %v\n", err)
+		return 1
+	}
+	version, detectErr := flowconfig.DetectSchemaVersion(data)
+	isV2 := detectErr == nil && version == 2
+
 	if *jsonOut {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintf(stderr, "read config: %v\n", err)
-			return 1
-		}
 		resp := configapi.ValidateWithEnv(data, !*noEnv)
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -114,19 +119,26 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		for _, iss := range resp.Issues {
-			if iss.Severity != "warning" {
+			if iss.Severity != "warning" || *strict {
 				return 1
 			}
 		}
 		return 0
 	}
 
-	if *noEnv {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintf(stderr, "read config: %v\n", err)
-			return 1
+	if isV2 {
+		var issues []config.ValidationIssue
+		if *noEnv {
+			issues = flowconfig.ValidateBytes(data)
+		} else {
+			var cfg flowconfig.Config
+			cfg, issues = flowconfig.LoadBytes(data, path, true)
+			issues = append(issues, flowconfig.Lint(cfg)...)
 		}
+		return printValidateResult(issues, *strict, path, stdout, stderr)
+	}
+
+	if *noEnv {
 		if issues := config.NewService().ValidateBytes(data); len(issues) > 0 {
 			fmt.Fprintln(stderr, config.ConfigValidationError{Issues: issues})
 			return 1
@@ -143,8 +155,47 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func printValidateResult(issues []config.ValidationIssue, strict bool, path string, stdout, stderr io.Writer) int {
+	blocking := false
+	for _, issue := range issues {
+		severity := issue.Severity
+		if severity == "" {
+			severity = config.SeverityError
+		}
+		if severity != config.SeverityWarning || strict {
+			blocking = true
+		}
+	}
+	if blocking {
+		if len(issues) > 0 {
+			fmt.Fprintln(stderr, config.ConfigValidationError{Issues: issues})
+		}
+		return 1
+	}
+	for _, issue := range issues {
+		fmt.Fprintf(stderr, "warning: %s: %s\n", issue.Field, issue.Message)
+	}
+	fmt.Fprintf(stdout, "config valid: %s\n", path)
+	return 0
+}
+
 // runSchema prints the JSON Schema describing the Hookway config to stdout.
-func runSchema(stdout, stderr io.Writer) int {
+func runSchema(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	nodes := flags.Bool("nodes", false, "emit per-node option JSON Schema metadata")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *nodes {
+		data, err := json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
+		if err != nil {
+			fmt.Fprintf(stderr, "generate node schema: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, string(data))
+		return 0
+	}
 	data, err := configapi.Schema()
 	if err != nil {
 		fmt.Fprintf(stderr, "generate schema: %v\n", err)

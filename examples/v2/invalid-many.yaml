@@ -1,0 +1,23 @@
+# Expected to fail validation and list every problem, not just the first:
+# unknown node type, duplicate node id, dangling non-Terminal leaf, and a
+# publish that names a missing destination.
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1024
+
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.test/hooks"
+
+flows:
+  broken:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: in, type: read_body, max_bytes: 1024}
+      - {id: ghost, type: not_a_real_node}
+      - {id: dangling, type: envelope}
+      - {id: out, type: publish, destination: missing-dest, target: t}
+    edges: [in>ghost]
