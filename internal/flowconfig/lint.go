@@ -89,7 +89,62 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			fmt.Sprintf("flow %q has no publish and no respond node; it can never deliver or reply", name),
 			"add a publish or respond node"))
 	}
-	return append(issues, parallelRespondIssues(prefix, fc)...)
+	return append(issues, append(parallelRespondIssues(prefix, fc), lookupBeforeFilterIssues(prefix, fc)...)...)
+}
+
+func lookupBeforeFilterIssues(prefix string, fc graph.FlowConfig) []config.ValidationIssue {
+	types := make(map[string]string, len(fc.Nodes))
+	hasFilter, hasLookup := false, false
+	root := ""
+	for _, node := range fc.Nodes {
+		types[node.ID] = node.Type
+		switch node.Type {
+		case "filter":
+			hasFilter = true
+		case "lookup":
+			hasLookup = true
+		case "http_trigger":
+			if root == "" {
+				root = node.ID
+			}
+		}
+	}
+	if !hasFilter || !hasLookup || root == "" {
+		return nil
+	}
+	edges, _ := graph.ParseEdges(fc.Edges)
+	out := map[string][]string{}
+	for _, edge := range edges {
+		out[edge.From] = append(out[edge.From], edge.To)
+	}
+	type frame struct {
+		id        string
+		sawFilter bool
+	}
+	seen := map[string]bool{}
+	var issues []config.ValidationIssue
+	reported := map[string]bool{}
+	stack := []frame{{id: root}}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		key := cur.id + ":" + fmt.Sprint(cur.sawFilter)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		saw := cur.sawFilter || types[cur.id] == "filter"
+		if types[cur.id] == "lookup" && !saw && !reported[cur.id] {
+			reported[cur.id] = true
+			issues = append(issues, v2Issue(prefix+".edges",
+				fmt.Sprintf("lookup %q is reachable without passing a filter; filters must run before variable resolution (I8)", cur.id),
+				"place a filter node before lookup on every path"))
+		}
+		for _, next := range out[cur.id] {
+			stack = append(stack, frame{id: next, sawFilter: saw})
+		}
+	}
+	return issues
 }
 
 func parallelRespondIssues(prefix string, fc graph.FlowConfig) []config.ValidationIssue {

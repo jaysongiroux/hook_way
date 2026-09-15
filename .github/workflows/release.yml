@@ -32,6 +32,9 @@ jobs:
       - name: Unit tests
         run: make test
 
+      - name: Invariant conformance
+        run: make conformance
+
       - name: Race tests
         run: make test-race
 

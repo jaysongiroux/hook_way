@@ -63,6 +63,20 @@ func TestLint(t *testing.T) {
 			"      - {id: look, type: lookup, provider: dynamodb, key: id}\n      - {id: out, type: publish, destination: primary, target: t}\n    edges: [in>rl, rl>body, body>auth, auth>env, env>look, look>out]\n")
 		assertLint(t, mustLoadV2(t, src), config.SeverityWarning, "per event")
 	})
+	t.Run("lookup before filter is an I8 error", func(t *testing.T) {
+		src := strings.ReplaceAll(cleanLintYAML,
+			"      - {id: out, type: publish, destination: primary, target: t}\n    edges: [in>rl, rl>body, body>auth, auth>env, env>out]\n",
+			"      - {id: look, type: lookup, provider: dynamodb, key: id, cache: {ttl: 5m}}\n      - {id: filt, type: filter, conditions: [{source: body, path: event, operator: eq, value: created}]}\n      - {id: out, type: publish, destination: primary, target: t}\n    edges: [in>rl, rl>body, body>auth, auth>env, env>look, look>filt, filt>out]\n")
+		assertLint(t, mustLoadV2(t, src), config.SeverityError, "before variable resolution")
+	})
+	t.Run("filter then lookup is legal", func(t *testing.T) {
+		src := strings.ReplaceAll(cleanLintYAML,
+			"      - {id: out, type: publish, destination: primary, target: t}\n    edges: [in>rl, rl>body, body>auth, auth>env, env>out]\n",
+			"      - {id: filt, type: filter, conditions: [{source: body, path: event, operator: eq, value: created}]}\n      - {id: look, type: lookup, provider: dynamodb, key: id, cache: {ttl: 5m}}\n      - {id: out, type: publish, destination: primary, target: t}\n    edges: [in>rl, rl>body, body>auth, auth>env, env>filt, filt>look, look>out]\n")
+		if issues := Lint(mustLoadV2(t, src)); containsMessage(issues, "before variable resolution") {
+			t.Fatalf("filter-then-lookup must be legal: %q", issuesText(issues))
+		}
+	})
 }
 
 const cleanLintYAML = `

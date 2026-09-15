@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -170,6 +171,7 @@ func define[T any](name string, in, out graph.PortType, detached bool, validate 
 // flows for serving. Validation uses the zero value.
 type RegistryOptions struct {
 	Publishers      PublisherResolver
+	Lookups         func(LookupOptions) LookupFunc
 	Logger          *slog.Logger
 	HeaderDenylist  []string
 	HeaderAllowlist []string
@@ -183,13 +185,8 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 				return errors.New("max_hops must be >= 0")
 			}
 			return nil
-		}, nil),
-		define("ip_allowlist", graph.PortRequestHead, graph.PortRequestHead, false, func(o IPAllowlistOptions) error {
-			if len(o.CIDRs) == 0 {
-				return errors.New("cidrs is required")
-			}
-			return nil
-		}, nil),
+		}, newLoopGuard),
+		define("ip_allowlist", graph.PortRequestHead, graph.PortRequestHead, false, validateIPAllowlist, newIPAllowlist),
 		define("rate_limit", graph.PortRequestHead, graph.PortRequestHead, false, func(o RateLimitOptions) error {
 			if o.RPM <= 0 {
 				return errors.New("rpm must be positive")
@@ -198,7 +195,7 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 				return errors.New("burst must be >= 0")
 			}
 			return nil
-		}, func(string, RateLimitOptions) graph.Node { return passthroughNode{name: "rate_limit"} }),
+		}, newRateLimit),
 		define("read_body", graph.PortRequestHead, graph.PortRawRequest, false, func(o ReadBodyOptions) error {
 			if o.MaxBytes <= 0 {
 				return errors.New("max_bytes must be positive")
@@ -211,15 +208,21 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		define[NoAuthOptions]("no_auth", graph.PortRawRequest, graph.PortVerified, false, nil, func(id string, _ NoAuthOptions) graph.Node {
 			return newNoAuthNode(id, opts.Logger)
 		}),
-		define("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, nil),
+		define("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, newReplayGuard),
 		define("envelope", graph.PortVerified, graph.PortEnvelope, false, validateEnvelope, func(id string, o EnvelopeOptions) graph.Node {
 			return newEnvelopeNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
 		}),
-		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, nil),
-		define("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, nil),
+		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode),
+		define("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, func(id string, o LookupOptions) graph.Node {
+			var fn LookupFunc
+			if opts.Lookups != nil {
+				fn = opts.Lookups(o)
+			}
+			return newLookupNode(id, o, fn)
+		}),
 		define("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, nil),
 		define("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, nil),
-		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, nil),
+		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
 		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, nil),
 		define("publish", graph.PortEnvelope, graph.PortTerminal, true, validatePublish, func(id string, o PublishOptions) graph.Node {
 			return newPublishNode(id, o, opts.Publishers)
@@ -348,6 +351,20 @@ func validateAuth(o AuthOptions) error {
 		}
 	}
 	return validateDuration("timestamp_tolerance", o.TimestampTolerance, false)
+}
+func validateIPAllowlist(o IPAllowlistOptions) error {
+	if len(o.CIDRs) == 0 {
+		return errors.New("cidrs is required")
+	}
+	for _, entry := range o.CIDRs {
+		if net.ParseIP(entry) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(entry); err != nil {
+			return fmt.Errorf("invalid cidr %q", entry)
+		}
+	}
+	return nil
 }
 func validateReplayGuard(o ReplayGuardOptions) error {
 	if o.MaxEntries < 0 {

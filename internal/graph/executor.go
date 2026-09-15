@@ -159,6 +159,18 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		return nil
 	}
 	successors := e.flow.out[id]
+	if selected := selectedBranch(out); selected != "" || labelledSuccessors(successors) {
+		var matched []Edge
+		for _, edge := range successors {
+			if edge.FromPort == selected || (selected == "" && edge.FromPort == "") {
+				matched = append(matched, edge)
+			}
+		}
+		if len(matched) == 0 {
+			return fmt.Errorf("node %q (%s): no successor for port %q", id, b.spec.Type, selected)
+		}
+		successors = matched
+	}
 	for _, edge := range successors {
 		next := out
 		if len(successors) > 1 {
@@ -196,6 +208,22 @@ func observe(fn func(NodeEvent), ev NodeEvent) {
 	}
 	defer func() { _ = recover() }()
 	fn(ev)
+}
+
+func selectedBranch(out Payload) string {
+	if env, ok := out.(Envelope); ok {
+		return env.Branch
+	}
+	return ""
+}
+
+func labelledSuccessors(edges []Edge) bool {
+	for _, e := range edges {
+		if e.FromPort != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Compensator must derive its reservation from Input, never shared node state.

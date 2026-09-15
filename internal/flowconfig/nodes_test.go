@@ -90,11 +90,17 @@ func TestEveryOptionContractRoundTripsAndRejectsUnknownFields(t *testing.T) {
 	}
 	implemented := map[string]bool{
 		"http_trigger": true,
+		"loop_guard":   true,
+		"ip_allowlist": true,
 		"rate_limit":   true,
 		"read_body":    true,
 		"auth":         true,
 		"no_auth":      true,
+		"replay_guard": true,
 		"envelope":     true,
+		"filter":       true,
+		"lookup":       true,
+		"switch":       true,
 		"publish":      true,
 	}
 	for _, def := range defs {

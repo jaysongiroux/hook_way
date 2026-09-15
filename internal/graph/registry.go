@@ -24,6 +24,12 @@ type Node interface {
 	Run(ctx context.Context, in Payload) (Payload, error)
 }
 
+// PortDeclarer is implemented by nodes that expose labelled output ports
+// (switch). Compile rejects labelled edges that are not in OutPorts.
+type PortDeclarer interface {
+	OutPorts() []string
+}
+
 // NodeConfig is one entry from a flow's `nodes:` list. Options holds the
 // type-specific fields, decoded by the NodeSpec's New function.
 type NodeConfig struct {

@@ -1,7 +1,7 @@
 # Chunk 4: Gates, Processing Nodes, and the Invariant Conformance Suite
 
-**Status:** not started
-**Depends on:** Chunk 3 (a serving V2 path)
+**Status:** implemented
+**Depends on:** Chunk 3 (`a468a52`)
 **Unlocks:** Chunk 5
 **Verification gate:** the **I1–I18 conformance suite** passes. Every gate node
 demonstrably rejects what it should, at the phase it should.

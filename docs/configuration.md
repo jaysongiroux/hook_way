@@ -911,6 +911,8 @@ Replay protection fields:
 
 Replay protection is in-process schema/config for MVP. In multi-node deployments, each node has its own replay cache unless later code uses shared storage, so identical replayed requests can pass if routed to a different node. The reservation is only committed after a successful publish, so a transient broker outage does not turn a provider's legitimate retry into a permanent `409 replay detected`.
 
+In schema_version 2 the same process-local cache is the `replay_guard` node. That is weakness W5, kept deliberately by decision D11 (no shared state on the hot path): N pods means N allowed replays. Consumers should still dedupe on `idempotency_key`, which is the documented retry contract. `rate_limit` is likewise pod-scoped; N pods means N× the configured RPM.
+
 Fan-out is at-least-once per destination, not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With `stop_on_failure`, if one destination succeeds and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations may receive the same event again, so consumers must dedupe with `idempotency_key`. With `skip_failed`, partial success is acknowledged with `202` and failed routes are reported in the response.
 
 ### Filtering

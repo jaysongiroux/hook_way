@@ -37,7 +37,7 @@ func uniqueMatches(t *testing.T, re *regexp.Regexp, src string) map[string]bool 
 }
 
 func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
-	const quoted = 41
+	const quoted = 42
 	src := readRepoFile(t, "internal/metrics/metrics.go")
 	names := uniqueMatches(t, regexp.MustCompile(`"(hookway_[a-z0-9_]+)"`), src)
 	if len(names) != quoted {

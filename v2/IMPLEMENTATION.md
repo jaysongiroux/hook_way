@@ -27,8 +27,8 @@ intended reason before implementation; workers must report that evidence.
 | 0 Spikes | Closed for current scope; external migration work excluded by user | Existing Hookway design constraints retained |
 | 1 Graph core | Accepted through `59975bd` | Race tests, 91.7% coverage, illegal gate wiring rejected |
 | 2 Config and validation | Accepted through `9db929f` | Valid configs accepted; all invalid-config problems reported |
-| 3 Minimal serving | Implemented; local curl gate passed | Signed live request delivered with 202; invalid signature rejected |
-| 4 Gates and conformance | Waiting for 3 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
+| 3 Minimal serving | Accepted through `a468a52` | Signed live request delivered with 202; invalid signature rejected |
+| 4 Gates and conformance | Implemented; I1-I18 suite green with I9/I15 skipped until Chunk 8 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Waiting for 4 | All 13 types deliver through V2; integration gates pass |
 | 6 Proxy and transforms | Waiting for 5 | Upstream response, method, path, query and transforms verified |
 | 7 Code node | Waiting for 6 | C1-C7 individually exercised; race and dependency checks pass |
@@ -175,5 +175,21 @@ do not claim that an unavailable skill was invoked.
   `{"status":"accepted",...}`; `sha256=deadbeef` → HTTP 401. httptest covers 413,
   404, 405+Allow, panicking node 500, and publish-failure 503.
 - `make test`, `make lint`, WASM validator build: PASS. V1 handler tests still pass.
-- Next: Chunk 4 gates and I1-I18 conformance (`v2/plans/04-gates-and-processing.md`).
+
+## Chunk 4 local gate — 2026-09-15
+
+- Gate nodes are real: `loop_guard`, `ip_allowlist`, `rate_limit` (pod-scoped, D11),
+  `replay_guard` with `graph.Compensator`, `filter`, `lookup` (injected resolver; no
+  `internal/lookup` import from flowconfig), `switch` with labelled ports.
+- Branch selection lives on `graph.Envelope.Branch`, not on the shared node.
+  Compile validates labelled edges via `PortDeclarer`. The executor follows only
+  matching `FromPort` edges; a missing port is an error, not a silent drop.
+- FlowServer maps 400/401/403/409/413/422/429/503, releases reservations on
+  publish failure (I17), keeps them on filter silent drop, and still registers a
+  compile-broken flow's path as 500 not 404 (I13).
+- `internal/conformance` has one named test per I1-I18. I9 and I15 are skipped
+  with pointers to Chunk 8. `make conformance` runs in CI next to `make test`.
+- `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
+  conformance, WASM validator build: PASS. V1 still serves.
+- Next: Chunk 5 destinations and fan-out (`v2/plans/05-destinations-and-fanout.md`).
 

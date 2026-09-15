@@ -40,7 +40,7 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "metrics",
     title: "Metrics on day one",
-    value: "41",
+    value: "42",
     valueLabel: "Prometheus metrics exported",
     line: "With a Grafana dashboard in the repo that a test keeps matching the metric names.",
     accent: "#25BE8A",

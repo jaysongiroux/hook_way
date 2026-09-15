@@ -16,7 +16,7 @@ test("the section covers six themes as compact tiles", () => {
 // Each headline value is a count a reader could verify in the repo.
 test("every tile headlines a real number", () => {
   const values = PRODUCTION_CARDS.map((c) => c.value);
-  expect(values).toEqual(["256", "3", "41", "11", "4", "1"]);
+  expect(values).toEqual(["256", "3", "42", "11", "4", "1"]);
 });
 
 // Retry blocks exist for rabbitmq, kafka, and webhook only.

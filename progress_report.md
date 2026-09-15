@@ -24,44 +24,37 @@ agent can resume without reading chat history.
 - D13 is settled: one `publish` node references the shared top-level destinations map.
 - Chunk 1 graph core is independently accepted at 91.7% statement coverage.
 - Chunk 2 configuration and validation is accepted at unsigned `9db929f`.
-- Chunk 3 minimal serving path is **implemented and locally gated** (live curl 202/401).
+- Chunk 3 minimal serving path is accepted at unsigned `a468a52`.
+- Chunk 4 gates and I1-I18 conformance is **implemented** (I9/I15 skipped until Chunk 8).
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 3 implemented on `v2`. Next chunk is 4 (gates and conformance).
+**Status:** Chunk 4 implemented on `v2`. Next chunk is 5 (destinations and fan-out).
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
-- Committed Chunk 2 as unsigned `9db929f`.
-- Implemented Chunk 3 serving path: `http_trigger`, `read_body`, `auth`/`no_auth`,
-  `envelope`, `publish`; `internal/httpapi/flowserver.go`; CLI `runServe` routes on
-  `schema_version`. `{rest...}` greedy path capture added in `internal/vars`.
-  `graph.NodeError` carries HTTP status so the server does not string-match errors.
-- `rate_limit` is a pass-through identity node until Chunk 4. `body_format: xml`
-  still returns `errNotImplemented`.
-- Publisher factory is reused via `flowconfig.Config.ServingConfig()`, which projects
-  publish nodes onto synthetic V1 endpoints so webhook targets are collected.
+- Committed Chunk 3 as unsigned `a468a52`.
+- Implemented Chunk 4: pre-body gates, replay_guard compensation, filter, lookup,
+  switch labelled ports, FlowServer status mapping, I1-I18 conformance suite.
 
-**Chunk 3 gate (local, 2026-09-15):**
+**Chunk 4 gate (local, 2026-09-15):**
 
-- Live: `HOOKWAY_CONFIG=examples/v2/github.yaml GITHUB_WEBHOOK_SECRET=testsecret WEBHOOK_URL=https://example.com/hooks go run ./cmd/hookway`
-  - valid `X-Hub-Signature-256` POST `/webhooks/github` → **202** `status=accepted`
-  - `sha256=deadbeef` → **401**
-- httptest: publish failure **503**, oversize **413**, unknown path **404**, wrong
-  method **405** with `Allow`, panicking `read_body` **500**
-- `make test`, `make lint`, `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- `go test ./internal/conformance/ -v`: I1-I8, I10-I14, I16-I18 PASS; I9 and I15 SKIP (Chunk 8)
+- `go test -race ./internal/graph/ ./internal/flowconfig/ ./internal/httpapi/ ./internal/conformance/`: PASS
+- `make test`, `make lint`, `make conformance`, WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- httptest: publish failure then retry **202 not 409** (I17); filter drop then resend **409**;
+  broken compile still answers its path with **500 not 404** (I13)
 
-**Files:** `internal/flowconfig/node_*.go`, `internal/httpapi/flowserver.go`,
-`internal/graph/error.go`, `internal/graph/payload.go`, `internal/vars/vars.go`,
-`cmd/hookway/main.go`, docs.
+**Files:** `internal/flowconfig/node_gates.go`, `node_replay_guard.go`, `node_filter.go`,
+`node_lookup.go`, `node_switch.go`, `internal/graph/executor.go`, `internal/httpapi/flowserver.go`,
+`internal/conformance/`, `internal/metrics/metrics.go`, Makefile, `.github/workflows/release.yml`.
 
-**Risks:** `rate_limit` does not limit yet. `secret_ref` is fail-closed until Chunk 8.
-Async webhook enqueue can 202 while downstream delivery to `WEBHOOK_URL` still fails
-in the background (same V1 async contract).
+**Risks:** lookup serving still does not dial providers at `NewFlowServer` (injected
+resolver / nil provider errors at run). `secret_ref` remains fail-closed until Chunk 8.
+I9/I15 are skipped until capture is wired.
 
-**Exact next step:** Chunk 4 — implement gate nodes (`loop_guard`, `ip_allowlist`,
-real `rate_limit`, `replay_guard`, `filter`) and the I1-I18 conformance suite.
-Track deferred I9/I15 until Chunk 8.
+**Exact next step:** Chunk 5 — publish across all 13 destination types, fan-out
+policies, and `on_error` ports.
 
 ## Subagent — Chunk 1 implementation (`spike_s2`)
 

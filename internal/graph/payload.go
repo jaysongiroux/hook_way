@@ -16,12 +16,12 @@ type Payload interface {
 // its body has been buffered. Gate nodes consume and produce this, which is
 // what makes "gates run before the body is read" (I1-I4) a type property.
 type RequestHead struct {
-	Method    string
-	Path      string
-	PathVars  map[string]string
-	Query     url.Values
-	Header    http.Header
-	SourceIP  string
+	Method      string
+	Path        string
+	PathVars    map[string]string
+	Query       url.Values
+	Header      http.Header
+	SourceIP    string
 	Hops        int
 	RequestID   string
 	TraceID     string
@@ -62,6 +62,9 @@ type Envelope struct {
 	// Extra holds node-private data such as the captured webhook event.
 	// Clone requires BodyCloner (or a JSON-cloneable body type).
 	Extra any
+	// Branch is the labelled output port selected by a switch node. Empty
+	// means the executor follows every successor (ordinary fan-out).
+	Branch string
 }
 
 func (Envelope) PortType() PortType { return PortEnvelope }

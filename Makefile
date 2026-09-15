@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -58,6 +58,9 @@ test:
 
 test-race:
 	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore|TemporalIntegration'
+
+conformance:
+	$(GO) test ./internal/conformance/ -v
 
 integration-test:
 	$(GO) test ./internal/queue -run TestRabbitMQ -count=1

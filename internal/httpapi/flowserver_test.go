@@ -172,3 +172,130 @@ func TestPanickingNodeReturns500(t *testing.T) {
 		t.Fatalf("status = %d, want 500 (process must survive a panicking node)", rec.Code)
 	}
 }
+
+const replayFlowYAML = `
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.com/hooks"
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
+      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: github-webhooks}
+    edges: [in>rl, rl>body, body>auth, auth>replay, replay>env, env>out]
+`
+
+const filterDropReplayYAML = `
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.com/hooks"
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
+      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: env, type: envelope, body_format: json}
+      - {id: filt, type: filter, conditions: [{source: body, path: action, operator: eq, value: never}], on_no_match: drop}
+      - {id: out, type: publish, destination: primary, target: github-webhooks}
+    edges: [in>rl, rl>body, body>auth, auth>replay, replay>env, env>filt, filt>out]
+`
+
+func postSignedFlow(srv *FlowServer, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPublishFailureReleasesReservation(t *testing.T) {
+	pub := &fakePublisher{err: errors.New("broker down")}
+	srv, err := NewFlowServer(loadFlowCfg(t, replayFlowYAML), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"action":"opened"}`)
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("first attempt = %d, want 503", rec.Code)
+	}
+	pub.mu.Lock()
+	pub.err = nil
+	pub.mu.Unlock()
+	rec := postSignedFlow(srv, body)
+	if rec.Code == http.StatusConflict {
+		t.Fatal("retry after a publish failure was rejected 409: the reservation was not " +
+			"released, so the only recovery path for a failed publish is closed (I17)")
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry = %d, want 202", rec.Code)
+	}
+}
+
+func TestFilterSilentDropKeepsReservation(t *testing.T) {
+	srv, err := NewFlowServer(loadFlowCfg(t, filterDropReplayYAML), &fakePublisher{}, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"action":"opened"}`)
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
+		t.Fatalf("first attempt = %d, want 202 (silent drop looks like success)", rec.Code)
+	}
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusConflict {
+		t.Fatalf("resend = %d, want 409: a consumed delivery must keep its reservation", rec.Code)
+	}
+}
+
+func TestBrokenFlowRegistersPathWith500Not404(t *testing.T) {
+	src := `
+schema_version: 2
+server: {addr: ":8080", max_body_bytes: 1024}
+destinations:
+  primary: {type: webhook, webhook: {url: "https://example.test"}}
+flows:
+  broken:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/broken, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: env, type: envelope}
+      - {id: out, type: publish, destination: primary, target: t}
+    edges: [in>body, body>env, env>out]
+`
+	cfg, issues := flowconfig.LoadBytes([]byte(src), "broken", false)
+	if len(issues) == 0 {
+		t.Fatal("expected compile issues for envelope-after-body")
+	}
+	srv, err := NewFlowServer(cfg, &fakePublisher{}, slog.Default(), nil)
+	if err != nil {
+		t.Fatalf("broken flow must still construct a server: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("broken flow answered 404; I13 requires 500 so a config error is not an unconfigured path")
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}

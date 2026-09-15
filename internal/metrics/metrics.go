@@ -53,6 +53,7 @@ type Metrics struct {
 	replayTriggered          *prometheus.CounterVec
 	replayStoreUp            prometheus.Gauge
 	replayPurged             prometheus.Counter
+	compensationFailed       *prometheus.CounterVec
 	runtimeRegistered        bool
 }
 
@@ -209,6 +210,10 @@ func New() *Metrics {
 	m.replayPurged = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "hookway_replay_events_purged_total", Help: "Replay-store events purged by the background retention cleanup sweep (age and/or over-count).",
 	})
+	m.compensationFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_compensation_failed_total",
+		Help: "Replay-reservation release failures. A silent failure leaves the reservation until TTL, so a legitimate retry is rejected 409.",
+	}, []string{"flow"})
 	m.registry.MustRegister(
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
@@ -217,7 +222,7 @@ func New() *Metrics {
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
 		m.destinationReady, m.panics, m.buildInfo, m.replayCaptured, m.replayCaptureFailures, m.replayTriggered,
-		m.replayStoreUp, m.replayPurged,
+		m.replayStoreUp, m.replayPurged, m.compensationFailed,
 	)
 	return m
 }
@@ -434,6 +439,13 @@ func (m *Metrics) ReplayStoreUp(up bool) {
 		value = 1
 	}
 	m.replayStoreUp.Set(value)
+}
+
+// CompensationFailed records a failed replay-reservation release. The HTTP
+// response has already been decided; this is the only signal that a retry
+// may be rejected 409 until the cache TTL expires.
+func (m *Metrics) CompensationFailed(flow string) {
+	m.compensationFailed.WithLabelValues(flow).Inc()
 }
 
 // ReplayPurged records n replay-store events purged by the background

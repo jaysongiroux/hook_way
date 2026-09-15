@@ -135,9 +135,6 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 			continue
 		}
 		seenEdges[e] = true
-		if e.FromPort != "" {
-			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: labelled outputs are not supported yet", e))
-		}
 		from, fromOK := f.nodes[e.From]
 		to, toOK := f.nodes[e.To]
 		if !fromOK {
@@ -149,6 +146,19 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		}
 		if !fromOK {
 			continue
+		}
+		if e.FromPort != "" {
+			declared := map[string]bool{}
+			if d, ok := from.node.(PortDeclarer); ok {
+				for _, p := range d.OutPorts() {
+					declared[p] = true
+				}
+			}
+			if len(declared) == 0 {
+				ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: labelled outputs are not supported on %s", e, from.spec.Type))
+			} else if !declared[e.FromPort] {
+				ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: port %q is not declared by %q", e, e.FromPort, e.From))
+			}
 		}
 		if from.spec.Out == PortTerminal {
 			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: Terminal node cannot have successors", e))

@@ -51,6 +51,9 @@ type mountedFlow struct {
 	allow      string
 	flow       *graph.Flow
 	destByNode map[string]string
+	// broken is set when graph.Compile failed. The path is still registered
+	// so matching requests return 500 rather than 404 (I13).
+	broken bool
 }
 
 type queueResolver struct{ pub queue.Publisher }
@@ -128,17 +131,18 @@ func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	sort.Strings(names)
 	for _, name := range names {
 		fc := cfg.Flows[name]
-		compiled, err := graph.Compile(name, fc, reg)
-		if err != nil {
-			return nil, fmt.Errorf("compile flow %q: %w", name, err)
-		}
 		path, methods, destByNode, err := triggerRouting(fc)
 		if err != nil {
 			return nil, fmt.Errorf("flow %q: %w", name, err)
 		}
+		compiled, compileErr := graph.Compile(name, fc, reg)
+		if compileErr != nil {
+			logger.Error("flow failed to compile; path will return 500 not 404",
+				"flow", name, "error", compileErr)
+		}
 		s.flows[name] = mountedFlow{
 			name: name, methods: methodSet(methods), allow: strings.Join(methods, ", "),
-			flow: compiled, destByNode: destByNode,
+			flow: compiled, destByNode: destByNode, broken: compileErr != nil || compiled == nil,
 		}
 		pattern, err := vars.ParsePath(path)
 		if err != nil {
@@ -301,6 +305,11 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "method not allowed"})
 		return
 	}
+	if mf.broken || mf.flow == nil {
+		status = http.StatusInternalServerError
+		writeJSON(w, status, map[string]string{"error": "internal error"})
+		return
+	}
 	if s.inflight != nil {
 		select {
 		case s.inflight <- struct{}{}:
@@ -340,30 +349,18 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if graph.NeedsCompensation(term, runErr) {
-		if cErr := graph.RunCompensations(r.Context(), term, runErr, 5*time.Second); cErr != nil {
-			s.logger.Error("compensation failed", "flow", mf.name, "error", cErr)
+		timeout := s.cfg.Server.PublishTimeout
+		if cErr := graph.RunCompensations(r.Context(), term, runErr, timeout); cErr != nil {
+			s.logger.Error("replay reservation release failed; duplicate suppression "+
+				"may reject a legitimate retry until the TTL expires",
+				"error", cErr, "flow", mf.name,
+				"request_id", requestIDFromContext(r.Context()))
+			s.metrics.CompensationFailed(mf.name)
 		}
 	}
 	if runErr != nil {
 		status = statusFromNodeError(runErr)
-		if status == http.StatusUnauthorized {
-			s.metrics.AuthFailure(mf.name, "invalid_signature")
-			writeJSON(w, status, map[string]string{"error": "unauthorized"})
-			return
-		}
-		if status == http.StatusRequestEntityTooLarge {
-			writeJSON(w, status, map[string]string{"error": "payload too large"})
-			return
-		}
-		if status == http.StatusServiceUnavailable {
-			writeJSON(w, status, map[string]string{"error": "service unavailable"})
-			return
-		}
-		if status == http.StatusBadRequest {
-			writeJSON(w, status, map[string]string{"error": "invalid body"})
-			return
-		}
-		writeJSON(w, status, map[string]string{"error": "internal error"})
+		s.writeFlowError(w, mf, status, runErr)
 		return
 	}
 	if term.Response != nil {
@@ -392,6 +389,39 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		"status": "accepted", "endpoint": mf.name, "destinations": published,
 		"event_id": head.EventID, "request_id": head.RequestID,
 	})
+}
+
+func (s *FlowServer) writeFlowError(w http.ResponseWriter, mf mountedFlow, status int, err error) {
+	switch status {
+	case http.StatusUnauthorized:
+		s.metrics.AuthFailure(mf.name, "invalid_signature")
+		writeJSON(w, status, map[string]string{"error": "unauthorized"})
+	case http.StatusForbidden:
+		s.metrics.Forbidden(mf.name, "", "")
+		writeJSON(w, status, map[string]string{"error": "forbidden"})
+	case http.StatusConflict:
+		s.metrics.ReplayRejected(mf.name, "", "")
+		writeJSON(w, status, map[string]string{"error": "replay detected"})
+	case http.StatusRequestEntityTooLarge:
+		writeJSON(w, status, map[string]string{"error": "payload too large"})
+	case http.StatusUnprocessableEntity:
+		s.metrics.Filtered(mf.name, "", "", "endpoint")
+		writeJSON(w, status, map[string]string{"error": "filtered"})
+	case http.StatusTooManyRequests:
+		s.metrics.RateLimited(mf.name, "", "")
+		writeJSON(w, status, map[string]string{"error": "rate limited"})
+	case http.StatusServiceUnavailable:
+		writeJSON(w, status, map[string]string{"error": "service unavailable"})
+	case http.StatusBadRequest:
+		if strings.Contains(err.Error(), "loop detected") {
+			s.metrics.LoopRejected(mf.name, "", "")
+			writeJSON(w, status, map[string]string{"error": "loop detected"})
+			return
+		}
+		writeJSON(w, status, map[string]string{"error": "invalid body"})
+	default:
+		writeJSON(w, status, map[string]string{"error": "internal error"})
+	}
 }
 
 func statusFromNodeError(err error) int {
