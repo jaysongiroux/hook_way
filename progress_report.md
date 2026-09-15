@@ -30,11 +30,12 @@ agent can resume without reading chat history.
   accepted at unsigned `a722076`.
 - Chunk 6 sync proxy and transforms (`http_request`, `respond`, `xml_prune`,
   `body_format: xml`) is accepted at unsigned `cd0288c`.
-- Chunk 7 goja `code` node (C1–C7) is implemented; local unsigned commit pending.
+- Chunk 7 goja `code` node (C1–C7) is accepted at unsigned `2b9b94d`.
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 7 implemented; local unsigned commit next. Do not push.
+**Status:** Chunk 7 accepted at unsigned `2b9b94d`. Next chunk is 8 (secrets
+and observability). Do not push.
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
@@ -54,7 +55,7 @@ agent can resume without reading chat history.
 - Trivy HIGH/CRITICAL: 2 pre-existing (amqp091-go CVE-2026-79921, grpc
   CVE-2026-84445). goja introduced no new HIGH/CRITICAL findings.
 
-**Exact next step:** Unsigned local commit for Chunk 7, then Chunk 8. Do not push.
+**Exact next step:** Chunk 8 (`v2/plans/08-secrets-and-observability.md`). Do not push.
 
 ## Orchestrator — Chunk 6 gate (retained)
 

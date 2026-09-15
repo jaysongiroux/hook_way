@@ -1,6 +1,6 @@
 # Chunk 7: The `code` Node (goja)
 
-**Status:** implemented (2026-09-15); unsigned local commit pending
+**Status:** committed at unsigned `2b9b94d` (2026-09-15)
 **Depends on:** Chunk 6
 **Unlocks:** Chunk 9
 **Verification gate:** **each sandbox control C1–C7 has a test proving the control actually
