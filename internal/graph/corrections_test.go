@@ -117,26 +117,28 @@ func TestMissingNodeIdentityAggregatesAtCompile(t *testing.T) {
 		}
 	}
 }
-func TestReturnedResponseAndMetadataSurviveError(t *testing.T) {
+func TestReturnedResponseSurvivesError(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(fmt.Sprint(failed), func(t *testing.T) {
 			r := testRegistry(t)
 			sentinel := errors.New("upstream")
-			replaceRun(r, "dest", func(context.Context, Payload) (Payload, error) {
-				term := Terminal{Response: &Response{Status: 418, Header: http.Header{"X-Test": {"yes"}}, Body: []byte("tea")}, Deliveries: []Delivery{{NodeID: "out", Target: "{env}-queue"}}}
+			replaceRun(r, "respond", func(context.Context, Payload) (Payload, error) {
+				term := Terminal{Response: &Response{Status: 418, Header: http.Header{"X-Test": {"yes"}}, Body: []byte("tea")}}
 				if failed {
 					return term, sentinel
 				}
 				return term, nil
 			})
-			term, err := mustCompile(t, linearFlow(), r).Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second})
+			fc := linearFlow()
+			fc.Nodes[len(fc.Nodes)-1].Type = "respond"
+			term, err := mustCompile(t, fc, r).Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second})
 			if failed && !errors.Is(err, sentinel) {
 				t.Fatal(err)
 			}
 			if !failed && err != nil {
 				t.Fatal(err)
 			}
-			if term.Response == nil || term.Response.Status != 418 || string(term.Response.Body) != "tea" || len(term.Deliveries) != 1 || term.Deliveries[0].Target != "{env}-queue" {
+			if term.Response == nil || term.Response.Status != 418 || string(term.Response.Body) != "tea" || len(term.Deliveries) != 0 {
 				t.Fatalf("lost result: %+v", term)
 			}
 		})
@@ -421,7 +423,7 @@ func TestDeliveryIdentityComesFromConfig(t *testing.T) {
 	s := r.specs["dest"]
 	s.New = func(NodeConfig) (Node, error) {
 		return targetRunNode{target: "{route}-queue", runFunc: func(context.Context, Payload) (Payload, error) {
-			return Terminal{Deliveries: []Delivery{{NodeID: "foreign", Target: "customer-123-queue"}}}, nil
+			return Terminal{Deliveries: []Delivery{{NodeID: "foreign", Target: "customer-123-queue", Unattempted: true}}}, nil
 		}}, nil
 	}
 	r.specs["dest"] = s
@@ -429,10 +431,22 @@ func TestDeliveryIdentityComesFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(term.Deliveries) != 1 || term.Deliveries[0].NodeID != "out" || term.Deliveries[0].Target != "{route}-queue" {
+	if len(term.Deliveries) != 1 || term.Deliveries[0].NodeID != "out" || term.Deliveries[0].Target != "{route}-queue" || term.Deliveries[0].Unattempted {
 		t.Fatalf("spoofed metadata: %+v", term.Deliveries)
 	}
 }
+
+func TestDestinationCannotReportResponse(t *testing.T) {
+	r := testRegistry(t)
+	replaceRun(r, "dest", func(context.Context, Payload) (Payload, error) {
+		return Terminal{Response: &Response{Status: 200}}, nil
+	})
+	term, err := mustCompile(t, linearFlow(), r).Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second})
+	if err != nil || term.Response != nil || len(term.Deliveries) != 1 {
+		t.Fatalf("destination reported response: %+v, %v", term, err)
+	}
+}
+
 func TestRespondCannotReportDeliveries(t *testing.T) {
 	r := testRegistry(t)
 	replaceRun(r, "respond", func(context.Context, Payload) (Payload, error) {

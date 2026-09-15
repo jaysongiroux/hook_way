@@ -125,7 +125,7 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 	// (4) and (5): endpoints exist and are type-compatible.
 	edges, err := ParseEdges(fc.Edges)
 	if err != nil {
-		ce.Problems = append(ce.Problems, err.Error())
+		ce.Problems = appendErrorProblems(ce.Problems, err)
 	}
 	inbound := map[string]int{}
 	seenEdges := map[Edge]bool{}
@@ -199,6 +199,22 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		return nil, ce
 	}
 	return f, nil
+}
+
+// appendErrorProblems flattens errors.Join so each independently actionable
+// diagnostic remains a separate CompileError problem and renders as its own
+// bullet with an accurate problem count.
+func appendErrorProblems(problems []string, err error) []string {
+	if err == nil {
+		return problems
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			problems = appendErrorProblems(problems, child)
+		}
+		return problems
+	}
+	return append(problems, err.Error())
 }
 
 func configuredTarget(node Node) (target string, err error) {

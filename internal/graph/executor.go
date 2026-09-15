@@ -118,36 +118,38 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 			err = fmt.Errorf("returned %s, declared output %s", out.PortType(), b.spec.Out)
 		}
 	}
-	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err})
-	// A successful reservation must be released even when its output is malformed.
-	if runErr == nil && isComp {
-		e.term.Compensations = append(e.term.Compensations, Compensation{NodeID: id, Node: comp, Input: saved})
-	}
 	if isTerminal {
-		if terminal.Response != nil {
+		if terminal.Response != nil && !b.spec.Detached {
 			if e.term.Response != nil {
 				err = errors.Join(err, errors.New("more than one response produced"))
 			} else {
 				e.term.Response = terminal.Response
 			}
 		}
-		for _, d := range terminal.Deliveries {
-			if d.NodeID == "" {
-				d.NodeID = id
+		if b.spec.Detached {
+			for _, outcome := range terminal.Deliveries {
+				// Identity, configured target, and attempted state are executor-owned.
+				// A destination controls only its outcome error.
+				d := e.delivery(b, outcome.Err, false)
+				if d.Err == nil && runErr != nil {
+					d.Err = runErr
+				}
+				e.term.Deliveries = append(e.term.Deliveries, d)
+				if outcome.Err != nil && runErr == nil {
+					err = errors.Join(err, d.Err)
+				}
 			}
-			if d.Target == "" && b.spec.Detached {
-				d.Target = e.delivery(b, nil, false).Target
-			}
-			if b.spec.Detached && d.Err == nil && runErr != nil {
-				d.Err = runErr
-			}
-			e.term.Deliveries = append(e.term.Deliveries, d)
 		}
 		// D12: only executor-collected Compensator instances are authorized.
 		// Node-returned payloads cannot inject release callbacks.
 	}
 	if b.spec.Detached && (!isTerminal || len(terminal.Deliveries) == 0) {
 		e.term.Deliveries = append(e.term.Deliveries, e.delivery(b, err, false))
+	}
+	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err})
+	// A successful reservation must be released even when its output is malformed.
+	if runErr == nil && isComp {
+		e.term.Compensations = append(e.term.Compensations, Compensation{NodeID: id, Node: comp, Input: saved})
 	}
 	if err != nil {
 		return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
