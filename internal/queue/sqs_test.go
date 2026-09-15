@@ -113,6 +113,30 @@ func TestSQSPublisherCreatesQueueAndSends(t *testing.T) {
 	}
 }
 
+func TestSQSPublisherAttachesMessageAttributes(t *testing.T) {
+	fake := newFakeSQS()
+	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SQSTarget{{Name: "billing-jobs", Create: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), "jobs", "billing-jobs", Message{
+		ID: "evt_1",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["status"]`},
+		},
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := fake.sent[0].MessageAttributes["fields_changed"]
+	if aws.ToString(got.DataType) != "String.Array" || aws.ToString(got.StringValue) != `["status"]` {
+		t.Fatalf("MessageAttributes = %+v", fake.sent[0].MessageAttributes)
+	}
+}
+
 func TestSQSPublisherFIFOSetsGroupAndDedup(t *testing.T) {
 	fake := newFakeSQS()
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{

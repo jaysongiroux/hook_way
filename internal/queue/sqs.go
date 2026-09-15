@@ -205,9 +205,14 @@ func (p *SQSPublisher) Publish(ctx context.Context, destinationID, target string
 	if err != nil {
 		return err
 	}
+	attrs, err := sqsMessageAttributes(msg.MessageAttributes)
+	if err != nil {
+		return err
+	}
 	in := &sqs.SendMessageInput{
-		QueueUrl:    aws.String(state.url),
-		MessageBody: aws.String(string(body)),
+		QueueUrl:          aws.String(state.url),
+		MessageBody:       aws.String(string(body)),
+		MessageAttributes: attrs,
 	}
 	if state.fifo != nil {
 		groupID, dedupID, _ := resolveFIFO(msg, *state.fifo)

@@ -58,6 +58,16 @@ type Message struct {
 	// additive and omitted for normal (first-time) deliveries, so
 	// schema_version stays 1.0.
 	ReplayOf string `json:"replay_of,omitempty"`
+	// MessageAttributes are SNS/SQS attributes. They ride on the AWS API,
+	// not inside the JSON envelope body.
+	MessageAttributes map[string]MessageAttribute `json:"-"`
+}
+
+// MessageAttribute is one SNS/SQS message attribute. DataType is String,
+// Number, or String.Array. StringValue is the AWS StringValue (JSON for arrays).
+type MessageAttribute struct {
+	DataType    string
+	StringValue string
 }
 
 // DeadLetterMeta records why and how a webhook delivery was dead-lettered. It

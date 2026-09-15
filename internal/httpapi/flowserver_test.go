@@ -266,6 +266,135 @@ func TestFilterSilentDropKeepsReservation(t *testing.T) {
 	}
 }
 
+const skipFailedFlowYAML = `
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.com/a"
+  secondary:
+    type: webhook
+    webhook:
+      url: "https://example.com/b"
+flows:
+  github:
+    delivery_failure_policy: skip_failed
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
+      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out_a, type: publish, destination: primary, target: github-a}
+      - {id: out_b, type: publish, destination: secondary, target: github-b}
+    edges: [in>rl, rl>body, body>auth, auth>replay, replay>env, env>out_a, env>out_b]
+`
+
+func TestSkipFailedPartialSuccessReturns202WithFailures(t *testing.T) {
+	pub := &fakePublisher{err: errors.New("secondary down"), errDestination: "secondary"}
+	srv, err := NewFlowServer(loadFlowCfg(t, skipFailedFlowYAML), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postSignedFlow(srv, []byte(`{"action":"opened"}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var res struct {
+		Destinations []struct {
+			DestinationQueueID string `json:"destination_queue_id"`
+		} `json:"destinations"`
+		FailedDestinations []struct {
+			DestinationQueueID string `json:"destination_queue_id"`
+		} `json:"failed_destinations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Destinations) != 1 || res.Destinations[0].DestinationQueueID != "primary" {
+		t.Fatalf("destinations = %#v", res.Destinations)
+	}
+	if len(res.FailedDestinations) != 1 || res.FailedDestinations[0].DestinationQueueID != "secondary" {
+		t.Fatalf("failed_destinations = %#v", res.FailedDestinations)
+	}
+}
+
+func TestSkipFailedAllFailuresReturn503(t *testing.T) {
+	pub := &fakePublisher{err: errors.New("all down")}
+	srv, err := NewFlowServer(loadFlowCfg(t, skipFailedFlowYAML), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postSignedFlow(srv, []byte(`{"action":"opened"}`))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 2 {
+		t.Fatalf("published = %d, want both destinations attempted", len(pub.published))
+	}
+}
+
+func TestSkipFailedPartialSuccessReleasesReservation(t *testing.T) {
+	pub := &fakePublisher{err: errors.New("secondary down"), errDestination: "secondary"}
+	srv, err := NewFlowServer(loadFlowCfg(t, skipFailedFlowYAML), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"action":"opened"}`)
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
+		t.Fatalf("first = %d %s", rec.Code, rec.Body.String())
+	}
+	rec := postSignedFlow(srv, body)
+	if rec.Code == http.StatusConflict {
+		t.Fatal("retry after skip_failed partial success was 409: the reservation was not released (I17)")
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry = %d, want 202", rec.Code)
+	}
+}
+
+func TestSkipFailedFullSuccessKeepsReservation(t *testing.T) {
+	srv, err := NewFlowServer(loadFlowCfg(t, skipFailedFlowYAML), &fakePublisher{}, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"action":"opened"}`)
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
+		t.Fatalf("first = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusConflict {
+		t.Fatalf("resend = %d, want 409 after full skip_failed success", rec.Code)
+	}
+}
+
+func TestPublishMessageAttributesReachQueueMessage(t *testing.T) {
+	src := strings.Replace(testFlowYAML,
+		"- {id: out, type: publish, destination: primary, target: github-webhooks}",
+		"- {id: out, type: publish, destination: primary, target: github-webhooks, message_attributes: {event: opened, fields_changed: {data_type: String.Array, value: '[\"status\"]'}}}",
+		1)
+	pub := &fakePublisher{}
+	srv, err := NewFlowServer(loadFlowCfg(t, src), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postSignedFlow(srv, []byte(`{"action":"opened"}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	got := pub.published[0].msg.MessageAttributes
+	if got["event"].DataType != "String" || got["event"].StringValue != "opened" {
+		t.Fatalf("event = %+v", got["event"])
+	}
+	if got["fields_changed"].DataType != "String.Array" || got["fields_changed"].StringValue != `["status"]` {
+		t.Fatalf("fields_changed = %+v", got["fields_changed"])
+	}
+}
+
 func TestBrokenFlowRegistersPathWith500Not404(t *testing.T) {
 	src := `
 schema_version: 2

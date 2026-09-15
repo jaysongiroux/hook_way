@@ -901,6 +901,10 @@ Delivery failure policies:
 - `stop_on_failure` (default): publish routes sequentially in config order. The first failed route stops later routes from starting and Hookway returns `503`.
 - `skip_failed`: publish every route. Hookway returns `202` when at least one route succeeds and includes `failed_destinations` in the response. If every route fails, Hookway returns `503`.
 
+In schema_version 2 the same policies are `flows.<name>.delivery_failure_policy`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on `idempotency_key`.
+
+`publish.message_attributes` attaches SNS/SQS MessageAttributes. Values may be strings (templated from envelope variables), numbers, YAML arrays (`String.Array`), or `{data_type, value}` maps. `String.Array` is required for subscription filter policies such as `fields_changed`. Attribute names are at most 256 bytes, values at most 256 KiB, and at most 10 attributes per message (AWS limits). Oversized values fail the publish rather than being silently dropped.
+
 Endpoint rate-limit fields match global rate-limit fields. `key_by` must be `ip` for MVP.
 
 Replay protection fields:

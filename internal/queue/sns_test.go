@@ -106,6 +106,62 @@ func TestSNSPublisherCreatesTopicAndPublishes(t *testing.T) {
 	}
 }
 
+func TestSNSPublisherAttachesMessageAttributes(t *testing.T) {
+	fake := newFakeSNS()
+	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SNSTarget{{Name: "billing-alerts", Create: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pub.Publish(context.Background(), "alerts", "billing-alerts", Message{
+		ID: "evt_1",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["status"]`},
+			"event":          {DataType: "String", StringValue: "opened"},
+			"count":          {DataType: "Number", StringValue: "2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := fake.published[0].MessageAttributes
+	if aws.ToString(got["fields_changed"].DataType) != "String.Array" || aws.ToString(got["fields_changed"].StringValue) != `["status"]` {
+		t.Fatalf("fields_changed = %+v", got["fields_changed"])
+	}
+	if aws.ToString(got["event"].DataType) != "String" {
+		t.Fatalf("event DataType = %q", aws.ToString(got["event"].DataType))
+	}
+	if aws.ToString(got["count"].DataType) != "Number" {
+		t.Fatalf("count DataType = %q", aws.ToString(got["count"].DataType))
+	}
+}
+
+func TestSNSPublisherRejectsOversizeMessageAttribute(t *testing.T) {
+	fake := newFakeSNS()
+	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SNSTarget{{Name: "billing-alerts", Create: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pub.Publish(context.Background(), "alerts", "billing-alerts", Message{
+		MessageAttributes: map[string]MessageAttribute{
+			"too_big": {DataType: "String", StringValue: strings.Repeat("x", maxMessageAttributeValueBytes+1)},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "AWS limit") {
+		t.Fatalf("err = %v, want AWS size-limit error", err)
+	}
+	if len(fake.published) != 0 {
+		t.Fatal("oversize attributes must fail closed, not publish")
+	}
+}
+
 func TestSNSPublisherFIFOSetsGroupAndDedup(t *testing.T) {
 	fake := newFakeSNS()
 	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{

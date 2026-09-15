@@ -65,6 +65,17 @@ type Envelope struct {
 	// Branch is the labelled output port selected by a switch node. Empty
 	// means the executor follows every successor (ordinary fan-out).
 	Branch string
+	// MessageAttributes are SNS/SQS attributes rendered by a publish node.
+	// They travel on the envelope so the serving adapter can attach them
+	// without flowconfig importing internal/queue.
+	MessageAttributes map[string]MessageAttribute
+}
+
+// MessageAttribute is one SNS/SQS message attribute. DataType is String,
+// Number, or String.Array. Value is the AWS StringValue (JSON for arrays).
+type MessageAttribute struct {
+	DataType string
+	Value    string
 }
 
 func (Envelope) PortType() PortType { return PortEnvelope }

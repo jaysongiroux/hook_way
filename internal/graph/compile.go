@@ -30,11 +30,12 @@ type bound struct {
 // Flow is a compiled, executable graph. It is immutable after Compile and safe
 // for concurrent use across requests.
 type Flow struct {
-	name  string
-	root  string
-	nodes map[string]*bound
-	out   map[string][]Edge
-	order []string // deterministic node order, for stable error and metric output
+	name       string
+	root       string
+	nodes      map[string]*bound
+	out        map[string][]Edge
+	order      []string // deterministic node order, for stable error and metric output
+	skipFailed bool
 }
 
 func (f *Flow) Name() string { return f.name }
@@ -49,7 +50,9 @@ func (f *Flow) NodeIDs() []string { return append([]string(nil), f.order...) }
 //  2. node ids are unique
 //  3. exactly one trigger (In == PortNone) exists
 //  4. every edge endpoint names a real node
-//  5. every edge is type-compatible: to.In.Accepts(from.Out)
+//  5. every edge is type-compatible: to.In.Accepts(from.Out). on_error is
+//     different: the error path carries the failing node's input, so the
+//     target must Accepts(from.In).
 //  6. every non-root node is reachable from the root
 //  7. every leaf produces PortTerminal
 //  8. the graph is acyclic
@@ -64,6 +67,13 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 	if reg == nil {
 		ce.Problems = append(ce.Problems, "node registry is nil")
 		return nil, ce
+	}
+	switch strings.TrimSpace(fc.DeliveryFailurePolicy) {
+	case "", "stop_on_failure":
+	case "skip_failed":
+		f.skipFailed = true
+	default:
+		ce.Problems = append(ce.Problems, fmt.Sprintf("delivery_failure_policy %q is not supported (use stop_on_failure or skip_failed)", fc.DeliveryFailurePolicy))
 	}
 
 	// (1) and (2): track identity independently from successful construction.
@@ -147,7 +157,7 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		if !fromOK {
 			continue
 		}
-		if e.FromPort != "" {
+		if e.FromPort != "" && e.FromPort != "on_error" {
 			declared := map[string]bool{}
 			if d, ok := from.node.(PortDeclarer); ok {
 				for _, p := range d.OutPorts() {
@@ -160,10 +170,18 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 				ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: port %q is not declared by %q", e, e.FromPort, e.From))
 			}
 		}
-		if from.spec.Out == PortTerminal {
+		if e.FromPort == "on_error" {
+			if from.spec.In == PortNone {
+				ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: trigger nodes cannot declare on_error", e))
+			} else if !to.spec.In.Accepts(from.spec.In) {
+				ce.Problems = append(ce.Problems, fmt.Sprintf(
+					"edge %s: on_error type mismatch -- %q consumes %s so the error path carries %s, but %q consumes %s",
+					e, e.From, from.spec.In, from.spec.In, e.To, to.spec.In))
+				continue
+			}
+		} else if from.spec.Out == PortTerminal {
 			ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: Terminal node cannot have successors", e))
-		}
-		if !to.spec.In.Accepts(from.spec.Out) {
+		} else if !to.spec.In.Accepts(from.spec.Out) {
 			ce.Problems = append(ce.Problems, fmt.Sprintf(
 				"edge %s: type mismatch -- %q (%s) produces %s but %q (%s) consumes %s",
 				e, e.From, from.spec.Type, from.spec.Out, e.To, to.spec.Type, to.spec.In))
@@ -190,13 +208,29 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		}
 	}
 
-	// (7): leaves must be Terminal.
+	// (7): leaves must be Terminal, and non-terminals need a success path.
 	for _, id := range f.order {
 		if len(f.out[id]) == 0 && f.nodes[id].spec.Out != PortTerminal {
 			ce.Problems = append(ce.Problems, fmt.Sprintf(
 				"node %q (%s) has no outgoing edge but produces %s, not Terminal: "+
 					"events reaching it would be silently dropped",
 				id, f.nodes[id].spec.Type, f.nodes[id].spec.Out))
+			continue
+		}
+		if f.nodes[id].spec.Out == PortTerminal {
+			continue
+		}
+		hasSuccess := false
+		for _, e := range f.out[id] {
+			if e.FromPort != "on_error" {
+				hasSuccess = true
+				break
+			}
+		}
+		if !hasSuccess && len(f.out[id]) > 0 {
+			ce.Problems = append(ce.Problems, fmt.Sprintf(
+				"node %q (%s) has only on_error successors; a success path is required",
+				id, f.nodes[id].spec.Type))
 		}
 	}
 

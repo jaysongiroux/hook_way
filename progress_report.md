@@ -25,36 +25,44 @@ agent can resume without reading chat history.
 - Chunk 1 graph core is independently accepted at 91.7% statement coverage.
 - Chunk 2 configuration and validation is accepted at unsigned `9db929f`.
 - Chunk 3 minimal serving path is accepted at unsigned `a468a52`.
-- Chunk 4 gates and I1-I18 conformance is **implemented** (I9/I15 skipped until Chunk 8).
+- Chunk 4 gates and I1-I18 conformance is accepted at unsigned `d7316df`.
+- Chunk 5 destinations, fan-out, `on_error`, and SNS/SQS MessageAttributes is
+  **implemented** (unsigned commit recorded after the gate).
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 4 implemented on `v2`. Next chunk is 5 (destinations and fan-out).
+**Status:** Chunk 5 implemented on `v2`. Next chunk is 6 (sync proxy and transforms).
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
-- Committed Chunk 3 as unsigned `a468a52`.
-- Implemented Chunk 4: pre-body gates, replay_guard compensation, filter, lookup,
-  switch labelled ports, FlowServer status mapping, I1-I18 conformance suite.
+- Committed Chunk 4 as unsigned `d7316df`.
+- Implemented Chunk 5: publish across all 13 destination types (adapter +
+  factory guard), `skip_failed`/`stop_on_failure`, reserved `on_error` ports,
+  SNS/SQS MessageAttributes from envelope variables.
 
-**Chunk 4 gate (local, 2026-09-15):**
+**Chunk 5 gate (local, 2026-09-15):**
 
-- `go test ./internal/conformance/ -v`: I1-I8, I10-I14, I16-I18 PASS; I9 and I15 SKIP (Chunk 8)
-- `go test -race ./internal/graph/ ./internal/flowconfig/ ./internal/httpapi/ ./internal/conformance/`: PASS
-- `make test`, `make lint`, `make conformance`, WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
-- httptest: publish failure then retry **202 not 409** (I17); filter drop then resend **409**;
-  broken compile still answers its path with **500 not 404** (I13)
+- `make test`, `make lint`, `make conformance`: PASS (I9/I15 SKIP until Chunk 8)
+- `go test -race` graph/flowconfig/httpapi/queue/conformance: PASS
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- `make test-all`: PASS (queue 391s including LocalStack SNS filter-policy test)
+- httptest: skip_failed partial **202** with `failed_destinations`; all-fail **503**;
+  partial success then retry **202 not 409** (I17); full success then resend **409**
 
-**Files:** `internal/flowconfig/node_gates.go`, `node_replay_guard.go`, `node_filter.go`,
-`node_lookup.go`, `node_switch.go`, `internal/graph/executor.go`, `internal/httpapi/flowserver.go`,
-`internal/conformance/`, `internal/metrics/metrics.go`, Makefile, `.github/workflows/release.yml`.
+**Files:** `internal/graph/{compile,executor,model,payload,clone}.go`,
+`internal/graph/executor_policy_test.go`, `internal/flowconfig/node_publish.go`,
+`internal/flowconfig/message_attributes.go`, `internal/flowconfig/node_publish_types_test.go`,
+`internal/httpapi/flowserver.go`, `internal/queue/{publisher,sns,sqs,message_attributes}.go`,
+`internal/queue/aws_integration_test.go`.
 
-**Risks:** lookup serving still does not dial providers at `NewFlowServer` (injected
-resolver / nil provider errors at run). `secret_ref` remains fail-closed until Chunk 8.
-I9/I15 are skipped until capture is wired.
+**Risks:** `skip_failed` dest fan-out is sequential (`FanoutConcurrency` unused).
+Lookup serving still does not dial providers at `NewFlowServer`. `secret_ref`
+remains fail-closed until Chunk 8. I9/I15 skipped until capture is wired.
+Universal-gateway live SNS filter-policy inventory was not performed (UG out of
+scope); attribute names/types follow gaps A4 (`fields_changed` / String.Array).
 
-**Exact next step:** Chunk 5 — publish across all 13 destination types, fan-out
-policies, and `on_error` ports.
+**Exact next step:** Chunk 6 — `http_request`, `respond`, and `transform`
+(`v2/plans/06-sync-proxy-and-transforms.md`).
 
 ## Subagent — Chunk 1 implementation (`spike_s2`)
 
@@ -184,7 +192,7 @@ field types are covered. The failing-first run initially failed on the absent ca
 `git diff --check` all pass.
 
 **Risks:** Runtime behavior intentionally remains stubbed for later chunks. Generic
-`message_attributes` values remain open until Chunk 5 settles destination data types.
+`message_attributes` values are settled in Chunk 5 (String / Number / String.Array).
 
 **Exact next step:** done. The V2 loader decodes flow nodes through this registry.
 

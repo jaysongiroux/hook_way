@@ -191,5 +191,26 @@ do not claim that an unavailable skill was invoked.
   with pointers to Chunk 8. `make conformance` runs in CI next to `make test`.
 - `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
   conformance, WASM validator build: PASS. V1 still serves.
-- Next: Chunk 5 destinations and fan-out (`v2/plans/05-destinations-and-fanout.md`).
+- Next: Chunk 6 synchronous proxy and transforms (`v2/plans/06-sync-proxy-and-transforms.md`).
+
+## Chunk 5 local gate — 2026-09-15
+
+- One `publish` node still references shared `destinations:` (D13). A catalog
+  guard fails if `internal/queue` grows a type V2 does not list.
+- `delivery_failure_policy: skip_failed` attempts every detached successor;
+  HTTP 202 with `failed_destinations` when at least one succeeds, 503 when none
+  do. Partial success releases the replay reservation (I17). Filter drops stay
+  202 without `failed` (I14). `stop_on_failure` still stops and records
+  unattempted destinations.
+- Reserved `on_error` ports route the failing node's **input** (compile-checked
+  against `from.In`, not `from.Out`). A node with only `on_error` successors is
+  a compile error.
+- SNS/SQS `MessageAttributes` are rendered from `publish.message_attributes`
+  (string / number / `String.Array`, including `{data_type, value}`). Oversized
+  values fail closed. Universal-gateway live filter-policy inventory is out of
+  scope; the implemented contract is gaps A4's `fields_changed` String.Array.
+- `skip_failed` fan-out is sequential; `FanoutConcurrency` remains a reserved
+  bound for later parallel dest fan-out.
+- `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
+  queue/conformance, WASM validator build, `make test-all`: PASS. V1 still serves.
 

@@ -60,6 +60,25 @@ func TestPublishLabelsWithTemplateNotRenderedTarget(t *testing.T) {
 	}
 }
 
+func TestPublishRendersMessageAttributes(t *testing.T) {
+	fake := &fakePublisher{}
+	node := mustPublishNode(t, "destination: primary\ntarget: t\nmessage_attributes:\n  event: '{kind}'\n  fields_changed: {data_type: String.Array, value: '{diff}'}\n",
+		staticResolver{pub: fake})
+	_, err := node.Run(context.Background(), graph.Envelope{Vars: map[string]string{
+		"kind": "opened",
+		"diff": `["status"]`,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.lastEnv.MessageAttributes["event"].DataType != "String" || fake.lastEnv.MessageAttributes["event"].Value != "opened" {
+		t.Fatalf("event = %+v", fake.lastEnv.MessageAttributes["event"])
+	}
+	if fake.lastEnv.MessageAttributes["fields_changed"].DataType != "String.Array" {
+		t.Fatalf("fields_changed = %+v", fake.lastEnv.MessageAttributes["fields_changed"])
+	}
+}
+
 func TestPublishRecordsFailure(t *testing.T) {
 	fake := &fakePublisher{err: errors.New("broker down")}
 	node := mustPublishNode(t, "destination: primary\ntarget: github-webhooks\n",

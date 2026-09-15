@@ -76,7 +76,7 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) queue.Mes
 		if env.Vars != nil {
 			msg.Variables = env.Vars
 		}
-		return msg
+		return attachMessageAttributes(msg, env)
 	}
 	head := env.V.Raw.Head
 	query := map[string]any{}
@@ -88,13 +88,24 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) queue.Mes
 		encoded := base64.StdEncoding.EncodeToString(env.V.Raw.Body)
 		rawB64 = &encoded
 	}
-	return queue.Message{
+	return attachMessageAttributes(queue.Message{
 		SchemaVersion: "1.0", ID: head.EventID, RequestID: head.RequestID, TraceID: head.TraceID,
 		Traceparent: head.Traceparent, Endpoint: head.Path, DestinationQueueID: destID, Queue: target,
 		ReceivedAt: time.Now().UTC(), Method: head.Method, Path: head.Path, Headers: head.Header,
 		Query: query, Body: env.Body, RawBodyBase64: rawB64, SourceIP: head.SourceIP,
 		Variables: env.Vars, RawBody: env.V.Raw.Body, OrigHeaders: head.Header, Hops: head.Hops,
+	}, env)
+}
+
+func attachMessageAttributes(msg queue.Message, env graph.Envelope) queue.Message {
+	if len(env.MessageAttributes) == 0 {
+		return msg
 	}
+	msg.MessageAttributes = make(map[string]queue.MessageAttribute, len(env.MessageAttributes))
+	for k, v := range env.MessageAttributes {
+		msg.MessageAttributes[k] = queue.MessageAttribute{DataType: v.DataType, StringValue: v.Value}
+	}
+	return msg
 }
 
 func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics) (*FlowServer, error) {
@@ -376,19 +387,26 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	status = http.StatusAccepted
 	published := make([]map[string]string, 0, len(term.Deliveries))
+	failed := make([]map[string]string, 0)
 	for _, d := range term.Deliveries {
-		if d.Err != nil || d.Unattempted {
-			continue
-		}
-		published = append(published, map[string]string{
+		item := map[string]string{
 			"destination_queue_id": mf.destByNode[d.NodeID],
 			"queue":                d.Target,
-		})
+		}
+		if d.Err != nil || d.Unattempted {
+			failed = append(failed, item)
+			continue
+		}
+		published = append(published, item)
 	}
-	writeJSON(w, status, map[string]any{
+	body := map[string]any{
 		"status": "accepted", "endpoint": mf.name, "destinations": published,
 		"event_id": head.EventID, "request_id": head.RequestID,
-	})
+	}
+	if len(failed) > 0 {
+		body["failed_destinations"] = failed
+	}
+	writeJSON(w, status, body)
 }
 
 func (s *FlowServer) writeFlowError(w http.ResponseWriter, mf mountedFlow, status int, err error) {

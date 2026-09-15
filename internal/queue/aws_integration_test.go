@@ -261,7 +261,7 @@ func snsFromConfig(cfg aws.Config) *snsservice.Client {
 	return snsservice.NewFromConfig(cfg)
 }
 
-func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicName, queueURL string) {
+func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicName, queueURL string, filterPolicy ...string) {
 	t.Helper()
 	snsClient := snsservice.NewFromConfig(cfg)
 	sqsClient := sqs.NewFromConfig(cfg)
@@ -279,20 +279,97 @@ func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicN
 	if topicARN == "" {
 		t.Fatalf("topic %q not found", topicName)
 	}
-	attrs, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+	qattrs, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       aws.String(queueURL),
 		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	queueARN := attrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
+	queueARN := qattrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
+	subAttrs := map[string]string{"RawMessageDelivery": "true"}
+	if len(filterPolicy) > 0 && filterPolicy[0] != "" {
+		subAttrs["FilterPolicy"] = filterPolicy[0]
+	}
 	if _, err := snsClient.Subscribe(ctx, &snsservice.SubscribeInput{
 		TopicArn:   aws.String(topicARN),
 		Protocol:   aws.String("sqs"),
 		Endpoint:   aws.String(queueARN),
-		Attributes: map[string]string{"RawMessageDelivery": "true"},
+		Attributes: subAttrs,
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAWSSNSMessageAttributeFilterPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	endpoint := startLocalStack(t)
+	ctx := context.Background()
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqsClient := sqs.NewFromConfig(awsCfg)
+	pub, err := NewSNSPublisher(ctx, snsFromConfig(awsCfg), SNSConfig{
+		Region: "us-east-1", Endpoint: endpoint, AccessKeyID: "test", SecretAccessKey: "test",
+		Targets: []SNSTarget{{Name: "filter-topic", Create: true}},
+	})
+	if err != nil {
+		t.Fatalf("NewSNSPublisher: %v", err)
+	}
+	qOut, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("filter-sub-queue")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscribeSQSToSNS(t, ctx, awsCfg, "filter-topic", aws.ToString(qOut.QueueUrl), `{"fields_changed":["status"]}`)
+
+	match := Message{
+		ID: "evt_match",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["status","amount"]`},
+		},
+	}
+	if err := pub.Publish(ctx, "alerts", "filter-topic", match); err != nil {
+		t.Fatalf("Publish match: %v", err)
+	}
+	if received := receiveSQSMessage(t, ctx, sqsClient, aws.ToString(qOut.QueueUrl), 15*time.Second); received == nil || received.ID != "evt_match" {
+		t.Fatalf("filter policy should match String.Array containing status, got %#v", received)
+	}
+
+	miss := Message{
+		ID: "evt_miss",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["other"]`},
+		},
+	}
+	if err := pub.Publish(ctx, "alerts", "filter-topic", miss); err != nil {
+		t.Fatalf("Publish miss: %v", err)
+	}
+	if received := receiveSQSMessage(t, ctx, sqsClient, aws.ToString(qOut.QueueUrl), 5*time.Second); received != nil {
+		t.Fatalf("filter policy should drop non-matching attributes, got %#v", received)
+	}
+}
+
+func receiveSQSMessage(t *testing.T, ctx context.Context, client *sqs.Client, queueURL string, wait time.Duration) *Message {
+	t.Helper()
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		out, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl: aws.String(queueURL), MaxNumberOfMessages: 1, WaitTimeSeconds: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Messages) == 0 {
+			continue
+		}
+		var m Message
+		if err := json.Unmarshal([]byte(aws.ToString(out.Messages[0].Body)), &m); err != nil {
+			t.Fatalf("body not json: %v", err)
+		}
+		return &m
+	}
+	return nil
 }

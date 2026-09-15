@@ -152,38 +152,18 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		e.term.Compensations = append(e.term.Compensations, Compensation{NodeID: id, Node: comp, Input: saved})
 	}
 	if err != nil {
+		if handled := e.followOnError(ctx, id, in); handled == nil {
+			return nil
+		} else if !errors.Is(handled, errNoOnError) {
+			return handled
+		}
 		return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
 	}
 	if isTerminal {
 		e.suppress(id)
 		return nil
 	}
-	successors := e.flow.out[id]
-	if selected := selectedBranch(out); selected != "" || labelledSuccessors(successors) {
-		var matched []Edge
-		for _, edge := range successors {
-			if edge.FromPort == selected || (selected == "" && edge.FromPort == "") {
-				matched = append(matched, edge)
-			}
-		}
-		if len(matched) == 0 {
-			return fmt.Errorf("node %q (%s): no successor for port %q", id, b.spec.Type, selected)
-		}
-		successors = matched
-	}
-	for _, edge := range successors {
-		next := out
-		if len(successors) > 1 {
-			next, err = clonePayload(out)
-			if err != nil {
-				return fmt.Errorf("node %q fan-out: %w", id, err)
-			}
-		}
-		if err = e.node(ctx, edge.To, next); err != nil {
-			return err
-		}
-	}
-	return nil
+	return e.followSuccessors(ctx, id, out)
 }
 
 func concretePort(p Payload) (PortType, error) {
@@ -217,9 +197,119 @@ func selectedBranch(out Payload) string {
 	return ""
 }
 
+var errNoOnError = errors.New("graph: no on_error successor")
+
+func (e *execution) followOnError(ctx context.Context, id string, in Payload) error {
+	var edges []Edge
+	for _, edge := range e.flow.out[id] {
+		if edge.FromPort == "on_error" {
+			edges = append(edges, edge)
+		}
+	}
+	if len(edges) == 0 {
+		return errNoOnError
+	}
+	for _, edge := range edges {
+		next := in
+		if len(edges) > 1 {
+			cloned, err := clonePayload(in)
+			if err != nil {
+				return fmt.Errorf("node %q on_error: %w", id, err)
+			}
+			next = cloned
+		}
+		if err := e.node(ctx, edge.To, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *execution) followSuccessors(ctx context.Context, id string, out Payload) error {
+	successors := successEdges(e.flow.out[id])
+	if selected := selectedBranch(out); selected != "" || labelledSuccessors(successors) {
+		var matched []Edge
+		for _, edge := range successors {
+			if edge.FromPort == selected || (selected == "" && edge.FromPort == "") {
+				matched = append(matched, edge)
+			}
+		}
+		if len(matched) == 0 {
+			b := e.flow.nodes[id]
+			return fmt.Errorf("node %q (%s): no successor for port %q", id, b.spec.Type, selected)
+		}
+		successors = matched
+	}
+	if e.flow.skipFailed && allDetached(e.flow, successors) {
+		return e.followSkipFailed(ctx, id, out, successors)
+	}
+	for _, edge := range successors {
+		next := out
+		var err error
+		if len(successors) > 1 {
+			next, err = clonePayload(out)
+			if err != nil {
+				return fmt.Errorf("node %q fan-out: %w", id, err)
+			}
+		}
+		if err = e.node(ctx, edge.To, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *execution) followSkipFailed(ctx context.Context, id string, out Payload, successors []Edge) error {
+	var firstErr error
+	var ok int
+	for _, edge := range successors {
+		next := out
+		var err error
+		if len(successors) > 1 {
+			next, err = clonePayload(out)
+			if err != nil {
+				return fmt.Errorf("node %q fan-out: %w", id, err)
+			}
+		}
+		if err = e.node(ctx, edge.To, next); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		ok++
+	}
+	if ok == 0 {
+		return firstErr
+	}
+	return nil
+}
+
+func successEdges(edges []Edge) []Edge {
+	var out []Edge
+	for _, e := range edges {
+		if e.FromPort != "on_error" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func allDetached(f *Flow, edges []Edge) bool {
+	if len(edges) == 0 {
+		return false
+	}
+	for _, e := range edges {
+		if !f.nodes[e.To].spec.Detached {
+			return false
+		}
+	}
+	return true
+}
+
 func labelledSuccessors(edges []Edge) bool {
 	for _, e := range edges {
-		if e.FromPort != "" {
+		if e.FromPort != "" && e.FromPort != "on_error" {
 			return true
 		}
 	}

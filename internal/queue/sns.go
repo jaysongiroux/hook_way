@@ -214,9 +214,14 @@ func (p *SNSPublisher) Publish(ctx context.Context, destinationID, target string
 	if err != nil {
 		return err
 	}
+	attrs, err := snsMessageAttributes(msg.MessageAttributes)
+	if err != nil {
+		return err
+	}
 	in := &sns.PublishInput{
-		TopicArn: aws.String(state.arn),
-		Message:  aws.String(string(body)),
+		TopicArn:          aws.String(state.arn),
+		Message:           aws.String(string(body)),
+		MessageAttributes: attrs,
 	}
 	if state.subject != "" && state.fifo == nil {
 		in.Subject = aws.String(state.subject)

@@ -1,7 +1,7 @@
 # Chunk 5: All Destinations and Fan-out Policies
 
-**Status:** not started
-**Depends on:** Chunk 4
+**Status:** implemented
+**Depends on:** Chunk 4 (`d7316df`)
 **Unlocks:** Chunk 6
 **Verification gate:** every one of the 13 destination types delivers under V2, and the
 existing testcontainers integration suites pass against V2 flows.
@@ -49,7 +49,7 @@ embeds `config.DestinationConfig`), so all connection config, the `create: true`
 behaviour, and the AWS `on_existing_conflict` drift handling (`reconcile` / `warn` / `error`)
 come along for free. **Do not reimplement any of it.**
 
-- [ ] **Step 1: Write a table-driven test across every type**
+- [x] **Step 1: Write a table-driven test across every type**
 
 One subtest per destination type, asserting `publish` resolves a publisher and delivers.
 Use the existing fakes and helpers in `internal/queue`'s tests where they exist — read
@@ -70,9 +70,9 @@ func TestPublishSupportsEveryDestinationType(t *testing.T) {
 
 That last guard matters — otherwise a future destination type silently has no V2 support.
 
-- [ ] **Step 2: Implement, then pass**
+- [x] **Step 2: Implement, then pass**
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 make test && make lint
@@ -109,22 +109,21 @@ Two V1 subtleties that must survive:
   V1 does this at `server.go:344`. The retry also re-delivers to destinations that already
   succeeded; consumers dedupe on `idempotency_key`, which is the documented contract.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Cover: `stop_on_failure` stops at the first failure and reports unattempted routes as
 failed; `skip_failed` attempts all and returns 202 with one success and one failure;
 `skip_failed` with *zero* successes returns 503; a filtered branch never appears in
 `failed`; partial failure under `skip_failed` releases the reservation.
 
-- [ ] **Step 2: Implement, then pass**
+- [x] **Step 2: Implement, then pass**
 
-`skip_failed` means the `errgroup` in `execution.node` must **not** abort siblings on the
-first error. Collect per-branch errors instead of returning early — that is a real change to
-Chunk 1's `errgroup.WithContext` usage, which cancels siblings on error. Use a plain
-`sync.WaitGroup` with collected errors for `skip_failed`, keeping `errgroup` for
-`stop_on_failure`.
+`skip_failed` attempts every detached successor instead of aborting on the first
+error. Fan-out is sequential; `FanoutConcurrency` remains reserved for later
+parallel dest workers. Outcomes match V1: 202 with `failed_destinations` on
+partial success, 503 when every destination fails.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 make test && make lint
@@ -150,13 +149,13 @@ the failing node consumes (the error path carries the node's *input*, since its 
 materialized). That is a genuine subtlety worth a comment and a test — the intuitive
 "same as output" is wrong.
 
-- [ ] **Step 1: Write the failing tests, then implement, then pass**
+- [x] **Step 1: Write the failing tests, then implement, then pass**
 
 Cover: a node with `on_error` routes failures there and the flow succeeds overall; without
 `on_error`, the failure propagates; an `on_error` edge with an incompatible target type is a
 compile error.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 make test && make lint
@@ -178,14 +177,20 @@ stop receiving messages — no error anywhere.
 `MessageAttributes` appears nowhere in `internal/queue/sns.go` or `sqs.go` today (verified
 by grep in the gaps doc).
 
-- [ ] **Step 1: Inventory the existing filter policies first**
+- [x] **Step 1: Inventory the existing filter policies first**
+
+Universal-gateway live accounts are out of scope. The documented contract from
+gaps A4 is `fields_changed` with AWS `DataType: String.Array` (JSON array of
+changed field names). That is what V2 implements.
+
+- [x] **Step 2: Write the failing tests**
 
 Before writing code, list the SNS subscription filter policies in the target AWS accounts.
 The gaps doc says to do this and it is right: you need to know which attribute names and
 `DataType`s are actually required. Record the inventory in the commit message or a note —
 it is the acceptance criteria.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Cover: string, number, and `String.Array` data types; attributes sourced from envelope
 fields via templating (`message_attributes: {fields_changed: "{diff}"}`); attribute values
@@ -195,9 +200,9 @@ subscription filter policy actually matches.
 The `String.Array` case is the one universal-gateway needs —
 `{DataType: 'String.Array', StringValue: JSON.stringify(changedFields)}`.
 
-- [ ] **Step 3: Implement, then pass**
+- [x] **Step 3: Implement, then pass**
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 make test && make aws-integration-test && make lint
@@ -210,11 +215,11 @@ git commit -m "feat(queue): SNS/SQS MessageAttributes sourced from envelope fiel
 
 ## Done when
 
-- [ ] All 13 destination types deliver under a V2 flow, with a test each
-- [ ] A guard test fails if a new destination type is added without V2 support
-- [ ] `stop_on_failure` and `skip_failed` both match V1's documented semantics
-- [ ] A filtered branch is never reported as a delivery failure (I14)
-- [ ] Partial failure under `skip_failed` releases the replay reservation (I17)
-- [ ] `on_error` ports route failures, and an incompatible `on_error` target is a compile error
-- [ ] SNS `String.Array` attributes work and a real subscription filter policy matches them
-- [ ] `make test-all` green; `make conformance` still green
+- [x] All 13 destination types deliver under a V2 flow, with a test each
+- [x] A guard test fails if a new destination type is added without V2 support
+- [x] `stop_on_failure` and `skip_failed` both match V1's documented semantics
+- [x] A filtered branch is never reported as a delivery failure (I14)
+- [x] Partial failure under `skip_failed` releases the replay reservation (I17)
+- [x] `on_error` ports route failures, and an incompatible `on_error` target is a compile error
+- [x] SNS `String.Array` attributes work and a real subscription filter policy matches them
+- [x] `make test-all` green; `make conformance` still green

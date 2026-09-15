@@ -52,8 +52,9 @@ indexed errors; Compile keeps checking independent nodes and valid edges.
 ## Execution semantics and API additions
 
 - `stop_on_failure` walks successors sequentially in configured edge order. Later
-  branches do not run after failure. `FanoutConcurrency` is reserved for Chunk 5's
-  bounded parallel `skip_failed`; it currently changes nothing.
+  branches do not run after failure. `skip_failed` attempts every detached
+  successor and succeeds when at least one publish works; `FanoutConcurrency` is
+  still reserved for bounded parallel fan-out (outcomes match V1 either way).
 - Reconvergence (multiple incoming edges) is rejected. Without merge semantics it
   could publish the shared descendant twice. Chunk 4 can permit convergence proven
   exclusive through one switch, or explicitly define merge behavior.

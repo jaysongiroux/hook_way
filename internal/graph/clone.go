@@ -44,6 +44,7 @@ func clonePayload(p Payload) (out Payload, err error) {
 	case Envelope:
 		v.V.Raw = cloneRaw(v.V.Raw)
 		v.Vars = maps.Clone(v.Vars)
+		v.MessageAttributes = maps.Clone(v.MessageAttributes)
 		b, err := cloneBody(v.Body, 0)
 		if err != nil {
 			return nil, err

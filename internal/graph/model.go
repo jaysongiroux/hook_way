@@ -13,10 +13,13 @@ import (
 type FlowConfig struct {
 	Nodes []NodeConfig `yaml:"nodes"`
 	Edges []string     `yaml:"edges"`
+	// DeliveryFailurePolicy is stop_on_failure (default) or skip_failed.
+	// It applies when a node fans out to destination (Detached) successors.
+	DeliveryFailurePolicy string `yaml:"delivery_failure_policy,omitempty"`
 }
 
-// Edge carries an optional output label. Labels parse now but Compile rejects
-// them until conditional branching semantics are implemented.
+// Edge carries an optional output label (switch ports, or the reserved
+// on_error port). Unlabelled edges are ordinary fan-out.
 type Edge struct{ From, FromPort, To string }
 
 func (e Edge) String() string {

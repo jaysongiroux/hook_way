@@ -51,6 +51,14 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: err}}}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
+	if len(n.opts.MessageAttributes) > 0 {
+		attrs, attrErr := renderMessageAttributes(n.opts.MessageAttributes, env.Vars)
+		if attrErr != nil {
+			term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: attrErr}}}
+			return term, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: attrErr}
+		}
+		env.MessageAttributes = attrs
+	}
 	if n.resolver == nil {
 		err := fmt.Errorf("publish %q: no publisher resolver", n.id)
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: err}}}
