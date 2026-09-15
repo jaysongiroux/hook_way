@@ -28,11 +28,11 @@ intended reason before implementation; workers must report that evidence.
 | 1 Graph core | Accepted through `59975bd` | Race tests, 91.7% coverage, illegal gate wiring rejected |
 | 2 Config and validation | Accepted through `9db929f` | Valid configs accepted; all invalid-config problems reported |
 | 3 Minimal serving | Accepted through `a468a52` | Signed live request delivered with 202; invalid signature rejected |
-| 4 Gates and conformance | Accepted through `d7316df`; I9/I15 skipped until Chunk 8 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
+| 4 Gates and conformance | Accepted through `d7316df`; I9/I15 completed in Chunk 8 (`d97b40e`) | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
 | 5 Destinations and fan-out | Accepted through `a722076` | All 13 types deliver through V2; integration gates pass |
 | 6 Proxy and transforms | Accepted through `cd0288c` | Upstream response, method, path, query and transforms verified |
 | 7 Code node | Accepted through `2b9b94d` | C1-C7 individually exercised; race and dependency checks pass |
-| 8 Secrets and observability | Waiting for 6 | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
+| 8 Secrets and observability | Accepted through `d97b40e` | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
 | 9 V2 cutover and V1 removal | Waiting for 7 and 8 | V2 feature/conformance gates pass before V1 removal |
 | 10 Web UI | Waiting for 9 | Export validates; import/export round-trip and visual checks pass |
 
@@ -56,8 +56,9 @@ Chunks 7 and 8 can overlap with coordinated registry changes. UI remains last.
    do not add a provider-specific exception.
 2. Q11 is resolved by D13: one `publish` node references shared destinations. The design
    catalog and open-question record now match the later implementation plans.
-3. Chunk 4 explicitly skips I9 and I15 until Chunk 8. Report this honestly; the full
-   I1-I18 gate cannot be called complete while those tests are skipped.
+3. I9 and I15 were skipped in Chunk 4 and completed in Chunk 8 (`d97b40e`).
+   Capture INSERT runs in `graph.RunOptions.BeforeDetached` (not a two-phase
+   `Flow.Run`). The I1-I18 conformance suite now runs without skips.
 4. Design section 9 calls Q5-Q8 unresolved, although README decisions D6-D9 and
    `OPEN-QUESTIONS.md` settle them. The locked decisions take precedence.
 5. No I6 exception is in scope. A port-type change still requires design review because
@@ -187,8 +188,8 @@ do not claim that an unavailable skill was invoked.
 - FlowServer maps 400/401/403/409/413/422/429/503, releases reservations on
   publish failure (I17), keeps them on filter silent drop, and still registers a
   compile-broken flow's path as 500 not 404 (I13).
-- `internal/conformance` has one named test per I1-I18. I9 and I15 are skipped
-  with pointers to Chunk 8. `make conformance` runs in CI next to `make test`.
+- `internal/conformance` has one named test per I1-I18. I9 and I15 were skipped
+  until Chunk 8 (`d97b40e`) and now pass. `make conformance` runs in CI next to `make test`.
 - `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
   conformance, WASM validator build: PASS. V1 still serves.
 - Next after Chunk 5: Chunk 6 synchronous proxy and transforms
@@ -233,6 +234,31 @@ do not claim that an unavailable skill was invoked.
   and `docs/configuration.md`. Lint timeout warning points at those docs.
 - Scratch image still builds (`docker build` → binary + CA bundle). Trivy
   HIGH on pre-existing amqp091-go and grpc; goja added none.
+
+## Chunk 8 local gate — 2026-09-15
+
+- `internal/secretref` caches env/file/AWS Secrets Manager values with timed
+  refresh and rotation overlap. Refresh failure keeps last-good and increments
+  `hookway_secret_refresh_failures_total`. `flowconfig` does not import
+  `secretref` (WASM); serving injects `SecretsFunc`. Auth tries each overlapping
+  secret (I18 still `hmac.Equal` / `subtle.ConstantTimeCompare`).
+- Per-node metrics `hookway_node_total` and `hookway_node_duration_seconds`
+  label only config-bounded values (R3). Grafana "Node Duration" panel is
+  test-guarded. `OnNode` also emits correlated logs and an OTel span.
+- FlowServer owns `/ready`/`/readyz`: 200 while at least one flow is ready;
+  `server.readiness_require_all: true` restores V1 503-if-any-unready. Unique
+  destination probes; replay store down marks every flow unready. `/healthz`
+  unchanged. V1 `Server.handleReady` still AND-aggregates.
+- Replay capture INSERT runs once in `BeforeDetached` before the publish-timeout
+  context (I9). Outcome UPDATE uses a fresh budget. Capture is best-effort (I15).
+  Filter drops are not captured. Redelivery republishes recorded destinations
+  and does not re-enter the graph. `replaystore` is unchanged (D10).
+- `make test`, `make lint`, `make conformance`: PASS (I9/I15 no longer skipped)
+- `go test -race` secretref/httpapi/flowconfig/graph/metrics/conformance: PASS
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- `make aws-integration-test`: PASS (queue + lookup + secretref LocalStack)
+- Full `make test-all` not re-run; broker packages were unchanged.
+- V1 still serves. Next: Chunk 9 V2 cutover (`v2/plans/09-migration-configs.md`).
 
 ## Chunk 5 local gate — 2026-09-15
 

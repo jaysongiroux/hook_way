@@ -1,6 +1,6 @@
 # Chunk 8: Secrets, Observability, Readiness, and Replay
 
-**Status:** not started
+**Status:** committed at unsigned `d97b40e` (2026-09-15)
 **Depends on:** Chunk 6 (Chunk 7 optional)
 **Unlocks:** Chunk 9
 **Verification gate:** a secret rotates with **no process restart** and no rejected
@@ -75,7 +75,7 @@ Requirements, from `v2/03-scalability.md` §4:
   `LastChangedDate`, and takes the newest. Read
   `../universal-gateway/*/layer_external_services/` for the exact semantics.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Cover per provider: resolves a secret; `env` matches V1's `${VAR}` behaviour exactly;
 refresh picks up a changed value **without a restart**; during the overlap window **both**
@@ -93,14 +93,14 @@ The rotation test is the important one and needs to assert *no rejected requests
 func TestRotationHasNoFlagDay(t *testing.T) { /* ... */ }
 ```
 
-- [ ] **Step 2: Implement, then pass**
+- [x] **Step 2: Implement, then pass**
 
-- [ ] **Step 3: Add a LocalStack integration test**
+- [x] **Step 3: Add a LocalStack integration test**
 
 Follow the existing pattern in `internal/queue/aws_integration_test.go`; wire it into
 `make aws-integration-test`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 make test && make aws-integration-test && make lint
@@ -131,7 +131,7 @@ Add:
 **Cardinality is the thing to get right.** Per scalability rule R3, labels must be bounded
 by config, never by data:
 
-- [ ] **Step 1: Write a cardinality guard test**
+- [x] **Step 1: Write a cardinality guard test**
 
 ```go
 // TestNodeMetricCardinalityIsBoundedByConfig guards scalability rule R3.
@@ -147,14 +147,14 @@ func TestNodeMetricCardinalityIsBoundedByConfig(t *testing.T) {
 
 Write that test **first**. It is the one that catches the mistake.
 
-- [ ] **Step 2: Implement, then pass**
+- [x] **Step 2: Implement, then pass**
 
-- [ ] **Step 3: Extend the Grafana dashboard**
+- [x] **Step 3: Extend the Grafana dashboard**
 
 `grafana/` has a dashboard with a test guarding it — find the test and extend both. A
 per-node latency panel is the payoff for this whole task.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 make test && make lint
@@ -190,7 +190,7 @@ Recommend 200-with-detail, and add a `readiness.require_all: true` option for op
 want V1's stricter behaviour. Document the choice in `docs/security.md`, which currently
 documents the AND-aggregation at line 90.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Cover: two flows with disjoint destinations, one destination down → the healthy flow is
 reported ready and the response is 200; probe count equals the number of **unique**
@@ -198,14 +198,14 @@ destinations, not flows × destinations (assert with a counting fake); `/healthz
 pure liveness check and never reflects destination state (V1 is explicit about this in the
 README, and infrastructure relies on it).
 
-- [ ] **Step 2: Implement, then pass**
+- [x] **Step 2: Implement, then pass**
 
-- [ ] **Step 3: Update the docs**
+- [x] **Step 3: Update the docs**
 
 `README.md`'s HTTP Endpoints section and `docs/security.md:90` both describe the old
 aggregation. Fix both.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 make test && make lint
@@ -235,29 +235,30 @@ with a pointer to this chunk:
   response.
 
 In V2 the publish context is created per destination node by the executor
-(`execution.contextFor`), not once in the handler. So I9 needs re-expressing: the capture
-write must complete before the executor is invoked, on its own `replayCaptureTimeout`
-budget. Do the capture in `flowserver.go` after the flow has determined its active
-destinations but before `flow.Run`. **That may require a two-phase run** — resolve the graph
-far enough to know the destinations, capture, then execute. If it does, say so and design it
-explicitly rather than quietly dropping I9.
+(`execution.contextFor`), not once in the handler. I9 is re-expressed as
+`graph.RunOptions.BeforeDetached`: the capture INSERT runs **once**, on its own
+`replayCaptureTimeout` budget, immediately before the first detached node's publish-timeout
+context is created. This is not a second `Flow.Run`. Filter drops never reach a detached
+node, so they are not captured (matching V1 empty `activeRoutes`). Redelivery stays on
+`replayapi` republishing recorded destinations; it does not re-enter the graph (re-running
+would double-apply transforms).
 
 Also carry forward: `replay.skip_unauthenticated` (V1 skips capturing `no_auth` events when
 configured — `server.go:395`), and the capture-outcome UPDATE using a **fresh** context
 budget rather than the possibly-exhausted publish context (`server.go:716`).
 
-- [ ] **Step 1: Un-skip the I9 and I15 conformance tests and watch them fail**
+- [x] **Step 1: Un-skip the I9 and I15 conformance tests and watch them fail**
 
-- [ ] **Step 2: Implement until they pass**
+- [x] **Step 2: Implement until they pass**
 
-- [ ] **Step 3: Verify the replay API works against V2 flows**
+- [x] **Step 3: Verify the replay API works against V2 flows**
 
 `internal/replayapi` serves list/inspect/redeliver on a separate listener. Redelivery
 re-runs a captured event — under V2 that means re-running a flow. Check whether
 `replayapi` needs changes to target a flow rather than an endpoint, and test a real
 redelivery end to end.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 make test && make integration-test && make lint && make conformance
@@ -269,13 +270,13 @@ git commit -m "feat(httpapi): wire replay capture into V2 flows, preserving I9 a
 
 ## Done when
 
-- [ ] A secret rotates with no restart and **no rejected requests** during the overlap
-- [ ] A Secrets Manager refresh failure keeps serving the last good value, with a metric
-- [ ] Per-node metrics exist and cardinality does **not** grow with lookup result count
-- [ ] `/ready` reports per flow; one bad destination does not sideline unrelated flows
-- [ ] Probe count is `O(unique destinations)`, asserted with a counting fake
-- [ ] `/healthz` still never reflects destination state
-- [ ] I9 and I15 conformance tests are un-skipped and passing
-- [ ] Replay redelivery works against a V2 flow, tested end to end
-- [ ] `replaystore` is **unchanged** — no batching, no WAL
-- [ ] `make test-all && make conformance` green
+- [x] A secret rotates with no restart and **no rejected requests** during the overlap
+- [x] A Secrets Manager refresh failure keeps serving the last good value, with a metric
+- [x] Per-node metrics exist and cardinality does **not** grow with lookup result count
+- [x] `/ready` reports per flow; one bad destination does not sideline unrelated flows
+- [x] Probe count is `O(unique destinations)`, asserted with a counting fake
+- [x] `/healthz` still never reflects destination state
+- [x] I9 and I15 conformance tests are un-skipped and passing
+- [x] Replay redelivery works against a V2 flow, tested end to end
+- [x] `replaystore` is **unchanged** — no batching, no WAL
+- [x] `make test && make lint && make conformance` green; `make aws-integration-test` green (includes `./internal/secretref`). Full `make test-all` (RabbitMQ/Redis/Kafka/etc.) was not re-run; those packages were unchanged.

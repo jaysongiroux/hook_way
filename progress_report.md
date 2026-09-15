@@ -31,8 +31,38 @@ agent can resume without reading chat history.
 - Chunk 6 sync proxy and transforms (`http_request`, `respond`, `xml_prune`,
   `body_format: xml`) is accepted at unsigned `cd0288c`.
 - Chunk 7 goja `code` node (C1–C7) is accepted at unsigned `2b9b94d`.
+- Chunk 8 secrets, per-node metrics, per-flow readiness, and V2 replay (I9/I15)
+  is accepted at unsigned `d97b40e`.
 
 ## Orchestrator — current handoff
+
+**Status:** Chunk 8 accepted at unsigned `d97b40e`. Next chunk is 9 (V2 cutover
+and V1 removal). Do not push.
+
+**Accomplished in this window (Cursor, 2026-09-15):**
+
+- Added `internal/secretref` (env/file/AWS) with rotation overlap and last-good
+  refresh failure. Serving injects resolvers; flowconfig stays WASM-safe.
+- Per-node Prometheus metrics, Grafana Node Duration panel, correlated logs,
+  and OTel spans. Cardinality bounded by config (R3).
+- FlowServer `/ready` is per-flow (D9). Default 200 if any flow is ready;
+  `readiness_require_all` restores V1 AND-aggregation.
+- Replay capture INSERT in `BeforeDetached` (I9); best-effort (I15); redelivery
+  republishes recorded destinations without re-entering the graph.
+- Marketing Prometheus count updated 42 → 45.
+
+**Chunk 8 gate (local, 2026-09-15):**
+
+- `make test`, `make lint`, `make conformance`: PASS (I9/I15 no longer skipped)
+- `go test -race ./internal/secretref ./internal/httpapi ./internal/flowconfig
+  ./internal/graph ./internal/metrics ./internal/conformance`: PASS
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- `make aws-integration-test`: PASS including `./internal/secretref`
+- Full `make test-all` not re-run (broker packages unchanged)
+
+**Exact next step:** Chunk 9 (`v2/plans/09-migration-configs.md`). Do not push.
+
+## Orchestrator — Chunk 7 gate (retained)
 
 **Status:** Chunk 7 accepted at unsigned `2b9b94d`. Next chunk is 8 (secrets
 and observability). Do not push.
