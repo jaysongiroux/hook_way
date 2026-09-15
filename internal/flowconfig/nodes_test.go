@@ -102,6 +102,9 @@ func TestEveryOptionContractRoundTripsAndRejectsUnknownFields(t *testing.T) {
 		"lookup":       true,
 		"switch":       true,
 		"publish":      true,
+		"http_request": true,
+		"respond":      true,
+		"transform":    true,
 	}
 	for _, def := range defs {
 		t.Run(def.name, func(t *testing.T) {

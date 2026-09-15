@@ -310,11 +310,13 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flowLabel = mf.name
-	if _, allowed := mf.methods[r.Method]; !allowed {
-		status = http.StatusMethodNotAllowed
-		w.Header().Set("Allow", mf.allow)
-		writeJSON(w, status, map[string]string{"error": "method not allowed"})
-		return
+	if _, allowAny := mf.methods["ANY"]; !allowAny {
+		if _, allowed := mf.methods[r.Method]; !allowed {
+			status = http.StatusMethodNotAllowed
+			w.Header().Set("Allow", mf.allow)
+			writeJSON(w, status, map[string]string{"error": "method not allowed"})
+			return
+		}
 	}
 	if mf.broken || mf.flow == nil {
 		status = http.StatusInternalServerError
@@ -430,6 +432,10 @@ func (s *FlowServer) writeFlowError(w http.ResponseWriter, mf mountedFlow, statu
 		writeJSON(w, status, map[string]string{"error": "rate limited"})
 	case http.StatusServiceUnavailable:
 		writeJSON(w, status, map[string]string{"error": "service unavailable"})
+	case http.StatusGatewayTimeout:
+		writeJSON(w, status, map[string]string{"error": "upstream timeout"})
+	case http.StatusBadGateway:
+		writeJSON(w, status, map[string]string{"error": "upstream error"})
 	case http.StatusBadRequest:
 		if strings.Contains(err.Error(), "loop detected") {
 			s.metrics.LoopRejected(mf.name, "", "")

@@ -27,18 +27,51 @@ agent can resume without reading chat history.
 - Chunk 3 minimal serving path is accepted at unsigned `a468a52`.
 - Chunk 4 gates and I1-I18 conformance is accepted at unsigned `d7316df`.
 - Chunk 5 destinations, fan-out, `on_error`, and SNS/SQS MessageAttributes is
-  **implemented** (unsigned commit recorded after the gate).
+  accepted at unsigned `a722076`.
+- Chunk 6 sync proxy and transforms (`http_request`, `respond`, `xml_prune`,
+  `body_format: xml`) is implemented in the working tree; local unsigned commit
+  pending the Chunk 6 gate.
 
 ## Orchestrator — current handoff
 
-**Status:** Chunk 5 implemented on `v2`. Next chunk is 6 (sync proxy and transforms).
+**Status:** Chunk 6 gate green; unsigned local commit next. Do not push.
+Do not start Chunk 7 until the Chunk 6 commit exists.
 
 **Accomplished in this window (Cursor, 2026-09-15):**
 
-- Committed Chunk 4 as unsigned `d7316df`.
-- Implemented Chunk 5: publish across all 13 destination types (adapter +
-  factory guard), `skip_failed`/`stop_on_failure`, reserved `on_error` ports,
-  SNS/SQS MessageAttributes from envelope variables.
+- Finished remaining Chunk 6 work: `body_format: xml`, `transform` kind
+  `xml_prune` (five ordered rules, per-rule counts), `http_request.body`
+  `raw|transformed`, and an httptest XML proxy flow.
+- Recorded D14: in-tree XML DOM over `encoding/xml`; UG `pipeline.js` is not
+  in this repo, so predicates are the documented V2 contract plus synthetic
+  MISMO-shaped fixtures (including orphaned relationships).
+
+**Chunk 6 gate (local, 2026-09-15):**
+
+- `make test`, `make lint`, `make conformance`: PASS (I9/I15 SKIP until Chunk 8)
+- `go test -race` graph/flowconfig/httpapi/transform/conformance: PASS
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- `make validate-examples`: PASS (`examples/v2/proxy.yaml` valid with no-rate_limit warning)
+- `make test-all`: PASS (queue 337s including LocalStack)
+- httptest: proxy PUT returns upstream 418/body; Authorization not forwarded;
+  hops incremented; XML prune proxy sends transformed body and returns upstream 202
+
+**Chunk 6 files:** `internal/transform/{xml_dom,xml_prune,changed_fields}.go` (+ tests),
+`internal/flowconfig/{node_envelope,node_http_request,node_transform,node_respond,nodes,headers,node_auth}.go`,
+`internal/httpapi/{flowserver,flowserver_proxy_test}.go`, `internal/auth/registry.go`,
+`examples/v2/proxy.yaml`, `Makefile`,
+`v2/README.md` (D14), `v2/plans/06-sync-proxy-and-transforms.md`.
+
+**Risks / skipped:** UG JS differential tests for `changed_fields` and
+`xml_prune` (UG excluded). `http_request.auth.oauth2` not in this chunk.
+I9/I15 still skipped until Chunk 8.
+
+**Exact next step:** One unsigned local commit for Chunk 6. Then Chunk 7
+(`v2/plans/07-code-node-goja.md`). Do not push.
+
+## Orchestrator — Chunk 5 gate (retained)
+
+**Status:** accepted at unsigned `a722076`.
 
 **Chunk 5 gate (local, 2026-09-15):**
 
@@ -54,15 +87,6 @@ agent can resume without reading chat history.
 `internal/flowconfig/message_attributes.go`, `internal/flowconfig/node_publish_types_test.go`,
 `internal/httpapi/flowserver.go`, `internal/queue/{publisher,sns,sqs,message_attributes}.go`,
 `internal/queue/aws_integration_test.go`.
-
-**Risks:** `skip_failed` dest fan-out is sequential (`FanoutConcurrency` unused).
-Lookup serving still does not dial providers at `NewFlowServer`. `secret_ref`
-remains fail-closed until Chunk 8. I9/I15 skipped until capture is wired.
-Universal-gateway live SNS filter-policy inventory was not performed (UG out of
-scope); attribute names/types follow gaps A4 (`fields_changed` / String.Array).
-
-**Exact next step:** Chunk 6 — `http_request`, `respond`, and `transform`
-(`v2/plans/06-sync-proxy-and-transforms.md`).
 
 ## Subagent — Chunk 1 implementation (`spike_s2`)
 

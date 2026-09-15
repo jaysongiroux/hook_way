@@ -28,9 +28,9 @@ intended reason before implementation; workers must report that evidence.
 | 1 Graph core | Accepted through `59975bd` | Race tests, 91.7% coverage, illegal gate wiring rejected |
 | 2 Config and validation | Accepted through `9db929f` | Valid configs accepted; all invalid-config problems reported |
 | 3 Minimal serving | Accepted through `a468a52` | Signed live request delivered with 202; invalid signature rejected |
-| 4 Gates and conformance | Implemented; I1-I18 suite green with I9/I15 skipped until Chunk 8 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
-| 5 Destinations and fan-out | Waiting for 4 | All 13 types deliver through V2; integration gates pass |
-| 6 Proxy and transforms | Waiting for 5 | Upstream response, method, path, query and transforms verified |
+| 4 Gates and conformance | Accepted through `d7316df`; I9/I15 skipped until Chunk 8 | Applicable invariant tests and gate rejection tests pass; track deferred I9/I15 explicitly |
+| 5 Destinations and fan-out | Accepted through `a722076` | All 13 types deliver through V2; integration gates pass |
+| 6 Proxy and transforms | Implemented; local unsigned commit after gate | Upstream response, method, path, query and transforms verified |
 | 7 Code node | Waiting for 6 | C1-C7 individually exercised; race and dependency checks pass |
 | 8 Secrets and observability | Waiting for 6 | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
 | 9 V2 cutover and V1 removal | Waiting for 7 and 8 | V2 feature/conformance gates pass before V1 removal |
@@ -191,7 +191,34 @@ do not claim that an unavailable skill was invoked.
   with pointers to Chunk 8. `make conformance` runs in CI next to `make test`.
 - `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
   conformance, WASM validator build: PASS. V1 still serves.
-- Next: Chunk 6 synchronous proxy and transforms (`v2/plans/06-sync-proxy-and-transforms.md`).
+- Next after Chunk 5: Chunk 6 synchronous proxy and transforms
+  (`v2/plans/06-sync-proxy-and-transforms.md`).
+
+## Chunk 6 local gate — 2026-09-15
+
+- `http_request` is Envelope→Envelope (not Terminal/Detached). Shared pooled
+  client; no redirect follow. Templated `{rest}`, `forward_method`/`forward_query`,
+  timeout→504, non-2xx passthrough, `error_on_status: [5xx]`→502. Increments
+  `X-Hookway-Hops`. Never forwards inbound `Authorization` unless listed in
+  `forward_headers`. `body: raw|transformed` (default raw).
+- `respond` passthrough copies `Envelope.Upstream` and strips hop-by-hop plus
+  `Set-Cookie`. Missing upstream is 502.
+- `methods: [ANY]` skips 405. `header_exact` aliases `exact`. `auth.NewVerifier`
+  infers AuthType from the scheme when empty.
+- `transform` kinds: `changed_fields` (status promotion), `field_map`, `xml_prune`.
+- `body_format: xml` stores a cloneable `transform.Document` on `Envelope.Body`
+  and keeps raw bytes on `Verified` (I6). Invalid XML is 400.
+- `xml_prune` runs the five ordered rules from S2. DOM is in-tree over
+  `encoding/xml` (D14). Universal-gateway JS/fixtures are not in this repo;
+  predicates are documented and tested with synthetic MISMO-shaped XML that
+  exercises empty leaves, empty parents, hardcoded parties, blank general
+  partners, and orphaned relationships. Per-rule element counts are logged.
+- `examples/v2/proxy.yaml` is the curl-gate flow; `{rest...}` paths must be quoted.
+- OAuth on `http_request.auth.oauth2` remains S2/Chunk-later; not required for
+  the proxy gate.
+- `make test`, `make lint`, `make conformance`, race on graph/flowconfig/httpapi/
+  transform/conformance, WASM validator build, `make validate-examples`,
+  `make test-all`: PASS. V1 still serves. UG JS differential tests skipped.
 
 ## Chunk 5 local gate — 2026-09-15
 

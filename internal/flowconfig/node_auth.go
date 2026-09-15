@@ -56,10 +56,14 @@ func newAuthNode(id string, opts AuthOptions, logger *slog.Logger) graph.Node {
 }
 
 func defaultAuthScheme(scheme string) string {
-	if scheme == "" {
+	switch scheme {
+	case "":
 		return auth.SchemeHMACSHA256TSColon
+	case "header_exact":
+		return auth.SchemeExact
+	default:
+		return scheme
 	}
-	return scheme
 }
 
 func (n authNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {

@@ -4,8 +4,8 @@ Scratch/working space for the V2 redesign: a typed-port node graph replacing V1'
 hardcoded request pipeline.
 
 **Branch:** `v2` (branched from `main` @ `242c358`)
-**Status:** implementation underway; Chunk 1 accepted; Chunk 2 committed; Chunk 3
-minimal serving path is implemented. External universal-gateway and DigiFi
+**Status:** implementation underway; Chunks 1–5 accepted; Chunk 6 proxy and
+transforms implemented. External universal-gateway and DigiFi
 migration work was removed from scope on 2026-09-14. See
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments, verification and plan corrections.
 
@@ -45,6 +45,7 @@ clean break (D4) removed — it is the most skippable and most regretted item in
 | D11 | Shared state scope (Q10) | **Pod scope only.** No Redis on the hot path; `rate_limit` and `replay_guard` stay in-process and approximate. W5 persists, documented. | 2026-09-14 |
 | D12 | I17 reservation release | **Optional `graph.Compensator` interface.** Executor collects compensations from nodes that succeeded; the **server** invokes them when `err != nil \|\| any delivery failed`, on a detached context. Rejected: context accumulator (a node unit-tested alone would silently no-op) and payload-carried callbacks (lost on the error path). Requires `Flow.Run` to return a populated `Terminal` on error. | 2026-09-14 |
 | D13 | Destination node vocabulary | **One `publish` node referencing the shared top-level `destinations:` map.** Keeps connection ownership and reuse in the existing destination factory while each graph node supplies its target and delivery options. | 2026-09-14 |
+| D14 | XML prune DOM | **In-tree tree over `encoding/xml`**, not a third-party DOM library. Parent-aware rewrites use recursive child slices; `Document` implements `graph.BodyCloner`. Universal-gateway `pipeline.js` is not in this repo, so predicates are the documented V2 contract (tested with synthetic MISMO-shaped fixtures covering all five rules, including orphaned `RELATIONSHIP`s). Non-UTF-8 charset declarations fail closed. | 2026-09-15 |
 
 Rejected alternatives for D2: *free DAG* (invariants become linter warnings) and
 *constrained spine* (invariants unrepresentable, but auth can never branch and the

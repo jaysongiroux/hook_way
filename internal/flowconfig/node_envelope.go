@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jasongiroux/hookway/internal/transform"
 	"github.com/jasongiroux/hookway/internal/webhook"
 )
 
@@ -58,13 +59,6 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 			Err: fmt.Errorf("envelope %q: expected Verified, got %T", n.id, in),
 		}
 	}
-	if n.format == "xml" {
-		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusInternalServerError,
-			Err:    fmt.Errorf("%w: envelope body_format xml", errNotImplemented),
-		}
-	}
-
 	head := verified.Raw.Head
 	req := &http.Request{
 		Method: head.Method,
@@ -107,6 +101,15 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 	switch n.format {
 	case "raw":
 		event.Body = nil
+		out.Extra = CapturedEvent{Event: event}
+		return out, nil
+	case "xml":
+		doc, err := transform.ParseXML(verified.Raw.Body)
+		if err != nil {
+			return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+		}
+		event.Body = nil
+		out.Body = doc
 		out.Extra = CapturedEvent{Event: event}
 		return out, nil
 	default:

@@ -105,14 +105,15 @@ func authTypeOrDefault(authType string) string {
 	return authType
 }
 
-// NewVerifier builds the verifier for a registered scheme.
+// NewVerifier builds the verifier for a registered scheme. An empty AuthType
+// is inferred from the scheme so V2 auth nodes can name only the scheme.
 func NewVerifier(spec Spec) (Verifier, error) {
 	def, ok := registry[spec.Scheme]
 	if !ok {
 		return nil, fmt.Errorf("unknown signature scheme %q (known: %v)", spec.Scheme, Schemes())
 	}
-	if def.authType != authTypeOrDefault(spec.AuthType) {
-		return nil, fmt.Errorf("scheme %q is not valid for auth type %q", spec.Scheme, authTypeOrDefault(spec.AuthType))
+	if spec.AuthType != "" && def.authType != spec.AuthType {
+		return nil, fmt.Errorf("scheme %q is not valid for auth type %q", spec.Scheme, spec.AuthType)
 	}
 	return def.build(spec)
 }

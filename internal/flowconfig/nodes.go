@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jasongiroux/hookway/internal/transform"
 	"gopkg.in/yaml.v3"
 )
 
@@ -123,6 +124,7 @@ type HTTPRequestOptions struct {
 	Timeout        string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Headers        map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	ErrorOnStatus  []string          `yaml:"error_on_status,omitempty" json:"error_on_status,omitempty"`
+	Body           string            `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed"`
 }
 type PublishOptions struct {
 	Destination       string         `yaml:"destination" json:"destination" jsonschema:"required"`
@@ -220,14 +222,18 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			}
 			return newLookupNode(id, o, fn)
 		}),
-		define("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, nil),
+		define("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) graph.Node {
+			return newTransformNode(id, o, opts.Logger)
+		}),
 		define("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, nil),
 		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
-		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, nil),
+		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) graph.Node {
+			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
+		}),
 		define("publish", graph.PortEnvelope, graph.PortTerminal, true, validatePublish, func(id string, o PublishOptions) graph.Node {
 			return newPublishNode(id, o, opts.Publishers)
 		}),
-		define("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, nil),
+		define("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode),
 	}
 }
 
@@ -423,6 +429,11 @@ func validateTransform(o TransformOptions) error {
 			return errors.New("field_map requires mappings")
 		}
 	case "xml_prune":
+		for i, rule := range o.Rules {
+			if !transform.KnownXMLPruneRule(rule) {
+				return fmt.Errorf("xml_prune rules[%d] unknown %q", i, rule)
+			}
+		}
 	default:
 		return fmt.Errorf("unknown transform kind %q", o.Kind)
 	}
@@ -459,6 +470,11 @@ func validateSwitch(o SwitchOptions) error {
 func validateHTTPRequest(o HTTPRequestOptions) error {
 	if err := require("url", o.URL); err != nil {
 		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(o.Body)) {
+	case "", "raw", "transformed":
+	default:
+		return fmt.Errorf("http_request.body %q must be raw or transformed", o.Body)
 	}
 	return validateDuration("timeout", o.Timeout, false)
 }

@@ -127,6 +127,8 @@ validate-examples:
 		ARCHIVE_BUCKET=archive \
 		HUB_API_KEY=dummy \
 		DIGIFI_WEBHOOK_TOKEN=dummy \
+		DIGIFI_BASE=https://example.test \
+		SF_TOKEN=testtoken \
 		ROUTING_TABLE=sandbox_ephemeral_routing_data \
 		ROUTING_DB_URL=postgres://localhost:5432/routing \
 		REPLAY_DB_URL=postgres://localhost:5432/db \
