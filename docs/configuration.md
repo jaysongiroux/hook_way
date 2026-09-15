@@ -23,6 +23,26 @@ config validation failed
 - `server.max_body_bytes`: required positive integer.
 - `server.max_inflight_requests`: optional integer. Omitted or explicit `0` defaults to `256`, capping concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. Explicit `-1` disables the limit (unlimited in-flight requests). Any other negative value is rejected. Health, readiness, and metrics endpoints are never subject to this limit.
 - `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for endpoints using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
+- `server.readiness_require_all`: optional boolean, default `false` for schema version 2. When false, `/ready` returns 200 with a per-flow body while at least one flow is ready. When true, `/ready` returns 503 if any flow is unready (V1 AND-aggregation). Schema version 1 always AND-aggregates.
+
+## Secret references (schema_version 2)
+
+`auth.secret_ref` is an alternative to inline `auth.secret`. Exactly one of `secret` or `secret_ref` is required. The resolver is cached and refreshed on a timer — never fetched per request.
+
+```yaml
+- id: auth
+  type: auth
+  scheme: hmac_sha256_hex
+  secret_ref: {provider: env, name: WEBHOOK_SECRET, refresh: 15m, overlap: 5m}
+  signature_header: X-Hub-Signature-256
+```
+
+- `provider`: `env` (read `name` as an environment variable, V1 `${VAR}` equivalent), `file` (read `name` as a path), or `aws_secrets_manager` (list matching names, newest `LastChangedDate` wins).
+- `name`: env var, file path, or Secrets Manager name/prefix.
+- `refresh`: optional duration, default `15m`.
+- `overlap`: optional duration, default `0`. During this window after a value change, **both** the previous and current secrets verify, so rotation is not a flag day.
+
+A refresh failure keeps serving the last known-good value, emits `hookway_secret_refresh_failures_total`, and logs at error. AWS credentials use the default SDK chain; `AWS_ENDPOINT_URL` targets LocalStack.
 
 ## Security
 

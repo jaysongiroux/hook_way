@@ -2249,6 +2249,74 @@
       ],
       "title": "Events Purged",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 104 },
+      "id": 120,
+      "panels": [],
+      "title": "Flow Nodes",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Per-node execution latency (p50/p95/p99). Labels are config-bounded (flow, node_id, node_type) — never rendered lookup targets.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 105 },
+      "id": 121,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "histogram_quantile(0.50, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[5m])) by (le, node_type))",
+          "legendFormat": "p50 {{node_type}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "histogram_quantile(0.95, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[5m])) by (le, node_type))",
+          "legendFormat": "p95 {{node_type}}",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "histogram_quantile(0.99, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[5m])) by (le, node_type))",
+          "legendFormat": "p99 {{node_type}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Node Duration",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

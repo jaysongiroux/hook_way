@@ -180,10 +180,16 @@ func defineErr[T any](name string, in, out graph.PortType, detached bool, valida
 type RegistryOptions struct {
 	Publishers      PublisherResolver
 	Lookups         func(LookupOptions) LookupFunc
+	Secrets         func(SecretRefOptions) (SecretsFunc, error)
 	Logger          *slog.Logger
 	HeaderDenylist  []string
 	HeaderAllowlist []string
 }
+
+// SecretsFunc returns the currently-valid secret values for an auth node.
+// Serving injects a cached secretref resolver; tests inject a fake. Defined
+// here so flowconfig does not import internal/secretref (WASM).
+type SecretsFunc func(ctx context.Context) ([][]byte, error)
 
 func catalog(opts RegistryOptions) []nodeDefinition {
 	return []nodeDefinition{
@@ -210,8 +216,16 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			}
 			return nil
 		}, newReadBody),
-		define("auth", graph.PortRawRequest, graph.PortVerified, false, validateAuth, func(id string, o AuthOptions) graph.Node {
-			return newAuthNode(id, o, opts.Logger)
+		defineErr("auth", graph.PortRawRequest, graph.PortVerified, false, validateAuth, func(id string, o AuthOptions) (graph.Node, error) {
+			var secrets SecretsFunc
+			if o.SecretRef != nil && opts.Secrets != nil {
+				fn, err := opts.Secrets(*o.SecretRef)
+				if err != nil {
+					return nil, err
+				}
+				secrets = fn
+			}
+			return newAuthNode(id, o, opts.Logger, secrets), nil
 		}),
 		define[NoAuthOptions]("no_auth", graph.PortRawRequest, graph.PortVerified, false, nil, func(id string, _ NoAuthOptions) graph.Node {
 			return newNoAuthNode(id, opts.Logger)

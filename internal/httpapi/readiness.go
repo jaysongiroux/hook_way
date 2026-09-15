@@ -38,8 +38,14 @@ var errNotProbed = errors.New("readiness not yet probed")
 // readinessResult is the cached outcome of the most recent readiness probe.
 type readinessResult struct {
 	err       error
+	dest      map[string]error
+	replayErr error
 	checkedAt time.Time
 }
+
+// destWildcard is stored when the publisher does not expose per-id readiness,
+// so every flow dest maps to the single aggregate Ready() result.
+const destWildcard = "*"
 
 // readinessByID is satisfied by *queue.RoutingPublisher. When the publisher
 // implements it, the prober collects per-destination readiness so it can drive
@@ -118,6 +124,18 @@ func (p *readinessProber) status(now time.Time) (error, bool) {
 	return res.err, res.err == nil
 }
 
+func (p *readinessProber) destinationSnapshot(now time.Time) (dest map[string]error, replayErr error, ready bool, err error) {
+	res := p.result.Load()
+	if res == nil {
+		return nil, nil, false, errNotProbed
+	}
+	if age := now.Sub(res.checkedAt); age > stalenessFactor*p.interval {
+		p.logStaleOnce(res.checkedAt, age)
+		return res.dest, res.replayErr, false, fmt.Errorf("readiness result is stale (last probed %s ago)", age.Round(time.Second))
+	}
+	return res.dest, res.replayErr, true, res.err
+}
+
 // logStaleOnce logs the staleness warning the first time status observes a
 // given cached result's checkedAt as stale, and suppresses repeats for that
 // same result on subsequent calls (e.g. repeated /ready polls before the next
@@ -139,6 +157,7 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 	defer cancel()
 
 	var aggErr error
+	dest := map[string]error{}
 	if byID, ok := p.publisher.(readinessByID); ok {
 		byIDResults := byID.ReadyByID(probeCtx)
 		ids := make([]string, 0, len(byIDResults))
@@ -149,6 +168,7 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 		var errs []error
 		for _, id := range ids {
 			err := byIDResults[id]
+			dest[id] = err
 			p.metrics.DestinationReady(id, err == nil)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", id, err))
@@ -157,11 +177,14 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 		aggErr = errors.Join(errs...)
 	} else {
 		aggErr = p.publisher.Ready(probeCtx)
+		dest[destWildcard] = aggErr
 	}
 
+	var replayErr error
 	if p.replayPing != nil {
 		if err := p.replayPing(probeCtx); err != nil {
 			p.metrics.ReplayStoreUp(false)
+			replayErr = err
 			aggErr = errors.Join(aggErr, fmt.Errorf("replay_store: %w", err))
 		} else {
 			p.metrics.ReplayStoreUp(true)
@@ -171,7 +194,7 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 	if aggErr != nil {
 		p.logger.Error("readiness probe failed", "error", aggErr.Error())
 	}
-	p.result.Store(&readinessResult{err: aggErr, checkedAt: time.Now()})
+	p.result.Store(&readinessResult{err: aggErr, dest: dest, replayErr: replayErr, checkedAt: time.Now()})
 }
 
 // run kicks an immediate probe, then re-probes every interval until ctx is

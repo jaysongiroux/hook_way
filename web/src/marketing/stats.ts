@@ -13,7 +13,7 @@ export interface Stat {
 // count of what ships is verifiable and does not expire.
 export const STATS: Stat[] = [
   { label: "Destination types", value: DEST_TYPES.length, detail: "queues, streams, stores, and services" },
-  { label: "Prometheus metrics", value: 42, detail: "exported by default, no exporter to add" },
+  { label: "Prometheus metrics", value: 45, detail: "exported by default, no exporter to add" },
   { label: "Signature schemes", value: 11, detail: "across hmac, jwt, and header auth" },
   { label: "Filter operators", value: 12, detail: "on any header or body field" },
 ];

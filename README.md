@@ -40,7 +40,7 @@ go run ./cmd/hookway --config examples/config.yaml
 
 - Configured endpoint paths, such as `POST /webhooks/paddle`, accept webhook events.
 - `GET /healthz` confirms the process is alive.
-- `GET /ready` reports readiness from the background prober's most recent check of every configured destination used by enabled endpoints (including fan-out destinations); it is served from cache, not probed per request.
+- `GET /ready` reports per-flow readiness derived from unique destination probes. Schema version 2 returns 200 while at least one flow is ready (one down destination does not sideline unrelated flows). Set `server.readiness_require_all: true` for V1 AND-aggregation (503 if any flow is unready). Schema version 1 still AND-aggregates every destination. Served from cache, not probed per request.
 - `GET /readyz` reports the same cached readiness state as `/ready`.
 - `GET /health` is a liveness alias for `/healthz` (it does NOT report readiness), so infrastructure treating `/health` as a liveness probe will not restart pods on transient destination outages.
 - `GET /metrics` exposes Prometheus metrics when enabled.

@@ -22,6 +22,9 @@ type RunOptions struct {
 	// OnNode runs once after each attempted node, including failures and panics.
 	// An observer panic is isolated: instrumentation must not alter delivery.
 	OnNode func(NodeEvent)
+	// BeforeDetached runs once before the first detached node's publish-timeout
+	// context is created. Used for replay capture INSERT (I9). Panics are isolated.
+	BeforeDetached func(Payload)
 }
 
 // DeliveryTarget is optional destination metadata. Return the configured template,
@@ -72,6 +75,7 @@ type execution struct {
 	opts                RunOptions
 	term                Terminal
 	visited, suppressed map[string]bool
+	beforeDetachedDone  bool
 }
 
 func (e *execution) delivery(b *bound, err error, unattempted bool) Delivery {
@@ -99,6 +103,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	nctx := ctx
 	cancel := func() {}
 	if b.spec.Detached {
+		e.runBeforeDetached(in)
 		nctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), e.opts.PublishTimeout)
 	}
 	started := time.Now()
@@ -188,6 +193,15 @@ func observe(fn func(NodeEvent), ev NodeEvent) {
 	}
 	defer func() { _ = recover() }()
 	fn(ev)
+}
+
+func (e *execution) runBeforeDetached(in Payload) {
+	if e.beforeDetachedDone || e.opts.BeforeDetached == nil {
+		return
+	}
+	e.beforeDetachedDone = true
+	defer func() { _ = recover() }()
+	e.opts.BeforeDetached(in)
 }
 
 func selectedBranch(out Payload) string {

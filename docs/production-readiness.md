@@ -14,7 +14,7 @@ internal services at this stage: 33.5k lines of Go with a high test-to-source ra
 records *why* decisions were made, fail-closed defaults throughout auth and filtering,
 panic recovery at every goroutine boundary, correct `X-Forwarded-For` handling,
 constant-time secret comparison, bounded shutdown waits with carefully-ordered
-`defer` LIFO semantics, and 41 Prometheus metrics with a tested Grafana dashboard.
+`defer` LIFO semantics, and 45 Prometheus metrics with a tested Grafana dashboard.
 `go vet` is clean and the full unit suite passes.
 
 **It is not, however, production-ready for an enterprise environment yet.** The gaps

@@ -15,11 +15,12 @@ type authNode struct {
 	id       string
 	opts     AuthOptions
 	verifier auth.Verifier
+	secrets  SecretsFunc
 	header   string
 	queryKey string
 }
 
-func newAuthNode(id string, opts AuthOptions, logger *slog.Logger) graph.Node {
+func newAuthNode(id string, opts AuthOptions, logger *slog.Logger, secrets SecretsFunc) graph.Node {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -46,13 +47,17 @@ func newAuthNode(id string, opts AuthOptions, logger *slog.Logger) graph.Node {
 			spec.TimestampTolerance = d
 		}
 	}
-	verifier, err := auth.NewVerifier(spec)
-	if err != nil {
-		logger.Error("signature scheme unavailable; node will reject all requests",
-			"node_id", id, "scheme", opts.Scheme, "error", err.Error())
-		verifier = auth.RejectAll{}
+	var verifier auth.Verifier
+	if secrets == nil {
+		var err error
+		verifier, err = auth.NewVerifier(spec)
+		if err != nil {
+			logger.Error("signature scheme unavailable; node will reject all requests",
+				"node_id", id, "scheme", opts.Scheme, "error", err.Error())
+			verifier = auth.RejectAll{}
+		}
 	}
-	return authNode{id: id, opts: opts, verifier: verifier, header: header, queryKey: queryKey}
+	return authNode{id: id, opts: opts, verifier: verifier, secrets: secrets, header: header, queryKey: queryKey}
 }
 
 func defaultAuthScheme(scheme string) string {
@@ -66,7 +71,7 @@ func defaultAuthScheme(scheme string) string {
 	}
 }
 
-func (n authNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
+func (n authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
 	raw, ok := in.(graph.RawRequest)
 	if !ok {
 		return nil, graph.NodeError{
@@ -75,13 +80,53 @@ func (n authNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error
 		}
 	}
 	credential := n.credential(raw)
-	if err := n.verifier.Verify(credential, raw.Body, time.Now()); err != nil {
+	if err := n.verify(ctx, credential, raw.Body); err != nil {
 		return nil, graph.NodeError{
 			NodeID: n.id, Status: http.StatusUnauthorized,
 			Err: auth.ErrUnauthorized,
 		}
 	}
 	return graph.Verified{Raw: raw, Identity: n.opts.Scheme}, nil
+}
+
+func (n authNode) verify(ctx context.Context, credential string, body []byte) error {
+	now := time.Now()
+	if n.secrets == nil {
+		return n.verifier.Verify(credential, body, now)
+	}
+	secrets, err := n.secrets(ctx)
+	if err != nil || len(secrets) == 0 {
+		return auth.ErrUnauthorized
+	}
+	spec := auth.Spec{
+		Scheme:           defaultAuthScheme(n.opts.Scheme),
+		RemoveBearer:     n.opts.RemoveBearer,
+		ExpectedIssuer:   n.opts.ExpectedIssuer,
+		ExpectedAudience: n.opts.ExpectedAudience,
+		BodyHashClaim:    n.opts.BodyHashClaim,
+	}
+	if n.opts.TimestampTolerance != "" {
+		if d, err := time.ParseDuration(n.opts.TimestampTolerance); err == nil {
+			spec.TimestampTolerance = d
+		}
+	}
+	var last error
+	for _, secret := range secrets {
+		spec.Secret = string(secret)
+		v, err := auth.NewVerifier(spec)
+		if err != nil {
+			last = err
+			continue
+		}
+		last = v.Verify(credential, body, now)
+		if last == nil {
+			return nil
+		}
+	}
+	if last == nil {
+		return auth.ErrUnauthorized
+	}
+	return last
 }
 
 func (n authNode) credential(raw graph.RawRequest) string {

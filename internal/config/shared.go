@@ -39,6 +39,7 @@ type rawServerConfig = struct {
 	FanoutConcurrency   int    `yaml:"fanout_concurrency"`
 	ReadinessInterval   string `yaml:"readiness_interval"`
 	ReadinessTimeout    string `yaml:"readiness_timeout"`
+	ReadinessRequireAll bool   `yaml:"readiness_require_all"`
 }
 
 type rawReplayConfig = struct {
@@ -285,6 +286,7 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests),
 			FanoutConcurrency:   raw.Server.FanoutConcurrency,
 			ReadinessInterval:   readinessInterval, ReadinessTimeout: readinessTimeout,
+			ReadinessRequireAll: raw.Server.ReadinessRequireAll,
 		},
 		Security: raw.Security,
 		Metrics:  raw.Metrics,

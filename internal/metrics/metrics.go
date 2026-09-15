@@ -54,6 +54,9 @@ type Metrics struct {
 	replayStoreUp            prometheus.Gauge
 	replayPurged             prometheus.Counter
 	compensationFailed       *prometheus.CounterVec
+	nodeTotal                *prometheus.CounterVec
+	nodeDuration             *prometheus.HistogramVec
+	secretRefreshFailures    *prometheus.CounterVec
 	runtimeRegistered        bool
 }
 
@@ -214,6 +217,19 @@ func New() *Metrics {
 		Name: "hookway_compensation_failed_total",
 		Help: "Replay-reservation release failures. A silent failure leaves the reservation until TTL, so a legitimate retry is rejected 409.",
 	}, []string{"flow"})
+	m.nodeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_node_total",
+		Help: "Graph node executions by outcome. Labels are config-bounded (flow, node id, node type); never rendered lookup targets.",
+	}, []string{"flow", "node_id", "node_type", "outcome"})
+	m.nodeDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "hookway_node_duration_seconds",
+		Help:    "Graph node execution duration. Labels are config-bounded (flow, node id, node type).",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"flow", "node_id", "node_type"})
+	m.secretRefreshFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_secret_refresh_failures_total",
+		Help: "Background secret_ref refresh failures. The last known-good secret continues to be served.",
+	}, []string{"provider", "name"})
 	m.registry.MustRegister(
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
@@ -222,7 +238,7 @@ func New() *Metrics {
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
 		m.destinationReady, m.panics, m.buildInfo, m.replayCaptured, m.replayCaptureFailures, m.replayTriggered,
-		m.replayStoreUp, m.replayPurged, m.compensationFailed,
+		m.replayStoreUp, m.replayPurged, m.compensationFailed, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
 	)
 	return m
 }
@@ -457,6 +473,20 @@ func (m *Metrics) ReplayPurged(n int) {
 		return
 	}
 	m.replayPurged.Add(float64(n))
+}
+
+// Node records one graph node execution. outcome is "ok" or "error".
+// Labels must stay config-bounded: never pass a rendered lookup target or
+// request-derived value.
+func (m *Metrics) Node(flow, nodeID, nodeType, outcome string, duration time.Duration) {
+	m.nodeTotal.WithLabelValues(flow, nodeID, nodeType, outcome).Inc()
+	m.nodeDuration.WithLabelValues(flow, nodeID, nodeType).Observe(duration.Seconds())
+}
+
+// SecretRefreshFailure records a failed background secret_ref refresh. The
+// resolver keeps serving the last known-good value.
+func (m *Metrics) SecretRefreshFailure(provider, name string) {
+	m.secretRefreshFailures.WithLabelValues(provider, name).Inc()
 }
 
 // SetBuildInfo records the running binary's version and commit as a gauge

@@ -104,3 +104,29 @@ func TestRequestLevelPanelsDoNotUseRouteFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeDurationPanelUsesBoundedNodeMetric(t *testing.T) {
+	d := loadDashboard(t)
+	found := false
+	for _, panel := range d.Panels {
+		if panel.Title != "Node Duration" {
+			continue
+		}
+		found = true
+		if panel.FieldConfig.Defaults.Unit != "s" {
+			t.Errorf("Node Duration unit = %q, want s", panel.FieldConfig.Defaults.Unit)
+		}
+		for _, target := range panel.Targets {
+			if !strings.Contains(target.Expr, "hookway_node_duration_seconds") {
+				t.Errorf("Node Duration query must use hookway_node_duration_seconds: %s", target.Expr)
+			}
+			if strings.Contains(target.Expr, "queue=") || strings.Contains(target.Expr, "target=") {
+				t.Errorf("Node Duration must not label by data-dependent queue/target: %s", target.Expr)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing panel \"Node Duration\"")
+	}
+}
+

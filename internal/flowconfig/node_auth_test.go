@@ -114,3 +114,46 @@ func TestNoAuthProducesVerified(t *testing.T) {
 		t.Errorf("PortType() = %s, want Verified", out.PortType())
 	}
 }
+
+func TestAuthSecretRefAcceptsAnyCurrentSecret(t *testing.T) {
+	const current, previous = "new-secret", "old-secret"
+	raw := []byte(`{"ok":true}`)
+	sign := func(secret string) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(raw)
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	reg, err := NewRegistryWithOptions(RegistryOptions{
+		Secrets: func(SecretRefOptions) (SecretsFunc, error) {
+			return func(context.Context) ([][]byte, error) {
+				return [][]byte{[]byte(current), []byte(previous)}, nil
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("auth")
+	node, err := spec.New(nodeConfigFromYAML(t, "auth",
+		"scheme: hmac_sha256_hex\nsecret_ref: {provider: env, name: IGNORED}\nsignature_header: X-Sig\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{current, previous} {
+		_, err := node.Run(context.Background(), graph.RawRequest{
+			Head: graph.RequestHead{Header: http.Header{"X-Sig": []string{sign(secret)}}},
+			Body: raw,
+		})
+		if err != nil {
+			t.Fatalf("secret %q rejected during overlap: %v", secret, err)
+		}
+	}
+	_, err = node.Run(context.Background(), graph.RawRequest{
+		Head: graph.RequestHead{Header: http.Header{"X-Sig": []string{sign("other")}}},
+		Body: raw,
+	})
+	if err == nil {
+		t.Fatal("unknown secret accepted")
+	}
+}
+

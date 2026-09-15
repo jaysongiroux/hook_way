@@ -66,7 +66,7 @@ integration-test:
 	$(GO) test ./internal/queue -run TestRabbitMQ -count=1
 
 aws-integration-test:
-	$(GO) test ./internal/queue ./internal/lookup -run 'TestAWS' -count=1
+	$(GO) test ./internal/queue ./internal/lookup ./internal/secretref -run 'TestAWS' -count=1
 
 redis-integration-test:
 	$(GO) test ./internal/queue -run 'TestRedis' -count=1

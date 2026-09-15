@@ -72,6 +72,11 @@ type ServerConfig struct {
 	// Defaults to 5s when omitted; an explicitly-set non-positive value is
 	// rejected at load time.
 	ReadinessTimeout time.Duration
+	// ReadinessRequireAll, when true, makes /ready return 503 if any flow is
+	// unready (V1 AND-aggregation). The default is false: /ready stays 200
+	// when at least one flow is ready so one bad destination does not take
+	// unrelated flows out of rotation (D9).
+	ReadinessRequireAll bool
 }
 
 type SecurityConfig struct {

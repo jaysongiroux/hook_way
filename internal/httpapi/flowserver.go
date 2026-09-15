@@ -13,13 +13,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/jasongiroux/hookway/internal/auth"
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/flowconfig"
 	"github.com/jasongiroux/hookway/internal/graph"
 	hooklogging "github.com/jasongiroux/hookway/internal/logging"
 	"github.com/jasongiroux/hookway/internal/metrics"
 	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jasongiroux/hookway/internal/secretref"
 	"github.com/jasongiroux/hookway/internal/vars"
 )
 
@@ -38,7 +45,10 @@ type FlowServer struct {
 	flows          map[string]mountedFlow
 	mux            *http.ServeMux
 	readiness      *readinessProber
+	replay         ReplayCapturer
 }
+
+var nodeTracer = otel.Tracer("hookway")
 
 type flowPattern struct {
 	name    string
@@ -51,6 +61,8 @@ type mountedFlow struct {
 	allow      string
 	flow       *graph.Flow
 	destByNode map[string]string
+	destIDs    []string
+	hasNoAuth  bool
 	// broken is set when graph.Compile failed. The path is still registered
 	// so matching requests return 500 rather than 404 (I13).
 	broken bool
@@ -109,6 +121,10 @@ func attachMessageAttributes(msg queue.Message, env graph.Envelope) queue.Messag
 }
 
 func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics) (*FlowServer, error) {
+	return newFlowServer(cfg, pub, logger, m, flowconfig.RegistryOptions{})
+}
+
+func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics, extra flowconfig.RegistryOptions) (*FlowServer, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -116,12 +132,16 @@ func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		m = metrics.New()
 	}
 	v1cfg := cfg.ServingConfig()
-	reg, err := flowconfig.NewRegistryWithOptions(flowconfig.RegistryOptions{
-		Publishers:      queueResolver{pub: pub},
-		Logger:          logger,
-		HeaderDenylist:  cfg.Security.RedactedHeaderDenylist,
-		HeaderAllowlist: cfg.Security.ForwardedHeaderAllowlist,
-	})
+	extra.Publishers = queueResolver{pub: pub}
+	extra.Logger = logger
+	extra.HeaderDenylist = cfg.Security.RedactedHeaderDenylist
+	extra.HeaderAllowlist = cfg.Security.ForwardedHeaderAllowlist
+	if extra.Secrets == nil {
+		extra.Secrets = func(o flowconfig.SecretRefOptions) (flowconfig.SecretsFunc, error) {
+			return bindSecretRef(o, logger, m)
+		}
+	}
+	reg, err := flowconfig.NewRegistryWithOptions(extra)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +173,8 @@ func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		}
 		s.flows[name] = mountedFlow{
 			name: name, methods: methodSet(methods), allow: strings.Join(methods, ", "),
-			flow: compiled, destByNode: destByNode, broken: compileErr != nil || compiled == nil,
+			flow: compiled, destByNode: destByNode, destIDs: uniqueDestIDs(destByNode),
+			hasNoAuth: flowHasNoAuth(fc), broken: compileErr != nil || compiled == nil,
 		}
 		pattern, err := vars.ParsePath(path)
 		if err != nil {
@@ -203,6 +224,29 @@ func triggerRouting(fc graph.FlowConfig) (path string, methods []string, destByN
 	return path, methods, destByNode, nil
 }
 
+func uniqueDestIDs(destByNode map[string]string) []string {
+	seen := map[string]struct{}{}
+	ids := make([]string, 0, len(destByNode))
+	for _, id := range destByNode {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func flowHasNoAuth(fc graph.FlowConfig) bool {
+	for _, nc := range fc.Nodes {
+		if nc.Type == "no_auth" {
+			return true
+		}
+	}
+	return false
+}
+
 func methodSet(methods []string) map[string]struct{} {
 	out := map[string]struct{}{}
 	for _, m := range methods {
@@ -214,15 +258,15 @@ func methodSet(methods []string) map[string]struct{} {
 func (s *FlowServer) v1() *Server {
 	return &Server{
 		cfg: s.v1cfg, logger: s.logger, metrics: s.metrics,
-		trustedProxies: s.trustedProxies, readiness: s.readiness,
+		trustedProxies: s.trustedProxies, readiness: s.readiness, replay: s.replay,
 	}
 }
 
 func (s *FlowServer) routes() {
 	s.mux.HandleFunc("/health", s.v1().handleLive)
 	s.mux.HandleFunc("/healthz", s.v1().handleLive)
-	s.mux.HandleFunc("/ready", s.v1().handleReady)
-	s.mux.HandleFunc("/readyz", s.v1().handleReady)
+	s.mux.HandleFunc("/ready", s.handleReady)
+	s.mux.HandleFunc("/readyz", s.handleReady)
 	if s.cfg.Metrics.Enabled && s.cfg.Metrics.Addr == "" {
 		s.mux.Handle(s.cfg.Metrics.Path, s.v1().metricsHandler())
 	}
@@ -268,6 +312,7 @@ func (s *FlowServer) StartReadinessProbe(ctx context.Context) <-chan struct{} {
 func (s *FlowServer) Close() error { return nil }
 
 func (s *FlowServer) SetReplayCapturer(c ReplayCapturer) {
+	s.replay = c
 	if pinger, ok := c.(interface{ Ping(context.Context) error }); ok {
 		s.readiness.setReplayPing(pinger.Ping)
 	}
@@ -349,16 +394,56 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := flowconfig.WithBodyReader(r.Context(), r.Body)
+	captureEnabled := s.replay != nil && !(s.cfg.Replay.SkipUnauthenticated && mf.hasNoAuth)
+	captured := false
+	capturedID := head.EventID
 	term, runErr := mf.flow.Run(ctx, head, graph.RunOptions{
 		PublishTimeout:    s.cfg.Server.PublishTimeout,
 		FanoutConcurrency: s.cfg.Server.FanoutConcurrencyLimit(),
-		OnNode: func(ev graph.NodeEvent) {
-			attrs := []any{"flow", mf.name, "node_id", ev.NodeID, "node_type", ev.NodeType, "duration_ms", ev.Duration.Milliseconds()}
-			if ev.Err != nil {
-				s.logger.Info("node failed", append(attrs, "error", ev.Err.Error())...)
+		BeforeDetached: func(in graph.Payload) {
+			if !captureEnabled {
 				return
 			}
-			s.logger.Debug("node", attrs...)
+			env, ok := in.(graph.Envelope)
+			if !ok {
+				return
+			}
+			if s.cfg.Replay.SkipUnauthenticated && env.V.Identity == auth.AuthTypeNoAuth {
+				return
+			}
+			captured = true
+			ev := replayEventFromEnvelope(mf.name, env, head.EventID)
+			capturedID = ev.ID
+			s.v1().captureEvent(r.Context(), ev)
+		},
+		OnNode: func(ev graph.NodeEvent) {
+			outcome := "ok"
+			if ev.Err != nil {
+				outcome = "error"
+			}
+			s.metrics.Node(mf.name, ev.NodeID, ev.NodeType, outcome, ev.Duration)
+			started := time.Now().Add(-ev.Duration)
+			_, span := nodeTracer.Start(r.Context(), "hookway.node."+ev.NodeType,
+				trace.WithTimestamp(started),
+				trace.WithAttributes(
+					attribute.String("hookway.flow", mf.name),
+					attribute.String("hookway.node_id", ev.NodeID),
+					attribute.String("hookway.node_type", ev.NodeType),
+					attribute.String("hookway.request_id", head.RequestID),
+					attribute.String("hookway.event_id", head.EventID),
+				),
+			)
+			attrs := []any{"flow", mf.name, "node_id", ev.NodeID, "node_type", ev.NodeType,
+				"duration_ms", ev.Duration.Milliseconds(),
+				"request_id", head.RequestID, "trace_id", head.TraceID, "event_id", head.EventID}
+			if ev.Err != nil {
+				span.RecordError(ev.Err)
+				span.SetStatus(codes.Error, ev.Err.Error())
+				s.logger.Info("node failed", append(attrs, "error", ev.Err.Error())...)
+			} else {
+				s.logger.Debug("node", attrs...)
+			}
+			span.End(trace.WithTimestamp(time.Now()))
 		},
 	})
 	if graph.NeedsCompensation(term, runErr) {
@@ -370,6 +455,10 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 				"request_id", requestIDFromContext(r.Context()))
 			s.metrics.CompensationFailed(mf.name)
 		}
+	}
+	published, failed := deliveryMaps(mf, term)
+	if captured {
+		s.v1().recordOutcome(r.Context(), capturedID, deliveriesFromResults(published, failed))
 	}
 	if runErr != nil {
 		status = statusFromNodeError(runErr)
@@ -388,19 +477,6 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status = http.StatusAccepted
-	published := make([]map[string]string, 0, len(term.Deliveries))
-	failed := make([]map[string]string, 0)
-	for _, d := range term.Deliveries {
-		item := map[string]string{
-			"destination_queue_id": mf.destByNode[d.NodeID],
-			"queue":                d.Target,
-		}
-		if d.Err != nil || d.Unattempted {
-			failed = append(failed, item)
-			continue
-		}
-		published = append(published, item)
-	}
 	body := map[string]any{
 		"status": "accepted", "endpoint": mf.name, "destinations": published,
 		"event_id": head.EventID, "request_id": head.RequestID,
@@ -455,3 +531,130 @@ func statusFromNodeError(err error) int {
 	}
 	return http.StatusInternalServerError
 }
+
+func deliveryMaps(mf mountedFlow, term graph.Terminal) (published, failed []map[string]string) {
+	published = make([]map[string]string, 0, len(term.Deliveries))
+	failed = make([]map[string]string, 0)
+	for _, d := range term.Deliveries {
+		item := map[string]string{
+			"destination_queue_id": mf.destByNode[d.NodeID],
+			"queue":                d.Target,
+		}
+		if d.Err != nil || d.Unattempted {
+			failed = append(failed, item)
+			continue
+		}
+		published = append(published, item)
+	}
+	return published, failed
+}
+
+func replayEventFromEnvelope(flow string, env graph.Envelope, eventID string) replaystore.Event {
+	if cap, ok := env.Extra.(flowconfig.CapturedEvent); ok {
+		id := cap.Event.ID
+		if id == "" {
+			id = eventID
+		}
+		return replaystore.Event{
+			ID: id, Endpoint: flow, IdempotencyKey: cap.Event.IdempotencyKey,
+			RequestID: cap.Event.RequestID, TraceID: cap.Event.TraceID,
+			ReceivedAt: cap.Event.ReceivedAt, Envelope: envelopeToMessage(cap.Event),
+		}
+	}
+	msg := graphEnvelopeToMessage(env, "", "")
+	return replaystore.Event{
+		ID: eventID, Endpoint: flow, RequestID: env.V.Raw.Head.RequestID,
+		TraceID: env.V.Raw.Head.TraceID, ReceivedAt: time.Now().UTC(), Envelope: msg,
+	}
+}
+
+func bindSecretRef(o flowconfig.SecretRefOptions, logger *slog.Logger, m *metrics.Metrics) (flowconfig.SecretsFunc, error) {
+	ref := secretref.Ref{Provider: o.Provider, Name: o.Name}
+	if o.Refresh != "" {
+		d, err := time.ParseDuration(o.Refresh)
+		if err != nil {
+			return nil, err
+		}
+		ref.Refresh = d
+	}
+	if o.Overlap != "" {
+		d, err := time.ParseDuration(o.Overlap)
+		if err != nil {
+			return nil, err
+		}
+		ref.Overlap = d
+	}
+	r, err := secretref.New(ref, logger, func() {
+		m.SecretRefreshFailure(ref.Provider, ref.Name)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r.Secrets, nil
+}
+
+type flowReadyState struct {
+	Ready   bool     `json:"ready"`
+	Unready []string `json:"unready,omitempty"`
+}
+
+func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
+	dest, replayErr, fresh, _ := s.readiness.destinationSnapshot(time.Now())
+	if !fresh {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "not ready", "status": "not_ready",
+		})
+		return
+	}
+	flows := map[string]flowReadyState{}
+	names := make([]string, 0, len(s.flows))
+	for name := range s.flows {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	readyCount := 0
+	for _, name := range names {
+		mf := s.flows[name]
+		var unready []string
+		for _, id := range mf.destIDs {
+			if destErr := destError(dest, id); destErr != nil {
+				unready = append(unready, id)
+			}
+		}
+		if replayErr != nil {
+			unready = append(unready, "replay_store")
+		}
+		state := flowReadyState{Ready: len(unready) == 0, Unready: unready}
+		if state.Ready {
+			readyCount++
+		}
+		flows[name] = state
+	}
+	allReady := readyCount == len(flows)
+	httpOK := allReady || (!s.cfg.Server.ReadinessRequireAll && readyCount > 0)
+	if !httpOK {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "not ready", "status": "not_ready", "flows": flows,
+		})
+		return
+	}
+	status := "ready"
+	if !allReady {
+		status = "degraded"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": status, "flows": flows})
+}
+
+func destError(dest map[string]error, id string) error {
+	if dest == nil {
+		return errNotProbed
+	}
+	if err, ok := dest[id]; ok {
+		return err
+	}
+	if err, ok := dest[destWildcard]; ok {
+		return err
+	}
+	return errNotProbed
+}
+
