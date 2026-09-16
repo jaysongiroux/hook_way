@@ -7,12 +7,11 @@ const DEBOUNCE_MS = 400;
 export function usePersistence(): void {
   const setGraph = useGraphStore((s) => s.setGraph);
 
-  // Rehydrate once on mount.
   useEffect(() => {
     let cancelled = false;
     loadGraph().then((g) => {
-      if (!cancelled && g && (g.nodes.length > 0 || g.edges.length > 0)) {
-        setGraph(g.nodes, g.edges, g.serverConfig, g.configExtra);
+      if (!cancelled && g && (g.nodes.length > 0 || g.edges.length > 0 || Object.keys(g.otherFlows).length > 0)) {
+        setGraph(g);
       }
     });
     return () => {
@@ -20,12 +19,24 @@ export function usePersistence(): void {
     };
   }, [setGraph]);
 
-  // Debounced autosave on graph changes.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsub = useGraphStore.subscribe((state) => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void saveGraph(state.nodes, state.edges, state.serverConfig, state.configExtra), DEBOUNCE_MS);
+      timer = setTimeout(
+        () =>
+          void saveGraph({
+            nodes: state.nodes,
+            edges: state.edges,
+            serverConfig: state.serverConfig,
+            configExtra: state.configExtra,
+            destinations: state.destinations,
+            activeFlow: state.activeFlow,
+            otherFlows: state.otherFlows,
+            deliveryFailurePolicy: state.deliveryFailurePolicy,
+          }),
+        DEBOUNCE_MS,
+      );
     });
     return () => {
       if (timer) clearTimeout(timer);

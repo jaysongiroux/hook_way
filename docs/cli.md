@@ -86,6 +86,18 @@ writing YAML, e.g. at the top of a config file:
 # yaml-language-server: $schema=./hookway.schema.json
 ```
 
+Print the per-node catalog (ports plus option JSON Schema) used by the config
+builder:
+
+```bash
+go run ./cmd/hookway schema --nodes
+go run ./cmd/hookway schema --destinations
+```
+
+`make node-schema` writes those catalogs to `web/src/graph/nodeSchema.json` and
+`web/src/graph/destinationSchema.json`. `make node-schema-check` fails if the
+committed files drifted from the CLI.
+
 ## Validate (JSON output)
 
 Emit validation results as a JSON envelope instead of human-readable text:
@@ -118,6 +130,7 @@ go run ./cmd/hookway editor --addr :8090
 ```
 
 - `GET /schema` → the JSON Schema above.
+- `GET /node-schema` → the per-node catalog (`hookway schema --nodes`).
 - `POST /validate` → body is candidate YAML; returns the same `{"issues": [...]}`
   envelope as `validate --json`.
 
@@ -127,19 +140,18 @@ The same server also serves the embedded web bundle, when one was staged into
 the binary with `make ui`:
 
 - `/` → the project overview, which links to these docs and the examples.
-- `/builder` → the config builder, which reads `GET /schema` and posts to
-  `POST /validate`.
+- `/builder` → the config builder. It is a **config generator**: drag nodes,
+  export `schema_version: 2` YAML, and deploy that file yourself. It does not
+  connect to a running Hookway instance, edit live flows, or show executions.
+  The canvas refuses illegal port wiring. Export validates in-browser (WASM)
+  and falls back to `POST /validate`.
 
 Without a staged bundle both paths return a page explaining that the UI was not
 built; the API keeps working either way.
 
-The builder graph (`web/src/graph/`) still exports V1 `endpoints:` YAML. `hookway
-validate` and `hookway serve` reject that document with a migration error until
-the web UI is retargeted (Chunk 10). Use the `examples/` flow configs as the
-source of truth for serving.
-
 Pass `--config` (or set `HOOKWAY_CONFIG`) so the editor reads `security.api_key`
-and requires `Authorization: Bearer <key>` on `GET /schema` and `POST /validate`:
+and requires `Authorization: Bearer <key>` on `GET /schema`, `GET /node-schema`,
+and `POST /validate`:
 
 ```bash
 go run ./cmd/hookway editor --addr :8090 --config examples/config.yaml

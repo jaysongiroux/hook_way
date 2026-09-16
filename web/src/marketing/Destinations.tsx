@@ -1,5 +1,5 @@
 import { Box, Group, Text } from "@mantine/core";
-import { DEST_TYPES } from "../graph/destTypes";
+import { DEST_TYPES } from "../graph/nodeSchema";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
 

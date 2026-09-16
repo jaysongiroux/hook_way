@@ -1,6 +1,6 @@
 # Chunk 10: Web UI — Node-Based Config Generator
 
-**Status:** not started
+**Status:** complete
 **Depends on:** Chunk 9 (config format must be final)
 **Unlocks:** nothing — this is last
 **Verification gate:** the UI exports a config that `hookway validate` accepts, and can
@@ -83,11 +83,11 @@ workflow fully static. But read `cmd/hookway-wasm/main.go` and `internal/editor/
 first — if the WASM build already ships the registry, runtime is nearly free and strictly
 better.
 
-- [ ] **Step 1: Write failing tests** — every node type in the schema produces a palette
+- [x] **Step 1: Write failing tests** — every node type in the schema produces a palette
       entry; each option renders an input of the right kind (string, number, boolean, enum,
       array, nested object); a `required` option is marked required.
-- [ ] **Step 2: Implement, then pass.**
-- [ ] **Step 3: Add the CI drift check** if you chose build-time.
+- [x] **Step 2: Implement, then pass.**
+- [x] **Step 3: Add the CI drift check** if you chose build-time.
 
 ---
 
@@ -99,7 +99,7 @@ This is the highest-value UI work: **make illegal wiring impossible to draw.** T
 rejects it at load, but catching it at drag time is the entire reason a typed graph is nicer
 to author than YAML.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Mirror the backend's rule exactly — **strict equality**, no assignability:
 
@@ -119,13 +119,13 @@ describe('isValidConnection', () => {
 });
 ```
 
-- [ ] **Step 2: Implement, then pass**
+- [x] **Step 2: Implement, then pass**
 
 Wire it into React Flow's `isValidConnection` so an illegal drag is refused visually. Colour
 the handles by port type and show the type name on hover — that is what teaches the model
 without documentation.
 
-- [ ] **Step 3: Render labelled output ports** for `switch` and `on_error`.
+- [x] **Step 3: Render labelled output ports** for `switch` and `on_error`.
 
 ---
 
@@ -137,10 +137,10 @@ without documentation.
 One generic component rendering a form from a node's JSON Schema, replacing five hand-coded
 ones.
 
-- [ ] **Step 1: Write failing tests** covering each JSON Schema type, `required` marking,
+- [x] **Step 1: Write failing tests** covering each JSON Schema type, `required` marking,
       defaults shown as placeholders, enums as selects, and validation messages on blur.
-- [ ] **Step 2: Implement, then pass.**
-- [ ] **Step 3: Delete the five old files** and confirm nothing imports them:
+- [x] **Step 2: Implement, then pass.**
+- [x] **Step 3: Delete the five old files** and confirm nothing imports them:
       `grep -rn 'destTypes\|EndpointForm\|DestinationForm\|FilterForm\|VariablesSection' web/src/`
 
 ---
@@ -149,7 +149,7 @@ ones.
 
 **Files:** `web/src/graph/fromConfig.ts`, `toConfig.ts`, `fromYaml.ts`, tests
 
-- [ ] **Step 1: Write the round-trip test first** — it is the real acceptance criterion:
+- [x] **Step 1: Write the round-trip test first** — it is the real acceptance criterion:
 
 ```ts
 // Round-tripping must be lossless. If it is not, the UI silently destroys
@@ -163,11 +163,11 @@ it.each(EXAMPLE_CONFIGS)('round-trips %s without loss', (yaml) => {
 
 Feed it every file in `examples/v2/`. Losing a comment is acceptable; losing a field is not.
 
-- [ ] **Step 2: Implement, then pass.**
-- [ ] **Step 3: Validate exports in-browser** using the existing `cmd/hookway-wasm` build,
+- [x] **Step 2: Implement, then pass.**
+- [x] **Step 3: Validate exports in-browser** using the existing `cmd/hookway-wasm` build,
       so the UI can show validation errors before the user ever downloads a file. Check what
       `internal/editor/embed.go` already wires up.
-- [ ] **Step 4: Layout** — `layout.ts` needs to handle deeper graphs than V1's two columns.
+- [x] **Step 4: Layout** — `layout.ts` needs to handle deeper graphs than V1's two columns.
       A simple layered DAG layout keyed on port type reads well, since the port types are
       already an ordering.
 
@@ -175,7 +175,7 @@ Feed it every file in `examples/v2/`. Losing a comment is acceptable; losing a f
 
 ## Task 5: Verify by hand and update docs
 
-- [ ] **Step 1: Run the full gate**
+- [x] **Step 1: Run the full gate**
 
 ```bash
 cd web && npm test && npm run build
@@ -184,13 +184,13 @@ cd web && npm test && npm run build
 Then by hand: build a flow, export, `hookway validate` it, re-import, confirm the canvas
 matches.
 
-- [ ] **Step 2: Round-trip every example** in `examples/v2/` through import and export.
+- [x] **Step 2: Round-trip every example** in `examples/v2/` through import and export.
 
-- [ ] **Step 3: Update docs** — `docs/cli.md` for the `editor` command, `README.md`, and
+- [x] **Step 3: Update docs** — `docs/cli.md` for the `editor` command, `README.md`, and
       `web/`'s own README if it has one. State plainly that the UI **generates config** and
       does not manage a running instance, so nobody expects n8n.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 make test && make lint
@@ -202,13 +202,13 @@ git commit -m "feat(web): node-based config generator for schema_version 2"
 
 ## Done when
 
-- [ ] The palette is generated from `hookway schema --nodes`, not hand-maintained
-- [ ] `destTypes.ts` and the four hand-coded form components are **deleted**
-- [ ] An illegal connection cannot be drawn; `RawRequest -> RequestHead` is refused
-- [ ] Handles are coloured by port type and show the type name
-- [ ] `switch` and `on_error` render labelled output ports
-- [ ] Every `examples/v2/` config round-trips without field loss
-- [ ] An exported config passes `hookway validate`
-- [ ] In-browser validation shows errors before download
-- [ ] Docs state this is a config generator, not a live editor
-- [ ] `npm test` and `npm run build` clean; `make test && make lint` clean
+- [x] The palette is generated from `hookway schema --nodes`, not hand-maintained
+- [x] `destTypes.ts` and the four hand-coded form components are **deleted**
+- [x] An illegal connection cannot be drawn; `RawRequest -> RequestHead` is refused
+- [x] Handles are coloured by port type and show the type name
+- [x] `switch` and `on_error` render labelled output ports
+- [x] Every `examples/v2/` config round-trips without field loss
+- [x] An exported config passes `hookway validate`
+- [x] In-browser validation shows errors before download
+- [x] Docs state this is a config generator, not a live editor
+- [x] `npm test` and `npm run build` clean; `make test && make lint` clean

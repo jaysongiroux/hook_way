@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DEST_TYPES } from "../graph/destTypes";
+import { DEST_TYPES } from "../graph/nodeSchema";
 import { STATS } from "./stats";
 
 test("the row carries four countable facts", () => {

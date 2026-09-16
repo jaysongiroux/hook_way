@@ -1,6 +1,6 @@
 import { Badge, Box, Button, Container, Group, Stack, Text, Title } from "@mantine/core";
 import { Link } from "react-router-dom";
-import { DEST_TYPES } from "../graph/destTypes";
+import { DEST_TYPES } from "../graph/nodeSchema";
 import { BuilderFrame } from "./BuilderFrame";
 import { GITHUB_REPO } from "./links";
 import { DARK } from "../tokens";

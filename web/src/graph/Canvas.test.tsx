@@ -4,13 +4,13 @@ import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { Canvas } from "./Canvas";
 import { useGraphStore } from "./store";
-import { createNode, resetIdCounters } from "./model";
+import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 beforeEach(() => {
   resetIdCounters();
   useGraphStore.setState({
-    nodes: [createNode("endpoint", { x: 0, y: 0 }), createNode("destination", { x: 200, y: 0 })],
-    edges: [],
+    ...emptyDocument(),
+    nodes: [createNode("http_trigger", { x: 0, y: 0 }), createNode("publish", { x: 200, y: 0 })],
     selectedId: null,
   });
 });

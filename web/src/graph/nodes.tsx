@@ -1,105 +1,96 @@
 import { Handle, Position, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { Paper, Stack, Text } from "@mantine/core";
 import type { CSSProperties } from "react";
-import type { HookwayNode, EndpointData, DestinationData, FilterData } from "./model";
+import type { HookwayNode } from "./model";
+import { NODE_SCHEMAS, nodeLabel, switchPorts } from "./nodeSchema";
+import { HANDLE_IN, HANDLE_ON_ERROR, HANDLE_OUT } from "./connection";
 import { useGraphStore } from "./store";
-import { DARK, NODE } from "../tokens";
+import { DARK, NODE, PORT } from "../tokens";
 
-// useSelectionRing returns the style overlay that outlines the node the user
-// is currently editing (store.selectedId), in the node's own accent color so
-// it reads as "this one is selected" without hiding the node's identity color.
 function useSelectionRing(id: string, color: string): CSSProperties {
   const selected = useGraphStore((s) => s.selectedId === id);
   return selected ? { outline: `2px solid ${color}`, outlineOffset: 2 } : {};
 }
 
-const CARD: CSSProperties = { minWidth: 150, background: DARK.surface };
+const CARD: CSSProperties = { minWidth: 160, background: DARK.surface };
 
-export function EndpointNode({ id, data }: NodeProps<HookwayNode>) {
-  const d = data as EndpointData;
-  return (
-    <Paper
-      withBorder
-      radius="md"
-      p="xs"
-      style={{ ...CARD, borderColor: NODE.border.endpoint, ...useSelectionRing(id, NODE.border.endpoint) }}
-    >
-      <Stack gap={2}>
-        {/* The brand blue is a 3.2:1 fill colour, too low for 13px text, so
-            labels use the lighter step of the same hue. */}
-        <Text fw={600} size="sm" c={NODE.label.endpoint}>
-          {d.name}
-        </Text>
-        <Text size="xs" c={DARK.muted}>
-          {d.path}
-        </Text>
-      </Stack>
-      <Handle type="source" position={Position.Right} />
-    </Paper>
-  );
+function handleStyle(port: string): CSSProperties {
+  return { background: PORT[port] ?? NODE.border.endpoint, width: 10, height: 10 };
 }
 
-export function DestinationNode({ id, data }: NodeProps<HookwayNode>) {
-  const d = data as DestinationData;
+export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
+  const meta = NODE_SCHEMAS[data.nodeType];
+  const input = meta?.input ?? "Envelope";
+  const output = meta?.output ?? "Envelope";
+  const color = PORT[output] ?? NODE.border.endpoint;
+  const summary = nodeSummary(data.nodeType, data.options);
+  const labelled = data.nodeType === "switch" ? switchPorts(data.options) : [];
+  const showDefaultOut = output !== "Terminal" && labelled.length === 0;
   return (
-    <Paper
-      withBorder
-      radius="md"
-      p="xs"
-      style={{ ...CARD, borderColor: NODE.border.destination, ...useSelectionRing(id, NODE.border.destination) }}
-    >
-      <Handle type="target" position={Position.Left} />
-      <Stack gap={6}>
-        <Text fw={600} size="sm" c={NODE.label.destination}>
-          {d.name}
+    <Paper withBorder radius="md" p="xs" style={{ ...CARD, borderColor: color, ...useSelectionRing(id, color) }}>
+      {input !== "None" && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id={HANDLE_IN}
+          title={input}
+          style={handleStyle(input)}
+        />
+      )}
+      <Stack gap={2}>
+        <Text fw={600} size="sm" c={DARK.text}>
+          {data.yamlId}
         </Text>
-        {/* A Mantine "light" badge of an already-dark slate rendered dark text
-            on a dark tint. The type is spelled out explicitly instead. */}
-        <Text
-          size="xs"
-          fw={500}
-          c={NODE.badgeText}
+        <Text size="xs" c={PORT[output] ?? DARK.accentText} style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
+          {nodeLabel(data.nodeType)}
+        </Text>
+        {summary && (
+          <Text size="xs" c={DARK.muted}>
+            {summary}
+          </Text>
+        )}
+      </Stack>
+      {showDefaultOut && (
+        <Handle type="source" position={Position.Right} id={HANDLE_OUT} title={output} style={handleStyle(output)} />
+      )}
+      {labelled.map((port, i) => (
+        <Handle
+          key={port}
+          type="source"
+          position={Position.Right}
+          id={port}
+          title={`${output} (${port})`}
           style={{
-            background: NODE.badgeBg,
-            borderRadius: 4,
-            padding: "2px 6px",
-            alignSelf: "flex-start",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            ...handleStyle(output),
+            top: `${((i + 1) / (labelled.length + 1)) * 100}%`,
           }}
-        >
-          {d.destType}
-        </Text>
-      </Stack>
+        />
+      ))}
+      {input !== "None" && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id={HANDLE_ON_ERROR}
+          title="on_error"
+          style={handleStyle("on_error")}
+        />
+      )}
     </Paper>
   );
 }
 
-export function FilterNode({ id, data }: NodeProps<HookwayNode>) {
-  const d = data as FilterData;
-  const summary = d.path ? `${d.source}.${d.path} ${d.operator} ${String(d.value)}` : "no condition";
-  return (
-    <Paper
-      withBorder
-      radius="md"
-      p="xs"
-      style={{ ...CARD, borderColor: NODE.border.filter, ...useSelectionRing(id, NODE.border.filter) }}
-    >
-      <Handle type="target" position={Position.Left} />
-      <Stack gap={2}>
-        <Text fw={600} size="sm" c={NODE.label.filter}>
-          {d.name}
-        </Text>
-        <Text size="xs" c={DARK.muted}>
-          {summary}
-        </Text>
-      </Stack>
-      <Handle type="source" position={Position.Right} />
-    </Paper>
-  );
+function nodeSummary(type: string, options: Record<string, unknown>): string {
+  if (type === "http_trigger") return String(options.path ?? "");
+  if (type === "publish") return [options.destination, options.target].filter(Boolean).map(String).join(" → ");
+  if (type === "auth") return String(options.scheme ?? "");
+  if (type === "filter") {
+    const conditions = Array.isArray(options.conditions) ? options.conditions : [];
+    const first = conditions[0] as { path?: string; operator?: string } | undefined;
+    return first?.path ? `${first.path} ${first.operator ?? ""}`.trim() : "";
+  }
+  if (type === "http_request") return String(options.url ?? "");
+  if (type === "respond") return options.passthrough ? "passthrough" : String(options.status ?? "");
+  return "";
 }
 
-export const nodeTypes: NodeTypes = {
-  endpoint: EndpointNode,
-  destination: DestinationNode,
-  filter: FilterNode,
-};
+export const nodeTypes: NodeTypes = { flow: FlowNode };

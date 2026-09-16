@@ -3,7 +3,7 @@ import { render, waitFor } from "@testing-library/react";
 import { usePersistence } from "./usePersistence";
 import { useGraphStore } from "./store";
 import { saveGraph, clearGraph } from "./persistence";
-import { createNode, resetIdCounters } from "./model";
+import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 function Harness() {
   usePersistence();
@@ -13,12 +13,12 @@ function Harness() {
 beforeEach(async () => {
   resetIdCounters();
   await clearGraph();
-  useGraphStore.setState({ nodes: [], edges: [], selectedId: null, selectedEdgeId: null });
+  useGraphStore.getState().clear();
 });
 
 test("rehydrates the store from a saved graph on mount", async () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  await saveGraph([ep], []);
+  const n = createNode("http_trigger", { x: 0, y: 0 });
+  await saveGraph({ ...emptyDocument(), nodes: [n], edges: [] });
   render(<Harness />);
   await waitFor(() => expect(useGraphStore.getState().nodes).toHaveLength(1));
 });

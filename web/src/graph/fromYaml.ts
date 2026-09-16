@@ -1,16 +1,10 @@
 import { parse } from "yaml";
-import type { Edge } from "@xyflow/react";
-import type { HookwayNode } from "./model";
 import { fromConfig } from "./fromConfig";
 import { layout } from "./layout";
+import type { GraphDocument } from "./model";
 
-export function fromYaml(text: string): {
-  nodes: HookwayNode[];
-  edges: Edge[];
-  serverConfig: Record<string, unknown>;
-  configExtra: Record<string, unknown>;
-} {
+export function fromYaml(text: string): GraphDocument {
   const config = (parse(text) ?? {}) as Record<string, unknown>;
-  const { nodes, edges, serverConfig, configExtra } = fromConfig(config);
-  return { nodes: layout(nodes, edges), edges, serverConfig, configExtra };
+  const doc = fromConfig(config);
+  return { ...doc, nodes: layout(doc.nodes, doc.edges) };
 }

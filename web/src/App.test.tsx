@@ -14,8 +14,8 @@ function renderApp() {
 test("renders the shell header and palette node items", () => {
   renderApp();
   expect(screen.getByText("Hookway Config")).toBeInTheDocument();
-  expect(screen.getByText("Endpoint")).toBeInTheDocument();
-  expect(screen.getByText("Filter")).toBeInTheDocument();
-  expect(screen.getByText("Destination")).toBeInTheDocument();
+  expect(screen.getByText("http trigger")).toBeInTheDocument();
+  expect(screen.getByText("filter")).toBeInTheDocument();
+  expect(screen.getByText("publish")).toBeInTheDocument();
   expect(screen.getByText("Inspector")).toBeInTheDocument();
 });

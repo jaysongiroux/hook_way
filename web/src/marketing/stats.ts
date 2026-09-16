@@ -1,4 +1,4 @@
-import { DEST_TYPES } from "../graph/destTypes";
+import { DEST_TYPES } from "../graph/nodeSchema";
 
 export interface Stat {
   /** Sentence case, no trailing colon. */

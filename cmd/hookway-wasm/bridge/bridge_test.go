@@ -8,6 +8,7 @@ import (
 	"github.com/jasongiroux/hookway/cmd/hookway-wasm/bridge"
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/configapi"
+	"github.com/jasongiroux/hookway/internal/flowconfig"
 )
 
 // Validate must be a byte-identical pass-through of configapi.Validate for any
@@ -64,5 +65,22 @@ func TestSchemaMatchesConfig(t *testing.T) {
 	}
 	if !strings.Contains(got, "endpoints") {
 		t.Errorf("schema missing expected property 'endpoints'")
+	}
+}
+
+func TestNodeSchemasMatchFlowconfig(t *testing.T) {
+	want, err := json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := bridge.NodeSchemas()
+	if err != nil {
+		t.Fatalf("bridge.NodeSchemas: %v", err)
+	}
+	if strings.TrimSpace(got) != strings.TrimSpace(string(want)) {
+		t.Errorf("node schema mismatch")
+	}
+	if !strings.Contains(got, "http_trigger") || !strings.Contains(got, "publish") {
+		t.Errorf("node schema missing catalog entries")
 	}
 }

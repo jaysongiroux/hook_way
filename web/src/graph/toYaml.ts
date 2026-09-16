@@ -1,9 +1,5 @@
 import { Document, isMap, isScalar } from "yaml";
-
-interface Notes {
-  endpoints: Record<string, string>;
-  destinations: Record<string, string>;
-}
+import type { Notes } from "./toConfig";
 
 function applyNotes(doc: Document, section: string, notes: Record<string, string>) {
   const map = doc.get(section);
@@ -16,9 +12,9 @@ function applyNotes(doc: Document, section: string, notes: Record<string, string
   }
 }
 
-export function toYaml(config: unknown, notes: Notes): string {
+export function toYaml(config: unknown, notes: Notes = { flows: {}, destinations: {} }): string {
   const doc = new Document(config);
-  applyNotes(doc, "endpoints", notes.endpoints);
-  applyNotes(doc, "destinations", notes.destinations);
+  applyNotes(doc, "flows", notes.flows ?? {});
+  applyNotes(doc, "destinations", notes.destinations ?? {});
   return doc.toString();
 }

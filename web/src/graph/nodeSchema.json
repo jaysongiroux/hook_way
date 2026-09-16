@@ -1,0 +1,637 @@
+{
+  "auth": {
+    "input": "RawRequest",
+    "output": "Verified",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "secret_ref"
+            ]
+          },
+          "required": [
+            "secret"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "secret"
+            ]
+          },
+          "required": [
+            "secret_ref"
+          ]
+        }
+      ],
+      "properties": {
+        "scheme": {
+          "type": "string"
+        },
+        "secret": {
+          "type": "string"
+        },
+        "secret_ref": {
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "env",
+                "file",
+                "aws_secrets_manager"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "refresh": {
+              "type": "string"
+            },
+            "overlap": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "provider",
+            "name"
+          ]
+        },
+        "signature_header": {
+          "type": "string"
+        },
+        "source": {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "header",
+                "query"
+              ]
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        "timestamp_tolerance": {
+          "type": "string"
+        },
+        "remove_bearer": {
+          "type": "boolean"
+        },
+        "expected_issuer": {
+          "type": "string"
+        },
+        "expected_audience": {
+          "type": "string"
+        },
+        "body_hash_claim": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "scheme"
+      ]
+    }
+  },
+  "code": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "script": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "string"
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_call_stack": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "script"
+      ]
+    }
+  },
+  "envelope": {
+    "input": "Verified",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "body_format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "xml",
+            "raw"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "filter": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "conditions": {
+          "items": {
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": true
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "path",
+              "operator"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        },
+        "on_no_match": {
+          "type": "string",
+          "enum": [
+            "drop",
+            "reject"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "conditions"
+      ]
+    }
+  },
+  "http_request": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "forward_method": {
+          "type": "boolean"
+        },
+        "forward_query": {
+          "type": "boolean"
+        },
+        "forward_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeout": {
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "error_on_status": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "body": {
+          "type": "string",
+          "enum": [
+            "raw",
+            "transformed"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url"
+      ]
+    }
+  },
+  "http_trigger": {
+    "input": "None",
+    "output": "RequestHead",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "methods": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ]
+    }
+  },
+  "ip_allowlist": {
+    "input": "RequestHead",
+    "output": "RequestHead",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cidrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cidrs"
+      ]
+    }
+  },
+  "lookup": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "cache": {
+          "properties": {
+            "ttl": {
+              "type": "string"
+            },
+            "max_entries": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "negative_ttl": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "key"
+      ]
+    }
+  },
+  "loop_guard": {
+    "input": "RequestHead",
+    "output": "RequestHead",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "max_hops": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "no_auth": {
+    "input": "RawRequest",
+    "output": "Verified",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "publish": {
+    "input": "Envelope",
+    "output": "Terminal",
+    "detached": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "destination": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "create": {
+          "type": "boolean"
+        },
+        "message_attributes": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "destination",
+        "target"
+      ]
+    }
+  },
+  "rate_limit": {
+    "input": "RequestHead",
+    "output": "RequestHead",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "rpm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "burst": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "key_by": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "rpm"
+      ]
+    }
+  },
+  "read_body": {
+    "input": "RequestHead",
+    "output": "RawRequest",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "max_bytes"
+      ]
+    }
+  },
+  "replay_guard": {
+    "input": "Verified",
+    "output": "Verified",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "ttl": {
+          "type": "string"
+        },
+        "max_entries": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "respond": {
+    "input": "Envelope",
+    "output": "Terminal",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "passthrough"
+            ]
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "status"
+            ]
+          },
+          "required": [
+            "passthrough"
+          ]
+        }
+      ],
+      "properties": {
+        "status": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 100
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "body": {
+          "type": "string"
+        },
+        "passthrough": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "switch": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cases": {
+          "items": {
+            "properties": {
+              "port": {
+                "type": "string"
+              },
+              "when": {
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "operator": {
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "source",
+                  "path",
+                  "operator"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "port",
+              "when"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        },
+        "default": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cases"
+      ]
+    }
+  },
+  "transform": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "changed_fields",
+            "field_map",
+            "xml_prune"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mappings": {
+          "items": {
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ]
+          },
+          "type": "array"
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

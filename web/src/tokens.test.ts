@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { DARK, EDGE, NODE, contrastRatio } from "./tokens";
+import { DARK, EDGE, NODE, PORT, contrastRatio } from "./tokens";
 
 // Contrast is computable, so compute it rather than trusting the eye. WCAG AA
 // wants 4.5:1 for body text and 3:1 for large text and UI boundaries.
@@ -51,6 +51,12 @@ test("the destination type badge is legible on its own tint", () => {
   expect(contrastRatio(NODE.badgeText, NODE.badgeBg)).toBeGreaterThanOrEqual(4.5);
   // The tint must also separate from the card it sits on.
   expect(contrastRatio(NODE.badgeBg, DARK.surface)).toBeGreaterThanOrEqual(1.1);
+});
+
+test("port-type handles are visible against the card surface", () => {
+  for (const [port, color] of Object.entries(PORT)) {
+    expect(contrastRatio(color, DARK.surface), `${port} handle`).toBeGreaterThanOrEqual(3);
+  }
 });
 
 test("edge lines are visible against the canvas", () => {

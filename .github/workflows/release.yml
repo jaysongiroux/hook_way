@@ -76,6 +76,9 @@ jobs:
       - name: Install web deps
         run: make web-install
 
+      - name: Node schema drift
+        run: make node-schema-check
+
       - name: Web unit tests
         run: make web-test
 

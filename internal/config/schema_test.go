@@ -26,6 +26,22 @@ func TestSchemaJSON_IsValidJSONWithTopLevelKeys(t *testing.T) {
 	}
 }
 
+func TestDestinationTypeSchemasCoverKnownTypes(t *testing.T) {
+	schemas := DestinationTypeSchemas()
+	for _, name := range []string{"webhook", "rabbitmq", "redis_stream", "mongodb", "temporal"} {
+		got, ok := schemas[name]
+		if !ok || got.Block == "" || got.Schema == nil {
+			t.Errorf("%s destination schema = %+v, found=%v", name, got, ok)
+		}
+	}
+	if schemas["redis_kv"].Block != "redis" || schemas["mongodb"].Block != "mongodb" {
+		t.Fatalf("block keys = redis_kv:%q mongodb:%q", schemas["redis_kv"].Block, schemas["mongodb"].Block)
+	}
+	if len(schemas) != 13 {
+		t.Fatalf("destination schemas=%d, want 13", len(schemas))
+	}
+}
+
 func TestSchemaJSON_UsesYAMLFieldNames(t *testing.T) {
 	// server.max_body_bytes proves yaml tags (not Go field names) drive the schema.
 	data, _ := SchemaJSON()

@@ -183,6 +183,7 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	nodes := flags.Bool("nodes", false, "emit per-node option JSON Schema metadata")
+	destinations := flags.Bool("destinations", false, "emit per-destination-type JSON Schema metadata")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -190,6 +191,15 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 		data, err := json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
 		if err != nil {
 			fmt.Fprintf(stderr, "generate node schema: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, string(data))
+		return 0
+	}
+	if *destinations {
+		data, err := json.MarshalIndent(config.DestinationTypeSchemas(), "", "  ")
+		if err != nil {
+			fmt.Fprintf(stderr, "generate destination schema: %v\n", err)
 			return 1
 		}
 		fmt.Fprintln(stdout, string(data))

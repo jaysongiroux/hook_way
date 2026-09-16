@@ -46,6 +46,19 @@ export const NODE = {
   badgeText: "#C6D0E3",
 } as const;
 
+// PORT colours handles by payload type so illegal wiring is visible, not just
+// refused. Measured on DARK.surface (3:1 UI boundary) except on_error which is
+// a warning accent on the same card.
+export const PORT: Record<string, string> = {
+  None: "#8FA3C7",
+  RequestHead: "#366CED",
+  RawRequest: "#E6B450",
+  Verified: "#25BE8A",
+  Envelope: "#70DAFF",
+  Terminal: "#C6D0E3",
+  on_error: "#F07178",
+};
+
 // EDGE colours for the builder canvas. The defaults React Flow ships are
 // tuned for a light background: a thin #b1b1b7 line reads as warm grey against
 // navy, and the unselected stroke was left to React Flow entirely.

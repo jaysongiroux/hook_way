@@ -29,6 +29,27 @@ func TestSchemaEndpointReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestNodeSchemaEndpointReturnsJSON(t *testing.T) {
+	srv := httptest.NewServer(Handler(""))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/node-schema")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var doc map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("node-schema not JSON: %v", err)
+	}
+	if _, ok := doc["http_trigger"]; !ok {
+		t.Fatal("node-schema missing http_trigger")
+	}
+}
+
 func TestValidateEndpointReturnsIssues(t *testing.T) {
 	srv := httptest.NewServer(Handler(""))
 	defer srv.Close()

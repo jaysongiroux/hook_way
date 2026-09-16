@@ -4,17 +4,29 @@ import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { ImportModal } from "./ImportModal";
 import { useGraphStore } from "./store";
+import { emptyDocument } from "./model";
 
-beforeEach(() => useGraphStore.setState({ nodes: [], edges: [], selectedId: null, selectedEdgeId: null }));
+beforeEach(() => useGraphStore.setState({ ...emptyDocument(), selectedId: null, selectedEdgeId: null }));
 
-test("importing YAML populates the store graph", () => {
+test("importing V2 YAML populates the store graph", () => {
   render(
     <MantineProvider theme={theme}>
       <ImportModal opened onClose={() => {}} />
     </MantineProvider>,
   );
-  const yaml = "destinations:\n  d: { type: rabbitmq, rabbitmq: { url: u, exchange: e, exchange_type: direct } }\nendpoints:\n  a: { enabled: true, path: /a, auth: { type: no_auth, scheme: no_auth }, destinations: [{ destination: d, target: t, create: true }] }\n";
+  const yaml = `schema_version: 2
+server: { addr: ":8080", max_body_bytes: 1048576 }
+destinations:
+  d: { type: webhook, webhook: { url: https://example.test } }
+flows:
+  a:
+    nodes:
+      - {id: in, type: http_trigger, path: /a, methods: [POST]}
+      - {id: out, type: publish, destination: d, target: t}
+    edges: [in>out]
+`;
   fireEvent.change(screen.getByLabelText("Config YAML"), { target: { value: yaml } });
   fireEvent.click(screen.getByText("Import"));
-  expect(useGraphStore.getState().nodes.map((n) => n.id).sort()).toEqual(["destination:d", "endpoint:a"]);
+  expect(useGraphStore.getState().nodes.map((n) => n.id).sort()).toEqual(["in", "out"]);
+  expect(useGraphStore.getState().activeFlow).toBe("a");
 });

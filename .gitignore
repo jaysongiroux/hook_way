@@ -49,6 +49,8 @@ cmd/hookway-wasm/harness/wasm_exec.js
 web/node_modules/
 web/dist/
 web/.vite/
+web/public/hookway.wasm
+web/public/wasm_exec.js
 # tsc -b (composite build) byproducts
 web/*.tsbuildinfo
 web/vite.config.js

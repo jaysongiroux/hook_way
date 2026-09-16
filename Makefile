@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -17,14 +17,24 @@ build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway ./cmd/hookway
 
 wasm:
-	mkdir -p internal/editor/assets
+	mkdir -p internal/editor/assets web/public
 	GOOS=js GOARCH=wasm $(GO) build -o internal/editor/assets/hookway.wasm ./cmd/hookway-wasm
 	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" internal/editor/assets/wasm_exec.js
+	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js web/public/
 
 wasm-harness: wasm
 	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js cmd/hookway-wasm/harness/
 	@echo "Serving harness on http://localhost:8091 (Ctrl-C to stop)"
 	cd cmd/hookway-wasm/harness && python3 -m http.server 8091
+
+# node-schema regenerates the JSON catalogs the config UI imports. node-schema-check
+# fails if the committed files drifted from `hookway schema --nodes/--destinations`.
+node-schema:
+	$(GO) run ./cmd/hookway schema --nodes > web/src/graph/nodeSchema.json
+	$(GO) run ./cmd/hookway schema --destinations > web/src/graph/destinationSchema.json
+
+node-schema-check: node-schema
+	@git diff --exit-code -- web/src/graph/nodeSchema.json web/src/graph/destinationSchema.json
 
 web-install:
 	cd web && npm install

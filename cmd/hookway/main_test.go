@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,56 @@ func TestRun_SchemaNodesListsCatalog(t *testing.T) {
 	}
 	if len(doc) != 17 {
 		t.Fatalf("schema --nodes listed %d types, want 17", len(doc))
+	}
+}
+
+func TestRun_SchemaDestinationsListsTypes(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"schema", "--destinations"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr: %s)", code, stderr.String())
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("destination schema output not valid JSON: %v", err)
+	}
+	for _, name := range []string{"webhook", "rabbitmq", "redis_kv"} {
+		entry, ok := doc[name].(map[string]any)
+		if !ok {
+			t.Errorf("schema --destinations missing %s", name)
+			continue
+		}
+		if _, ok := entry["block"]; !ok {
+			t.Errorf("%s missing block", name)
+		}
+	}
+	if len(doc) != 13 {
+		t.Fatalf("schema --destinations listed %d types, want 13", len(doc))
+	}
+}
+
+func TestCommittedWebSchemasMatchCLI(t *testing.T) {
+	assertCommittedSchema(t, "web/src/graph/nodeSchema.json", []string{"schema", "--nodes"})
+	assertCommittedSchema(t, "web/src/graph/destinationSchema.json", []string{"schema", "--destinations"})
+}
+
+func assertCommittedSchema(t *testing.T, rel string, args []string) {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "../..", rel)
+	committed, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v (run make node-schema)", rel, err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(args, &stdout, &stderr); code != 0 {
+		t.Fatalf("%v exit %d: %s", args, code, stderr.String())
+	}
+	if strings.TrimSpace(string(committed)) != strings.TrimSpace(stdout.String()) {
+		t.Fatalf("%s is stale; run `make node-schema`", rel)
 	}
 }
 

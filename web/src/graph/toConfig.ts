@@ -1,230 +1,100 @@
 import type { Edge } from "@xyflow/react";
-import type { HookwayNode, EndpointData, DestinationData, FilterData, AuthData, VariableData, LookupData } from "./model";
-import { DEFAULT_SERVER } from "./model";
-import { DEST_TYPE_SPECS } from "./destTypes";
-import type { FieldSpec } from "./destTypes";
+import type { FlowSnapshot, GraphDocument, HookwayNode } from "./model";
+import { DEFAULT_FLOW, DEFAULT_SERVER, yamlIdOf } from "./model";
+import { formatEdge } from "./fromConfig";
+import { edgePort } from "./connection";
 
 export class ExportError extends Error {}
 
-interface Route {
-  filters: FilterData[];
-  dest: string;
-  target: string;
-  create: boolean;
-  rawExtra?: Record<string, unknown>;
-}
-
-// mapVariables exports the endpoint's variables as the YAML map; an empty
-// list yields undefined so the key is omitted.
-function mapVariables(vs: VariableData[] | undefined): Record<string, unknown> | undefined {
-  if (!vs || vs.length === 0) return undefined;
-  const out: Record<string, unknown> = {};
-  for (const v of vs) {
-    if (!v.name) continue;
-    const entry: Record<string, unknown> = { source: v.source };
-    if (v.source !== "lookup" && v.path && v.path !== v.name) entry.path = v.path;
-    if (v.mode === "pattern") entry.pattern = v.pattern;
-    else if (v.mode === "values") entry.values = v.values.split(",").map((x) => x.trim()).filter((x) => x.length > 0);
-    if (v.default) entry.default = v.default;
-    if (v.source === "lookup" && v.lookup) entry.lookup = mapLookup(v.lookup);
-    out[v.name] = entry;
+export function toConfig(doc: GraphDocument): { config: Record<string, unknown>; notes: Notes } {
+  const notes: Notes = { flows: {}, destinations: {} };
+  const flows: Record<string, unknown> = {};
+  for (const [name, snap] of Object.entries(doc.otherFlows)) {
+    flows[name] = snapshotToFlow(snap, notes, name);
   }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function mapLookup(l: LookupData): Record<string, unknown> {
-  const extra = (l.extra ?? {}) as Record<string, unknown>;
-  const out: Record<string, unknown> = { ...extra };
-  delete out.dynamodb;
-  delete out.http;
-  delete out.postgres;
-  const key: Record<string, unknown> = { source: l.keySource };
-  if (l.keyPath) key.path = l.keyPath;
-  out.key = key;
-  out.provider = l.provider;
-  if (l.provider === "dynamodb") {
-    const d: Record<string, unknown> = { ...((extra.dynamodb ?? {}) as Record<string, unknown>), table: l.dynamodb.table, value_attribute: l.dynamodb.value_attribute };
-    if (l.dynamodb.index) d.index = l.dynamodb.index;
-    if (l.dynamodb.filter_attribute || l.dynamodb.filter_value) d.filter = { attribute: l.dynamodb.filter_attribute, value: l.dynamodb.filter_value };
-    out.dynamodb = d;
-  } else if (l.provider === "http") {
-    const h: Record<string, unknown> = { ...((extra.http ?? {}) as Record<string, unknown>), url: l.http.url, value_path: l.http.value_path };
-    if (l.http.method && l.http.method !== "GET") h.method = l.http.method;
-    out.http = h;
-  } else {
-    out.postgres = { ...((extra.postgres ?? {}) as Record<string, unknown>), url: l.postgres.url, query: l.postgres.query };
-  }
-  return out;
-}
-
-function mapAuth(a: AuthData): Record<string, unknown> | undefined {
-  if (a.type === "none") return { type: "no_auth", scheme: "no_auth" };
-  const out: Record<string, unknown> = { type: a.type };
-  if (a.type === "hmac_sha256" || a.type === "jwt") out.scheme = a.scheme;
-  if (a.signatureHeader) out.signature_header = a.signatureHeader;
-  if (a.secret) out.secret = a.secretMode === "env" ? `\${${a.secret}}` : a.secret;
-  return out;
-}
-
-function mapFilter(f: FilterData): Record<string, unknown> {
-  const out: Record<string, unknown> = { source: f.source, path: f.path, operator: f.operator };
-  if (f.value !== undefined && f.value !== "") out.value = f.value;
-  return out;
-}
-
-function mapFields(fields: FieldSpec[], values: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const field of fields) {
-    const v = values[field.key];
-    switch (field.kind) {
-      case "bool":
-        // Emit only when true. Go's zero value is false, so an omitted bool
-        // decodes identically — and this keeps untouched optional groups
-        // (dead_letter, tls) from emitting spurious `enabled: false` blocks.
-        if (v === true) out[field.key] = true;
-        break;
-      case "number":
-        if (v !== undefined && v !== null && v !== "") out[field.key] = Number(v);
-        break;
-      case "list": {
-        const arr = String(v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-        if (arr.length > 0) out[field.key] = arr;
-        break;
-      }
-      case "group": {
-        const nested = mapFields(field.fields ?? [], (v as Record<string, unknown>) ?? {});
-        if (Object.keys(nested).length > 0) out[field.key] = nested;
-        break;
-      }
-      default:
-        if (v !== undefined && v !== "") out[field.key] = v;
-    }
-  }
-  return out;
-}
-
-function mapSettings(destType: string, settings: Record<string, unknown>): Record<string, unknown> {
-  const spec = DEST_TYPE_SPECS[destType];
-  if (!spec) return {};
-  return mapFields(spec.fields, settings);
-}
-
-function longestCommonPrefix(lists: string[][]): number {
-  if (lists.length === 0) return 0;
-  const first = lists[0];
-  let i = 0;
-  for (; i < first.length; i++) {
-    if (!lists.every((l) => l[i] === first[i])) break;
-  }
-  return i;
-}
-
-export function toConfig(
-  nodes: HookwayNode[],
-  edges: Edge[],
-  serverConfig?: Record<string, unknown>,
-  configExtra?: Record<string, unknown>,
-): { config: Record<string, unknown>; notes: { endpoints: Record<string, string>; destinations: Record<string, string> } } {
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const out = (id: string) => edges.filter((e) => e.source === id);
-
-  function routesFrom(startId: string): Route[] {
-    const routes: Route[] = [];
-    const walk = (nodeId: string, acc: FilterData[], seen: Set<string>) => {
-      if (seen.has(nodeId)) throw new ExportError(`filter cycle detected at node "${nodeId}"`);
-      for (const e of out(nodeId)) {
-        const tgt = byId.get(e.target);
-        if (!tgt) continue;
-        const ed = (e.data ?? {}) as { target?: string; create?: boolean; rawExtra?: Record<string, unknown> };
-        if (tgt.data.kind === "destination") {
-          routes.push({
-            filters: [...acc],
-            dest: String(tgt.data.name),
-            target: String(ed.target ?? tgt.data.name),
-            create: ed.create ?? true,
-            rawExtra: ed.rawExtra,
-          });
-        } else if (tgt.data.kind === "filter") {
-          const next = new Set(seen);
-          next.add(nodeId);
-          walk(e.target, [...acc, tgt.data as FilterData], next);
-        }
-      }
-    };
-    walk(startId, [], new Set());
-    return routes;
-  }
-
-  const destinations: Record<string, unknown> = {};
-  const destNotes: Record<string, string> = {};
-  for (const n of nodes) {
-    if (n.data.kind !== "destination") continue;
-    const d = n.data as DestinationData;
-    const block = DEST_TYPE_SPECS[d.destType]?.block ?? d.destType;
-    const mapped = mapSettings(d.destType, d.settings ?? {});
-    // Start from preserved extras (entry-level + block-level), then layer the
-    // UI-managed values over the block. Managed keys the user cleared stay
-    // cleared (they were stripped from rawExtra on import).
-    const rawExtra = (d.rawExtra ?? {}) as Record<string, unknown>;
-    const blockExtra = (rawExtra[block] ?? {}) as Record<string, unknown>;
-    const entry: Record<string, unknown> = { ...rawExtra, type: d.destType };
-    const blockOut = { ...blockExtra, ...mapped };
-    if (Object.keys(blockOut).length > 0) entry[block] = blockOut;
-    else delete entry[block];
-    destinations[d.name] = entry;
-    if (d.notes) destNotes[d.name] = d.notes;
-  }
-
-  const endpoints: Record<string, unknown> = {};
-  const endpointNotes: Record<string, string> = {};
-  for (const n of nodes) {
-    if (n.data.kind !== "endpoint") continue;
-    const ep = n.data as EndpointData;
-    const routes = routesFrom(n.id);
-    const prefixLen = longestCommonPrefix(routes.map((r) => r.filters.map((f) => f.name)));
-    // Preserved endpoint-level extras first, then managed keys override them.
-    const entry: Record<string, unknown> = {
-      ...((ep.rawExtra ?? {}) as Record<string, unknown>),
-      enabled: ep.enabled ?? true,
-      path: ep.path,
-    };
-    const auth = mapAuth(ep.auth);
-    if (auth) entry.auth = auth;
-    const variables = mapVariables(ep.variables);
-    if (variables) entry.variables = variables;
-    else delete entry.variables;
-    if (ep.fallback && ep.fallback.destination) {
-      entry.on_unresolved_variable = { destination: ep.fallback.destination, target: ep.fallback.target };
-    } else {
-      delete entry.on_unresolved_variable;
-    }
-    if (prefixLen > 0 && routes.length > 0) {
-      entry.filters = routes[0].filters.slice(0, prefixLen).map(mapFilter);
-    }
-    entry.destinations = routes.map((r) => {
-      // Preserved route extras first, then managed keys override.
-      const dest: Record<string, unknown> = {
-        ...((r.rawExtra ?? {}) as Record<string, unknown>),
-        destination: r.dest,
-        target: r.target,
-        create: r.create,
-      };
-      const perRoute = r.filters.slice(prefixLen);
-      if (perRoute.length > 0) dest.filters = perRoute.map(mapFilter);
-      return dest;
-    });
-    endpoints[ep.name] = entry;
-    if (ep.notes) endpointNotes[ep.name] = ep.notes;
-  }
-
-  const server = serverConfig && Object.keys(serverConfig).length > 0 ? serverConfig : { ...DEFAULT_SERVER };
-  // server first (readability), then any preserved top-level blocks
-  // (security/rate_limit/metrics/logging/replay), then the graph-derived maps.
+  const active = doc.activeFlow || DEFAULT_FLOW;
+  flows[active] = snapshotToFlow(
+    { nodes: doc.nodes, edges: doc.edges, deliveryFailurePolicy: doc.deliveryFailurePolicy },
+    notes,
+    active,
+  );
+  const destinations = pruneEmpty(doc.destinations, true);
+  const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig, false) : { ...DEFAULT_SERVER };
   const config: Record<string, unknown> = {
+    schema_version: 2,
     server,
-    ...(configExtra ?? {}),
-    destinations,
-    endpoints,
+    destinations: destinations ?? {},
+    ...pruneEmpty(doc.configExtra, false),
+    flows,
   };
-  return { config, notes: { endpoints: endpointNotes, destinations: destNotes } };
+  return { config, notes };
+}
+
+function snapshotToFlow(snap: FlowSnapshot, notes: Notes, flowName: string): Record<string, unknown> {
+  const seen = new Set<string>();
+  const nodes = snap.nodes.map((n) => nodeToYaml(n, seen));
+  const byRf = new Map(snap.nodes.map((n) => [n.id, n]));
+  const edges = snap.edges.map((e) => edgeToYaml(e, byRf));
+  const out: Record<string, unknown> = { nodes, edges };
+  if (snap.deliveryFailurePolicy) out.delivery_failure_policy = snap.deliveryFailurePolicy;
+  const flowNotes = snap.nodes.map((n) => n.data.notes).filter((n): n is string => Boolean(n && n.trim()));
+  if (flowNotes.length === 1) notes.flows[flowName] = flowNotes[0];
+  return out;
+}
+
+function nodeToYaml(n: HookwayNode, seen: Set<string>): Record<string, unknown> {
+  const id = yamlIdOf(n);
+  if (seen.has(id)) {
+    // Duplicate YAML ids are preserved so invalid examples round-trip.
+  }
+  seen.add(id);
+  const out: Record<string, unknown> = { id, type: n.data.nodeType };
+  for (const [k, v] of Object.entries(n.data.options ?? {})) {
+    const pruned = pruneValue(v);
+    if (pruned !== undefined) out[k] = pruned;
+  }
+  if (n.data.notes && n.data.notes.trim()) {
+    // Notes are YAML comments on the flow, not node fields.
+  }
+  return out;
+}
+
+function edgeToYaml(e: Edge, byRf: Map<string, HookwayNode>): string {
+  const from = byRf.get(e.source);
+  const to = byRf.get(e.target);
+  if (!from || !to) throw new ExportError(`edge ${e.id} is missing a node`);
+  return formatEdge(yamlIdOf(from), edgePort(e.sourceHandle), yamlIdOf(to));
+}
+
+export interface Notes {
+  flows: Record<string, string>;
+  destinations: Record<string, string>;
+}
+
+function pruneEmpty(obj: Record<string, unknown>, keepEmptyObject: boolean): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const pruned = pruneValue(v);
+    if (pruned !== undefined) out[k] = pruned;
+  }
+  if (Object.keys(out).length === 0) return keepEmptyObject ? {} : undefined;
+  return out;
+}
+
+function pruneValue(v: unknown): unknown {
+  if (v === undefined || v === null || v === "") return undefined;
+  if (typeof v === "boolean") return v ? true : undefined;
+  if (Array.isArray(v)) {
+    const items = v.map(pruneValue).filter((x) => x !== undefined);
+    return items.length > 0 ? items : undefined;
+  }
+  if (typeof v === "object") {
+    const nested: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      const pruned = pruneValue(val);
+      if (pruned !== undefined) nested[k] = pruned;
+    }
+    return Object.keys(nested).length > 0 ? nested : undefined;
+  }
+  return v;
 }

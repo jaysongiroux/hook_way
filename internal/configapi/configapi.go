@@ -1,9 +1,11 @@
 // Package configapi exposes Hookway config validation and schema as UI-facing
-// JSON. It adds no validation logic — it wraps internal/config so a client (a
-// future config UI, an editor, scripts) gets a stable JSON contract.
+// JSON. It adds no validation logic — it wraps internal/config and
+// internal/flowconfig so a client (the config builder, the WASM validator,
+// scripts) gets a stable JSON contract.
 package configapi
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -213,4 +215,9 @@ func errorSeverity(issues []config.ValidationIssue) ValidateResponse {
 // Schema returns the JSON Schema describing the config YAML.
 func Schema() ([]byte, error) {
 	return config.SchemaJSON()
+}
+
+// NodeSchemas returns the per-node option schemas used by the config UI.
+func NodeSchemas() ([]byte, error) {
+	return json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
 }

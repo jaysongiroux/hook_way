@@ -4,13 +4,12 @@ import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { ExportModal } from "./ExportModal";
 import { useGraphStore } from "./store";
-import { createNode, resetIdCounters } from "./model";
+import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 beforeEach(() => {
   resetIdCounters();
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  const d = createNode("destination", { x: 0, y: 0 });
-  useGraphStore.setState({ nodes: [ep, d], edges: [], selectedId: null, selectedEdgeId: null });
+  const trigger = createNode("http_trigger", { x: 0, y: 0 });
+  useGraphStore.setState({ ...emptyDocument(), nodes: [trigger], selectedId: null, selectedEdgeId: null });
 });
 
 test("renders exported YAML for the current graph", () => {
@@ -19,6 +18,6 @@ test("renders exported YAML for the current graph", () => {
       <ExportModal opened onClose={() => {}} />
     </MantineProvider>,
   );
-  expect(screen.getByText(/max_body_bytes/)).toBeInTheDocument();
-  expect(screen.getByText(/\/webhooks\/endpoint_1/)).toBeInTheDocument();
+  expect(screen.getByText(/schema_version/)).toBeInTheDocument();
+  expect(screen.getByText(/http_trigger/)).toBeInTheDocument();
 });

@@ -14,11 +14,25 @@ import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./RouteEdge";
 import { isValidConnection } from "./connection";
-import { parallelGroups } from "./routes";
 import { createNode, isNodeKind } from "./model";
 import { DND_MIME } from "./Palette";
 import { useGraphStore } from "./store";
 import { DARK, EDGE } from "../tokens";
+
+function parallelGroups(edges: Edge[]): Map<string, { index: number; count: number }> {
+  const byKey = new Map<string, string[]>();
+  for (const e of edges) {
+    const key = `${e.source}:${e.sourceHandle ?? ""}->${e.target}`;
+    const ids = byKey.get(key);
+    if (ids) ids.push(e.id);
+    else byKey.set(key, [e.id]);
+  }
+  const out = new Map<string, { index: number; count: number }>();
+  for (const ids of byKey.values()) {
+    ids.forEach((id, index) => out.set(id, { index, count: ids.length }));
+  }
+  return out;
+}
 
 function CanvasInner() {
   const { screenToFlowPosition } = useReactFlow();
@@ -33,17 +47,9 @@ function CanvasInner() {
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
 
   const routedEdges = useMemo(() => {
-    const destIds = new Set(nodes.filter((n) => n.data.kind === "destination").map((n) => n.id));
     const groups = parallelGroups(edges);
     return edges.map((e) => {
-      // Arrowhead on every edge shows which way data flows; the selected edge
-      // highlights blue uniformly (arrow + stroke) regardless of what it points
-      // at — otherwise plain edges into filters would fall back to React Flow's
-      // default (dark) selected style while route edges went blue.
       const sel = e.id === selectedEdgeId;
-      // markerUnits userSpaceOnUse keeps the arrow a fixed size; without it the
-      // marker scales with the path stroke width, so the selected edge's thicker
-      // stroke would balloon the arrowhead.
       const markerEnd = {
         type: MarkerType.ArrowClosed,
         width: 16,
@@ -51,27 +57,20 @@ function CanvasInner() {
         markerUnits: "userSpaceOnUse",
         color: sel ? EDGE.selected : EDGE.line,
       };
-      // The resting stroke is set explicitly; React Flow's own dark default is
-      // too faint to follow across the canvas.
-      const style = sel
-        ? { stroke: EDGE.selected, strokeWidth: 2.5 }
-        : { stroke: EDGE.line, strokeWidth: 1.5 };
-      if (!destIds.has(e.target)) return { ...e, markerEnd, style };
+      const style = sel ? { stroke: EDGE.selected, strokeWidth: 2.5 } : { stroke: EDGE.line, strokeWidth: 1.5 };
       const g = groups.get(e.id);
+      const port = e.sourceHandle && e.sourceHandle !== "out" ? String(e.sourceHandle) : "";
       return {
         ...e,
         type: "route",
         markerEnd,
         style,
-        data: { ...(e.data ?? {}), parallelIndex: g?.index ?? 0, parallelCount: g?.count ?? 1 },
+        data: { ...(e.data ?? {}), label: port, parallelIndex: g?.index ?? 0, parallelCount: g?.count ?? 1 },
       };
     });
-  }, [nodes, edges, selectedEdgeId]);
+  }, [edges, selectedEdgeId]);
 
-  const validate = useCallback(
-    (c: Connection | Edge) => isValidConnection(c, nodes, edges),
-    [nodes, edges],
-  );
+  const validate = useCallback((c: Connection | Edge) => isValidConnection(c, nodes, edges), [nodes, edges]);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

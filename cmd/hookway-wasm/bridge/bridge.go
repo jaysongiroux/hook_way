@@ -37,3 +37,13 @@ func Schema() (string, error) {
 	}
 	return string(b), nil
 }
+
+// NodeSchemas returns the per-node option schemas (the same document as
+// `hookway schema --nodes`).
+func NodeSchemas() (string, error) {
+	b, err := configapi.NodeSchemas()
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}

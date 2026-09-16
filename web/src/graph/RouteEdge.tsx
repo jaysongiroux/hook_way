@@ -16,18 +16,16 @@ export function RouteEdge({
   style,
   data,
 }: EdgeProps) {
-  const d = (data ?? {}) as { target?: string; parallelIndex?: number; parallelCount?: number };
+  const d = (data ?? {}) as { label?: string; parallelIndex?: number; parallelCount?: number };
   const count = d.parallelCount ?? 1;
   const index = d.parallelIndex ?? 0;
-  const target = String(d.target ?? "");
+  const label = String(d.label ?? "");
   const selected = useGraphStore((s) => s.selectedEdgeId === id);
 
   let path: string;
   let labelX: number;
   let labelY: number;
   if (count > 1) {
-    // Bow each parallel edge apart by a perpendicular offset so same source→target
-    // routes (and their chips) don't stack on one line.
     const dx = targetX - sourceX;
     const dy = targetY - sourceY;
     const len = Math.hypot(dx, dy) || 1;
@@ -37,7 +35,6 @@ export function RouteEdge({
     const cx = (sourceX + targetX) / 2 + nx * offset;
     const cy = (sourceY + targetY) / 2 + ny * offset;
     path = `M ${sourceX},${sourceY} Q ${cx},${cy} ${targetX},${targetY}`;
-    // quadratic point at t=0.5
     labelX = 0.25 * sourceX + 0.5 * cx + 0.25 * targetX;
     labelY = 0.25 * sourceY + 0.5 * cy + 0.25 * targetY;
   } else {
@@ -47,7 +44,7 @@ export function RouteEdge({
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
-      {target && (
+      {label && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -62,13 +59,14 @@ export function RouteEdge({
               color: DARK.text,
               pointerEvents: "all",
               cursor: "pointer",
+              fontFamily: "ui-monospace, Menlo, monospace",
             }}
             onClick={(e) => {
               e.stopPropagation();
               useGraphStore.getState().setSelectedEdge(id);
             }}
           >
-            {target}
+            {label}
           </div>
         </EdgeLabelRenderer>
       )}

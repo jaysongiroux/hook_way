@@ -87,6 +87,20 @@ Immutable conflicts (e.g., FIFO vs standard queue type) always fail startup rega
 
 **IAM Note:** The default `reconcile` mode requires additional IAM permissions (`sqs:SetQueueAttributes` or `sns:SetTopicAttributes`). If operating under least-privilege IAM policies that cannot grant these permissions, set `on_existing_conflict: warn` or `on_existing_conflict: error` instead.
 
+## Config builder
+
+The web UI at `/builder` (served by `hookway editor` after `make ui`, or via
+`make web-dev`) is a **config generator**. It exports `schema_version: 2` YAML
+for you to validate and deploy; it does not manage a running instance.
+
+```bash
+make node-schema   # regenerate web/src/graph/{node,destination}Schema.json
+make web-dev       # Vite app on the local web port
+go run ./cmd/hookway editor --addr :8090
+```
+
+See [CLI § Editor API](docs/cli.md#editor-api).
+
 ## Development
 
 ```bash

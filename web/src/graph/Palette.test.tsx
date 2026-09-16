@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { Palette, DND_MIME } from "./Palette";
+import { NODE_TYPES, nodeLabel } from "./nodeSchema";
 
 function wrap() {
   return render(
@@ -12,27 +13,18 @@ function wrap() {
   );
 }
 
-test("renders draggable Endpoint and Destination items", () => {
+test("renders a palette entry for every catalog node type", () => {
   wrap();
-  expect(screen.getByText("Endpoint")).toBeInTheDocument();
-  expect(screen.getByText("Destination")).toBeInTheDocument();
+  for (const type of NODE_TYPES) {
+    expect(screen.getByText(nodeLabel(type))).toBeInTheDocument();
+  }
 });
 
-test("dragging an item sets the node kind on the dataTransfer", () => {
+test("dragging an item sets the node type on the dataTransfer", () => {
   wrap();
   const setData = vi.fn();
-  const item = screen.getByText("Endpoint").closest("[draggable=true]");
+  const item = screen.getByText("http trigger").closest("[draggable=true]");
   expect(item).not.toBeNull();
   fireEvent.dragStart(item!, { dataTransfer: { setData, effectAllowed: "" } });
-  expect(setData).toHaveBeenCalledWith(DND_MIME, "endpoint");
-});
-
-test("renders a draggable Filter item that sets the filter kind", () => {
-  wrap();
-  expect(screen.getByText("Filter")).toBeInTheDocument();
-  const setData = vi.fn();
-  const item = screen.getByText("Filter").closest("[draggable=true]");
-  expect(item).not.toBeNull();
-  fireEvent.dragStart(item!, { dataTransfer: { setData, effectAllowed: "" } });
-  expect(setData).toHaveBeenCalledWith(DND_MIME, "filter");
+  expect(setData).toHaveBeenCalledWith(DND_MIME, "http_trigger");
 });

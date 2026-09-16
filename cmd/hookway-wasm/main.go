@@ -39,8 +39,17 @@ func schema(_ js.Value, _ []js.Value) any {
 	return out
 }
 
+func nodeSchemas(_ js.Value, _ []js.Value) any {
+	out, err := bridge.NodeSchemas()
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
+}
+
 func main() {
 	js.Global().Set("hookwayValidate", js.FuncOf(validate))
 	js.Global().Set("hookwaySchema", js.FuncOf(schema))
+	js.Global().Set("hookwayNodeSchemas", js.FuncOf(nodeSchemas))
 	select {} // block forever so the exported functions stay callable
 }

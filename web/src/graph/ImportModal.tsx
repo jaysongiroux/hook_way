@@ -10,8 +10,8 @@ export function ImportModal({ opened, onClose }: { opened: boolean; onClose: () 
 
   const doImport = () => {
     try {
-      const { nodes, edges, serverConfig, configExtra } = fromYaml(text);
-      setGraph(nodes, edges, serverConfig, configExtra);
+      const doc = fromYaml(text);
+      setGraph(doc);
       setError("");
       onClose();
     } catch (e) {

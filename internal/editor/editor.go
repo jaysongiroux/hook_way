@@ -19,11 +19,11 @@ const maxValidateBytes = 5 << 20 // 5 MiB
 
 // Handler returns the routed handler for the config editor: the SPA at / (no
 // auth — the browser needs the HTML/JS before it can present a key) and the
-// config API (GET /schema, POST /validate) guarded by apiKey when non-empty.
+// config API (GET /schema, GET /node-schema, POST /validate) guarded by apiKey when non-empty.
 // CORS is outermost so OPTIONS preflight is answered before auth runs.
 //
 // The API routes are dispatched through a nested mux reached via method-agnostic
-// top-level patterns ("/schema", "/validate"). Registering "GET /schema" and
+// top-level patterns ("/schema", "/node-schema", "/validate"). Registering "GET /schema" and
 // "POST /validate" directly alongside the "GET /" SPA catch-all would let the
 // catch-all silently absorb the "wrong" method for each API path (e.g. GET
 // /validate), since it is the only pattern matching that method — defeating
@@ -31,10 +31,12 @@ const maxValidateBytes = 5 << 20 // 5 MiB
 func Handler(apiKey string) http.Handler {
 	api := http.NewServeMux()
 	api.Handle("GET /schema", apikey.Middleware(apiKey, http.HandlerFunc(handleSchema)))
+	api.Handle("GET /node-schema", apikey.Middleware(apiKey, http.HandlerFunc(handleNodeSchema)))
 	api.Handle("POST /validate", apikey.Middleware(apiKey, http.HandlerFunc(handleValidate)))
 
 	mux := http.NewServeMux()
 	mux.Handle("/schema", api)
+	mux.Handle("/node-schema", api)
 	mux.Handle("/validate", api)
 	mux.Handle("/", uiHandler())
 	return withCORS(mux)
@@ -60,6 +62,16 @@ func handleSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/schema+json")
+	_, _ = w.Write(data)
+}
+
+func handleNodeSchema(w http.ResponseWriter, r *http.Request) {
+	data, err := configapi.NodeSchemas()
+	if err != nil {
+		http.Error(w, "node schema generation failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(data)
 }
 
