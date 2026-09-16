@@ -81,11 +81,12 @@ test("editing a trigger path updates the store", () => {
   expect(useGraphStore.getState().nodes[0].data.options.path).toBe("/webhooks/github");
 });
 
-test("editing notes updates the store", () => {
+test("editing the description updates the store", () => {
   const n = createNode("publish", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap();
-  fireEvent.click(screen.getByRole("button", { name: /^Notes/i }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Notes" }), { target: { value: "audit" } });
-  expect(useGraphStore.getState().nodes[0].data.notes).toBe("audit");
+  // Description is a top-level field beside Id, not a collapsed section, so
+  // it is reachable without opening an accordion.
+  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Fan out to billing." } });
+  expect(useGraphStore.getState().nodes[0].data.description).toBe("Fan out to billing.");
 });

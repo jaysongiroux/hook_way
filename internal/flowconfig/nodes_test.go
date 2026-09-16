@@ -188,3 +188,27 @@ func zeroPayload(port graph.PortType) graph.Payload {
 		return graph.RequestHead{}
 	}
 }
+
+// TestEveryNodeTypeAcceptsDescription proves description is node identity and
+// not a per-type option: every registered type must build with one, even
+// though each option struct decodes with KnownFields(true). The companion
+// assertion is that the description is absent from Options -- if it leaked,
+// New would have failed the first half of this test.
+func TestEveryNodeTypeAcceptsDescription(t *testing.T) {
+	defs := catalog(RegistryOptions{})
+	if len(defs) != len(wantedCatalog) {
+		t.Fatalf("definitions=%d, want %d", len(defs), len(wantedCatalog))
+	}
+	const text = "Explains what this node does."
+	for _, def := range defs {
+		t.Run(def.name, func(t *testing.T) {
+			nc := nodeConfigFromYAML(t, def.name, "description: "+text+"\n"+validNodeYAML[def.name])
+			if nc.Description != text {
+				t.Fatalf("Description = %q, want %q", nc.Description, text)
+			}
+			if _, err := def.spec().New(nc); err != nil {
+				t.Fatalf("described node rejected: %v", err)
+			}
+		})
+	}
+}

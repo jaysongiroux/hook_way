@@ -23,12 +23,22 @@ function handleStyle(port: string): CSSProperties {
   return { background: PORT[port] ?? NODE.border.endpoint, width: 10, height: 10 };
 }
 
+// Two lines keeps cards a predictable height on a dense canvas; the full text
+// stays reachable through the title attribute and the Inspector.
+const DESCRIPTION: CSSProperties = {
+  display: "-webkit-box",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 2,
+  overflow: "hidden",
+};
+
 export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const meta = NODE_SCHEMAS[data.nodeType];
   const input = meta?.input ?? "Envelope";
   const output = meta?.output ?? "Envelope";
   const color = PORT[output] ?? NODE.border.endpoint;
   const summary = nodeSummary(data.nodeType, data.options);
+  const description = data.description?.trim() ?? "";
   const labelled = data.nodeType === "switch" ? switchPorts(data.options) : [];
   const showDefaultOut = output !== "Terminal" && labelled.length === 0;
   const showError = nodeHasOnError(data.nodeType);
@@ -50,6 +60,11 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
         <Text size="xs" c={DARK.muted} style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
           {nodeLabel(data.nodeType)}
         </Text>
+        {description && (
+          <Text size="xs" c={DARK.text} title={description} style={DESCRIPTION}>
+            {description}
+          </Text>
+        )}
         {summary && (
           <Text size="xs" c={DARK.muted}>
             {summary}

@@ -14,10 +14,10 @@ destinations:
 flows:
   github:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
-      - {id: env, type: envelope, body_format: json}
-      - {id: out, type: publish, destination: primary, target: github-webhooks}
+      - {id: in, type: http_trigger, description: "GitHub posts webhook deliveries here.", path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, description: "Caps inbound traffic before any body is read.", rpm: 60}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - {id: out, type: publish, description: "Delivers the envelope to the downstream webhook.", destination: primary, target: github-webhooks}
     edges: [in>rl, rl>body, body>auth, auth>env, env>out]

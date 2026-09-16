@@ -76,8 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // Env-expansion behavior across the two output modes and --no-env:
 //   - plain validate (no flags): flowconfig.LoadBytes with expansion, which
 //     expands ${VAR} strictly and HARD-fails (nonzero exit) on any
-//     referenced-but-unset variable. schema_version other than 2 is a
-//     migration error.
+//     referenced-but-unset variable.
 //   - validate --json: configapi.ValidateWithEnv(data, true) also expands
 //     ${VAR}, but a missing variable is reported as a "config.env.<NAME>"
 //     issue at severity "warning" (exit 0 if it's the only issue) rather than

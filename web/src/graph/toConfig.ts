@@ -6,18 +6,17 @@ import { edgePort } from "./connection";
 
 export class ExportError extends Error {}
 
-export function toConfig(doc: GraphDocument): { config: Record<string, unknown>; notes: Notes } {
-  const notes: Notes = { flows: {}, destinations: {} };
+export function toConfig(doc: GraphDocument): { config: Record<string, unknown> } {
   const flows: Record<string, unknown> = {};
   for (const [name, snap] of Object.entries(doc.otherFlows)) {
-    flows[name] = snapshotToFlow(snap, notes, name);
+    flows[name] = snapshotToFlow(snap);
   }
   const active = doc.activeFlow || DEFAULT_FLOW;
-  flows[active] = snapshotToFlow(
-    { nodes: doc.nodes, edges: doc.edges, deliveryFailurePolicy: doc.deliveryFailurePolicy },
-    notes,
-    active,
-  );
+  flows[active] = snapshotToFlow({
+    nodes: doc.nodes,
+    edges: doc.edges,
+    deliveryFailurePolicy: doc.deliveryFailurePolicy,
+  });
   const destinations = pruneEmpty(doc.destinations, true);
   const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig, false) : { ...DEFAULT_SERVER };
   const config: Record<string, unknown> = {
@@ -26,34 +25,27 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown>;
     ...pruneEmpty(doc.configExtra, false),
     flows,
   };
-  return { config, notes };
+  return { config };
 }
 
-function snapshotToFlow(snap: FlowSnapshot, notes: Notes, flowName: string): Record<string, unknown> {
-  const seen = new Set<string>();
-  const nodes = snap.nodes.map((n) => nodeToYaml(n, seen));
+function snapshotToFlow(snap: FlowSnapshot): Record<string, unknown> {
+  const nodes = snap.nodes.map(nodeToYaml);
   const byRf = new Map(snap.nodes.map((n) => [n.id, n]));
   const edges = snap.edges.map((e) => edgeToYaml(e, byRf));
   const out: Record<string, unknown> = { nodes, edges };
   if (snap.deliveryFailurePolicy) out.delivery_failure_policy = snap.deliveryFailurePolicy;
-  const flowNotes = snap.nodes.map((n) => n.data.notes).filter((n): n is string => Boolean(n && n.trim()));
-  if (flowNotes.length === 1) notes.flows[flowName] = flowNotes[0];
   return out;
 }
 
-function nodeToYaml(n: HookwayNode, seen: Set<string>): Record<string, unknown> {
-  const id = yamlIdOf(n);
-  if (seen.has(id)) {
-    // Duplicate YAML ids are preserved so invalid examples round-trip.
-  }
-  seen.add(id);
-  const out: Record<string, unknown> = { id, type: n.data.nodeType };
+function nodeToYaml(n: HookwayNode): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: yamlIdOf(n), type: n.data.nodeType };
+  // description follows type so the node reads as identity-then-options,
+  // matching the field order the Go loader strips.
+  const description = n.data.description?.trim();
+  if (description) out.description = description;
   for (const [k, v] of Object.entries(n.data.options ?? {})) {
     const pruned = pruneValue(v);
     if (pruned !== undefined) out[k] = pruned;
-  }
-  if (n.data.notes && n.data.notes.trim()) {
-    // Notes are YAML comments on the flow, not node fields.
   }
   return out;
 }
@@ -63,11 +55,6 @@ function edgeToYaml(e: Edge, byRf: Map<string, HookwayNode>): string {
   const to = byRf.get(e.target);
   if (!from || !to) throw new ExportError(`edge ${e.id} is missing a node`);
   return formatEdge(yamlIdOf(from), edgePort(e.sourceHandle), yamlIdOf(to));
-}
-
-export interface Notes {
-  flows: Record<string, string>;
-  destinations: Record<string, string>;
 }
 
 function pruneEmpty(obj: Record<string, unknown>, keepEmptyObject: boolean): Record<string, unknown> | undefined {

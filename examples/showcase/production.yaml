@@ -57,48 +57,54 @@ flows:
   github:
     delivery_failure_policy: skip_failed
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: hops, type: loop_guard, max_hops: 3}
-      - {id: rl, type: rate_limit, rpm: 60, burst: 20, key_by: source_ip}
-      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: in, type: http_trigger, description: "GitHub delivers push and pull request events here.", path: /webhooks/github, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects requests that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, description: "Sheds bursts per source IP before the body is read.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
       - id: auth
         type: auth
+        description: "Verifies the GitHub HMAC signature over the raw body."
         scheme: hmac_sha256_hex
         secret: "${GITHUB_WEBHOOK_SECRET}"
         signature_header: X-Hub-Signature-256
-      - {id: replay, type: replay_guard, ttl: 24h, max_entries: 100000}
-      - {id: env, type: envelope, body_format: json}
-      - {id: archive, type: publish, destination: archive, target: github, create: true}
+      - {id: replay, type: replay_guard, description: "Drops redeliveries of an event already seen today.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - {id: archive, type: publish, description: "Archives every verified event to S3, unfiltered.", destination: archive, target: github, create: true}
       - id: pushes
         type: filter
+        description: "Keeps only pushes to public repositories."
         on_no_match: drop
         conditions:
           - {source: header, path: X-GitHub-Event, operator: eq, value: push}
           - {source: body, path: repository.private, operator: eq, value: false}
       - id: map
         type: transform
+        description: "Lifts the repository name into vars.repo for the ack URL."
         kind: field_map
         mappings:
           - {from: body.repository.full_name, to: vars.repo}
       - id: snippet
         type: code
+        description: "Tags the payload so consumers can tell it came through Hookway."
         timeout: 50ms
         script: "return { body: input.body, vars: Object.assign({}, input.vars, { ingested: 'true' }) };"
       - id: ack
         type: http_request
+        description: "Acknowledges to the upstream API; a 5xx takes the on_error port."
         url: "https://example.test/hooks/{repo}"
         timeout: 5s
         error_on_status: [5xx]
         body: transformed
       - id: route
         type: switch
+        description: "Splits main-branch pushes from every other branch."
         default: other
         cases:
           - port: main
             when: {source: body, path: ref, operator: eq, value: "refs/heads/main"}
-      - {id: orders, type: publish, destination: orders, target: github-main, create: true}
-      - {id: stream, type: publish, destination: events, target: github-pushes, create: true}
-      - {id: dlq, type: publish, destination: dlq, target: github-failed, create: true}
+      - {id: orders, type: publish, description: "Order pipeline queue for main-branch pushes.", destination: orders, target: github-main, create: true}
+      - {id: stream, type: publish, description: "Kafka topic for pushes to every other branch.", destination: events, target: github-pushes, create: true}
+      - {id: dlq, type: publish, description: "Dead letter queue for failed acknowledgements.", destination: dlq, target: github-failed, create: true}
     edges:
       - in>hops
       - hops>rl
@@ -118,22 +124,22 @@ flows:
 
   proxy:
     nodes:
-      - {id: in, type: http_trigger, path: "/salesforce/proxy/{rest...}", methods: [ANY]}
-      - {id: rl, type: rate_limit, rpm: 120}
-      - {id: body, type: read_body, max_bytes: 10485760}
-      - {id: auth, type: auth, scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
-      - {id: env, type: envelope, body_format: raw}
-      - {id: up, type: http_request, url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 10s}
-      - {id: resp, type: respond, passthrough: true}
+      - {id: in, type: http_trigger, description: "Accepts any method under the Salesforce proxy prefix.", path: "/salesforce/proxy/{rest...}", methods: [ANY]}
+      - {id: rl, type: rate_limit, description: "Caps proxy traffic at 120 requests per minute.", rpm: 120}
+      - {id: body, type: read_body, description: "Buffers the body so it can be signed and forwarded.", max_bytes: 10485760}
+      - {id: auth, type: auth, description: "Checks the shared proxy token in X-Auth.", scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
+      - {id: up, type: http_request, description: "Forwards method, query, and trailing path upstream.", url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 10s}
+      - {id: resp, type: respond, description: "Returns the upstream response to the caller unchanged.", passthrough: true}
     edges: [in>rl, rl>body, body>auth, auth>env, env>up, up>resp]
 
   trusted:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/internal/jobs, methods: [POST]}
-      - {id: allow, type: ip_allowlist, cidrs: ["10.0.0.0/8", "192.168.0.0/16"]}
-      - {id: rl, type: rate_limit, rpm: 30, key_by: source_ip}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: no_auth}
-      - {id: env, type: envelope, body_format: json}
-      - {id: out, type: publish, destination: warehouse, target: internal-jobs, create: true}
+      - {id: in, type: http_trigger, description: "Internal job events published from inside the VPC.", path: /webhooks/internal/jobs, methods: [POST]}
+      - {id: allow, type: ip_allowlist, description: "Restricts the endpoint to private network ranges.", cidrs: ["10.0.0.0/8", "192.168.0.0/16"]}
+      - {id: rl, type: rate_limit, description: "Modest per-IP cap for internal callers.", rpm: 30, key_by: source_ip}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: no_auth, description: "Network trust replaces signature verification here."}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - {id: out, type: publish, description: "Inserts each event into the Postgres warehouse table.", destination: warehouse, target: internal-jobs, create: true}
     edges: [in>allow, allow>rl, rl>body, body>auth, auth>env, env>out]

@@ -8,7 +8,8 @@ interface FlowNodeData extends Record<string, unknown> {
   nodeType: string;
   options: Record<string, unknown>;
   yamlId: string;
-  notes?: string;
+  /** Operator note exported as the node's `description:` field. */
+  description?: string;
 }
 
 export type HookwayNode = Node<FlowNodeData>;

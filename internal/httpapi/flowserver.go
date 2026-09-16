@@ -33,7 +33,7 @@ import (
 	"github.com/jasongiroux/hookway/internal/vars"
 )
 
-// FlowServer serves schema_version 2 flows through the graph executor.
+// FlowServer serves configured flows through the graph executor.
 type FlowServer struct {
 	cfg            flowconfig.Config
 	process        config.Config

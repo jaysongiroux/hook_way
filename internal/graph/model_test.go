@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"bytes"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -110,4 +111,44 @@ edges: [in>body]
 	if fc.Nodes[1].ID != "body" {
 		t.Errorf("Nodes[1].ID = %q, want body", fc.Nodes[1].ID)
 	}
+}
+
+// TestNodeConfigUnmarshalSeparatesDescription pins description as node
+// identity rather than a type-specific option: it must land on the struct
+// field and be absent from Options, because every node type decodes its
+// options with KnownFields(true) and would reject an unexpected key.
+func TestNodeConfigUnmarshalSeparatesDescription(t *testing.T) {
+	const src = `
+id: rl
+type: rate_limit
+description: Shed bursts before the body is read.
+rpm: 600
+`
+	var nc NodeConfig
+	if err := yaml.Unmarshal([]byte(src), &nc); err != nil {
+		t.Fatalf("Unmarshal() = %v", err)
+	}
+	if nc.Description != "Shed bursts before the body is read." {
+		t.Errorf("Description = %q, want the description text", nc.Description)
+	}
+	var opts struct {
+		RPM int `yaml:"rpm"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(mustMarshal(t, &nc.Options)))
+	dec.KnownFields(true)
+	if err := dec.Decode(&opts); err != nil {
+		t.Fatalf("strict Options decode = %v; description must not reach option structs", err)
+	}
+	if opts.RPM != 600 {
+		t.Errorf("rpm = %d, want 600", opts.RPM)
+	}
+}
+
+func mustMarshal(t *testing.T, node *yaml.Node) []byte {
+	t.Helper()
+	raw, err := yaml.Marshal(node)
+	if err != nil {
+		t.Fatalf("Marshal() = %v", err)
+	}
+	return raw
 }

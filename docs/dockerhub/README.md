@@ -2,7 +2,7 @@
 
 Hookway is a small webhook intake service for forwarding verified third-party webhook events to a message destination (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or Webhook).
 
-It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes, and hand work off to consumers through a queue or topic. Configuration is `schema_version: 2` YAML (`flows` of typed nodes), not `endpoints:`.
+It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes, and hand work off to consumers through a queue or topic. Configuration is YAML: `flows` of typed nodes wired by `edges`.
 
 ## Features
 

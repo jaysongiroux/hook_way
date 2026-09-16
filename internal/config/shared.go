@@ -68,8 +68,8 @@ var sharedYAMLFields = map[string]struct{}{
 
 // DecodeSharedYAML strictly decodes the common process-scoped sections from a
 // complete config document. allowedExtras names top-level keys owned by the
-// caller (schema_version, flows). Their values are ignored here and must be
-// decoded by the flow loader.
+// caller (flows). Their values are ignored here and must be decoded by the
+// flow loader.
 func DecodeSharedYAML(data []byte, source string, allowedExtras ...string) (SharedConfig, []ValidationIssue) {
 	allowed := make(map[string]struct{}, len(sharedYAMLFields)+len(allowedExtras))
 	for field := range sharedYAMLFields {

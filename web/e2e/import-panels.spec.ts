@@ -51,6 +51,7 @@ for (const fixture of exampleFixtures()) {
       for (const node of nodes) {
         await builder.selectNode(node.id);
         await expect(builder.inspector().getByLabel("Id", { exact: true })).toHaveValue(node.id);
+        await expect(builder.inspector().getByLabel("Description")).toHaveValue(node.description);
         await expect(builder.inspector().getByText(node.type, { exact: true }).first()).toBeVisible();
         for (const [key, value] of Object.entries(node.options)) {
           await expectYamlValue(builder.inspector(), key, value);

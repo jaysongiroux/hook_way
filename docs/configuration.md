@@ -783,12 +783,12 @@ destinations:
 flows:
   github_events:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
-      - {id: env, type: envelope, body_format: json}
-      - {id: out, type: publish, destination: billing, target: github-events, create: true}
+      - {id: in, type: http_trigger, description: "GitHub posts deliveries here.", path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, description: "Caps traffic before any body is read.", rpm: 60}
+      - {id: body, type: read_body, description: "Reads the raw body up to 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the HMAC over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope.", body_format: json}
+      - {id: out, type: publish, description: "Delivers to the billing queue.", destination: billing, target: github-events, create: true}
     edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 ```
 
@@ -805,6 +805,15 @@ edges: [env>ack, ack>out, ack:on_error>dlq]
 ```
 
 See `examples/on_error.yaml` for `rate_limit`, `auth`, `envelope`, and `http_request`. `examples/showcase/production.yaml` uses `ack:on_error>dlq`.
+
+Node fields (every type):
+
+- `id`: required. Unique within the flow; this is the name `edges` refer to.
+- `type`: required. One of the catalog types below.
+- `description`: optional. A note explaining what the node does, shown on the
+  node in the config UI. Nothing at runtime reads it: it is not published in
+  the envelope and never appears in logs. Type-specific options are listed per
+  node type below.
 
 Flow fields:
 

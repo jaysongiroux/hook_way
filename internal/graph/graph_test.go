@@ -9,9 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestCompileAndRunFromYAML is the acceptance test for Chunk 1: real YAML in,
-// type-checked graph out, executed in order. It uses test nodes because real
-// node implementations land in Chunk 3.
+// TestCompileAndRunFromYAML is the end-to-end test for this package: real
+// YAML in, type-checked graph out, executed in order. It uses test nodes so
+// the compiler and executor are exercised independently of the real node
+// implementations in internal/flowconfig.
 func TestCompileAndRunFromYAML(t *testing.T) {
 	const src = `
 nodes:

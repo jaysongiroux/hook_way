@@ -48,13 +48,14 @@ flows:
   # GitHub does not retry filtered-out deliveries.
   github_push_public:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: in, type: http_trigger, description: "GitHub posts webhook deliveries here.", path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
       # No idempotency_header field; replay_guard is a separate node.
-      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
-      - {id: env, type: envelope, body_format: json}
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON envelope the filter reads fields from.", body_format: json}
       - id: filt
         type: filter
+        description: "Keeps only pushes to public repositories; drops the rest."
         conditions:
           - source: header
             path: X-GitHub-Event
@@ -64,7 +65,7 @@ flows:
             path: repository.private
             operator: eq
             value: false
-      - {id: out, type: publish, destination: primary, target: github-public-pushes, create: true}
+      - {id: out, type: publish, description: "Receives only the events that cleared the filter.", destination: primary, target: github-public-pushes, create: true}
     edges: [in>body, body>auth, auth>env, env>filt, filt>out]
 
   # Branch-level filtering: every accepted event fans out selectively. Main-branch
@@ -73,32 +74,34 @@ flows:
   # always returns 202.
   github_branch_router:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/github-router, methods: [POST]}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
-      - {id: env, type: envelope, body_format: json}
+      - {id: in, type: http_trigger, description: "Router endpoint that fans one event out two ways.", path: /webhooks/github-router, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON envelope both branches receive.", body_format: json}
       - id: main_filt
         type: filter
+        description: "Gates the main-branch branch only; a drop here is not a failure."
         conditions:
           - source: body
             path: ref
             operator: eq
             value: "refs/heads/main"
-      - {id: main_out, type: publish, destination: primary, target: github-main-pushes, create: true}
+      - {id: main_out, type: publish, description: "Main-branch pushes only.", destination: primary, target: github-main-pushes, create: true}
       # No filters: receives every event this flow accepts.
-      - {id: all_out, type: publish, destination: primary, target: github-all-pushes, create: true}
+      - {id: all_out, type: publish, description: "Every event the flow accepts, unfiltered.", destination: primary, target: github-all-pushes, create: true}
     edges: [in>body, body>auth, auth>env, env>main_filt, env>all_out, main_filt>main_out]
 
   # Flow filtering that rejects non-matching payloads with 422 instead of a
   # silent ack. Shows numeric (gte), regex, and exists operators.
   orders_high_value:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Order-Signature, timestamp_tolerance: "5m"}
-      - {id: env, type: envelope, body_format: json}
+      - {id: in, type: http_trigger, description: "Order events from the commerce platform.", path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the timestamped HMAC within a 5 minute window.", scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Order-Signature, timestamp_tolerance: "5m"}
+      - {id: env, type: envelope, description: "Builds the JSON envelope the filter reads fields from.", body_format: json}
       - id: filt
         type: filter
+        description: "Requires a large order in a known currency; rejects with 422."
         on_no_match: reject
         conditions:
           - source: body
@@ -112,5 +115,5 @@ flows:
           - source: body
             path: customer.id
             operator: exists
-      - {id: out, type: publish, destination: primary, target: high-value-orders, create: true}
+      - {id: out, type: publish, description: "Receives only high-value orders.", destination: primary, target: high-value-orders, create: true}
     edges: [in>body, body>auth, auth>env, env>filt, filt>out]

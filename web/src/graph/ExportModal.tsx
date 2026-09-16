@@ -28,8 +28,8 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
       deliveryFailurePolicy,
     };
     try {
-      const { config, notes } = toConfig(doc);
-      return { yaml: toYaml(config, notes), error: "" };
+      const { config } = toConfig(doc);
+      return { yaml: toYaml(config), error: "" };
     } catch (e) {
       return { yaml: "", error: e instanceof ExportError ? e.message : String(e) };
     }

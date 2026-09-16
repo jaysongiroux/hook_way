@@ -69,6 +69,11 @@ func ParseEdges(ss []string) ([]Edge, error) {
 	return out, errors.Join(errs...)
 }
 
+// identityKeys are the node fields every type shares. They are decoded here
+// and withheld from Options, because each NodeSpec decodes its options with
+// KnownFields(true) and would reject them as unknown.
+var identityKeys = map[string]bool{"id": true, "type": true, "description": true}
+
 // UnmarshalYAML separates node identity from type-specific options. Missing
 // identity is diagnosed by Compile so independent problems can be aggregated.
 func (nc *NodeConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -76,18 +81,19 @@ func (nc *NodeConfig) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("graph: node at line %d must be a mapping", value.Line)
 	}
 	var head struct {
-		ID   string `yaml:"id"`
-		Type string `yaml:"type"`
+		ID          string `yaml:"id"`
+		Type        string `yaml:"type"`
+		Description string `yaml:"description"`
 	}
 	if err := value.Decode(&head); err != nil {
 		return err
 	}
-	nc.ID, nc.Type = head.ID, head.Type
+	nc.ID, nc.Type, nc.Description = head.ID, head.Type, head.Description
 	nc.Options = *value
 	nc.Options.Content = nil
 	for i := 0; i < len(value.Content); i += 2 {
 		key := value.Content[i]
-		if key.Value != "id" && key.Value != "type" {
+		if !identityKeys[key.Value] {
 			nc.Options.Content = append(nc.Options.Content, key, value.Content[i+1])
 		}
 	}

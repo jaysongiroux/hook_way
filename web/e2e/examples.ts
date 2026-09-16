@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { scanEnvVars } from "../src/graph/envScan";
+import { NODE_IDENTITY_KEYS } from "../src/graph/nodeIdentity";
 
 const examplesRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../examples");
 
@@ -54,8 +55,10 @@ export function destinationNames(config: Record<string, unknown>): string[] {
 export interface FlowNodeYaml {
   id: string;
   type: string;
+  description: string;
   options: Record<string, unknown>;
 }
+
 
 export function flowNodes(config: Record<string, unknown>, flow: string): FlowNodeYaml[] {
   const flows = isRecord(config.flows) ? config.flows : {};
@@ -65,11 +68,12 @@ export function flowNodes(config: Record<string, unknown>, flow: string): FlowNo
     const rec = isRecord(item) ? item : {};
     const options: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(rec)) {
-      if (key !== "id" && key !== "type") options[key] = value;
+      if (!NODE_IDENTITY_KEYS.has(key)) options[key] = value;
     }
     return {
       id: String(rec.id ?? `node_${index + 1}`),
       type: String(rec.type ?? ""),
+      description: rec.description === undefined ? "" : String(rec.description),
       options,
     };
   });

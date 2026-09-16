@@ -219,8 +219,7 @@ func issuesText(issues []config.ValidationIssue) string {
 
 func TestReviewRejectsAmbiguousAndReservedTriggerPaths(t *testing.T) {
 	for _, path := range []string{"/webhooks/{id}", "/healthz"} {
-		src := `schema_version: 2
-flows:
+		src := `flows:
   open:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/test}

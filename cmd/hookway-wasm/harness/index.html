@@ -14,7 +14,6 @@
   <h1>Hookway WASM validator harness</h1>
   <p id="status">Loading WASM…</p>
   <textarea id="yaml" spellcheck="false">
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -25,7 +24,7 @@ destinations:
 flows:
   demo:
     nodes:
-      - {id: in, type: http_trigger, path: /webhooks/demo, methods: [POST]}
+      - {id: in, type: http_trigger, description: "Demo endpoint.", path: /webhooks/demo, methods: [POST]}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: no_auth}
       - {id: env, type: envelope, body_format: json}

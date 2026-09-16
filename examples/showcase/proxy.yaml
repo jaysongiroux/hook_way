@@ -1,4 +1,4 @@
-# Synchronous proxy flow used by the Chunk 6 verification gate.
+# Synchronous proxy flow: authenticate, forward upstream, return the reply.
 # DIGIFI_BASE should have no trailing slash (e.g. http://127.0.0.1:9999).
 # SF_TOKEN is compared to the inbound X-Auth header.
 server:
@@ -10,10 +10,10 @@ destinations: {}
 flows:
   salesforce_proxy:
     nodes:
-      - {id: in, type: http_trigger, path: "/salesforce/proxy/{rest...}", methods: [ANY]}
-      - {id: body, type: read_body, max_bytes: 10485760}
-      - {id: auth, type: auth, scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
-      - {id: env, type: envelope, body_format: raw}
-      - {id: up, type: http_request, url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true}
-      - {id: resp, type: respond, passthrough: true}
+      - {id: in, type: http_trigger, description: "Accepts any method under the proxy prefix.", path: "/salesforce/proxy/{rest...}", methods: [ANY]}
+      - {id: body, type: read_body, description: "Buffers the body so it can be forwarded upstream.", max_bytes: 10485760}
+      - {id: auth, type: auth, description: "Compares the inbound X-Auth header to the shared token.", scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
+      - {id: up, type: http_request, description: "Forwards method, query, and trailing path to the upstream.", url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true}
+      - {id: resp, type: respond, description: "Returns the upstream response to the caller unchanged.", passthrough: true}
     edges: [in>body, body>auth, auth>env, env>up, up>resp]

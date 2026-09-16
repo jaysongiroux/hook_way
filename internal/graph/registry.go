@@ -33,9 +33,13 @@ type PortDeclarer interface {
 // NodeConfig is one entry from a flow's `nodes:` list. Options holds the
 // type-specific fields, decoded by the NodeSpec's New function.
 type NodeConfig struct {
-	ID      string
-	Type    string
-	Options yaml.Node
+	ID   string
+	Type string
+	// Description is an optional operator note explaining what this node
+	// does. It is documentation only: nothing in the executor, the
+	// envelope, or the logs reads it.
+	Description string
+	Options     yaml.Node
 }
 
 // NodeSpec declares a node type's port signature and how to build one.

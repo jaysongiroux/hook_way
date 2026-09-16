@@ -98,7 +98,7 @@ export function Inspector() {
   }
 
   const meta = NODE_SCHEMAS[node.data.nodeType];
-  const notes = node.data.notes ?? "";
+  const description = node.data.description ?? "";
   const destNames = Object.keys(destinations);
   const enums = node.data.nodeType === "publish" && destNames.length > 0 ? { destination: destNames } : undefined;
   const setOptions = (options: unknown) => updateNodeData(node.id, { options: options as Record<string, unknown> });
@@ -115,21 +115,6 @@ export function Inspector() {
           onChange={setOptions}
           enums={enums}
           fieldHelp={(field) => nodeFieldHelp(node.data.nodeType, field)}
-        />
-      ),
-    },
-    {
-      value: "notes",
-      label: "Notes",
-      badge: notes.trim() ? "note" : undefined,
-      render: () => (
-        <Textarea
-          aria-label="Notes"
-          placeholder="Exported as a YAML comment on the flow"
-          value={notes}
-          autosize
-          minRows={2}
-          onChange={(e) => updateNodeData(node.id, { notes: e.currentTarget.value })}
         />
       ),
     },
@@ -154,6 +139,15 @@ export function Inspector() {
         description="YAML node id used in edges, e.g. in>out."
         value={yamlIdOf(node)}
         onChange={(e) => updateNodeData(node.id, { yamlId: e.currentTarget.value })}
+      />
+      <Textarea
+        label="Description"
+        description="Optional note explaining what this node does. Exported as the node's description field."
+        placeholder="Verify the GitHub signature over the raw body."
+        value={description}
+        autosize
+        minRows={2}
+        onChange={(e) => updateNodeData(node.id, { description: e.currentTarget.value })}
       />
       <Sections key={node.id} sections={sections} />
       {node.data.nodeType === "publish" && destNames.length === 0 && (

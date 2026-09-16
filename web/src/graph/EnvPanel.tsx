@@ -26,8 +26,8 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
       otherFlows,
       deliveryFailurePolicy,
     };
-    const { config, notes } = toConfig(doc);
-    vars = scanEnvVars(toYaml(config, notes));
+    const { config } = toConfig(doc);
+    vars = scanEnvVars(toYaml(config));
   } catch {
     vars = [];
   }

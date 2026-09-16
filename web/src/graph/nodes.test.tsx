@@ -80,3 +80,22 @@ test("node is outlined when selected", () => {
   const paper = container.querySelector(".mantine-Paper-root") as HTMLElement;
   expect(paper.style.outline).toContain("2px solid");
 });
+
+test("FlowNode renders the description on the card", () => {
+  resetIdCounters();
+  const n = createNode("auth", { x: 0, y: 0 });
+  n.data.description = "Verify the GitHub signature over the raw body.";
+  wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  const text = screen.getByText("Verify the GitHub signature over the raw body.");
+  expect(text).toBeInTheDocument();
+  // Clamped to two lines, so the full text has to stay reachable on hover.
+  expect(text).toHaveAttribute("title", "Verify the GitHub signature over the raw body.");
+});
+
+test("FlowNode omits the description line when there is none", () => {
+  resetIdCounters();
+  const n = createNode("auth", { x: 0, y: 0 });
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  // Scoped to card text: the port handles carry their own title attributes.
+  expect(container.querySelectorAll("p[title]")).toHaveLength(0);
+});

@@ -2,6 +2,7 @@ import type { Edge } from "@xyflow/react";
 import type { FlowSnapshot, GraphDocument, HookwayNode } from "./model";
 import { DEFAULT_FLOW, DEFAULT_SERVER } from "./model";
 import { HANDLE_IN, HANDLE_OUT, edgePort } from "./connection";
+import { NODE_IDENTITY_KEYS } from "./nodeIdentity";
 
 const MANAGED_TOP = new Set(["server", "destinations", "flows"]);
 
@@ -54,13 +55,14 @@ function parseFlow(raw: Record<string, unknown>): FlowSnapshot {
     if (!yamlToRf.has(yamlId)) yamlToRf.set(yamlId, rfId);
     const options: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(rec)) {
-      if (k !== "id" && k !== "type") options[k] = v;
+      if (!NODE_IDENTITY_KEYS.has(k)) options[k] = v;
     }
+    const description = rec.description === undefined ? undefined : String(rec.description);
     nodes.push({
       id: rfId,
       type: "flow",
       position: { x: 0, y: 0 },
-      data: { nodeType, yamlId, options },
+      data: { nodeType, yamlId, options, description },
     });
   });
   const edges: Edge[] = [];
