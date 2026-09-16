@@ -40,6 +40,11 @@ export function exampleFixtures(): ExampleFixture[] {
   });
 }
 
+/** Reads one example by path relative to `examples/`, valid or not. */
+export function exampleYaml(rel: string): string {
+  return readFileSync(path.join(examplesRoot, rel), "utf8");
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

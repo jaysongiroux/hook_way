@@ -50,7 +50,12 @@ web-test:
 web-knip:
 	cd web && npx --yes knip@6.36.0
 
-web-e2e:
+# web-e2e depends on wasm because the builder's live validation runs the real
+# Go validator compiled to WebAssembly, served from web/public. That file is
+# generated and gitignored, so without this prerequisite the dev server 404s
+# it, validate.ts silently falls back to a dead /validate fetch, and every
+# validation assertion passes vacuously.
+web-e2e: wasm
 	cd web && npm run test:e2e
 
 web-build:

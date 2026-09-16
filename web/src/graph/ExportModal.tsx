@@ -81,7 +81,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
             This builder generates YAML for you to deploy. It does not connect to a running Hookway instance.
           </Text>
           {issues && blocking.length > 0 && (
-            <Alert color="red" title="Validation errors">
+            <Alert color="red" title="Validation errors" data-testid="validation-errors">
               <List size="sm">
                 {blocking.map((iss, i) => (
                   <List.Item key={i}>
@@ -95,7 +95,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
             </Alert>
           )}
           {issues && blocking.length === 0 && (
-            <Alert color="green" title="Valid">
+            <Alert color="green" title="Valid" data-testid="validation-ok">
               This config passes <Text span ff="monospace">hookway validate</Text>.
             </Alert>
           )}
