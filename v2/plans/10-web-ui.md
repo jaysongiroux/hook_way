@@ -1,6 +1,6 @@
 # Chunk 10: Web UI — Node-Based Config Generator
 
-**Status:** complete
+**Status:** accepted at `f613710`
 **Depends on:** Chunk 9 (config format must be final)
 **Unlocks:** nothing — this is last
 **Verification gate:** the UI exports a config that `hookway validate` accepts, and can

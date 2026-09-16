@@ -4,7 +4,7 @@ Scratch/working space for the V2 redesign: a typed-port node graph replacing V1'
 hardcoded request pipeline.
 
 **Branch:** `v2` (branched from `main` @ `242c358`)
-**Status:** implementation underway; Chunks 1–9 accepted. External universal-gateway and DigiFi
+**Status:** implementation complete; Chunks 1–10 accepted. External universal-gateway and DigiFi
 migration work was removed from scope on 2026-09-14. See
 [`IMPLEMENTATION.md`](IMPLEMENTATION.md) for assignments, verification and plan corrections.
 

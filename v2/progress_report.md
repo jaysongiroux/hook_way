@@ -23,9 +23,42 @@ agent can resume without reading chat history.
   invariant I6 remains unchanged.
 - D13 is settled: one `publish` node references the shared top-level destinations map.
 - Chunks 1–8 accepted as recorded below. Chunk 9 V2 cutover is independently accepted
-  at unsigned `740da1d`. Web/WASM graph export remains V1 until Chunk 10; CLI rejects it.
+  at unsigned `740da1d`. Chunk 10 web UI is independently accepted at unsigned
+  `f613710`. The builder exports `schema_version: 2` YAML as a config generator.
 
 ## Orchestrator — current handoff
+
+**Status:** Chunk 10 accepted at unsigned `f613710`. V2 plan chunks 1–10 are
+complete. Do not push.
+
+**Accomplished in this window (Cursor, 2026-09-15):**
+
+- Pulled origin/v2 `25d3c89` (`feat: review`: executor policy, FlowServer
+  secret-ref closers, `progress_report.md` → `v2/progress_report.md`). No
+  overlap with the Chunk 10 working tree.
+- Builder retargeted to the V2 node catalog. Palette, inspector, and
+  destination editor are schema-driven. `destTypes.ts` and the hand-coded
+  forms are deleted.
+- Canvas uses strict port equality; `RawRequest → RequestHead` cannot be
+  drawn. `switch` and `on_error` are labelled handles. Destinations stay a
+  shared map (D13), not canvas nodes.
+- Import/export round-trips every `examples/v2/*.yaml` without field loss.
+  Export writes `schema_version: 2` and validates in-browser (WASM, then
+  `POST /validate`). Copy states it is a config generator, not a live editor.
+- `hookway schema --nodes` / `--destinations`, `GET /node-schema`, CI
+  `make node-schema-check`.
+
+**Chunk 10 gate (local, 2026-09-15):**
+
+- `cd web && npm test && npm run build`: PASS (110 tests)
+- `make test`, `make lint`: PASS
+- `WEBHOOK_URL=… GITHUB_WEBHOOK_SECRET=… hookway validate --config examples/v2/github.yaml`: PASS
+- WASM `GOOS=js GOARCH=wasm go build ./cmd/hookway-wasm`: PASS
+- Full `make test-all` not re-run (optional)
+
+**Exact next step:** none in the V2 chunk plan. Do not push.
+
+## Orchestrator — Chunk 9 gate (retained)
 
 **Status:** Chunk 9 accepted at unsigned `740da1d`. Next chunk is 10 (web UI).
 Do not push.

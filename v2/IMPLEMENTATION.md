@@ -34,7 +34,7 @@ intended reason before implementation; workers must report that evidence.
 | 7 Code node | Accepted through `2b9b94d` | C1-C7 individually exercised; race and dependency checks pass |
 | 8 Secrets and observability | Accepted through `d97b40e` | Rotation, per-flow readiness, bounded metrics; I9/I15 pass |
 | 9 V2 cutover and V1 removal | Accepted through `740da1d` | V2-only serve; V1 YAML rejected; handleWebhook gone |
-| 10 Web UI | Waiting for 9 | Export validates; import/export round-trip and visual checks pass |
+| 10 Web UI | Accepted through `f613710` | Export validates; import/export round-trip; config generator, not a live editor |
 
 S1 and S2 are independent. Chunks 4 and 5 may overlap only after shared interfaces
 are settled and file ownership is separated; acceptance of 5 still requires 4.
@@ -275,6 +275,20 @@ do not claim that an unavailable skill was invoked.
   `FlowServer` with no skips.
 - Web/WASM still emit V1 `endpoints:` (Chunk 10). CLI rejects that YAML.
 - `make test`, `make lint`, `make conformance`, `make validate-examples`, WASM
+  validator build: PASS. Do not push.
+
+## Chunk 10 local gate — 2026-09-15 (`f613710`)
+
+- Builder exports `schema_version: 2` flows. Palette/inspector/destinations
+  are driven by `hookway schema --nodes` / `--destinations` JSON (CI
+  `make node-schema-check`). `destTypes.ts` and the four hand-coded forms
+  are deleted.
+- Illegal wiring cannot be drawn (`RawRequest → RequestHead` refused).
+  Handles are coloured by port type. `switch` and `on_error` are labelled.
+- Every `examples/v2/*.yaml` round-trips without field loss. In-browser
+  validation (WASM, then `POST /validate`) runs on export. Docs state this
+  is a config generator, not a live editor (D6).
+- `cd web && npm test && npm run build`, `make test`, `make lint`, WASM
   validator build: PASS. Do not push.
 
 ## Chunk 5 local gate — 2026-09-15
