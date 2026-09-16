@@ -8,7 +8,14 @@ test("every catalog node type has palette metadata", () => {
     expect(meta.input, type).toBeTruthy();
     expect(meta.output, type).toBeTruthy();
     expect(meta.schema, type).toBeTruthy();
+    expect(typeof meta.on_error, type).toBe("boolean");
   }
+  expect(NODE_SCHEMAS.http_trigger.on_error).toBe(false);
+  expect(NODE_SCHEMAS.read_body.on_error).toBe(false);
+  expect(NODE_SCHEMAS.no_auth.on_error).toBe(false);
+  expect(NODE_SCHEMAS.rate_limit.on_error).toBe(true);
+  expect(NODE_SCHEMAS.auth.on_error).toBe(true);
+  expect(NODE_SCHEMAS.envelope.on_error).toBe(true);
 });
 
 test("option schemas cover string, number, boolean, enum, array, and nested object", () => {

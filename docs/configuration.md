@@ -25,7 +25,7 @@ config validation failed
 - `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for flows using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
 - `server.readiness_require_all`: optional boolean, default `false`. When false, `/ready` returns 200 with a per-flow body while at least one flow is ready. When true, `/ready` returns 503 if any flow is unready.
 
-## Secret references (schema_version 2)
+## Secret references
 
 `auth.secret_ref` is an alternative to inline `auth.secret`. Exactly one of `secret` or `secret_ref` is required. The resolver is cached and refreshed on a timer — never fetched per request.
 
@@ -37,7 +37,7 @@ config validation failed
   signature_header: X-Hub-Signature-256
 ```
 
-- `provider`: `env` (read `name` as an environment variable, V1 `${VAR}` equivalent), `file` (read `name` as a path), or `aws_secrets_manager` (list matching names, newest `LastChangedDate` wins).
+- `provider`: `env` (read `name` as an environment variable, same as inline `${VAR}`), `file` (read `name` as a path), or `aws_secrets_manager` (list matching names, newest `LastChangedDate` wins).
 - `name`: env var, file path, or Secrets Manager name/prefix.
 - `refresh`: optional duration, default `15m`.
 - `overlap`: optional duration, default `0`. During this window after a value change, **both** the previous and current secrets verify, so rotation is not a flag day.
@@ -51,9 +51,7 @@ A refresh failure keeps serving the last known-good value, emits `hookway_secret
 - `security.request_id_header`: optional request ID header name.
 - `security.redacted_header_denylist`: optional list of exact HTTP header names that are redacted in logs and in the published envelope. This augments automatic redaction of obvious secrets; it does not replace it.
 - `security.forwarded_header_allowlist`: optional list of HTTP header names. When non-empty, only these headers are logged and forwarded to the queue (fail-safe); every other header is dropped entirely. The denylist and built-in sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through. When empty, behavior is the legacy denylist filter (everything except denylisted/sensitive headers is forwarded).
-- `security.loop_protection`: detects webhook delivery loops (a webhook destination that points back at Hookway). See [Loop protection](#loop-protection).
-  - `enabled`: optional boolean, default `true`. When true, an inbound request whose hop count has reached `max_hops` is rejected.
-  - `max_hops`: optional positive integer, default `3`. Hookway rejects an inbound request when its `X-Hookway-Hops` value is greater than or equal to this. Raise it if you intentionally chain more than three Hookway instances; lower it to break tight self-loops sooner.
+- `security.loop_protection`: leftover YAML. It is still parsed and validated, but **inbound hop rejection is not applied from this block**. Put a `loop_guard` node on each flow that should reject `X-Hookway-Hops`. Outbound webhook deliveries still stamp `X-Hookway-Hops` regardless. See [Loop protection](#loop-protection).
 
 ```yaml
 security:
@@ -71,10 +69,10 @@ security:
   forwarded_header_allowlist:
     - "Content-Type"
     - "X-Request-ID"
-  # Optional. Defaults to enabled with a 3-hop ceiling.
-  loop_protection:
-    enabled: true
-    max_hops: 3
+  # Inbound hop rejection is a loop_guard node, not this block.
+  # loop_protection:
+  #   enabled: true
+  #   max_hops: 3
 ```
 
 ### `security.api_key`
@@ -91,14 +89,16 @@ security:
 
 ### Loop protection
 
-A webhook destination can point back at a Hookway endpoint (directly, or through a chain of Hookways), creating a delivery loop that would amplify traffic without bound. Hookway detects this with a hop counter carried in the `X-Hookway-Hops` header:
+A webhook destination can point back at a Hookway path (directly, or through a chain of Hookways), creating a delivery loop that would amplify traffic without bound. Hookway detects this with a hop counter carried in the `X-Hookway-Hops` header:
 
-- Every outbound **webhook** delivery is stamped with `X-Hookway-Hops: <inbound count + 1>`, in both envelope and proxy payload modes. A request that never passed through Hookway has no header and counts as `0`.
-- On the inbound side, when `security.loop_protection.enabled` is true, Hookway rejects a request whose hop count is greater than or equal to `max_hops`, before authentication and publishing. The rejection is a terminal `400` so a well-behaved sender — including an upstream Hookway, whose delivery engine treats `4xx` as non-retryable — stops rather than retrying the loop.
+- Every outbound **webhook** delivery is stamped with `X-Hookway-Hops: <inbound count + 1>`, in both envelope and proxy payload modes. A request that never passed through Hookway has no header and counts as `0`. `http_request` nodes also increment the header on the outbound call.
+- On the inbound side, a `loop_guard` node rejects a request whose hop count is greater than or equal to `max_hops` (default `3`) with `400`, before `read_body`. The rejection is a terminal `400` so a well-behaved sender — including an upstream Hookway, whose delivery engine treats `4xx` as non-retryable — stops rather than retrying the loop. A flow with no `loop_guard` does not reject hop headers.
 
-Because the hop count increments per Hookway hop (not per loop iteration), a tight self-loop is broken after at most `max_hops` iterations, and an intentional finite chain of up to `max_hops` Hookways still works. A malformed or negative header value counts as `0`, so it can only reset the counter, never bypass the limit. The header is always stamped on outbound deliveries even when this instance has enforcement disabled, so a downstream Hookway can still detect the loop.
+`security.loop_protection` is accepted YAML (and `max_hops` is still validated) but is **not** wired to the serve path. Do not rely on it for inbound enforcement.
 
-This mechanism relies on the header surviving each hop; a loop that transits an intermediary which strips unknown headers will not be caught. Rejections are counted by `hookway_loop_rejected_total{endpoint, destination_queue_id, queue}` and logged at Warn.
+Because the hop count increments per Hookway hop (not per loop iteration), a tight self-loop is broken after at most `max_hops` iterations, and an intentional finite chain of up to `max_hops` Hookways still works. A malformed or negative header value counts as `0`, so it can only reset the counter, never bypass the limit. The header is always stamped on outbound webhook deliveries even when a given flow has no `loop_guard`, so a downstream Hookway can still detect the loop.
+
+This mechanism relies on the header surviving each hop; a loop that transits an intermediary which strips unknown headers will not be caught. Rejections are counted by `hookway_loop_rejected_total` (the flow name is the `endpoint` label) and logged at Warn.
 
 ## Rate Limit
 
@@ -124,7 +124,7 @@ paths.
 
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. Endpoint `destinations` route to these ids and choose the target (queue, topic, or routing key) for each. Each entry has a `type` field selecting the backend. Supported types are `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, or Temporal task queue). Optional `create` and SNS/SQS `message_attributes` are the only per-publish options. blocks (`queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, `sns_options`) are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 
@@ -133,12 +133,12 @@ RabbitMQ fields live under `destinations.<id>.rabbitmq`:
 - `destinations.<id>.type`: required backend type; use `rabbitmq`.
 - `destinations.<id>.rabbitmq.url`: required AMQP URL, usually `${RABBITMQ_URL}`.
 - `destinations.<id>.rabbitmq.exchange`: required direct exchange name.
-- `destinations.<id>.rabbitmq.exchange_type`: required, use `direct` for MVP.
+- `destinations.<id>.rabbitmq.exchange_type`: required, use `direct`.
 - `destinations.<id>.rabbitmq.durable`: boolean for exchange/queue durability.
 - `destinations.<id>.rabbitmq.publish_timeout`: optional duration, default `5s`.
 - `destinations.<id>.rabbitmq.declare_queues`: boolean. If true, Hookway declares and binds allowed queues on startup.
 - `destinations.<id>.rabbitmq.publisher_channels`: optional non-negative integer. Bounds how many AMQP channels publish concurrently; each channel carries one publisher-confirm round-trip at a time, so this is the effective publish concurrency. Defaults to `8` when omitted or `0`.
-- `destinations.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to each endpoint route queue Hookway declares for that destination. Destination route `queue_options` override these defaults.
+- `destinations.<id>.rabbitmq.queue_defaults`: optional queue arguments applied to every queue this destination declares (`publish` `create: true`). There is no per-publish `queue_options` override.
   - `message_ttl`: optional positive duration mapped to RabbitMQ `x-message-ttl` in milliseconds. Stale messages are expired from the queue.
   - `expires`: optional positive duration mapped to `x-expires` in milliseconds. Useful for temporary/test queues; usually omit for production webhook queues.
   - `max_length`: optional positive integer mapped to `x-max-length` to cap backlog size.
@@ -202,7 +202,7 @@ destinations:
 
 Dead-letter fields:
 
-- `enabled`: when true, queue declaration code can attach endpoint queues to the dead-letter exchange.
+- `enabled`: when true, queue declaration attaches declared queues to the dead-letter exchange.
 - `exchange`: required safe exchange name when enabled.
 - `exchange_type`: required when enabled, usually `direct`.
 - `queue`: required only when `create_queue` is true.
@@ -219,7 +219,7 @@ SQS fields live under `destinations.<id>.sqs`. Credentials are optional: when bo
 - `destinations.<id>.sqs.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
 - `destinations.<id>.sqs.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
 
-Per-flow SQS queue attributes belong on the destination (or a dedicated destination per queue). `.fifo` targets still require FIFO-capable destination configuration.
+`sqs_options` and `fifo` are **not** fields on the `publish` node or on the destination. A `.fifo` suffix still makes create-time declaration set `FifoQueue=true`, but MessageGroupId is not sent, so AWS FIFO publishes fail. Use a standard (non-`.fifo`) queue from operator YAML until those options exist on `publish`.
 
 ```yaml
 destinations:
@@ -244,7 +244,7 @@ SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint o
 - `destinations.<id>.sns.endpoint`: optional endpoint override (LocalStack).
 - `destinations.<id>.sns.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
 
-Per-flow SNS topic settings belong on the destination. `.fifo` targets still require FIFO-capable destination configuration.
+`sns_options` and `fifo` are **not** fields on the `publish` node or on the destination. Same FIFO caveat as SQS: a `.fifo` suffix is not enough to publish. Use a standard topic from operator YAML.
 
 ### AWS S3
 
@@ -259,7 +259,7 @@ S3 fields live under `destinations.<id>.s3`. Hookway writes each webhook event a
 - `destinations.<id>.s3.sse`: server-side encryption mode. Leave empty (default) to rely on the bucket's or account's default encryption. Use `"AES256"` for SSE-S3 managed keys or `"aws:kms"` for SSE-KMS.
 - `destinations.<id>.s3.sse_kms_key_id`: KMS key ARN or alias. Only used when `sse` is `"aws:kms"`. Omit to use the default `aws/s3` KMS key.
 
-**Object key layout:** the per-route `target` is the base folder (key prefix). Each event is stored at:
+**Object key layout:** the publish `target` is the base folder (key prefix). Each event is stored at:
 
 ```
 <target>/yyyy/mm/dd/<timestamp>-<id>.json
@@ -291,7 +291,7 @@ destinations:
 
 ### Postgres
 
-Postgres fields live under `destinations.<id>.postgres`. Hookway inserts each webhook event as one row into a single shared table using [jackc/pgx/v5](https://github.com/jackc/pgx) (pgxpool). The table is created unconditionally at startup with `CREATE TABLE IF NOT EXISTS`; no per-route `create` flag is used.
+Postgres fields live under `destinations.<id>.postgres`. Hookway inserts each webhook event as one row into a single shared table using [jackc/pgx/v5](https://github.com/jackc/pgx) (pgxpool). The table is created unconditionally at startup with `CREATE TABLE IF NOT EXISTS`; no per-publish `create` flag is used.
 
 - `destinations.<id>.type`: set to `postgres`.
 - `destinations.<id>.postgres.url`: required libpq DSN. `sslmode` is honored inline (e.g. `postgres://user:pass@host:5432/db?sslmode=require`). Usually `${POSTGRES_URL}`.
@@ -312,7 +312,7 @@ Postgres fields live under `destinations.<id>.postgres`. Hookway inserts each we
 |--------|------|-------|
 | `id` | `text` | Event id; PRIMARY KEY |
 | `target` | `text` | Per-route `target` value (not a table name) |
-| `idempotency_key` | `text` | Provider delivery id (nullable) |
+| `idempotency_key` | `text` | Nullable; ingest leaves this empty. Dedupe on `id` |
 | `source_ip` | `text` | Client IP (nullable) |
 | `method` | `text` | HTTP method |
 | `path` | `text` | Request path |
@@ -324,11 +324,11 @@ Postgres fields live under `destinations.<id>.postgres`. Hookway inserts each we
 
 Two indexes are also created `IF NOT EXISTS`: one on `target` and one on `received_at`.
 
-**`target` as a column:** the per-route `target` field is stored in the `target` column rather than selecting a different table. Use it to distinguish event sources when multiple endpoints share the same destination.
+**`target` as a column:** the publish `target` is stored in the `target` column rather than selecting a different table. Use it to distinguish event sources when multiple flows share the same destination.
 
 **Deduplication:** inserts use `INSERT ... ON CONFLICT (id) DO NOTHING`. At-least-once retries from a provider are safe — duplicate event ids are silently ignored.
 
-**Pre-existing table caveat:** `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table. If the table already exists with an incompatible schema, inserts will fail at runtime. Hookway does not reconcile or migrate columns in v1 — ensure the table matches the expected schema or drop and recreate it before starting.
+**Pre-existing table caveat:** `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table. If the table already exists with an incompatible schema, inserts will fail at runtime. Hookway does not migrate columns — ensure the table matches the expected schema or drop and recreate it before starting.
 
 ```yaml
 destinations:
@@ -353,7 +353,7 @@ MongoDB fields live under `destinations.<id>.mongodb`. Hookway inserts each webh
 
 - `destinations.<id>.type`: set to `mongodb`.
 - `destinations.<id>.mongodb.uri`: required MongoDB connection URI (e.g. `mongodb://user:pass@host:27017/?replicaSet=rs0`). Usually `${MONGODB_URI}`.
-- `destinations.<id>.mongodb.database`: required database name to write into. The collection is determined by the per-route `target`.
+- `destinations.<id>.mongodb.database`: required database name to write into. The collection is determined by the publish `target`.
 - `destinations.<id>.mongodb.max_pool_size`: optional connection pool cap. `0` (default) uses the driver default.
 - `destinations.<id>.mongodb.tls`: optional TLS block. Only needed for a custom/private CA or mutual TLS (client certificate). Fields mirror the RabbitMQ/Redis TLS block:
   - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
@@ -363,7 +363,7 @@ MongoDB fields live under `destinations.<id>.mongodb`. Hookway inserts each webh
 
 **`on_existing_conflict` is not valid for MongoDB destinations** — the field is rejected at config validation time. Do not set it on `mongodb` entries.
 
-**Collection-per-target:** the per-route `target` field names the MongoDB collection within `database`. Use different targets to send events from different endpoints into separate collections.
+**Collection-per-target:** the publish `target` names the MongoDB collection within `database`. Use different targets to send events from different flows into separate collections.
 
 **Document shape:** each event is stored as one BSON document. The stored document carries the same envelope fields (`_id`, `endpoint`, `received_at`, `headers`, `query`, `body`, `auth`) that other destinations emit, stored as native BSON — top-level scalars map to BSON string/datetime types and nested objects (`headers`, `query`, `body`, `auth`) become nested BSON documents.
 
@@ -411,19 +411,9 @@ Kafka fields live under `destinations.<id>.kafka`. Hookway publishes each webhoo
 
 **Security note:** omitting both `tls.enabled` and `sasl` connects to the brokers in plaintext with no authentication. Hookway logs a startup warning in this case; use it only for local development.
 
-**`target` is the topic.** The per-route `target` field is the Kafka topic name. Setting the route's `create: true` makes Hookway pre-create the topic via an admin `CreateTopics` call at startup (idempotent — an already-existing topic is left as-is). This replaces relying on broker-side auto-creation, which raced the first publish. Omit `create: true` when topics are pre-provisioned; `create: false` (or omitted) routes must already exist on the broker.
+**`target` is the topic.** The publish `target` is the Kafka topic name. Setting `create: true` on that `publish` node makes Hookway pre-create the topic via an admin `CreateTopics` call at startup (idempotent — an already-existing topic is left as-is). This replaces relying on broker-side auto-creation, which raced the first publish. Omit `create: true` when topics are pre-provisioned; `create: false` (or omitted) targets must already exist on the broker.
 
-**Partition key:** the optional per-route `kafka_options.partition_key` block derives the Kafka message key (which selects the partition), reusing the same source model as FIFO group ids:
-
-- `source`: one of `static` | `endpoint` | `header` | `body`. `static` uses `value`; `header`/`body` extract `path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name.
-- `fallback`: a literal value, or `endpoint`; used when extraction yields nothing.
-
-Keyed messages preserve per-key ordering within the topic. Omit `partition_key` entirely for round-robin distribution across partitions.
-
-**Topic creation options:** for `create: true` routes, two optional per-route settings tune the pre-created topic:
-
-- `kafka_options.partitions`: number of partitions for the topic. Omit (or `0`) to use the broker default.
-- `kafka_options.replication_factor`: replication factor for the topic. Omit (or `0`) to use the broker default.
+**Partition key / topic creation options:** `kafka_options` (`partition_key`, `partitions`, `replication_factor`) are not fields on the `publish` node. Messages are produced without a key (round-robin partitions) and topic create uses the broker defaults. Put a dedicated destination per topic when you need different destination-level Kafka settings.
 
 See `examples/destinations/kafka.yaml` for a complete reference config.
 
@@ -468,19 +458,9 @@ Temporal fields live under `destinations.<id>.temporal`. Hookway starts one work
 
 **Security note:** omitting both `tls.enabled` and `api_key` connects to the frontend in plaintext with no authentication. Hookway logs a startup warning in this case. The published image is built `FROM scratch`, so certificate paths must be mounted into the container.
 
-**`target` is the task queue.** The per-route `target` field is the Temporal task queue name. `create: true` has no meaning for Temporal and is ignored. Task queue names must not end in `.fifo`.
+**`target` is the task queue.** The publish `target` is the Temporal task queue name. `create: true` has no meaning for Temporal and is ignored. Task queue names must not end in `.fifo`.
 
-**Per-route `temporal_options`** (required on every route that points at a `temporal` destination):
-
-- `workflow_type` (required): the workflow type name registered on the worker.
-- `input`: `envelope` (default) sends the full Hookway event envelope as the single workflow argument, the same JSON every other destination emits. `body` sends only the decoded webhook body, for workflows that expect a plain object. When the body was not JSON, `body` mode falls back to the envelope and logs a warning so a JSON-typed worker still receives an object.
-- `workflow_id`: derives the workflow id. Omit the block to use the Hookway event id (unique per event).
-  - `source`: `static` | `endpoint` | `header` | `body`. `static` uses `value`; `header`/`body` extract `path` (a header name, or a dotted path into the JSON body); `endpoint` uses the endpoint name. An unresolved value falls back to the event id.
-  - `prefix`: prepended to the resolved value, e.g. `prefix: "order-"` with `path: "order.id"` yields `order-<id>`. May contain `{variable}` placeholders declared under the endpoint's `variables` (e.g. `"{envName}-aan-"`), rendered per event.
-- `id_reuse_policy`: `allow_duplicate`, `allow_duplicate_failed_only`, `reject_duplicate`, or `terminate_if_running`. Omit for the server default (`allow_duplicate`).
-- `execution_timeout`, `run_timeout`, `task_timeout`: optional per-execution timeouts. `run_timeout` must not exceed `execution_timeout`.
-
-Routes in different endpoints that share a task queue must use identical `temporal_options`.
+**Workflow type and id:** `temporal_options` (`workflow_type`, `input`, `workflow_id`, `id_reuse_policy`, timeouts) are **not** fields on the `publish` node. The destination factory therefore starts executions with an empty workflow type unless you inject those options some other way (the standalone YAML catalog cannot). Treat Temporal as incomplete for operator YAML until those options exist on `publish` or on the destination. The example under `examples/destinations/temporal.yaml` shows task-queue wiring only.
 
 **Duplicates count as delivered.** When the server reports that an execution with the derived workflow id already exists, Hookway logs it at debug level and returns success, so sender retries with a deterministic workflow id are idempotent (first-start-wins).
 
@@ -519,22 +499,22 @@ flows:
 
 ### Redis / Valkey
 
-Hookway supports four Redis destination types. All share a common `redis:` connection block on the destination, and per-route settings under `redis_options` on each endpoint route.
+Hookway supports four Redis destination types. All share a common `redis:` connection block on the destination. `redis_options` (`max_len`, `consumer_group`, `ttl`, `key_template`) are not fields on the `publish` node.
 
 **Available types:**
 
 | Type | Primitive | Notes |
 |------|-----------|-------|
-| `redis_stream` | XADD to a Stream — durable, consumer groups, replay, bounded trim | Recommended for at-least-once delivery |
-| `redis_list` | LPUSH to a List — FIFO work queue; LTRIM cap bounds memory | Simple competing-consumer queue |
+| `redis_stream` | XADD to a Stream — durable; consumers may XREADGROUP | Recommended for at-least-once delivery. YAML has no `max_len` / `consumer_group`, so Hookway does not trim or create groups |
+| `redis_list` | LPUSH to a List — FIFO work queue | Simple competing-consumer queue. YAML has no `max_len`, so lists are unbounded unless consumers trim |
 | `redis_pubsub` | PUBLISH to a channel — live broadcast; lossy, not durable | Fire-and-forget; subscribers offline at delivery time miss the message |
-| `redis_kv` | SET a key per webhook with TTL — storage/lookup, not a queue | Latest-event overwrite; keys expire automatically |
+| `redis_kv` | SET a key per webhook — storage, not a queue | Latest-event overwrite. Default key `{prefix}:{flow}:{id}`. YAML has no `ttl`, so keys do not expire |
 
 `redis_stream` is the recommended type for at-least-once webhook handoff. `redis_pubsub` is intentionally lossy — if no subscriber is connected at publish time, the message is silently dropped; use it only for live broadcast scenarios where occasional loss is acceptable.
 
 [Valkey](https://valkey.io/) is fully supported: it speaks the RESP protocol and behaves identically to Redis.
 
-**Shared `redis:` connection block** — configure once on the destination, reused by every endpoint route that targets it:
+**Shared `redis:` connection block** — configure once on the destination, reused by every `publish` that targets it:
 
 - `mode`: deployment topology. `single` (default) for one node or a proxied endpoint; `cluster` for Redis Cluster; `sentinel` for Redis Sentinel.
 - `url`: redis:// or rediss:// URL. Required for `single` mode. Usually `${REDIS_URL}`.
@@ -542,7 +522,7 @@ Hookway supports four Redis destination types. All share a common `redis:` conne
 - `master_name`: sentinel primary name. Required for `sentinel` mode (e.g. `"mymaster"`).
 - `username` / `password`: optional auth credentials.
 - `db`: optional database index. Applies to `single` and `sentinel`; Redis Cluster ignores it.
-- `key_prefix`: optional string automatically prepended to stream/list/channel targets for `redis_stream`, `redis_list`, and `redis_pubsub` (formatted as `<prefix>:<target>`). For `redis_kv`, the prefix is available via the `{prefix}` token in `key_template` but is not automatically prepended.
+- `key_prefix`: optional string automatically prepended to stream/list/channel targets for `redis_stream`, `redis_list`, and `redis_pubsub` (formatted as `<prefix>:<target>`). For `redis_kv`, the prefix is substituted into the default key template `{prefix}:{endpoint}:{id}` (`endpoint` is the flow name) but is not automatically prepended.
 - `tls`: optional TLS settings — mirror of the RabbitMQ TLS block.
   - `enabled`: boolean.
   - `ca_cert`: path to a PEM bundle for private/self-signed CAs.
@@ -571,10 +551,9 @@ See `examples/destinations/redis_stream.yaml` for a full annotated reference wit
 
 **Best practices for `redis_stream`:**
 
-- Use `max_len` with approximate trimming (`XADD MAXLEN ~`): the actual stream length may slightly exceed the configured cap, which is intentional — approximate trimming is far more efficient than exact trimming in Redis.
-- Set `consumer_group` when multiple workers compete for messages. Hookway creates the group at startup when `create: true` and `consumer_group` is set (idempotent: safe in production).
-- Delivery is at-least-once: a message appended via XADD is acknowledged to the webhook provider before the consumer confirms processing, so consumers must tolerate duplicates (deduplicate on `idempotency_key`).
-- Redis connectivity for a `redis_stream` destination is **not** verified at process startup unless a consumer group is being created (`create: true` with `consumer_group` set, which dials Redis immediately). Otherwise, the connection is established lazily — verified at the `/ready` (`/readyz`) probe and on the first publish.
+- `redis_options.max_len` / `consumer_group` are not on the `publish` node, so streams are unbounded unless you trim from the consumer side, and Hookway does not create a consumer group at startup.
+- Delivery is at-least-once: a message appended via XADD is acknowledged to the webhook provider before the consumer confirms processing, so consumers must tolerate duplicates (deduplicate on envelope `id`).
+- Redis connectivity for a `redis_stream` destination is established lazily — verified at the `/ready` (`/readyz`) probe and on the first publish.
 
 ### Webhook
 
@@ -591,9 +570,11 @@ Webhook fields live under `destinations.<id>.webhook`. Hookway delivers each inb
 
 **NON-DURABLE by default:** the delivery queue is in-memory only. There is no write-ahead log or persistent queue. For durability of terminally-failed deliveries, configure a `dead_letter` destination pointing at a durable backend; for full durability of every event, use a durable queue destination (RabbitMQ, SQS, Kafka, etc.) directly.
 
-**Dead-letter (`dead_letter`, async only):** when an async delivery fails terminally — a terminal `4xx`, or `5xx`/timeout/error after retries are exhausted — Hookway can redirect the message to another destination instead of dropping it (log-and-drop is the default when no `dead_letter` is set). The redirected message is the original envelope enriched with a `dead_letter` block (`destination`, `target`, `outcome`, `attempts`, `failed_at`). The referenced destination MUST exist and MUST NOT itself be a `webhook` destination — this makes delivery loops structurally impossible (no cycle-detection needed). The dead-letter target queue/topic is auto-collected into the backend destination (and declared for RabbitMQ when `declare_queues: true`) even if it has no direct endpoint route.
+**Dead-letter (`dead_letter`, async only):** when an async delivery fails terminally — a terminal `4xx`, or `5xx`/timeout/error after retries are exhausted — Hookway can redirect the message to another destination instead of dropping it (log-and-drop is the default when no `dead_letter` is set). The redirected message is the original envelope enriched with a `dead_letter` block (`destination`, `target`, `outcome`, `attempts`, `failed_at`). The referenced destination MUST exist and MUST NOT itself be a `webhook` destination — this makes delivery loops structurally impossible (no cycle-detection needed). The dead-letter target queue/topic is auto-collected into the backend destination (and declared for RabbitMQ when `declare_queues: true`) even if no `publish` node targets it directly.
 
-**Not a transparent proxy (async):** Hookway does not return the downstream HTTP response to the inbound sender. In async mode the inbound sender always sees Hookway's own `202 Accepted` (queue-accept) or an error. In sync mode the inbound sender still sees Hookway's status (2xx/non-2xx), never the downstream body.
+**Not a transparent proxy (async webhook destination):** Hookway does not return the downstream HTTP response to the inbound sender. In async mode the inbound sender always sees Hookway's own `202 Accepted` (queue-accept) or an error. In sync mode the inbound sender still sees Hookway's status (2xx/non-2xx), never the downstream body.
+
+For a synchronous reverse proxy of the inbound request (upstream status, headers, and body), use `http_request` plus `respond` `passthrough: true` — see [Flows](#flows) and `examples/showcase/proxy.yaml` — not a webhook destination.
 
 #### Fields
 
@@ -812,11 +793,23 @@ flows:
     edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 ```
 
-Nodes are wired by `edges` (`from>to`). Illegal port wiring fails `hookway validate`. Typical order: `http_trigger` → pre-body gates (`loop_guard`, `ip_allowlist`, `rate_limit`) → `read_body` → `auth` or `no_auth` → `envelope` → `filter` / `transform` / `lookup` / `code` / `http_request` → `publish` and/or `respond`.
+Nodes are wired by `edges` (`from>to`, or `from:port>to` for a labelled port). Illegal port wiring fails `hookway validate`. Typical order: `http_trigger` → pre-body gates (`loop_guard`, `ip_allowlist`, `rate_limit`) → `read_body` → `auth` or `no_auth` → `envelope` → `filter` / `transform` / `lookup` / `code` / `http_request` → `publish` and/or `respond`.
+
+`on_error` is a reserved output port on nodes that can fail with a recoverable input. It is not available on `http_trigger` (no input), `read_body` (the body reader is consumed by a failed read), or `no_auth` (no semantic failure). If the node returns an error and an `on_error` edge exists, the flow continues with that node's **input** (not its output) and the request succeeds unless the error path itself fails. The error-path target must consume the failing node's input port — `rate_limit:on_error` still carries `RequestHead`, `auth:on_error` still carries `RawRequest`, `envelope:on_error` still carries `Verified`, `http_request:on_error` still carries `Envelope`. A node that has only `on_error` successors is rejected; it still needs a success path. Without `on_error`, the failure becomes the HTTP status from the node (`401`, `413`, `429`, `502`, …) or `500`. Filter `on_no_match: drop` is a successful stop, not an error, so it does not take `on_error`.
+
+```yaml
+- {id: ack, type: http_request, url: "https://example.test/hooks", error_on_status: [5xx]}
+- {id: out, type: publish, destination: billing, target: github-events}
+- {id: dlq, type: publish, destination: billing, target: github-failed}
+# …
+edges: [env>ack, ack>out, ack:on_error>dlq]
+```
+
+See `examples/on_error.yaml` for `rate_limit`, `auth`, `envelope`, and `http_request`. `examples/showcase/production.yaml` uses `ack:on_error>dlq`.
 
 Flow fields:
 
-- `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on `idempotency_key`.
+- `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on envelope `id`.
 - `nodes` / `edges`: required.
 
 ### Trigger, gates, and body
@@ -824,7 +817,7 @@ Flow fields:
 - `http_trigger`: `path` (must start with `/`, unique among flows; `{name}` captures a path segment into envelope vars) and `methods` (default `[POST]`; `ANY` skips 405).
 - `loop_guard`: rejects inbound `X-Hookway-Hops` at `max_hops` with 400.
 - `ip_allowlist`: `cidrs` list of IPs or CIDR ranges; mismatch is 403. Source IP honors `security.trusted_proxy_headers` / `trusted_proxies`.
-- `rate_limit`: pod-scoped token bucket (`rpm`, optional `burst`, `key_by: source_ip` or `header.<name>`). N pods means N× the configured RPM (D11).
+- `rate_limit`: pod-scoped token bucket (`rpm`, optional `burst`, `key_by: source_ip` or `header.<name>`). Unknown `key_by` values fall back to source IP. N pods means N× the configured RPM (D11).
 - `read_body`: required positive `max_bytes` (the per-node cap; values above `server.max_body_bytes` produce a lint warning); oversize is 413.
 - `replay_guard`: process-local replay cache (`ttl`, `max_entries`, `key` template). N pods means N allowed replays (W5). The reservation is released on retryable publish failure so a broker outage does not become a permanent `409`.
 
@@ -841,9 +834,9 @@ Each flow builds its verifier once at startup from the `auth` (or `no_auth`) nod
   - `exact` (`header_exact`): constant-time compare of `signature_header` to `secret`. Use `remove_bearer: true` to strip a leading `Bearer` prefix. *Example: RevenueCat `Authorization`.*
   - `basic` (`header_exact`): HTTP Basic against the configured `user:pass` secret.
   - Use the separate `no_auth` node for intentional unverified traffic; `auth.scheme: no_auth` is rejected.
-  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): Bearer JWT from `signature_header`. `body_hash_claim` is required and binds the token to the raw body. There is no V2 opt-out.
-- `secret` or `secret_ref`: required except for `no_auth`. See [Secret references](#secret-references-schema_version-2).
-- `signature_header`: header Hookway reads; not required for `no_auth`.
+  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): Bearer JWT from `signature_header`. `body_hash_claim` is required and binds the token to the raw body. There is no opt-out.
+- `secret` or `secret_ref`: required except for `no_auth`. See [Secret references](#secret-references).
+- `signature_header`: header Hookway reads. Alternative: `source: {kind: header|query, key: ...}`. `kind: query` reads a query parameter (Qualia-style `?authID=`). Query keys used for auth are redacted. If both `source` and `signature_header` are set, `source` wins.
 - `timestamp_tolerance`: defaults to `5m`; timestamped HMAC uses it as the freshness window, JWT as clock leeway.
 
 HMAC schemes verify the **raw** body bytes. New providers are added by registering a scheme in `internal/auth`.
@@ -853,10 +846,10 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
-- `http_request`: outbound request; see the proxy examples under `examples/v2/`.
+- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`). See `examples/showcase/proxy.yaml` and `examples/on_error.yaml`.
 - `transform`: `changed_fields`, `field_map`, `xml_prune`.
-- `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the V2 YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
-- `code`: sandboxed JavaScript; see [Code node](#code-node-schema_version-2).
+- `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
+- `code`: sandboxed JavaScript; see [Code node](#code-node).
 - `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path.
 
 `stop_on_failure` (default) publishes `publish` successors sequentially and returns `503` on the first failure. `skip_failed` attempts every direct publish successor with bounded concurrency and returns `202` when at least one succeeds, with `failed_destinations` listing failures. Fan-out through processing nodes remains sequential and stops on error. Filter drops are successful branch termination.
@@ -888,13 +881,13 @@ See `examples/filters.yaml`.
 
 ### Variables
 
-Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a body field to `vars.tenant`. `lookup` resolves an external key. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. Unresolved templates fail closed at publish.
+Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a body field to `vars.tenant`. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. Unresolved templates fail closed at publish. The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`) until a provider is injected.
 
 A placeholder in a webhook `url` **host** must be followed by a literal domain suffix (`{envName}-api.example.com`) so a request cannot choose an arbitrary host. `${ENV_VAR}` references expand at load and are not request variables.
 
 See `examples/variables.yaml`.
 
-## Code node (schema_version 2)
+## Code node
 
 `code` runs JavaScript on a goja VM compiled at config load. A syntax error fails `hookway validate`, not the first request. Known transforms (`changed_fields`, `field_map`, `xml_prune`) belong on `transform`, not in JS.
 
@@ -952,12 +945,12 @@ replay:
 
 The replay API is served on `replay.addr`, distinct from the webhook listener:
 
-- `GET /replay/events`: list captured events. Query params: `endpoint`, `destination`, `target`, `status`, `since`/`until` (RFC 3339 timestamps), `limit`, `cursor` (opaque, from a previous response's `next_cursor`). Response: `{"events": [...], "next_cursor": "..."}`, where each event summary has `id`, `endpoint`, `status`, `idempotency_key`, `received_at`.
+- `GET /replay/events`: list captured events. Query params: `endpoint` (flow name), `destination`, `target`, `status`, `since`/`until` (RFC 3339 timestamps), `limit`, `cursor` (opaque, from a previous response's `next_cursor`). Response: `{"events": [...], "next_cursor": "..."}`, where each event summary has `id`, `endpoint` (flow name), `status`, `idempotency_key` (empty for ingest), `received_at`.
 - `GET /replay/events/{id}`: fetch one captured event, including its full stored envelope. Response: `{"id", "endpoint", "status", "idempotency_key", "received_at", "envelope"}`. `404` when not found.
 - `POST /replay/events/{id}/replay`: re-deliver one captured event to every destination it was originally recorded as delivered/failed to. Body (optional): `{"reprocess": false}`. Response: `{"replayed_event_id", "original_event_id", "destinations": [...]}`. `404` when the event doesn't exist; `422` when the event has no recorded deliveries (see Limitations below).
 - `POST /replay/replay`: bulk re-delivery over a filtered set of events. Body (all fields optional): `{"endpoint", "destination", "target", "status", "since", "until", "reprocess": false, "dry_run": false, "max": 100}`. With `dry_run: true`, returns `{"matched": <count>, "dry_run": true}` and replays nothing. Otherwise replays up to `max` matching events (default and per-request ceiling; the store additionally clamps list pages to its own maximum) and returns `{"replayed": <count>, "capped": <bool>, "results": [...]}` — `capped` is true when more events matched the filter than were replayed in this request. `destination`/`target` here only **select** which events to replay (events that were recorded as delivered/failed to that destination) — they do not restrict delivery. Each matched event is still re-delivered to **all** of its own recorded destinations, not just the one used to select it.
 
-**`reprocess`:** a replayed event is published as a new event (a fresh event id, `replay_of` set to the original event's id, and hop count reset to 0). When `reprocess` is `false` (default), the original `idempotency_key` is preserved, so a consumer that already deduplicated the original delivery treats the replay as a no-op (dedup-safe re-send). When `true`, a fresh idempotency key is generated, so consumers process the replayed copy as a new event.
+**`reprocess`:** a replayed event is always a new envelope: fresh `id`, `replay_of` set to the original event id, hop count reset to 0. Consumers that follow the documented contract (dedupe on `id`) therefore process every replay as a new event; correlate with `replay_of`. `reprocess` only touches `idempotency_key`, which ingest leaves empty: `false` (default) keeps the stored value (empty), `true` mints a new UUID. That flag only matters for consumers still keyed on `idempotency_key`.
 
 ### Limitations
 
@@ -977,7 +970,7 @@ Hookway emits structured `slog` JSON logs. Each log record carries a consistent 
 |-----|-----------|-------------|
 | `destination` | publish path, startup | Stable destination id from the config map (e.g. `billing`). |
 | `target` | publish path, startup | Queue/topic/routing-key/stream name (e.g. `stripe-events`). |
-| `event_id` | publish path | Envelope event id; correlates with the `idempotency_key` in the published message. |
+| `event_id` | publish path | Envelope event id (`id` on the published message). |
 | `endpoint` | publish path | Flow name (e.g. `stripe_billing`); the metric label remains `endpoint` for compatibility. |
 | `request_id` | publish path | Value of the configured `request_id_header`, when present. |
 | `trace_id` | publish path | Trace id propagated from the inbound request, when present. |

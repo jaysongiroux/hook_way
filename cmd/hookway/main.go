@@ -106,7 +106,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	version, detectErr := flowconfig.DetectSchemaVersion(data)
-	isV2 := detectErr == nil && version == 2
+	schema2 := detectErr == nil && version == 2
 
 	if *jsonOut {
 		resp := configapi.ValidateWithEnv(data, !*noEnv)
@@ -124,8 +124,8 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	if !isV2 {
-		fmt.Fprintln(stderr, config.ConfigValidationError{Issues: []config.ValidationIssue{flowconfig.V1UnsupportedIssue()}})
+	if !schema2 {
+		fmt.Fprintln(stderr, config.ConfigValidationError{Issues: []config.ValidationIssue{flowconfig.UnsupportedSchemaIssue()}})
 		return 1
 	}
 
@@ -232,7 +232,7 @@ func editorAPIKey(configFlag string) (string, error) {
 		return "", err
 	}
 	if version != 2 {
-		iss := flowconfig.V1UnsupportedIssue()
+		iss := flowconfig.UnsupportedSchemaIssue()
 		return "", fmt.Errorf("%s: %s", iss.Message, iss.Suggestion)
 	}
 	cfg, issues := flowconfig.Load(path)
@@ -350,23 +350,23 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 
 	if schemaVersion != 2 {
 		appMetrics.ConfigLoadFailure("load")
-		iss := flowconfig.V1UnsupportedIssue()
+		iss := flowconfig.UnsupportedSchemaIssue()
 		logger.Error("config load failed", "error", iss.Message, "suggestion", iss.Suggestion)
 		return 1
 	}
 
-	v2cfg, issues := flowconfig.Load(path)
-	issues = append(issues, flowconfig.Lint(v2cfg)...)
-	issues = append(issues, flowconfig.StandaloneIssues(v2cfg)...)
+	flowCfg, issues := flowconfig.Load(path)
+	issues = append(issues, flowconfig.Lint(flowCfg)...)
+	issues = append(issues, flowconfig.StandaloneIssues(flowCfg)...)
 	if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
 		appMetrics.ConfigLoadFailure("load")
 		logger.Error("config load failed", "error", config.ConfigValidationError{Issues: blocking})
 		return 1
 	}
-	for _, issue := range flowconfig.Lint(v2cfg) {
+	for _, issue := range flowconfig.Lint(flowCfg) {
 		logger.Warn("config lint", "field", issue.Field, "message", issue.Message)
 	}
-	cfg := v2cfg.ServingConfig()
+	cfg := flowCfg.ServingConfig()
 	level, err := hooklogging.ParseLevel(cfg.Logging.Level)
 	if err != nil {
 		// Unreachable in practice: cfg.ValidationIssues() already rejected an
@@ -392,9 +392,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	defer publisher.Close()
 
-	flowApp, err := httpapi.NewFlowServer(v2cfg, publisher, logger, appMetrics)
+	flowApp, err := httpapi.NewFlowServer(flowCfg, publisher, logger, appMetrics)
 	if err != nil {
-		logger.Error("v2 flow server failed", "error", err)
+		logger.Error("flow server failed", "error", err)
 		return 1
 	}
 	app := flowApp

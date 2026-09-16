@@ -3,7 +3,7 @@ import { fromConfig } from "./fromConfig";
 import { toConfig } from "./toConfig";
 import { createNode, resetIdCounters } from "./model";
 
-test("imports a V2 flow into canvas nodes and edges", () => {
+test("imports a flow into canvas nodes and edges", () => {
   const config = {
     schema_version: 2,
     server: { addr: ":8080", max_body_bytes: 1048576 },

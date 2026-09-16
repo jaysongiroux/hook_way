@@ -1,6 +1,6 @@
 # Security
 
-Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, or SNS). An `auth` node selects the verifier family (`hmac_sha256`, `header_exact`, `jwt`, or `no_auth` via a `no_auth` node); **scheme** selects the header layout within that family. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The full scheme list lives in [Configuration](configuration.md#auth).
+Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, SNS, S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or outbound webhook). An `auth` node selects the verifier family (`hmac_sha256`, `header_exact`, `jwt`); **scheme** selects the header layout within that family. Unverified traffic uses a separate `no_auth` node — `auth.scheme: no_auth` is rejected. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The full scheme list lives in [Configuration](configuration.md#auth).
 
 ## Auth Schemes
 
@@ -16,11 +16,11 @@ Prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (used by G
 
 ### `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`)
 
-Verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm, so a token whose `alg` does not match (including `alg: none`) is rejected. `secret` holds the HMAC secret (`jwt_hs256`) or a PEM public key (`jwt_rs256`/`jwt_es256`). `exp` is required and `timestamp_tolerance` is the clock-skew leeway; optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. `body_hash_claim` is required and binds the token to the raw body; V2 has no unbound-body opt-out.
+Verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm, so a token whose `alg` does not match (including `alg: none`) is rejected. `secret` holds the HMAC secret (`jwt_hs256`) or a PEM public key (`jwt_rs256`/`jwt_es256`). `exp` is required and `timestamp_tolerance` is the clock-skew leeway; optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. `body_hash_claim` is required and binds the token to the raw body; There is no unbound-body opt-out.
 
-### `no_auth` (`no_auth`)
+### `no_auth` node
 
-Accepts every request without verification. Hookway logs a startup warning for any flow using it. Reserve it for trusted internal traffic where authentication is enforced upstream.
+Accepts every request without verification. Use the `no_auth` node, not `auth.scheme: no_auth`. Hookway logs a startup warning for any flow using it. Reserve it for trusted internal traffic where authentication is enforced upstream.
 
 ### `exact` (`header_exact`)
 
@@ -34,13 +34,14 @@ For HMAC schemes the body is not parsed, trimmed, normalized, or re-serialized b
 
 ## Secrets
 
-Put secrets in environment variables and reference them from YAML with `${ENV_NAME}`. Hookway validates required secrets but does not print expanded secret values.
+Put secrets in environment variables and reference them from YAML with `${ENV_NAME}`, or use `auth.secret_ref` (`env` / `file` / `aws_secrets_manager`) with a refresh interval and optional overlap window so rotation is not a flag day. See [Configuration § Secret references](configuration.md#secret-references). Hookway does not print expanded secret values.
 
 ## Request Handling
 
 - Only configured flow paths are accepted for ingress.
 - Empty bodies are rejected.
-- Body size is capped by each `read_body.max_bytes`; `server.max_body_bytes` is a lint reference, not an inherited cap.
+- Body size is capped by each `read_body.max_bytes`; `server.max_body_bytes` is a lint reference, not an inherited cap. Keep `read_body.max_bytes` tight per flow.
+- Inbound `X-Hookway-Hops` is enforced by a `loop_guard` node, not `security.loop_protection`. See [Configuration § Loop protection](configuration.md#loop-protection).
 - Server timeouts are configured from YAML.
 - Shutdown handles `SIGINT` and `SIGTERM`.
 - `/healthz` reports process liveness for container healthchecks.
@@ -50,15 +51,15 @@ Put secrets in environment variables and reference them from YAML with `${ENV_NA
 
 ## Rate Limiting
 
-Rate limiting uses `golang.org/x/time/rate` token buckets keyed by source IP. Buckets are stored in process memory and idle keys are evicted to cap growth from one-off IPs. `X-Forwarded-For` and `X-Real-IP` are ignored unless `security.trusted_proxy_headers` is true. When `security.trusted_proxies` is configured, forwarding headers are honored only when the immediate TCP peer is within one of those CIDR ranges; otherwise the peer IP is used.
+Rate limiting uses `golang.org/x/time/rate` token buckets on a `rate_limit` node. `key_by` is `source_ip` (default) or `header.<name>` (falls back to source IP if that header is empty). Unknown `key_by` values are treated as source IP. Buckets are stored in process memory and idle keys are evicted to cap growth from one-off IPs. `X-Forwarded-For` and `X-Real-IP` are ignored unless `security.trusted_proxy_headers` is true. When `security.trusted_proxies` is configured, forwarding headers are honored only when the immediate TCP peer is within one of those CIDR ranges; otherwise the peer IP is used.
 
 When `X-Forwarded-For` is honored, Hookway does **not** take the leftmost entry (that value is client-supplied and trivially spoofed). Instead it walks the comma-separated list right to left — the direction proxies append in — skipping any entry that itself falls within `trusted_proxies`, and uses the first (rightmost) entry that isn't a known proxy as the client IP. If every entry is a trusted proxy, the leftmost entry is used. A malformed entry stops the walk immediately and falls back to the last known-good hop rather than continuing toward the client-controlled end, so a crafted invalid entry can't be used to smuggle a different address into scope. This stops a client from spoofing `X-Forwarded-For` (e.g. prepending an allowlisted IP, or rotating fake addresses) to evade the IP allowlist or per-IP rate limit. Configure `trusted_proxies` to your load balancer/ingress ranges in production; leaving `trusted_proxy_headers` on with `trusted_proxies` empty trusts any peer and treats the rightmost `X-Forwarded-For` entry as the client IP with no proxy hops recognized to skip.
 
-For horizontally scaled deployments, enforce global quotas at a shared edge or gateway limiter. Hookway V2 has no Redis/shared limiter mode. Process-local rate limits are useful as defense in depth but do not enforce a global quota across replicas.
+For horizontally scaled deployments, enforce global quotas at a shared edge or gateway limiter. Hookway has no Redis/shared limiter mode. Process-local rate limits are useful as defense in depth but do not enforce a global quota across replicas.
 
 ## Replay Protection
 
-Replay protection is process-local. By default it keys on a hash of raw body bytes; an explicit key can use headers/path variables. A replay can pass on another replica (N pods permit N reservations). Hookway V2 has no cluster-wide replay guard; the optional replay capture database does not provide one. Consumers must deduplicate.
+Replay protection is process-local. By default it keys on a hash of raw body bytes; an explicit key can use headers/path variables. A replay can pass on another replica (N pods permit N reservations). Hookway has no cluster-wide replay guard; the optional replay capture database does not provide one. Consumers must deduplicate.
 
 ## Header Redaction and Allowlisting
 
@@ -77,9 +78,9 @@ By default this is a denylist (fail-open): headers not matched above are forward
 
 ## Idempotency
 
-Each published envelope has a unique `id` (UUIDv7) so consumers can deduplicate at-least-once deliveries. `idempotency_key` is included when the envelope carries one (also set as the AMQP `x-idempotency-key` header).
+Each published envelope has a unique `id` (UUIDv7) so consumers can deduplicate at-least-once deliveries. Hookway does not populate `idempotency_key` on the envelope (there is no `idempotency_header` on `auth` / `no_auth`). Dedupe on `id`.
 
-For fan-out flows, delivery is not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With the default `delivery_failure_policy: stop_on_failure`, Hookway publishes sequentially; if an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations can see the same event again and must dedupe by `id` / `idempotency_key`. With `delivery_failure_policy: skip_failed`, Hookway attempts every publish and acknowledges partial success with `202` when at least one destination succeeds; that partial-success `202` also releases the replay reservation (see below), so an identical sender retry is accepted again rather than rejected, and can redeliver to the destinations that failed the first time. That retry re-delivers to the destinations that already succeeded too; consumers dedupe that duplicate, identical to the retry contract `stop_on_failure` already relies on.
+For fan-out flows, delivery is not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With the default `delivery_failure_policy: stop_on_failure`, Hookway publishes sequentially; if an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations can see the same event again and must dedupe by `id`. With `delivery_failure_policy: skip_failed`, Hookway attempts every publish and acknowledges partial success with `202` when at least one destination succeeds; that partial-success `202` also releases the replay reservation (see below), so an identical sender retry is accepted again rather than rejected, and can redeliver to the destinations that failed the first time. That retry re-delivers to the destinations that already succeeded too; consumers dedupe that duplicate on `id`, identical to the retry contract `stop_on_failure` already relies on.
 
 ## Availability Model
 
@@ -91,7 +92,7 @@ The webhook publish itself runs detached from the inbound HTTP request's context
 
 ## Logging
 
-Logs include request method, path, endpoint, destination queue id, queue, status, and duration. Raw webhook payloads and secrets are not logged.
+Logs include request method, path, flow name (`endpoint` / `flow` depending on the logger), destination id (`destination`), target, status, and duration. Raw webhook payloads and secrets are not logged.
 
 ## Envelope Compatibility
 
@@ -123,7 +124,7 @@ The optional replay store and its API (see [Configuration § Replay](configurati
 - **Mandatory authentication.** `replay.enabled: true` requires a non-empty `security.api_key`; config validation rejects the config otherwise. This is enforced (not merely recommended) because the replay API is not read-only — `POST /replay/replay` and `POST /replay/events/{id}/replay` re-inject stored payloads into live destinations, so an unauthenticated instance of this API would let anyone replay arbitrary captured traffic. Callers authenticate the same way as the metrics endpoint: `Authorization: Bearer <security.api_key>`.
 - **Capture scope.** Only events that pass the flow's own authentication are ever captured — a request that fails auth verification is rejected before capture, so the replay store cannot become a side channel for unauthenticated payloads. Set `replay.skip_unauthenticated: true` to additionally exclude `no_auth` flows from capture, since those flows have no caller identity to attribute a captured event to.
 - **Best-effort capture, readiness-gated store.** Writing a captured event (or its delivery outcome) to the replay store is strictly best-effort: a store error or panic is caught, logged, and counted in `hookway_replay_capture_failures_total{op}` — it never blocks the webhook response or changes its status code. When replay is enabled, the store's reachability is AND-joined into every flow's readiness (and exposed as `hookway_replay_store_up`) so a store outage does not silently accept events that cannot be captured. Schema version 2 still keeps unrelated *destination* failures from sidelining healthy flows. `/health`/`/healthz` stay liveness-only.
-- **Replay identity and idempotency.** A replayed event is published as a new event: a fresh event id, `replay_of` set to the original event's id, and hop count reset to `0`. The `reprocess` flag on both replay endpoints controls dedup behavior — `false` (default) preserves the original `idempotency_key`, so a consumer that already processed the original delivery treats the replay as a no-op; `true` generates a fresh idempotency key so consumers process it as a new event. Choose `reprocess: true` deliberately — it is what makes an operator-triggered replay actually reach a consumer that already deduplicated the first delivery.
+- **Replay identity and idempotency.** A replayed event is always a new envelope: fresh `id`, `replay_of` set to the original event id, hop count reset to `0`. Consumers that dedupe on `id` (the documented contract) process every replay as a new event; correlate with `replay_of`. `reprocess` only changes `idempotency_key`, which ingest leaves empty — `false` keeps the stored value, `true` mints a new UUID. That flag only matters for consumers still keyed on `idempotency_key`.
 - **Failed and unattempted routes are replayable.** On `stop_on_failure`, the first failed destination and any routes not yet attempted are recorded as `failed` delivery rows, so `POST /replay/events/{id}/replay` has a destination list even when the inbound webhook returned `503`.
 - **Proxy-mode webhook replay.** Capture persists the original raw body (`raw_body_base64`) and unredacted request headers (`orig_headers`) in the replay store so a proxy-mode webhook destination can be reconstructed on replay. Those fields are store-only — they are not published to other destinations.
 
@@ -131,7 +132,7 @@ The optional replay store and its API (see [Configuration § Replay](configurati
 
 A `code` node runs operator-authored JavaScript (goja) on the request envelope. **Flow authors are trusted operators.** They can already point destinations at arbitrary URLs and disable auth. The sandbox defends against accidents — infinite loops, unbounded recursion, accidental host I/O — not against a hostile tenant. **If Hookway is ever multi-tenant or hosted, this design does not hold; move the code node to WASM with real resource isolation rather than hardening goja further.**
 
-Controls C1–C7 bound wall-clock time, call stack, host access, input/output size, per-request isolation, and panics. See [Configuration § Code node](configuration.md#code-node-schema_version-2).
+Controls C1–C7 bound wall-clock time, call stack, host access, input/output size, per-request isolation, and panics. See [Configuration § Code node](configuration.md#code-node).
 
 **Memory gap.** goja has no hard memory cap. Controls C1–C7 bound time, call stack, host access, and payload size, but a script doing `let a=[]; while(1) a.push(1)` allocates until the timeout interrupts it — which may be after significant allocation. Hookway is a single process, so that pressure is shared with every other flow. Mitigate with per-pod memory limits plus liveness restart, and deploy split by trust domain for untrusted flows.
 
@@ -145,11 +146,11 @@ A `code` node with no explicit `timeout` is a config warning; the 1s default sti
 - Keep RabbitMQ durable exchanges/queues enabled for production and configure dead-letter queues for failed consumers.
 - Use `amqps://` for broker connections. The container image ships the system CA bundle so publicly trusted brokers (e.g. CloudAMQP) work out of the box; for private/self-signed CAs or mutual TLS, set `destinations.<id>.rabbitmq.tls` (`ca_cert`, `client_cert`/`client_key`, `server_name`). Never enable `insecure_skip_verify` in production.
 - Run at least two replicas, but treat rate limiting and replay protection as process-local until a shared backend is added.
-- Keep `server.max_body_bytes` tight per flow and set `server.max_inflight_requests` to bound memory and shed load under flood.
+- Keep `read_body.max_bytes` tight per flow and set `server.max_inflight_requests` to bound memory and shed load under flood.
 - Tune `destinations.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
 - Tune `server.fanout_concurrency` to bound per-request goroutines and concurrent publishes across fan-out routes (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
 - If `replay` is enabled, keep `replay.addr` off the internet-facing network path (private port/network, same as `metrics.addr`) and always set `security.api_key` — config validation already requires it, but treat the key with the same care as any credential capable of re-injecting webhook traffic. A replay-store outage reports the pod not-ready so traffic is shed until the store is reachable again.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
 - Set `security.forwarded_header_allowlist` so only intended headers reach consumers and logs.
-- Rotate webhook secrets per flow and keep old/new overlap short during provider-side rotations. Use `secret_ref` overlap for in-process rotation.
+- Rotate webhook secrets per flow and keep old/new overlap short during provider-side rotations. `auth.secret_ref.overlap` is the in-process overlap window; `${ENV}` expansion still happens at load.

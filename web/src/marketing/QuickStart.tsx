@@ -18,7 +18,7 @@ export function QuickStart() {
     }
   };
   return (
-    <Paper radius="md" p="sm" style={{ background: DARK.recessed, border: `1px solid ${DARK.border}` }}>
+    <Paper radius="sm" p="sm" style={{ background: DARK.recessed, border: `1px solid ${DARK.border}` }}>
       <Group justify="space-between" wrap="nowrap" gap="sm">
         <Box style={{ minWidth: 0, overflowX: "auto" }}>
           <Text

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ActionIcon, Box, Group, ScrollArea, Text } from "@mantine/core";
+import { DARK } from "../tokens";
 
 const PALETTE_MIN = 180;
 const PALETTE_MAX = 420;
@@ -31,7 +32,7 @@ function persist(key: string, value: number) {
 
 export function usePanelWidths() {
   const [paletteWidth, setPaletteWidth] = useState(() => readWidth("hookway.builder.paletteWidth", 260, PALETTE_MIN, PALETTE_MAX));
-  const [inspectorWidth, setInspectorWidth] = useState(() => readWidth("hookway.builder.inspectorWidth", 300, INSPECTOR_MIN, INSPECTOR_MAX));
+  const [inspectorWidth, setInspectorWidth] = useState(() => readWidth("hookway.builder.inspectorWidth", 340, INSPECTOR_MIN, INSPECTOR_MAX));
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => persist("hookway.builder.paletteWidth", paletteWidth), [paletteWidth]);
@@ -93,21 +94,31 @@ export function SidePanel({
         left: overlay && side === "left" ? 0 : undefined,
         right: overlay && side === "right" ? 0 : undefined,
         zIndex: overlay ? 30 : 2,
-        background: "var(--mantine-color-body)",
-        borderRight: side === "left" ? "1px solid var(--mantine-color-dark-6)" : undefined,
-        borderLeft: side === "right" ? "1px solid var(--mantine-color-dark-6)" : undefined,
-        boxShadow: overlay ? "0 0 28px rgba(0,0,0,0.4)" : undefined,
+        background: DARK.surface,
+        borderRight: side === "left" ? `1px solid ${DARK.border}` : undefined,
+        borderLeft: side === "right" ? `1px solid ${DARK.border}` : undefined,
+        boxShadow: overlay
+          ? side === "left"
+            ? "4px 0 16px rgba(20, 24, 31, 0.12)"
+            : "-4px 0 16px rgba(20, 24, 31, 0.12)"
+          : undefined,
       }}
     >
-      <Group px="sm" py={8} justify="space-between" wrap="nowrap">
-        <Text fw={600} size="sm" tt="uppercase" c="dimmed">
+      <Group
+        px="sm"
+        py={10}
+        justify="space-between"
+        wrap="nowrap"
+        style={{ borderBottom: `1px solid ${DARK.border}`, background: DARK.recessed, flexShrink: 0 }}
+      >
+        <Text fw={600} size="xs" tt="uppercase" c={DARK.muted} style={{ letterSpacing: "0.08em" }}>
           {title}
         </Text>
-        <ActionIcon aria-label={`Close ${title}`} variant="subtle" size="sm" onClick={onClose}>
+        <ActionIcon aria-label={`Close ${title}`} variant="subtle" size="sm" color="gray" onClick={onClose}>
           ×
         </ActionIcon>
       </Group>
-      <ScrollArea type="auto" style={{ flex: 1, minHeight: 0 }} px="sm" pb="sm">
+      <ScrollArea type="auto" style={{ flex: 1, minHeight: 0 }} px="sm" pt="sm" pb="sm">
         {children}
       </ScrollArea>
       <Box
@@ -142,7 +153,7 @@ export function SidePanel({
             marginTop: "35%",
             marginBottom: "35%",
             borderRadius: 2,
-            background: "var(--mantine-color-dark-2)",
+            background: DARK.border,
           }}
         />
       </Box>

@@ -36,8 +36,8 @@ destinations:
         max_attempts: 3
         initial_backoff: "100ms"
         max_backoff: "2s"
-      # Default queue arguments applied to all queues declared by Hookway.
-      # Per-route queue_options can override these individually.
+      # Default queue arguments applied to all queues this destination declares.
+      # There is no per-publish queue_options override.
       queue_defaults:
         # Drop stale deliveries after this much time in queue.
         # RabbitMQ receives this as x-message-ttl in milliseconds.
@@ -82,14 +82,14 @@ flows:
     delivery_failure_policy: "stop_on_failure"
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/paddle, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 500, burst: 1000, key_by: ip}
+      - {id: rl, type: rate_limit, rpm: 500, burst: 1000, key_by: source_ip}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${PADDLE_WEBHOOK_SECRET}", signature_header: Paddle-Signature, timestamp_tolerance: "5m"}
       - {id: guard, type: replay_guard, ttl: "10m", max_entries: 50000}
       - {id: env, type: envelope, body_format: json}
-      # V1 per-route queue_options (primary: message_ttl 72h, max_length 500000,
+      # queue_options (primary: message_ttl 72h, max_length 500000,
       # dead_letter_routing_key paddle.dead; audit: message_ttl 168h) are not
-      # publish-node fields. V1 also set per-flow max_body_bytes: 2097152.
+      # publish-node fields.
       - {id: out1, type: publish, destination: primary, target: paddle-webhooks, create: true}
       - {id: out2, type: publish, destination: audit, target: paddle-audit-webhooks, create: true}
     edges: [in>rl, rl>body, body>auth, auth>guard, guard>env, env>out1, env>out2]

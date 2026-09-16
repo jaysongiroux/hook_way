@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useGraphStore } from "./store";
 import { loadGraph, saveGraph } from "./persistence";
+import { starterDocument } from "./starter";
 
 const DEBOUNCE_MS = 400;
 
@@ -10,9 +11,12 @@ export function usePersistence(): void {
   useEffect(() => {
     let cancelled = false;
     loadGraph().then((g) => {
-      if (!cancelled && g && (g.nodes.length > 0 || g.edges.length > 0 || Object.keys(g.otherFlows).length > 0)) {
+      if (cancelled) return;
+      if (g && (g.nodes.length > 0 || g.edges.length > 0 || Object.keys(g.otherFlows).length > 0)) {
         setGraph(g);
+        return;
       }
+      setGraph(starterDocument());
     });
     return () => {
       cancelled = true;

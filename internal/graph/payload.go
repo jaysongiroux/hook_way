@@ -89,11 +89,11 @@ type UpstreamResponse struct {
 
 // Terminal is a leaf result. Response is nil unless a respond node ran, in
 // which case the server writes it; otherwise the caller gets the default
-// 202 plus the Deliveries summary, matching V1.
+// 202 plus the Deliveries summary.
 //
 // Terminal is ALWAYS populated by Run, including when Run returns an error.
-// V1 returns the already-succeeded and still-unattempted destination lists
-// even on a 503 (server.go:322) so replay has a complete picture, and the
+// Run returns the already-succeeded and still-unattempted destination lists
+// even on a 503 so replay has a complete picture, and the
 // caller needs Deliveries to decide whether to compensate (see
 // NeedsCompensation).
 type Terminal struct {

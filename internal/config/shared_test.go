@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestDecodeSharedYAMLMatchesV1Conversion(t *testing.T) {
+func TestDecodeSharedYAMLMatchesConfigConversion(t *testing.T) {
 	const src = `
 server:
   addr: ":8080"
@@ -28,20 +28,20 @@ endpoints:
     destinations: [{destination: outgoing, target: events}]
     auth: {type: no_auth, scheme: no_auth}
 `
-	v1, err := NewService().loadBytes([]byte(src), "test", false)
+	loaded, err := NewService().loadBytes([]byte(src), "test", false)
 	if err != nil {
-		t.Fatalf("V1 load: %v", err)
+		t.Fatalf("load: %v", err)
 	}
 	shared, issues := DecodeSharedYAML([]byte(src), "test", "endpoints")
 	if len(issues) != 0 {
 		t.Fatalf("DecodeSharedYAML issues = %#v", issues)
 	}
 	want := SharedConfig{
-		Server: v1.Server, Security: v1.Security, Metrics: v1.Metrics,
-		Logging: v1.Logging, Replay: v1.Replay, Destinations: v1.Destinations,
+		Server: loaded.Server, Security: loaded.Security, Metrics: loaded.Metrics,
+		Logging: loaded.Logging, Replay: loaded.Replay, Destinations: loaded.Destinations,
 	}
 	if !reflect.DeepEqual(shared, want) {
-		t.Fatalf("shared conversion differs from V1\n got: %#v\nwant: %#v", shared, want)
+		t.Fatalf("shared conversion differs from Config\n got: %#v\nwant: %#v", shared, want)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestDecodeSharedYAMLRejectsUnknownFieldsAndHonorsAllowedExtras(t *testing.T
 		{"top level", "server: {addr: ':8080'}\nflows: {}\ntyop: true\n", "tyop"},
 		{"nested server", "server: {addr: ':8080', max_body_bytes: 1, tyop: true}\nflows: {}\n", "server.tyop"},
 		{"nested destination", "server: {addr: ':8080', max_body_bytes: 1}\ndestinations: {outgoing: {type: webhook, webhook: {url: https://example.test, tyop: true}}}\nflows: {}\n", "destinations.outgoing.webhook.tyop"},
-		{"v1 global rate limit is not shared", "server: {addr: ':8080'}\nflows: {}\nrate_limit: {enabled: true}\n", "rate_limit"},
+		{"global rate limit is not shared", "server: {addr: ':8080'}\nflows: {}\nrate_limit: {enabled: true}\n", "rate_limit"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -241,7 +241,7 @@ func TestSharedValidationAllowsNoDestinationsAndValidatesConfiguredOnes(t *testi
 	}
 }
 
-func TestV1StillRequiresDestinationsAndEndpoints(t *testing.T) {
+func TestConfigRequiresDestinationsAndEndpoints(t *testing.T) {
 	cfg := Config{Server: ServerConfig{
 		Addr: ":8080", ReadTimeout: time.Second, WriteTimeout: 10 * time.Second,
 		IdleTimeout: time.Minute, ShutdownTimeout: 10 * time.Second,
@@ -251,7 +251,7 @@ func TestV1StillRequiresDestinationsAndEndpoints(t *testing.T) {
 	}}
 	joined := sharedIssuesText(cfg.ValidationIssues())
 	if !strings.Contains(joined, "destinations") || !strings.Contains(joined, "endpoints") {
-		t.Fatalf("V1 presence requirements changed: %q", joined)
+		t.Fatalf("presence requirements changed: %q", joined)
 	}
 }
 

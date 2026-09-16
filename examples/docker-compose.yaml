@@ -19,6 +19,6 @@ services:
     environment:
       HOOKWAY_CONFIG: /etc/hookway/config.yaml
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      PADDLE_WEBHOOK_SECRET: change-me
+      GITHUB_WEBHOOK_SECRET: change-me
     volumes:
       - ./config.yaml:/etc/hookway/config.yaml:ro

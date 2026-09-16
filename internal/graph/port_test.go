@@ -2,7 +2,7 @@ package graph
 
 import "testing"
 
-// TestAcceptsIsStrictEquality is the load-bearing test of the whole V2 design.
+// TestAcceptsIsStrictEquality is the load-bearing test of the typed-port design.
 // RawRequest carries a RequestHead, so the intuitive choice is to make it
 // assignable to RequestHead. It must not be: if a gate node (rate_limit,
 // ip_allowlist, loop_guard) can be wired downstream of read_body, then

@@ -1,8 +1,31 @@
 # Hookway — Enterprise Production Readiness Assessment
 
-**Date:** 2026-08-26
+> **Historical snapshot.** Reviewed 2026-08-26 at commit `612e372` on `main`, **before** the typed-port graph. Line citations to `handleWebhook` / `internal/httpapi/server.go` refer to deleted code. Keep this file as a backlog, not current operator truth. Live behavior is in [configuration.md](configuration.md) and [security.md](security.md).
+
+**Date:** 2026-08-26 (endpoint-based config). Status table added 2026-09-16.
+
 **Reviewed at commit:** `612e372` (branch `main`, clean tree)
 **Scope:** whole repository — Go services, config layer, CI/release pipeline, docs, web UI, deployment story
+
+### Status vs current Hookway (`schema_version: 2`)
+
+| Item | Now |
+|---|---|
+| **P0-2** pending events unreplayable | **Closed.** Failed and unattempted `publish` routes are recorded so `stop_on_failure` 503s are replayable. |
+| **P0-5** no secret file / overlap | **Partial.** `auth.secret_ref` (`env` / `file` / `aws_secrets_manager`) with refresh + overlap. Still no SIGHUP / hot reload. |
+| **P2-5** `key_by` only `"ip"` / “MVP” | **Partial.** `rate_limit.key_by` is `source_ip` or `header.<name>`. The old validator is unused. |
+| **P2-6** readiness AND-aggregation | **Closed** (D9). `/ready` is 200 while at least one flow is ready; `server.readiness_require_all: true` restores 503-if-any. |
+| **P2-10** OpenTelemetry | **Spans only.** `OnNode` starts `hookway.node.*` spans on the global tracer; there is no OTLP exporter. Do not claim OpenTelemetry. |
+| **P2-2** empty `idempotency_key` | **Still true, broader.** envelopes omit `idempotency_key`; consumers should dedupe on `id`. |
+| **P0-1** no LICENSE | **Still open.** |
+| **P0-3** async webhook in-memory queue | **Still open** (documented in configuration.md). |
+| **P0-4** one static API key | **Still open.** |
+| **P1-1** no SIGTERM drain | **Still open.** |
+| **P1-2** process-local rate limit / replay guard | **Still open** (D11). |
+| **P1-3** no in-process TLS / `ReadHeaderTimeout` on main listener | **Still open.** |
+| **P1-4** replay store DDL on startup | **Still open.** |
+| **P1-6** `make lint` is `go vet` | **Still open.** Extra CI jobs exist; lint is still vet. |
+| **P1-8** no Helm chart | **Still open.** |
 
 ---
 
@@ -490,9 +513,9 @@ the building blocks exist.
 **Fix:** support `key_by: ip | endpoint | header:<name> | body:<jsonpath>`; reword the
 error regardless.
 
-### P2-6. Readiness AND-aggregation couples unrelated flows (mitigated in V2)
+### P2-6. Readiness AND-aggregation couples unrelated flows (mitigated)
 
-V2 `/ready` reports per flow and returns 200 while at least one flow is ready
+`/ready` reports per flow and returns 200 while at least one flow is ready
 (D9). `server.readiness_require_all: true` restores 503-if-any-unready. A
 saturated low-priority destination still marks *its* flows unready; it no
 longer takes unrelated flows out of rotation by default.

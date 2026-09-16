@@ -18,21 +18,21 @@ function renderAt(path: string) {
 test("the root url serves the marketing overview, not the builder", () => {
   renderAt("/");
   expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-  // The builder's own header is the giveaway that the config UI mounted.
-  expect(screen.queryByText("Hookway Config")).not.toBeInTheDocument();
+  // The inspector toggle is builder chrome; the overview must not mount it.
+  expect(screen.queryByRole("button", { name: "Inspector" })).not.toBeInTheDocument();
 });
 
 test("/builder mounts the config builder", async () => {
   renderAt("/builder");
   // The builder is lazy-loaded, so it arrives after the dynamic import settles.
-  expect(await screen.findByText("Hookway Config")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Inspector" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Inspector" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Hookway home" })).toBeInTheDocument();
 });
 
 test("an unknown path falls back to the overview", () => {
   renderAt("/nope");
   expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-  expect(screen.queryByText("Hookway Config")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Inspector" })).not.toBeInTheDocument();
 });
 
 // The bundle serves both routes from one index.html, so each route has to claim
@@ -43,6 +43,6 @@ test("the overview and the builder set their own document titles", async () => {
   expect(document.title).not.toBe("Hookway Config");
 
   renderAt("/builder");
-  await screen.findByText("Hookway Config");
+  await screen.findByRole("button", { name: "Inspector" });
   expect(document.title).toBe("Hookway Config");
 });

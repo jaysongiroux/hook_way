@@ -12,10 +12,10 @@ import (
 	"github.com/jasongiroux/hookway/internal/graph"
 )
 
-// v2DestinationTypes is the catalog Chunk 5 must keep in lockstep with
-// internal/queue.Factory.Create. A new destination type that is not listed
-// here has no V2 coverage.
-var v2DestinationTypes = []string{
+// catalogDestinationTypes is the destination catalog Factory.Create must stay
+// in lockstep with. A new destination type that is not listed here has no
+// publish coverage.
+var catalogDestinationTypes = []string{
 	"rabbitmq", "sqs", "sns", "s3", "redis_stream", "redis_list",
 	"redis_pubsub", "redis_kv", "postgres", "mongodb", "kafka", "webhook", "temporal",
 }
@@ -30,10 +30,10 @@ func TestPublishSupportsEveryDestinationType(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(factorySrc)
-	for _, dt := range v2DestinationTypes {
+	for _, dt := range catalogDestinationTypes {
 		t.Run(dt, func(t *testing.T) {
 			if !strings.Contains(src, `"`+dt+`"`) {
-				t.Fatalf("internal/queue/factory.go does not mention %q; V2 publish cannot deliver it", dt)
+				t.Fatalf("internal/queue/factory.go does not mention %q; publish cannot deliver it", dt)
 			}
 			fake := &fakePublisher{}
 			node := mustPublishNode(t, "destination: "+dt+"\ntarget: t\n", staticResolver{pub: fake})

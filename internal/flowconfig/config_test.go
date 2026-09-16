@@ -31,7 +31,7 @@ func TestDetectSchemaVersion(t *testing.T) {
 	}
 }
 
-func TestLoadBytesRejectsV1Configs(t *testing.T) {
+func TestLoadBytesRejectsEndpointsConfigs(t *testing.T) {
 	wantMsg := "schema_version 1 (endpoints:) is no longer supported"
 	wantHint := "schema_version: 2"
 	cases := []string{
@@ -101,6 +101,36 @@ func TestExampleConfigIsValid(t *testing.T) {
 	}
 	if _, ok := cfg.Flows["github_events"]; !ok {
 		t.Fatal("example config should include github_events")
+	}
+}
+
+func TestOnErrorExampleIsValid(t *testing.T) {
+	t.Setenv("WEBHOOK_URL", "https://example.test/hooks")
+	t.Setenv("GITHUB_WEBHOOK_SECRET", "gh_secret")
+	t.Setenv("SF_TOKEN", "token")
+	t.Setenv("DIGIFI_BASE", "https://example.test")
+	cfg, issues := Load(filepath.Join("..", "..", "examples", "on_error.yaml"))
+	for _, iss := range issues {
+		if iss.EffectiveSeverity() == config.SeverityError {
+			t.Fatalf("on_error example invalid: %+v", issues)
+		}
+	}
+	for _, name := range []string{"github_ack_or_dlq", "proxy_or_502", "rate_or_429", "auth_or_401", "parse_or_400"} {
+		if _, ok := cfg.Flows[name]; !ok {
+			t.Fatalf("missing %s", name)
+		}
+	}
+	wantPorts := []string{"ack:on_error>", "up:on_error>", "rl:on_error>", "auth:on_error>", "env:on_error>"}
+	joined := ""
+	for _, fc := range cfg.Flows {
+		for _, e := range fc.Edges {
+			joined += e + " "
+		}
+	}
+	for _, port := range wantPorts {
+		if !strings.Contains(joined, port) {
+			t.Fatalf("example missing %s", port)
+		}
 	}
 }
 

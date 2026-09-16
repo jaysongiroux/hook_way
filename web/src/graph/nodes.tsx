@@ -2,7 +2,7 @@ import { Handle, Position, type NodeProps, type NodeTypes } from "@xyflow/react"
 import { Paper, Stack, Text } from "@mantine/core";
 import type { CSSProperties } from "react";
 import type { HookwayNode } from "./model";
-import { NODE_SCHEMAS, nodeLabel, switchPorts } from "./nodeSchema";
+import { NODE_SCHEMAS, nodeHasOnError, nodeLabel, switchPorts } from "./nodeSchema";
 import { HANDLE_IN, HANDLE_ON_ERROR, HANDLE_OUT } from "./connection";
 import { useGraphStore } from "./store";
 import { DARK, NODE, PORT } from "../tokens";
@@ -12,7 +12,12 @@ function useSelectionRing(id: string, color: string): CSSProperties {
   return selected ? { outline: `2px solid ${color}`, outlineOffset: 2 } : {};
 }
 
-const CARD: CSSProperties = { minWidth: 168, background: DARK.surface };
+const CARD: CSSProperties = {
+  minWidth: 176,
+  background: DARK.surface,
+  borderColor: DARK.border,
+  overflow: "hidden",
+};
 
 function handleStyle(port: string): CSSProperties {
   return { background: PORT[port] ?? NODE.border.endpoint, width: 10, height: 10 };
@@ -26,9 +31,9 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const summary = nodeSummary(data.nodeType, data.options);
   const labelled = data.nodeType === "switch" ? switchPorts(data.options) : [];
   const showDefaultOut = output !== "Terminal" && labelled.length === 0;
-  const showError = input !== "None";
+  const showError = nodeHasOnError(data.nodeType);
   return (
-    <Paper withBorder radius="md" p="xs" style={{ ...CARD, borderColor: color, ...useSelectionRing(id, color) }}>
+    <Paper withBorder radius="sm" p="xs" style={{ ...CARD, ...useSelectionRing(id, color) }}>
       {input !== "None" && (
         <Handle
           type="target"
@@ -42,12 +47,25 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
         <Text fw={600} size="sm" c={DARK.text}>
           {data.yamlId}
         </Text>
-        <Text size="xs" c={PORT[output] ?? DARK.accentText} style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
+        <Text size="xs" c={DARK.muted} style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
           {nodeLabel(data.nodeType)}
         </Text>
         {summary && (
           <Text size="xs" c={DARK.muted}>
             {summary}
+          </Text>
+        )}
+        {showError && (
+          <Text
+            className="nodrag nopan"
+            size="xs"
+            fw={600}
+            c={PORT.on_error}
+            mt={6}
+            pb={2}
+            style={{ fontSize: 10, letterSpacing: "0.03em", textAlign: "center", lineHeight: 1.2 }}
+          >
+            on error
           </Text>
         )}
       </Stack>
@@ -68,26 +86,14 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
         />
       ))}
       {showError && (
-        <>
-          <Text
-            className="nodrag nopan"
-            size="xs"
-            fw={600}
-            c={PORT.on_error}
-            mt={8}
-            style={{ fontSize: 10, letterSpacing: "0.03em", textAlign: "center", lineHeight: 1.2 }}
-          >
-            on error
-          </Text>
-          <Handle
-            type="source"
-            position={Position.Bottom}
-            id={HANDLE_ON_ERROR}
-            title="on error — if this node fails, the same input is sent along this red handle"
-            aria-label="on error"
-            style={{ ...handleStyle("on_error"), bottom: -5 }}
-          />
-        </>
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id={HANDLE_ON_ERROR}
+          title="on error — if this node fails, the same input is sent along this red handle"
+          aria-label="on error"
+          style={{ ...handleStyle("on_error"), bottom: -5 }}
+        />
       )}
     </Paper>
   );

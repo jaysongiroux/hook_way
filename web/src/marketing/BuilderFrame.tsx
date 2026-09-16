@@ -1,6 +1,8 @@
 import { Box, Group, Text } from "@mantine/core";
-import { FLOW_EDGES, FLOW_NODES, LAYOUT, edgePath, flowDescription, nodeBox, type FlowNode } from "./flowGraph";
-import { DARK, EDGE, NODE } from "../tokens";
+import { LogoMark } from "../brand/Logo";
+import { FlowGraphSvg } from "./FlowDiagram";
+import { LAYOUT, flowDescription } from "./flowGraph";
+import { DARK } from "../tokens";
 
 // BuilderFrame shows the config builder inside browser chrome. It is rendered
 // live from the same flowGraph data the diagram section uses, rather than a
@@ -11,10 +13,10 @@ export function BuilderFrame() {
     <Box
       style={{
         border: `1px solid ${DARK.border}`,
-        borderRadius: 12,
+        borderRadius: 4,
         overflow: "hidden",
         background: DARK.surface,
-        boxShadow: "0 24px 60px rgba(0, 0, 0, 0.45)",
+        boxShadow: "0 8px 24px rgba(20, 24, 31, 0.08)",
       }}
     >
       <Group
@@ -23,16 +25,17 @@ export function BuilderFrame() {
         py={8}
         style={{ borderBottom: `1px solid ${DARK.border}`, background: DARK.recessed }}
       >
-        {["#FF5F57", "#FEBC2E", "#28C840"].map((c) => (
-          <Box key={c} style={{ width: 10, height: 10, borderRadius: 5, background: c }} />
+        {[0, 1, 2].map((i) => (
+          <Box key={i} style={{ width: 8, height: 8, borderRadius: 1, background: DARK.border }} />
         ))}
+        <LogoMark size={14} />
         <Text
           size="xs"
           c={DARK.muted}
-          ml="sm"
+          ml={4}
           style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
         >
-          localhost:8090/builder
+          Hookway Builder
         </Text>
       </Group>
       <CanvasMock />
@@ -43,7 +46,6 @@ export function BuilderFrame() {
 // The canvas plus a hint of the inspector panel on the right, so the frame
 // reads as an application rather than a diagram.
 function CanvasMock() {
-  const nodeById = (id: string) => FLOW_NODES.find((n) => n.id === id)!;
   const inspectorX = LAYOUT.width + 40;
   const totalWidth = inspectorX + 250;
   return (
@@ -56,65 +58,13 @@ function CanvasMock() {
     >
       <defs>
         <pattern id="hookway-dots" width="18" height="18" patternUnits="userSpaceOnUse">
-          <circle cx="1" cy="1" r="1" fill="#2A3A57" />
+          <circle cx="1" cy="1" r="1" fill={DARK.border} />
         </pattern>
       </defs>
       <rect x={0} y={0} width={inspectorX - 20} height={LAYOUT.height} fill="url(#hookway-dots)" />
-
-      {FLOW_EDGES.map((e) => (
-        <path
-          key={`${e.from}-${e.to}`}
-          d={edgePath(nodeById(e.from), nodeById(e.to))}
-          fill="none"
-          stroke={EDGE.line}
-          strokeWidth={1.5}
-        />
-      ))}
-      {FLOW_EDGES.map((e, i) => (
-        <path
-          key={`pulse-${e.from}-${e.to}`}
-          className="hookway-pulse"
-          d={edgePath(nodeById(e.from), nodeById(e.to))}
-          fill="none"
-          stroke={DARK.highlight}
-          strokeWidth={2.5}
-          strokeLinecap="round"
-          style={{ animationDelay: `${i * 0.45}s` }}
-        />
-      ))}
-      {FLOW_NODES.map((n) => (
-        <DarkNode key={n.id} node={n} selected={n.id === "ep"} />
-      ))}
-
+      <FlowGraphSvg selectedId="ep" markerId="hookway-hero-edge" />
       <Inspector x={inspectorX} />
     </svg>
-  );
-}
-
-function DarkNode({ node, selected }: { node: FlowNode; selected: boolean }) {
-  const b = nodeBox(node);
-  return (
-    <g>
-      {/* Border by node kind, from the same palette the real builder uses, so
-          the frame is a faithful preview rather than a lookalike. */}
-      <rect
-        x={b.x}
-        y={b.y}
-        width={b.w}
-        height={b.h}
-        rx={8}
-        fill={DARK.surface}
-        stroke={NODE.border[node.kind]}
-        strokeWidth={selected ? 2 : 1}
-      />
-      <rect x={b.x + 12} y={b.y + 12} width={24} height={3} rx={1.5} fill={node.accent} />
-      <text x={b.x + 12} y={b.y + 32} fontSize={13} fontWeight={600} fill={NODE.label[node.kind]}>
-        {node.label}
-      </text>
-      <text x={b.x + 12} y={b.y + 48} fontSize={11} fill={DARK.muted}>
-        {node.sub}
-      </text>
-    </g>
   );
 }
 
@@ -122,16 +72,15 @@ function DarkNode({ node, selected }: { node: FlowNode; selected: boolean }) {
 // node. Labels only, so it reads as chrome rather than competing for attention.
 function Inspector({ x }: { x: number }) {
   const rows = [
-    { label: "Path", value: "/webhooks/{envName}/digifi" },
-    { label: "Auth", value: "hmac_sha256" },
-    { label: "Variables", value: "2" },
-    { label: "Routes", value: "3" },
+    { label: "Id", value: "in" },
+    { label: "Path", value: "/webhooks/github" },
+    { label: "Methods", value: "POST" },
   ];
   return (
     <g>
       <line x1={x - 20} y1={0} x2={x - 20} y2={LAYOUT.height} stroke={DARK.border} strokeWidth={1} />
       <text x={x} y={22} fontSize={10} fill={DARK.muted} letterSpacing={1}>
-        INSPECTOR
+        HTTP_TRIGGER
       </text>
       {rows.map((r, i) => {
         const top = 46 + i * 52;
@@ -140,7 +89,7 @@ function Inspector({ x }: { x: number }) {
             <text x={x} y={top} fontSize={11} fill={DARK.muted}>
               {r.label}
             </text>
-            <rect x={x} y={top + 8} width={210} height={26} rx={5} fill={DARK.recessed} stroke={DARK.border} />
+            <rect x={x} y={top + 8} width={210} height={26} rx={4} fill={DARK.recessed} stroke={DARK.border} />
             <text x={x + 8} y={top + 25} fontSize={11} fill={DARK.text}>
               {r.value}
             </text>

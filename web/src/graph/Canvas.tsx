@@ -1,9 +1,10 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
   Background,
   Controls,
+  Panel,
   MarkerType,
   useReactFlow,
   type Connection,
@@ -17,6 +18,7 @@ import { isValidConnection } from "./connection";
 import { createNode, isNodeKind } from "./model";
 import { DND_MIME } from "./Palette";
 import { useGraphStore } from "./store";
+import { Button, Text } from "@mantine/core";
 import { DARK, EDGE } from "../tokens";
 
 function parallelGroups(edges: Edge[]): Map<string, { index: number; count: number }> {
@@ -35,7 +37,9 @@ function parallelGroups(edges: Edge[]): Map<string, { index: number; count: numb
 }
 
 function CanvasInner() {
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
+  const activeFlow = useGraphStore((s) => s.activeFlow);
+  const arrangeSeq = useGraphStore((s) => s.arrangeSeq);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
   const onNodesChange = useGraphStore((s) => s.onNodesChange);
@@ -72,6 +76,12 @@ function CanvasInner() {
 
   const validate = useCallback((c: Connection | Edge) => isValidConnection(c, nodes, edges), [nodes, edges]);
 
+  useEffect(() => {
+    if (arrangeSeq === 0) return;
+    const id = requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+    return () => cancelAnimationFrame(id);
+  }, [arrangeSeq, fitView]);
+
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -91,10 +101,12 @@ function CanvasInner() {
   return (
     <div style={{ width: "100%", height: "100%" }} onDrop={onDrop} onDragOver={onDragOver}>
       <ReactFlow
-        colorMode="dark"
+        key={activeFlow}
+        colorMode="light"
         style={{ background: DARK.bg }}
         nodes={nodes}
         edges={routedEdges}
+        fitViewOptions={{ padding: 0.2 }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
@@ -106,8 +118,53 @@ function CanvasInner() {
         onPaneClick={() => setSelected(null)}
         fitView
       >
-        <Background color="#2A3A57" />
-        <Controls />
+        <Background color={DARK.border} gap={18} size={1} />
+        <Controls
+          style={{
+            background: DARK.surface,
+            border: `1px solid ${DARK.border}`,
+            borderRadius: 8,
+            overflow: "hidden",
+            boxShadow: "0 8px 20px rgba(20, 24, 31, 0.10)",
+          }}
+        />
+        <Panel position="bottom-left">
+          <Button
+            size="xs"
+            variant="default"
+            aria-label="Arrange nodes"
+            disabled={nodes.length === 0}
+            onClick={() => useGraphStore.getState().arrangeNodes()}
+            styles={{
+              root: {
+                marginLeft: 44,
+                background: DARK.surface,
+                borderColor: DARK.border,
+                boxShadow: "0 8px 20px rgba(20, 24, 31, 0.10)",
+              },
+            }}
+          >
+            Arrange
+          </Button>
+        </Panel>
+        {nodes.length === 0 && (
+          <Panel position="top-center">
+            <Text
+              size="sm"
+              c={DARK.muted}
+              px="md"
+              py={8}
+              style={{
+                background: DARK.surface,
+                border: `1px solid ${DARK.border}`,
+                borderRadius: 8,
+                boxShadow: "0 8px 20px rgba(20, 24, 31, 0.08)",
+              }}
+            >
+              Drag a node from the left to start this flow.
+            </Text>
+          </Panel>
+        )}
       </ReactFlow>
     </div>
   );

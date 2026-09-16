@@ -223,8 +223,8 @@ func TestRunCollectsCompensationsForNodesThatRan(t *testing.T) {
 }
 
 // TestRunPopulatesTerminalOnError pins the contract the caller depends on:
-// V1 returns the succeeded and unattempted destination lists even on a 503
-// (server.go:322), and compensation needs Deliveries to make its decision.
+// Run returns the succeeded and unattempted destination lists even on a 503,
+// and compensation needs Deliveries to make its decision.
 func TestRunPopulatesTerminalOnError(t *testing.T) {
 	rec := &recorder{}
 	sentinel := errors.New("publish failed")

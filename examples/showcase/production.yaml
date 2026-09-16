@@ -1,0 +1,140 @@
+# Production showcase: gates, HMAC auth, replay protection, filtering, a
+# switch, transform, code, http_request with on_error, and fan-out publishes.
+# A second flow is the sync proxy; a third is a CIDR-trusted ingest (no_auth).
+# lookup is omitted: the standalone server has no lookup provider binding.
+#
+# Requires GITHUB_WEBHOOK_SECRET, ARCHIVE_BUCKET, RABBITMQ_URL, KAFKA_BROKER_*,
+# POSTGRES_URL, DIGIFI_BASE, and SF_TOKEN in the environment.
+schema_version: 2
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "10s"
+  max_body_bytes: 10485760
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+security:
+  trusted_proxy_headers: true
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
+
+destinations:
+  archive:
+    type: s3
+    s3:
+      region: "us-east-1"
+      bucket: "${ARCHIVE_BUCKET}"
+  orders:
+    type: sqs
+    sqs:
+      region: "us-east-1"
+  events:
+    type: kafka
+    kafka:
+      brokers:
+        - "${KAFKA_BROKER_1}"
+        - "${KAFKA_BROKER_2}"
+      acks: "all"
+  dlq:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.dlq"
+      exchange_type: "direct"
+      durable: true
+      declare_queues: true
+  warehouse:
+    type: postgres
+    postgres:
+      url: "${POSTGRES_URL}"
+      table: "webhook_events"
+
+flows:
+  github:
+    delivery_failure_policy: skip_failed
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: hops, type: loop_guard, max_hops: 3}
+      - {id: rl, type: rate_limit, rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_hex
+        secret: "${GITHUB_WEBHOOK_SECRET}"
+        signature_header: X-Hub-Signature-256
+      - {id: replay, type: replay_guard, ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, body_format: json}
+      - {id: archive, type: publish, destination: archive, target: github, create: true}
+      - id: pushes
+        type: filter
+        on_no_match: drop
+        conditions:
+          - {source: header, path: X-GitHub-Event, operator: eq, value: push}
+          - {source: body, path: repository.private, operator: eq, value: false}
+      - id: map
+        type: transform
+        kind: field_map
+        mappings:
+          - {from: body.repository.full_name, to: vars.repo}
+      - id: snippet
+        type: code
+        timeout: 50ms
+        script: "return { body: input.body, vars: Object.assign({}, input.vars, { ingested: 'true' }) };"
+      - id: ack
+        type: http_request
+        url: "https://example.test/hooks/{repo}"
+        timeout: 5s
+        error_on_status: [5xx]
+        body: transformed
+      - id: route
+        type: switch
+        default: other
+        cases:
+          - port: main
+            when: {source: body, path: ref, operator: eq, value: "refs/heads/main"}
+      - {id: orders, type: publish, destination: orders, target: github-main, create: true}
+      - {id: stream, type: publish, destination: events, target: github-pushes, create: true}
+      - {id: dlq, type: publish, destination: dlq, target: github-failed, create: true}
+    edges:
+      - in>hops
+      - hops>rl
+      - rl>body
+      - body>auth
+      - auth>replay
+      - replay>env
+      - env>archive
+      - env>pushes
+      - pushes>map
+      - map>snippet
+      - snippet>ack
+      - ack>route
+      - ack:on_error>dlq
+      - route:main>orders
+      - route:other>stream
+
+  proxy:
+    nodes:
+      - {id: in, type: http_trigger, path: "/salesforce/proxy/{rest...}", methods: [ANY]}
+      - {id: rl, type: rate_limit, rpm: 120}
+      - {id: body, type: read_body, max_bytes: 10485760}
+      - {id: auth, type: auth, scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, body_format: raw}
+      - {id: up, type: http_request, url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 10s}
+      - {id: resp, type: respond, passthrough: true}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>up, up>resp]
+
+  trusted:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/internal/jobs, methods: [POST]}
+      - {id: allow, type: ip_allowlist, cidrs: ["10.0.0.0/8", "192.168.0.0/16"]}
+      - {id: rl, type: rate_limit, rpm: 30, key_by: source_ip}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: warehouse, target: internal-jobs, create: true}
+    edges: [in>allow, allow>rl, rl>body, body>auth, auth>env, env>out]

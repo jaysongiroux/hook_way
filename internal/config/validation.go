@@ -36,7 +36,7 @@ const (
 )
 
 // EffectiveSeverity preserves the historical meaning of a zero-value issue:
-// all V1 validation issues are errors unless a caller explicitly marks one as
+// validation issues are errors unless a caller explicitly marks one as
 // a warning.
 func (i ValidationIssue) EffectiveSeverity() string {
 	if i.Severity == "" {
@@ -99,14 +99,13 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	return validationIssues(c, true)
 }
 
-// ValidationIssues validates only process-scoped configuration. Unlike V1,
-// the shared contract allows no destinations because a V2 flow may only
-// respond to its caller.
+// ValidationIssues validates only process-scoped configuration. The shared
+// contract allows no destinations because a flow may only respond to its caller.
 func (s SharedConfig) ValidationIssues() []ValidationIssue {
 	return normalizeIssueSeverities(validationIssues(s.asConfig(), false))
 }
 
-func validationIssues(c Config, v1 bool) []ValidationIssue {
+func validationIssues(c Config, requireEndpoints bool) []ValidationIssue {
 	var issues []ValidationIssue
 	if c.Server.Addr == "" {
 		issues = append(issues, validationError("server.addr", "listen address is required", "set server.addr to a host:port such as \":8080\""))
@@ -154,7 +153,7 @@ func validationIssues(c Config, v1 bool) []ValidationIssue {
 	if c.Security.LoopProtection.MaxHops < 0 {
 		issues = append(issues, validationError("security.loop_protection.max_hops", "must be zero (use the default) or a positive integer", "set a small ceiling such as 3, or omit to use the default"))
 	}
-	if v1 && len(c.Destinations) == 0 {
+	if requireEndpoints && len(c.Destinations) == 0 {
 		issues = append(issues, validationError("destinations", "at least one destination is required", "add destinations.billing with type \"rabbitmq\""))
 	}
 	for id, dest := range c.Destinations {
@@ -377,7 +376,7 @@ func validationIssues(c Config, v1 bool) []ValidationIssue {
 			}
 		}
 	}
-	if v1 && len(c.Endpoints) == 0 {
+	if requireEndpoints && len(c.Endpoints) == 0 {
 		issues = append(issues, validationError("endpoints", "at least one endpoint is required", "add an endpoint such as endpoints.billing"))
 	}
 	if c.Metrics.Enabled && (c.Metrics.Path == "" || c.Metrics.Path[0] != '/') {
@@ -389,7 +388,7 @@ func validationIssues(c Config, v1 bool) []ValidationIssue {
 	default:
 		issues = append(issues, validationError("logging.level", fmt.Sprintf("%q is not supported", c.Logging.Level), "use \"debug\", \"info\", \"warn\", or \"error\", or omit for the default of \"info\""))
 	}
-	if v1 && c.RateLimit.Enabled {
+	if requireEndpoints && c.RateLimit.Enabled {
 		if c.RateLimit.RequestsPerMinute <= 0 {
 			issues = append(issues, validationError("rate_limit.requests_per_minute", "must be positive when rate limiting is enabled", "set a value such as 120"))
 		}

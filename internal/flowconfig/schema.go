@@ -3,13 +3,30 @@ package flowconfig
 import (
 	"github.com/invopop/jsonschema"
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/graph"
 )
 
 type NodeSchema struct {
 	Input    string             `json:"input"`
 	Output   string             `json:"output"`
 	Detached bool               `json:"detached"`
+	OnError  bool               `json:"on_error"`
 	Schema   *jsonschema.Schema `json:"schema"`
+}
+
+// allowsOnError is whether a catalog type can take a useful on_error edge.
+// http_trigger has no input. no_auth never fails a well-typed RawRequest.
+// read_body consumes the request body on a failed read, so re-reading is not a recovery path.
+func allowsOnError(name string, in graph.PortType) bool {
+	if in == graph.PortNone {
+		return false
+	}
+	switch name {
+	case "no_auth", "read_body":
+		return false
+	default:
+		return true
+	}
 }
 
 // NodeSchemas exposes the same definitions used by Register for the CLI and graph editor.
@@ -28,8 +45,11 @@ func NodeSchemas() map[string]NodeSchema {
 			schema.OneOf = exclusivePropertyContract("status", "passthrough")
 		}
 		out[def.name] = NodeSchema{
-			Input: def.in.String(), Output: def.out.String(), Detached: def.detached,
-			Schema: schema,
+			Input:    def.in.String(),
+			Output:   def.out.String(),
+			Detached: def.detached,
+			OnError:  allowsOnError(def.name, def.in),
+			Schema:   schema,
 		}
 	}
 	return out

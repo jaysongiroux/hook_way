@@ -50,7 +50,7 @@ export function RouteEdge({
             style={{
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-              background: selected ? "#24365C" : DARK.surface,
+              background: selected ? DARK.recessed : DARK.surface,
               border: `1px solid ${selected ? EDGE.selected : EDGE.labelBorder}`,
               borderRadius: 6,
               padding: "1px 6px",

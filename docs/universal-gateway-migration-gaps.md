@@ -1,8 +1,27 @@
 # Migrating `universal-gateway` → Hookway: Gap Analysis
 
-**Date:** 2026-08-27
+> **Historical snapshot.** Written 2026-08-27 against Hookway `612e372` (endpoint-based config). Universal-gateway and DigiFi migration work was **removed from implementation scope** on 2026-09-14. Several Category A items were still built as general Hookway features. This file is a decision record, not current capability docs.
+
+**Date:** 2026-08-27 (endpoint-based config). Status table added 2026-09-16.
+
 **Sources:** `../universal-gateway` @ `3f8161f` (main), `hook_way` @ `612e372` (main)
 **Question:** what breaks if we abandon the current SAM architecture in favour of Hookway?
+
+### Status vs current Hookway
+
+| Gap | Status |
+|---|---|
+| **A1** sync HTTP proxy | **Closed.** `http_request` + `respond` `passthrough`; `examples/showcase/proxy.yaml`. |
+| **A2** dynamic dest / lookup | **Partial.** Path `{vars}` and `transform.field_map` work (`examples/variables.yaml`). The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`: no standalone provider binding). |
+| **A3** payload transform / XML prune | **Closed.** `transform` `changed_fields` / `field_map` / `xml_prune`; `envelope.body_format: xml`. |
+| **A4** SNS/SQS `MessageAttributes` | **Closed.** `publish.message_attributes`. |
+| **A5** query-parameter auth | **Closed.** `auth.source.kind: query`. |
+| **A6** non-POST, greedy path, query forward | **Closed.** `methods: [ANY]`, `{rest...}`, `forward_method` / `forward_query`. |
+| **A7** DigiFi re-serialized HMAC | **Still open.** Auth verifies **raw bytes**; no vendor-SDK exception (I6). |
+| **B2** readiness AND-aggregation | **Closed** (D9 / per-flow `/ready`). |
+| **B3** Secrets Manager + rotation overlap | **Partial.** `secret_ref.provider: aws_secrets_manager` with overlap. No live YAML reload. |
+
+---
 
 ---
 
@@ -30,6 +49,10 @@ are synchronous request/response proxies, which Hookway is not architected to do
 That split is the headline finding. "Replace universal-gateway with Hookway" is not one
 migration — it is one migration plus one new product.
 
+**Update (2026-09-16):** A1, A3, A5, and A6 shipped as general Hookway features (see the
+status table). The 2026-08-27 rows and Category A write-ups below are the original
+finding, not current capability docs.
+
 ---
 
 ## 2. Category A — Hard blockers (Hookway cannot do these today)
@@ -55,6 +78,9 @@ returns a fixed envelope to the sender (`internal/httpapi/server.go:601-622`):
 status = http.StatusAccepted
 body := map[string]any{"status": "accepted", "endpoint": ..., "destinations": published, ...}
 ```
+
+**Update (2026-09-16):** `http_request` + `respond` `passthrough` is the sync proxy
+(`examples/showcase/proxy.yaml`). The previous 202 envelope path cited above is gone.
 
 Salesforce callers are doing synchronous API calls and consuming the DigiFi/DocMagic
 response. There is no configuration that makes Hookway do this. It needs a new
@@ -144,6 +170,9 @@ s.verifiers[endpointName].Verify(r.Header.Get(endpoint.Auth.SignatureHeader), ra
 There is no query-parameter auth source in `internal/auth` at all. The Qualia endpoint
 cannot be migrated without adding one.
 
+**Update (2026-09-16):** `auth.source.kind: query` reads a query parameter. The
+header-only path cited above is gone.
+
 ### A6. Non-POST methods, greedy paths, query forwarding
 
 The proxy routes use `x-amazon-apigateway-any-method` with `{proxy+}`, then strip the
@@ -151,6 +180,10 @@ route prefix and forward the remaining path, the method, and `queryStringParamet
 the target. Hookway matches exact configured paths and rejects anything but POST
 (`server.go:358-363`), and its webhook destination URL is `base + static target name`
 (`joinWebhookURL`) with no inbound-path passthrough.
+
+**Update (2026-09-16):** `methods: [ANY]`, `{rest...}`, and `forward_method` /
+`forward_query` closed this (`examples/showcase/proxy.yaml`). The previous POST-only matcher cited
+above is gone.
 
 ### A7. DigiFi's signature scheme is a vendor SDK, over a *re-serialized* body
 
@@ -322,29 +355,28 @@ proxy paths; Hookway sits behind an ALB for the webhook paths.
 
 Still requires building, in rough priority order:
 
-1. **Dynamic target resolution** — a lookup provider (DynamoDB or HTTP) plus target
-   templating from body content. *The big one; nothing else matters without it.*
-   **Update (2026-09-03):** covered. Endpoint `variables` (`docs/configuration.md` § Variables)
-   fill `{name}` placeholders in route targets and webhook URLs from a path segment, header,
-   query key, or body path, and `source: lookup` resolves a request-derived key through
-   DynamoDB (the routing table, with the `id_type` filter applied client-side), HTTP, or
-   Postgres, with caching and a fallback route. The per-event-type id extraction is expressed
-   as one lookup variable per id type plus route filters on `eventType`.
+1. **Dynamic target resolution** — a lookup provider plus target templating from body content.
+   **Update (2026-09-16):** path `{vars}` and `transform.field_map` fill `{name}` in `publish.target` and webhook `url` (`examples/variables.yaml`). The `lookup` node exists but **standalone CLI/serve reject it** (`StandaloneIssues`). Endpoint `variables` / `source: lookup` are not YAML.
 2. **SNS/SQS `MessageAttributes`** sourced from envelope fields.
+   **Update (2026-09-16):** `publish.message_attributes` closed this.
 3. **Query-parameter auth source** for Qualia.
+   **Update (2026-09-16):** `auth.source.kind: query` closed this.
 4. **AWS Secrets Manager secret source** with rotation (already P0-5).
+   **Update (2026-09-16):** `secret_ref.provider: aws_secrets_manager` with overlap; no live YAML reload.
 5. **A `digifi` auth scheme** byte-compatible with the vendor SDK, validated against
    captured real traffic.
 6. **A transformation hook** — at minimum the `changedFields` diff.
+   **Update (2026-09-16):** `transform` `changed_fields` / `field_map` / `xml_prune`.
 7. **Deployment split by trust domain** to preserve IAM isolation (B1).
 
 ### Option 2 — Full migration
 
 Additionally requires building synchronous gateway mode into Hookway: upstream response
 passthrough, arbitrary methods, path and query forwarding, response header handling,
-upstream OAuth token acquisition, and an XML transformation pipeline. That is a large
-feature program that changes what Hookway *is* — from a webhook ingestion gateway into a
-general API gateway. Worth doing only if that is the product direction anyway.
+upstream OAuth token acquisition, and an XML transformation pipeline.
+
+**Update (2026-09-16):** passthrough, methods, path/query forwarding, and XML prune
+shipped. OAuth token acquisition and a vendor DigiFi HMAC scheme are still open.
 
 ### Option 3 — Status quo, patched
 

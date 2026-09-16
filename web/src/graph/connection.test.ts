@@ -41,6 +41,13 @@ test("on_error carries the failing node's input, not its output", () => {
   expect(isValidConnection(connect(gate.from, gate.to, "on_error"), gate.nodes, [])).toBe(false);
 });
 
+test("read_body and no_auth cannot start an on_error edge", () => {
+  const body = pair("read_body", "rate_limit");
+  expect(isValidConnection(connect(body.from, body.to, "on_error"), body.nodes, [])).toBe(false);
+  const na = pair("no_auth", "envelope");
+  expect(isValidConnection(connect(na.from, na.to, "on_error"), na.nodes, [])).toBe(false);
+});
+
 test("self-loop is invalid", () => {
   resetIdCounters();
   const n = createNode("filter", { x: 0, y: 0 });

@@ -20,6 +20,7 @@ test("the hero states what Hookway does and offers both calls to action", () => 
   wrap();
   const heading = screen.getByRole("heading", { level: 1 });
   expect(heading).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute("href", "/");
 
   const builderCta = screen.getByRole("link", { name: /open the builder/i });
   expect(builderCta).toHaveAttribute("href", "/builder");

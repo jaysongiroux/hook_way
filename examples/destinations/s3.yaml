@@ -9,8 +9,8 @@
 # For example, with target "orders":
 #   orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
 #
-# The per-route `target` is the base folder (key prefix). All objects for
-# that route are stored under that prefix with the date/time partition above.
+# The publish `target` is the base folder (key prefix). All objects for
+# that flow are stored under that prefix with the date/time partition above.
 #
 # Credentials: omit access_key_id / secret_access_key to use the default
 # AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to
@@ -65,6 +65,6 @@ flows:
       #   <target>/yyyy/mm/dd/<timestamp>-<id>.json
       # e.g. orders/2026/06/29/20260629T143000.000000000Z-evt_1.json
       # Note: bucket auto-creation is a destination-level setting (s3.create
-      # above), not a per-route option. S3 has no per-target "create".
+      # above), not a per-publish option. S3 has no per-target "create".
       - {id: out, type: publish, destination: events, target: orders}
     edges: [in>body, body>auth, auth>env, env>out]

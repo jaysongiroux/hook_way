@@ -8,6 +8,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { isValidConnection } from "./connection";
+import { layout, maybeLayout } from "./layout";
 import { emptyDocument, seedCounters, type GraphDocument, type HookwayNode, type FlowSnapshot } from "./model";
 
 let edgeSeq = 0;
@@ -30,6 +31,8 @@ interface GraphState extends GraphDocument {
   setActiveFlow: (name: string) => void;
   addFlow: (name: string) => boolean;
   renameFlow: (name: string) => void;
+  arrangeNodes: () => void;
+  arrangeSeq: number;
   document: () => GraphDocument;
   clear: () => void;
 }
@@ -42,6 +45,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   ...emptyDocument(),
   selectedId: null,
   selectedEdgeId: null,
+  arrangeSeq: 0,
   onNodesChange: (changes) => set({ nodes: applyNodeChanges(changes, get().nodes) as HookwayNode[] }),
   onEdgesChange: (changes) => set({ edges: applyEdgeChanges(changes, get().edges) }),
   onConnect: (c) => {
@@ -91,9 +95,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setSelectedEdge: (id) => set({ selectedEdgeId: id, selectedId: null }),
   setGraph: (doc) => {
     seedCounters(doc.nodes);
+    const otherFlows: Record<string, FlowSnapshot> = {};
+    for (const [name, snap] of Object.entries(doc.otherFlows ?? {})) {
+      otherFlows[name] = { ...snap, nodes: maybeLayout(snap.nodes, snap.edges) };
+    }
     set({
       ...emptyDocument(),
       ...doc,
+      nodes: maybeLayout(doc.nodes, doc.edges),
+      otherFlows,
       selectedId: null,
       selectedEdgeId: null,
     });
@@ -106,16 +116,22 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     const next = other[name] ?? { nodes: [], edges: [] };
     const rest = { ...other };
     delete rest[name];
-    seedCounters(next.nodes);
+    const nodes = maybeLayout(next.nodes, next.edges);
+    seedCounters(nodes);
     set({
       activeFlow: name,
       otherFlows: rest,
-      nodes: next.nodes,
+      nodes,
       edges: next.edges,
       deliveryFailurePolicy: next.deliveryFailurePolicy,
       selectedId: null,
       selectedEdgeId: null,
     });
+  },
+  arrangeNodes: () => {
+    const { nodes, edges, arrangeSeq } = get();
+    if (nodes.length === 0) return;
+    set({ nodes: layout(nodes, edges), arrangeSeq: arrangeSeq + 1 });
   },
   addFlow: (name) => {
     const trimmed = name.trim();
@@ -134,7 +150,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   },
   renameFlow: (name) => {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    const s = get();
+    if (!trimmed || trimmed === s.activeFlow || s.otherFlows[trimmed]) return;
     set({ activeFlow: trimmed });
   },
   document: () => {

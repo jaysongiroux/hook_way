@@ -131,7 +131,7 @@ flows:
 	}
 }
 
-func TestV2RedeliveryPublishesCapturedEnvelope(t *testing.T) {
+func TestRedeliveryPublishesCapturedEnvelope(t *testing.T) {
 	cfg := loadFlowCfg(t, testFlowYAML)
 	cfg.Replay.Enabled = true
 	ingest := &fakePublisher{}

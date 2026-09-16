@@ -8,7 +8,7 @@ import { emptyDocument } from "./model";
 
 beforeEach(() => useGraphStore.setState({ ...emptyDocument(), selectedId: null, selectedEdgeId: null }));
 
-test("importing V2 YAML populates the store graph", () => {
+test("importing flow YAML populates the store graph", () => {
   render(
     <MantineProvider theme={theme}>
       <ImportModal opened onClose={() => {}} />

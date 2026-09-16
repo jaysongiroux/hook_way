@@ -37,6 +37,6 @@ export const DOC_LINKS: DocLink[] = [
 export const EXAMPLES = {
   path: "examples",
   title: "Example configs",
-  description: "Ready-to-run YAML for each destination, filters, replay, and variables.",
+  description: "Ready-to-run YAML for each destination, filters, replay, variables, and on_error.",
   href: repoTree("examples"),
 };

@@ -3,6 +3,7 @@
     "input": "RawRequest",
     "output": "Verified",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
@@ -111,6 +112,7 @@
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -140,6 +142,7 @@
     "input": "Verified",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -160,6 +163,7 @@
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -207,6 +211,7 @@
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -259,6 +264,7 @@
     "input": "None",
     "output": "RequestHead",
     "detached": false,
+    "on_error": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -283,6 +289,7 @@
     "input": "RequestHead",
     "output": "RequestHead",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -305,6 +312,7 @@
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -352,6 +360,7 @@
     "input": "RequestHead",
     "output": "RequestHead",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -368,6 +377,7 @@
     "input": "RawRequest",
     "output": "Verified",
     "detached": false,
+    "on_error": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {},
@@ -379,6 +389,7 @@
     "input": "Envelope",
     "output": "Terminal",
     "detached": true,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -407,6 +418,7 @@
     "input": "RequestHead",
     "output": "RequestHead",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -433,6 +445,7 @@
     "input": "RequestHead",
     "output": "RawRequest",
     "detached": false,
+    "on_error": false,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -452,6 +465,7 @@
     "input": "Verified",
     "output": "Verified",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -474,6 +488,7 @@
     "input": "Envelope",
     "output": "Terminal",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
@@ -525,6 +540,7 @@
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -581,6 +597,7 @@
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
+    "on_error": true,
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

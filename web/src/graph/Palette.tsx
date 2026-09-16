@@ -1,6 +1,8 @@
-import { Paper, Stack, Text } from "@mantine/core";
+import { Box, Stack, Text } from "@mantine/core";
 import { NODE_SCHEMAS, NODE_TYPES, nodeLabel } from "./nodeSchema";
 import { nodeHelp, PALETTE_GROUP_HELP } from "./help";
+import { PALETTE_ITEM_CLASS } from "./builderStyles";
+import { DARK } from "../tokens";
 
 export const DND_MIME = "application/hookway-node";
 
@@ -15,41 +17,40 @@ const GROUPS: { title: string; types: string[] }[] = [
 
 export function Palette() {
   return (
-    <Stack gap="md">
+    <Stack gap="lg">
       {GROUPS.map((group) =>
         group.types.length === 0 ? null : (
-          <Stack key={group.title} gap="xs">
+          <Stack key={group.title} gap={8}>
             <div>
-              <Text fw={600} size="xs" tt="uppercase" c="dimmed">
+              <Text fw={600} size="xs" tt="uppercase" c={DARK.muted} style={{ letterSpacing: "0.08em" }}>
                 {group.title}
               </Text>
               {PALETTE_GROUP_HELP[group.title] && (
-                <Text size="xs" c="dimmed" lh={1.35}>
+                <Text size="xs" c={DARK.muted} lh={1.4} mt={4}>
                   {PALETTE_GROUP_HELP[group.title]}
                 </Text>
               )}
             </div>
             {group.types.map((type) => (
-              <Paper
-                key={type}
-                withBorder
-                p="xs"
-                radius="sm"
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(DND_MIME, type);
-                  e.dataTransfer.effectAllowed = "move";
-                }}
-                style={{ cursor: "grab" }}
-              >
-                <Text size="sm" fw={500}>
-                  {nodeLabel(type)}
-                </Text>
-                <Text size="xs" c="dimmed" lh={1.35}>
-                  {nodeHelp(type)}
-                </Text>
-              </Paper>
-            ))}
+                <Box
+                  key={type}
+                  className={PALETTE_ITEM_CLASS}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(DND_MIME, type);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                >
+                  <Box px={10} py={8}>
+                    <Text size="sm" fw={600} c={DARK.text}>
+                      {nodeLabel(type)}
+                    </Text>
+                    <Text size="xs" c={DARK.muted} lh={1.4}>
+                      {nodeHelp(type)}
+                    </Text>
+                  </Box>
+                </Box>
+              ))}
           </Stack>
         ),
       )}

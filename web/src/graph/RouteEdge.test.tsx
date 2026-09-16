@@ -6,6 +6,13 @@ import { theme } from "../theme";
 import { edgeTypes } from "./RouteEdge";
 import { createNode, resetIdCounters } from "./model";
 import { useGraphStore } from "./store";
+import { EDGE } from "../tokens";
+
+function hexRgb(hex: string) {
+  const h = hex.replace("#", "");
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 function pair() {
   resetIdCounters();
@@ -78,7 +85,7 @@ test("the selected edge's chip is highlighted", () => {
     </MantineProvider>,
   );
   const chip = getByText("matched");
-  expect(chip.style.borderColor).toBe("rgb(54, 108, 237)");
+  expect(chip.style.borderColor).toBe(hexRgb(EDGE.selected));
   expect(chip.style.fontWeight).toBe("600");
 });
 

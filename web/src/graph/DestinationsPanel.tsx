@@ -3,6 +3,7 @@ import { DEST_SCHEMAS, DEST_TYPES, destSchema } from "./nodeSchema";
 import { destFieldHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
+import { DARK } from "../tokens";
 
 export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const destinations = useGraphStore((s) => s.destinations);
@@ -40,7 +41,13 @@ export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClos
           const block = spec.block;
           const blockValue = (entry[block] ?? {}) as Record<string, unknown>;
           return (
-            <Stack key={name} gap="xs" p="xs" style={{ border: "1px solid var(--mantine-color-dark-4)", borderRadius: 8 }}>
+            <Stack
+              key={name}
+              gap="xs"
+              p="sm"
+              data-testid={`destination-${name}`}
+              style={{ border: `1px solid ${DARK.border}`, borderRadius: 8, background: DARK.surface }}
+            >
               <Group justify="space-between" wrap="nowrap">
                 <TextInput
                   label="Name"

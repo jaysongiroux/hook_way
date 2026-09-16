@@ -20,7 +20,7 @@ func SchemaJSON() ([]byte, error) {
 }
 
 // NewSchemaReflector returns Hookway's configured JSON Schema reflector so
-// V1 whole-config and V2 per-node schemas use identical YAML field naming and
+// whole-config and per-node schemas use identical YAML field naming and
 // required-field behavior.
 func NewSchemaReflector() *jsonschema.Reflector {
 	return &jsonschema.Reflector{

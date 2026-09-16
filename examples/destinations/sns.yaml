@@ -38,6 +38,6 @@ flows:
       - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Signature, timestamp_tolerance: "5m"}
       - {id: env, type: envelope, body_format: json}
       # Target is the SNS topic name. Hookway will publish to this topic.
-      # V1 route set sns_options.subject: "order event" (not a publish-node field).
+      # Previously set sns_options.subject: "order event" (not a publish-node field).
       - {id: out, type: publish, destination: alerts, target: order-alerts, create: true}
     edges: [in>body, body>auth, auth>env, env>out]

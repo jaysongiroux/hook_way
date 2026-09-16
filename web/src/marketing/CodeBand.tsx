@@ -2,7 +2,7 @@ import { Box, Group, Stack, Text } from "@mantine/core";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
 
-// A complete V2 flow with a shared destination connection.
+// A complete flow with a shared destination connection.
 const LINES: { text: string; kind: "key" | "value" | "comment" | "plain" }[] = [
   { text: "schema_version: 2", kind: "key" },
   { text: "flows:", kind: "key" },
@@ -25,7 +25,7 @@ const LINES: { text: string; kind: "key" | "value" | "comment" | "plain" }[] = [
 ];
 
 const COLOR = {
-  key: DARK.highlight,
+  key: DARK.accent,
   value: DARK.text,
   comment: DARK.muted,
   plain: DARK.text,
@@ -37,14 +37,13 @@ const COLOR = {
 export function CodeBand() {
   return (
     <Section
-      eyebrow="Configuration"
       title="Define the flow in YAML"
       lead="No SDK to install and no handler to deploy. Declare the flow, the verification, and where events should land."
     >
       <Box
         style={{
           border: `1px solid ${DARK.border}`,
-          borderRadius: 12,
+          borderRadius: 4,
           background: DARK.recessed,
           overflow: "hidden",
         }}

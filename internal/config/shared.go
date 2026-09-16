@@ -12,9 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SharedConfig is the process-scoped configuration shared by V1 endpoints and
-// V2 flows. It deliberately excludes V1's global rate limiter and endpoints:
-// V2 models rate limiting as a node and replaces endpoints with flows.
+// SharedConfig is the process-scoped configuration: server, security, metrics,
+// logging, replay, and destination connections. Rate limiting is a flow node,
+// not a top-level limiter, and request pipelines are named flows.
 type SharedConfig struct {
 	Server       ServerConfig
 	Security     SecurityConfig
@@ -67,10 +67,9 @@ var sharedYAMLFields = map[string]struct{}{
 }
 
 // DecodeSharedYAML strictly decodes the common process-scoped sections from a
-// complete config document. allowedExtras names version-specific top-level
-// sections owned by the caller, such as schema_version/flows or endpoints.
-// Their values are deliberately ignored here and must be decoded by that
-// version's loader.
+// complete config document. allowedExtras names top-level keys owned by the
+// caller (schema_version, flows). Their values are ignored here and must be
+// decoded by the flow loader.
 func DecodeSharedYAML(data []byte, source string, allowedExtras ...string) (SharedConfig, []ValidationIssue) {
 	allowed := make(map[string]struct{}, len(sharedYAMLFields)+len(allowedExtras))
 	for field := range sharedYAMLFields {

@@ -8,9 +8,8 @@ import { DARK } from "../tokens";
 export function Destinations() {
   return (
     <Section
-      eyebrow="Destinations"
       title={`${DEST_TYPES.length} destination types, one way to configure them`}
-      lead="Pick per route. Every type is validated before you ship it and provisioned on first use where the backend allows."
+      lead="Declare once, reference from publish nodes. Every type is validated before you ship it and provisioned when a publish sets create: true."
     >
       <Group gap={10}>
         {DEST_TYPES.map((t) => (
@@ -20,7 +19,7 @@ export function Destinations() {
             py={7}
             style={{
               border: `1px solid ${DARK.border}`,
-              borderRadius: 8,
+              borderRadius: 4,
               background: DARK.surface,
               fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             }}

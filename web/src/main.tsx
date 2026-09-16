@@ -8,7 +8,7 @@ import { AppRoutes } from "./AppRoutes";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <MantineProvider theme={theme} forceColorScheme="dark">
+    <MantineProvider theme={theme} forceColorScheme="light">
       <BrowserRouter>
         <AppRoutes />
       </BrowserRouter>

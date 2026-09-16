@@ -80,7 +80,7 @@ func TestEnvResolverMatchesGetenv(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || !bytes.Equal(got[0], []byte("exact-v1-value")) {
-		t.Fatalf("Secrets() = %q, want the env value (V1 ${VAR} equivalent)", got)
+		t.Fatalf("Secrets() = %q, want the env value (${VAR} equivalent)", got)
 	}
 }
 
@@ -113,8 +113,8 @@ func TestNewRejectsMissingEnv(t *testing.T) {
 
 // TestRotationHasNoFlagDay proves the overlap window works: a sender still
 // signing with the previous secret must be accepted throughout the overlap,
-// so rotation never drops traffic. V1 cannot do this -- one secret per
-// endpoint means rotation is a flag day (W3).
+// so rotation never drops traffic. A single secret per
+// flow would make rotation a flag day (W3).
 func TestRotationHasNoFlagDay(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)}
 	fetch := &fakeFetcher{v: []byte("old")}

@@ -2,6 +2,8 @@
 
 Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal workflows, or another HTTP webhook).
 
+Config is `schema_version: 2`: named `flows` of typed nodes (`http_trigger`, gates, `auth` / `no_auth`, `envelope`, `publish` / `respond`). `hookway validate` rejects `endpoints:` and schema version 1. See [Configuration](docs/configuration.md).
+
 ## Quick Start
 
 ```bash
@@ -18,10 +20,10 @@ go run ./cmd/hookway validate --config examples/config.yaml
 make validate
 ```
 
-Example Paddle-style webhook URL:
+Example webhook URL (`examples/config.yaml`):
 
 ```txt
-http://localhost:8080/webhooks/paddle
+http://localhost:8080/webhooks/github
 ```
 
 Run locally without Docker:
@@ -38,7 +40,7 @@ go run ./cmd/hookway --config examples/config.yaml
 
 ## HTTP Endpoints
 
-- Configured flow paths, such as `POST /webhooks/paddle`, accept webhook events.
+- Configured flow paths, such as `POST /webhooks/github`, accept webhook events.
 - `GET /healthz` confirms the process is alive.
 - `GET /ready` reports per-flow readiness derived from unique destination probes. It returns 200 while at least one flow is ready (one down destination does not sideline unrelated flows). Set `server.readiness_require_all: true` for 503 if any flow is unready. Served from cache, not probed per request.
 - `GET /readyz` reports the same cached readiness state as `/ready`.
@@ -51,15 +53,16 @@ Successful webhook response:
 ```json
 {
   "status": "accepted",
-  "endpoint": "paddle_billing",
+  "endpoint": "github_events",
   "destinations": [
-    {"destination_queue_id": "primary", "queue": "paddle-webhooks"},
-    {"destination_queue_id": "audit", "queue": "paddle-audit-webhooks"}
+    {"destination_queue_id": "primary", "queue": "github-webhooks"}
   ],
   "event_id": "018f...",
   "request_id": "req_..."
 }
 ```
+
+`endpoint` is the **flow name** (compatibility field). `destination_queue_id` is the `destinations:` map key; `queue` is the publish `target`. A `respond` node can replace this envelope with an explicit HTTP status and body (sync proxy).
 
 Flows can set `delivery_failure_policy`. `stop_on_failure` is the default and publishes sequentially until one fails. `skip_failed` attempts every `publish` node and returns `202` when at least one destination succeeds, with `failed_destinations` listing any skipped failures.
 
@@ -69,7 +72,7 @@ Hookway publishes JSON envelopes from each flow `publish` node. Every publish na
 
 Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for reference configs for each type.
 
-Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind endpoint queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
+Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind declared queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
 
 Published envelope compatibility is governed by `schema_version`: consumers may rely on additive changes within the same major version, and breaking field removals or meaning changes require a new schema version.
 

@@ -122,6 +122,22 @@ func TestCompileStructuralChecks(t *testing.T) {
 			}, "in>body", "body>auth", "auth>env", "env>p1", "p1>p2", "p2>p1", "p1>out"),
 			wantMsg: "cycle",
 		},
+		{
+			name: "trigger on_error",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"out", "dest"},
+			}, "in>body", "in:on_error>body", "body>auth", "auth>env", "env>out"),
+			wantMsg: "trigger nodes cannot declare on_error",
+		},
+		{
+			name: "on_error only",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"fb", "envelope"}, {"out", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env:on_error>fb", "fb>out"),
+			wantMsg: "only on_error successors",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

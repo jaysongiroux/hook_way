@@ -29,7 +29,7 @@ type ValidateResponse struct {
 
 // Validate parses and validates raw YAML config bytes, returning structured
 // issues. schema_version other than 2 is a migration error (severity "error").
-// V2 policy lint may emit "warning".
+// Policy lint may emit "warning".
 //
 // This is the function internal/editor's POST /validate calls. It must NEVER
 // expand ${VAR} references against the process environment: the editor
@@ -43,7 +43,7 @@ func Validate(data []byte) ValidateResponse {
 		return preserveSeverity(flowconfig.ValidateBytes(data))
 	}
 	if version != 2 {
-		return errorSeverity([]config.ValidationIssue{flowconfig.V1UnsupportedIssue()})
+		return errorSeverity([]config.ValidationIssue{flowconfig.UnsupportedSchemaIssue()})
 	}
 	return preserveSeverity(flowconfig.ValidateBytes(data))
 }
@@ -87,7 +87,7 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 	if err != nil {
 		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
 	} else if version != 2 {
-		structural = errorSeverity([]config.ValidationIssue{flowconfig.V1UnsupportedIssue()})
+		structural = errorSeverity([]config.ValidationIssue{flowconfig.UnsupportedSchemaIssue()})
 	} else {
 		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
 	}

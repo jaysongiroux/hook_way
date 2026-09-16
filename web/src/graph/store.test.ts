@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from "vitest";
 import { useGraphStore } from "./store";
-import { createNode, resetIdCounters } from "./model";
+import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 beforeEach(() => {
   resetIdCounters();
@@ -40,6 +40,17 @@ test("addFlow returns false for an empty or duplicate name", () => {
   expect(useGraphStore.getState().activeFlow).toBe("billing");
 });
 
+test("renameFlow ignores empty, whitespace, and colliding names", () => {
+  useGraphStore.getState().addFlow("billing");
+  useGraphStore.getState().renameFlow("");
+  useGraphStore.getState().renameFlow("   ");
+  expect(useGraphStore.getState().activeFlow).toBe("billing");
+  useGraphStore.getState().renameFlow("main");
+  expect(useGraphStore.getState().activeFlow).toBe("billing");
+  useGraphStore.getState().renameFlow("payments");
+  expect(useGraphStore.getState().activeFlow).toBe("payments");
+});
+
 test("setGraph replaces the document and clears selection", () => {
   const n = createNode("filter", { x: 0, y: 0 });
   useGraphStore.getState().setSelected("x");
@@ -55,4 +66,54 @@ test("setGraph replaces the document and clears selection", () => {
   expect(useGraphStore.getState().nodes).toHaveLength(1);
   expect(useGraphStore.getState().activeFlow).toBe("github");
   expect(useGraphStore.getState().selectedId).toBeNull();
+});
+
+test("arrangeNodes spreads overlapping nodes", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 0, y: 0 });
+  useGraphStore.setState({
+    nodes: [a, b],
+    edges: [{ id: "e1", source: a.id, target: b.id, sourceHandle: "out", targetHandle: "in" }],
+  });
+  useGraphStore.getState().arrangeNodes();
+  const [left, right] = useGraphStore.getState().nodes;
+  expect(left.position).not.toEqual(right.position);
+});
+
+test("setGraph lays out stacked nodes on inactive flows", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 0, y: 0 });
+  useGraphStore.getState().setGraph({
+    ...emptyDocument(),
+    nodes: [createNode("filter", { x: 40, y: 40 })],
+    otherFlows: {
+      billing: {
+        nodes: [a, b],
+        edges: [{ id: "e1", source: a.id, target: b.id, sourceHandle: "out", targetHandle: "in" }],
+      },
+    },
+  });
+  const billing = useGraphStore.getState().otherFlows.billing.nodes;
+  expect(billing[0].position).not.toEqual(billing[1].position);
+});
+
+test("setActiveFlow lays out a stacked snapshot", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 0, y: 0 });
+  useGraphStore.setState({
+    ...emptyDocument(),
+    nodes: [createNode("filter", { x: 40, y: 40 })],
+    otherFlows: {
+      billing: {
+        nodes: [a, b],
+        edges: [{ id: "e1", source: a.id, target: b.id, sourceHandle: "out", targetHandle: "in" }],
+      },
+    },
+    selectedId: null,
+    selectedEdgeId: null,
+  });
+  useGraphStore.getState().setActiveFlow("billing");
+  const nodes = useGraphStore.getState().nodes;
+  expect(nodes).toHaveLength(2);
+  expect(nodes[0].position).not.toEqual(nodes[1].position);
 });

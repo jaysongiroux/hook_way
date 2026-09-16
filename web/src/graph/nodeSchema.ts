@@ -24,6 +24,7 @@ export interface NodeSchemaMeta {
   input: string;
   output: string;
   detached: boolean;
+  on_error: boolean;
   schema: JSONSchema;
 }
 
@@ -43,6 +44,11 @@ export function isNodeType(s: string): s is string {
 
 export function nodeSchema(type: string): NodeSchemaMeta | undefined {
   return NODE_SCHEMAS[type];
+}
+
+/** Whether the builder should draw an on_error handle for this catalog type. */
+export function nodeHasOnError(type: string): boolean {
+  return NODE_SCHEMAS[type]?.on_error === true;
 }
 
 export function destSchema(type: string): DestSchemaMeta | undefined {

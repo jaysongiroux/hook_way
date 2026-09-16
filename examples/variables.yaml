@@ -54,9 +54,8 @@ flows:
         mappings:
           - from: body.data.object.organizationId
             to: vars.tenant
-      # Enumerated V1 values for envName and the tenant pattern are omitted;
-      # path vars are accepted as-is and unresolved templates fail closed at publish.
-      # V1 on_unresolved_variable (archive / unrouted) has no V2 node equivalent.
+      # envName is a path var; tenant is filled by field_map. Unresolved
+      # templates fail closed at publish. There is no archive/unrouted fallback.
       # DynamoDB lookup variable envByApp is omitted until the lookup node grows
       # those fields (index, filter, value_attribute, region).
       - {id: out_archive, type: publish, destination: archive, target: "{envName}-events"}

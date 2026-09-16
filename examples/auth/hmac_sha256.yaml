@@ -44,10 +44,10 @@ flows:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
       - {id: body, type: read_body, max_bytes: 1048576}
-      # V1 idempotency_header: X-GitHub-Delivery (no V2 field)
+      # No idempotency_header field; replay_guard is a separate node.
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, body_format: json}
       - {id: out, type: publish, destination: primary, target: github-webhooks, create: true}
     edges: [in>body, body>auth, auth>env, env>out]
 
-  # Disabled V1 example stripe_billing (hmac_sha256_ts_dot / Stripe-Signature) was dropped.
+  # stripe_billing (hmac_sha256_ts_dot / Stripe-Signature) is omitted.

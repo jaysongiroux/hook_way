@@ -35,7 +35,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			opts, err := decodeOptions[PublishOptions](nc)
 			if err == nil && opts.Destination != "" {
 				if _, ok := cfg.Destinations[opts.Destination]; !ok {
-					issues = append(issues, v2Issue(
+					issues = append(issues, cfgIssue(
 						fmt.Sprintf("%s.nodes[%d].destination", prefix, i),
 						fmt.Sprintf("publish destination %q is not in destinations (known: %s)",
 							opts.Destination, strings.Join(sortedKeys(cfg.Destinations), ", ")),
@@ -48,7 +48,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 		case "code":
 			opts, err := decodeOptions[CodeOptions](nc)
 			if err == nil && strings.TrimSpace(opts.Timeout) == "" {
-				issues = append(issues, v2Warning(
+				issues = append(issues, cfgWarning(
 					fmt.Sprintf("%s.nodes[%d].timeout", prefix, i),
 					"code node has no explicit timeout; the 1s default applies and goja has no memory cap (docs/security.md#code-node)",
 					"set timeout explicitly; see docs/security.md#code-node",
@@ -57,7 +57,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 		case "read_body":
 			opts, err := decodeOptions[ReadBodyOptions](nc)
 			if err == nil && cfg.Server.MaxBodyBytes > 0 && opts.MaxBytes > cfg.Server.MaxBodyBytes {
-				issues = append(issues, v2Warning(
+				issues = append(issues, cfgWarning(
 					fmt.Sprintf("%s.nodes[%d].max_bytes", prefix, i),
 					fmt.Sprintf("read_body.max_bytes (%d) is above server.max_body_bytes (%d)", opts.MaxBytes, cfg.Server.MaxBodyBytes),
 					"lower max_bytes or raise server.max_body_bytes",
@@ -66,7 +66,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 		case "lookup":
 			opts, err := decodeOptions[LookupOptions](nc)
 			if err == nil && opts.Cache == nil {
-				issues = append(issues, v2Warning(
+				issues = append(issues, cfgWarning(
 					fmt.Sprintf("%s.nodes[%d].cache", prefix, i),
 					"lookup has no cache block; reads will hit the provider per event",
 					"add a cache block to bound provider load",
@@ -75,17 +75,17 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 		}
 	}
 	if !hasRateLimit {
-		issues = append(issues, v2Warning(prefix,
+		issues = append(issues, cfgWarning(prefix,
 			fmt.Sprintf("flow %q has no rate_limit node; it is unthrottled", name),
 			"add a rate_limit node before read_body"))
 	}
 	if hasNoAuth {
-		issues = append(issues, v2Warning(prefix,
+		issues = append(issues, cfgWarning(prefix,
 			fmt.Sprintf("flow %q has a no_auth node; every request is accepted unverified", name),
 			"replace no_auth with an auth node unless this is intentional"))
 	}
 	if !hasPublish && !hasRespond {
-		issues = append(issues, v2Issue(prefix,
+		issues = append(issues, cfgIssue(prefix,
 			fmt.Sprintf("flow %q has no publish and no respond node; it can never deliver or reply", name),
 			"add a publish or respond node"))
 	}
@@ -136,7 +136,7 @@ func lookupBeforeFilterIssues(prefix string, fc graph.FlowConfig) []config.Valid
 		saw := cur.sawFilter || types[cur.id] == "filter"
 		if types[cur.id] == "lookup" && !saw && !reported[cur.id] {
 			reported[cur.id] = true
-			issues = append(issues, v2Issue(prefix+".edges",
+			issues = append(issues, cfgIssue(prefix+".edges",
 				fmt.Sprintf("lookup %q is reachable without passing a filter; filters must run before variable resolution (I8)", cur.id),
 				"place a filter node before lookup on every path"))
 		}
@@ -184,7 +184,7 @@ func parallelRespondIssues(prefix string, fc graph.FlowConfig) []config.Validati
 			}
 		}
 		if len(found) >= 2 {
-			issues = append(issues, v2Issue(prefix+".edges",
+			issues = append(issues, cfgIssue(prefix+".edges",
 				fmt.Sprintf("respond nodes %s are reachable through parallel fan-out from %q; only one response may be written",
 					strings.Join(found, " and "), from),
 				"keep respond nodes on exclusive switch branches"))

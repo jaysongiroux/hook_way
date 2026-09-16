@@ -1,4 +1,4 @@
-import { Box, Button, Group, Menu, Modal, Stack, Text, Title } from "@mantine/core";
+import { Box, Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { useDisclosure, useDocumentTitle, useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
 import { Palette } from "./graph/Palette";
@@ -9,12 +9,15 @@ import { EnvPanel } from "./graph/EnvPanel";
 import { ServerPanel } from "./graph/ServerPanel";
 import { DestinationsPanel } from "./graph/DestinationsPanel";
 import { ImportModal } from "./graph/ImportModal";
-import { FlowSwitcher } from "./graph/FlowSwitcher";
+import { BuilderHeader } from "./graph/BuilderHeader";
 import { SidePanel, usePanelWidths } from "./graph/BuilderShell";
+import { BUILDER_CSS } from "./graph/builderStyles";
 import { usePersistence } from "./graph/usePersistence";
 import { useGraphStore } from "./graph/store";
 import { clearGraph } from "./graph/persistence";
 import { loadValidator } from "./graph/validate";
+import { starterDocument } from "./graph/starter";
+import { DARK } from "./tokens";
 
 export default function App() {
   useDocumentTitle("Hookway Config");
@@ -68,48 +71,21 @@ export default function App() {
   };
 
   return (
-    <Box style={{ height: "100vh", display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <Box
-        component="header"
-        px="md"
-        py={8}
-        style={{ flexShrink: 0, borderBottom: "1px solid var(--mantine-color-dark-6)" }}
-      >
-        <Group justify="space-between" align="center" wrap="wrap" gap="xs" style={{ width: "100%" }}>
-          <Group gap="xs" wrap="wrap" style={{ minWidth: 0 }}>
-            <Title order={4} c="brand.6" style={{ whiteSpace: "nowrap" }}>
-              Hookway Config
-            </Title>
-            <Button size="xs" variant={paletteOpen ? "light" : "subtle"} onClick={togglePalette}>
-              Nodes
-            </Button>
-            <Button size="xs" variant={inspectorOpen ? "light" : "subtle"} onClick={toggleInspector}>
-              Inspector
-            </Button>
-            <FlowSwitcher />
-          </Group>
-          <Group gap="xs" wrap="nowrap">
-            <Menu>
-              <Menu.Target>
-                <Button size="xs" variant="subtle">
-                  Config
-                </Button>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Item onClick={openImport}>Import YAML</Menu.Item>
-                <Menu.Item onClick={openExport}>Export YAML</Menu.Item>
-                <Menu.Divider />
-                <Menu.Item onClick={openDest}>Destinations</Menu.Item>
-                <Menu.Item onClick={openEnv}>Environment</Menu.Item>
-                <Menu.Item onClick={openServer}>Server</Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-            <Button size="xs" variant="subtle" color="red" onClick={openClear}>
-              Clear
-            </Button>
-          </Group>
-        </Group>
-      </Box>
+    <Box style={{ height: "100vh", display: "flex", flexDirection: "column", minHeight: 0, background: DARK.bg }}>
+      <style>{BUILDER_CSS}</style>
+      <BuilderHeader
+        paletteOpen={paletteOpen}
+        inspectorOpen={inspectorOpen}
+        onTogglePalette={togglePalette}
+        onToggleInspector={toggleInspector}
+        onImport={openImport}
+        onExport={openExport}
+        onDestinations={openDest}
+        onEnv={openEnv}
+        onServer={openServer}
+        onLoadExample={() => useGraphStore.getState().setGraph(starterDocument())}
+        onClear={openClear}
+      />
 
       <Box ref={bodyRef} style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
         {compact && (paletteOpen || inspectorOpen) && (
@@ -119,7 +95,7 @@ export default function App() {
               setPaletteOpen(false);
               setInspectorOpen(false);
             }}
-            style={{ position: "absolute", inset: 0, zIndex: 25, background: "rgba(8,12,20,0.45)" }}
+            style={{ position: "absolute", inset: 0, zIndex: 25, background: "rgba(20, 24, 31, 0.28)" }}
           />
         )}
         <SidePanel

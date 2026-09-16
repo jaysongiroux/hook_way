@@ -1,42 +1,70 @@
 import { createTheme, type MantineColorsTuple } from "@mantine/core";
+import { DARK } from "./tokens";
 
-// Brand primary derived from Hometap Accent 1 (#366CED). Mantine requires a
-// 10-shade tuple; index 6 is the base interactive shade.
 const brand: MantineColorsTuple = [
-  "#eef3ff",
-  "#dce4f5",
-  "#b6c6e8",
-  "#8ea6db",
-  "#6b8bd0",
-  "#5479ca",
-  "#366CED",
-  "#2f5fd6",
-  "#2954bf",
-  "#2149a8",
+  "#eef3f8",
+  "#d4e0ed",
+  "#a9c0d8",
+  "#7a9dc0",
+  "#527eab",
+  "#366696",
+  "#0C447C",
+  "#0a3a69",
+  "#083056",
+  "#062443",
 ];
 
-// Mantine builds every dark surface from colors.dark. Its default ramp is
-// neutral grey, which clashed with the navy canvas, so these steps map onto
-// the tokens in src/tokens.ts: 6 is the hairline, 7 the card, 8 the body, 9
-// the recessed band.
 const dark: MantineColorsTuple = [
-  "#E8EDF7",
-  "#C6D0E3",
-  "#A3B4D3",
-  "#8FA3C7",
-  "#6D82AB",
-  "#4A5C80",
-  "#2A3A57",
-  "#1B2840",
-  "#152033",
-  "#0F1826",
+  "#14181F",
+  "#3E4A59",
+  "#5C6778",
+  "#7A8494",
+  "#9AA3B0",
+  "#C5CBD4",
+  "#D8DDE4",
+  "#EBEEF2",
+  "#F4F5F7",
+  "#FFFFFF",
 ];
 
 export const theme = createTheme({
   primaryColor: "brand",
   primaryShade: 6,
   colors: { brand, dark },
-  black: "#152033", // Hometap text color
-  fontFamily:
-    "system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+  black: DARK.text,
+  white: DARK.surface,
+  defaultRadius: "sm",
+  fontFamily: '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
+  fontFamilyMonospace: '"Source Code Pro", ui-monospace, Menlo, monospace',
+  headings: {
+    fontFamily: '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
+    fontWeight: "650",
+  },
+  components: {
+    Button: {
+      defaultProps: { fw: 600, radius: "sm" },
+    },
+    Modal: {
+      defaultProps: {
+        radius: "sm",
+        overlayProps: { backgroundOpacity: 0.35, blur: 0 },
+      },
+      styles: {
+        header: { borderBottom: `1px solid ${DARK.border}` },
+        title: { fontWeight: 600 },
+      },
+    },
+    Drawer: {
+      defaultProps: {
+        overlayProps: { backgroundOpacity: 0.35, blur: 0 },
+      },
+      styles: {
+        header: { borderBottom: `1px solid ${DARK.border}` },
+        title: { fontWeight: 600 },
+      },
+    },
+    Menu: {
+      defaultProps: { withinPortal: true, zIndex: 400, radius: "sm" },
+    },
+  },
 });

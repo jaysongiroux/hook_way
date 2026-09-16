@@ -40,4 +40,4 @@ flows:
       - {id: out, type: publish, destination: primary, target: revenuecat-events, create: true}
     edges: [in>body, body>auth, auth>env, env>out]
 
-  # Disabled V1 example basic_webhook (scheme: basic / HTTP Basic Authorization) was dropped.
+  # basic_webhook (scheme: basic / HTTP Basic Authorization) is omitted.

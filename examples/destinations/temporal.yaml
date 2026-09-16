@@ -2,11 +2,9 @@
 #
 # Reference config for a Temporal destination.
 #
-# Each webhook event starts one workflow execution. The route `target` is the
-# Temporal task queue; the workflow type, input shape, and workflow-id
-# derivation live in the per-route `temporal_options` block. Hookway only
-# starts workflows (no signals) and needs no worker of its own: your existing
-# workers on the task queue pick the execution up.
+# Each webhook event starts one workflow execution. The publish `target` is
+# the Temporal task queue. temporal_options (workflow_type, input,
+# workflow_id) are not publish-node fields; standalone YAML cannot set them.
 #
 # An execution that already exists for the derived workflow id counts as
 # delivered (first-start-wins), so sender retries with a deterministic id are
@@ -56,11 +54,8 @@ flows:
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, body_format: json}
       # Temporal task queue. `create:` has no meaning for Temporal.
-      # V1 temporal_options on this route: workflow_type OrderWebhookWorkflow,
-      # input envelope, workflow_id from body.order.id with prefix order-,
-      # id_reuse_policy reject_duplicate (not publish-node fields).
+      # workflow_type, workflow_id, and id_reuse_policy are not publish-node fields.
       - {id: out1, type: publish, destination: orchestrator, target: order-events}
-      # V1 temporal_options: workflow_type OrderAuditWorkflow, input body;
-      # no workflow_id block (id = Hookway event id).
+      # Second task queue. Workflow id defaults to the Hookway event id.
       - {id: out2, type: publish, destination: orchestrator, target: order-audit}
     edges: [in>body, body>auth, auth>env, env>out1, env>out2]

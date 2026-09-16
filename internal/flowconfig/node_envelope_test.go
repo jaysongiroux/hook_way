@@ -45,7 +45,7 @@ func TestEnvelopeJSONNonJSONDoesNotError(t *testing.T) {
 		Raw: graph.RawRequest{Body: []byte("not-json")},
 	})
 	if err != nil {
-		t.Fatalf("non-JSON body should not error (V1 body_unparsed path): %v", err)
+		t.Fatalf("non-JSON body should not error (body_unparsed path): %v", err)
 	}
 	env := out.(graph.Envelope)
 	if env.Body != nil {

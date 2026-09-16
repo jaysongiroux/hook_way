@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -44,6 +44,9 @@ web-dev:
 
 web-test:
 	cd web && npm run test
+
+web-e2e:
+	cd web && npm run test:e2e
 
 web-build:
 	cd web && npm run build
@@ -143,11 +146,11 @@ validate-examples:
 		ROUTING_DB_URL=postgres://localhost:5432/routing \
 		REPLAY_DB_URL=postgres://localhost:5432/db \
 		REPLAY_API_KEY=dummy; \
-	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
+	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/on_error.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done; \
-	for f in examples/v2/*.yaml; do \
+	for f in examples/showcase/*.yaml; do \
 		case $$f in *invalid-*) continue ;; esac; \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \

@@ -3,8 +3,9 @@
 # Reference config for a Redis / Valkey stream destination (redis_stream).
 #
 # redis_stream is the recommended Redis destination type for webhook handoff:
-# messages are appended via XADD to a durable stream, support consumer groups
-# for competing-consumer fan-out, and can be replayed from any offset.
+# messages are appended via XADD to a durable stream. Consumers may use their
+# own groups (XREADGROUP). redis_options.max_len / consumer_group are not
+# publish-node fields, so Hookway does not trim the stream or create a group.
 #
 # Hookway supports four Redis destination types: redis_stream, redis_list,
 # redis_pubsub, and redis_kv. See the corresponding example files under
@@ -70,8 +71,8 @@ destinations:
       #   # insecure_skip_verify: false
 
 flows:
-  # Webhook events routed to a Redis stream. Consumer groups let multiple
-  # worker processes share the work without duplicating messages.
+  # Webhook events routed to a Redis stream. Consumers may XREADGROUP on their
+  # own; Hookway does not create a consumer group.
   webhook_events:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/events, methods: [POST]}
@@ -80,7 +81,7 @@ flows:
       - {id: env, type: envelope, body_format: json}
       # Stream key (without the key_prefix, if set). Must match
       # ^[a-zA-Z0-9._-]{1,128}$
-      # V1 route set redis_options.max_len: 100000 and consumer_group:
+      # Previously set redis_options.max_len: 100000 and consumer_group:
       # hookway-workers (not publish-node fields).
       - {id: out, type: publish, destination: events, target: webhooks.stream, create: true}
     edges: [in>body, body>auth, auth>env, env>out]

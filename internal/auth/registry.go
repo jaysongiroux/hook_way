@@ -106,7 +106,7 @@ func authTypeOrDefault(authType string) string {
 }
 
 // NewVerifier builds the verifier for a registered scheme. An empty AuthType
-// is inferred from the scheme so V2 auth nodes can name only the scheme.
+// is inferred from the scheme so auth nodes can name only the scheme.
 func NewVerifier(spec Spec) (Verifier, error) {
 	def, ok := registry[spec.Scheme]
 	if !ok {

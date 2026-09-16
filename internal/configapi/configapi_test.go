@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestValidate_RejectsV1Config(t *testing.T) {
+func TestValidate_RejectsEndpointsConfig(t *testing.T) {
 	for _, src := range []string{
 		"schema_version: 1\nendpoints: {}\n",
 		"endpoints:\n  github:\n    path: /webhooks/github\n",
@@ -340,7 +340,7 @@ flows:
 `
 }
 
-func TestValidate_V2PreservesLintWarningSeverity(t *testing.T) {
+func TestValidate_PreservesLintWarningSeverity(t *testing.T) {
 	src := `
 schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}

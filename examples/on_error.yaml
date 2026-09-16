@@ -1,0 +1,104 @@
+# examples/on_error.yaml
+#
+# on_error is a reserved output port on nodes that can fail with a recoverable
+# input. If the node returns an error and an on_error edge exists, the flow
+# continues with that node's *input* (not its output) and the request succeeds
+# unless the error path itself fails.
+#
+# Type rule: the error-path target must consume the failing node's input port.
+# http_trigger, read_body, and no_auth cannot declare on_error. A node still
+# needs a success path; on_error-only wiring is rejected at validate.
+#
+# Without on_error, the failure becomes the HTTP status from the node
+# (401, 413, 429, 502, …) or 500. Filter on_no_match: drop is a successful
+# stop, not an error, so it does not take this port.
+#
+# See docs/configuration.md § Flows.
+
+schema_version: 2
+server:
+  addr: ":8080"
+  max_body_bytes: 10485760
+
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "${WEBHOOK_URL}"
+  dlq:
+    type: webhook
+    webhook:
+      url: "${WEBHOOK_URL}"
+
+flows:
+  # Ingest: POST the decoded event to an ack URL. 5xx from that URL publishes
+  # the original envelope to dlq instead of failing the webhook (sender sees
+  # 202 if the DLQ publish succeeds).
+  github_ack_or_dlq:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: ack, type: http_request, url: "https://example.test/hooks", timeout: 5s, error_on_status: [5xx]}
+      - {id: out, type: publish, destination: primary, target: github-webhooks}
+      - {id: dlq, type: publish, destination: dlq, target: github-failed}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>ack, ack>out, ack:on_error>dlq]
+
+  # Sync proxy: upstream timeout or 5xx becomes an explicit 502 to the sender
+  # instead of a 500 from an unhandled node error.
+  proxy_or_502:
+    nodes:
+      - {id: in, type: http_trigger, path: "/proxy/{rest...}", methods: [ANY]}
+      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 10485760}
+      - {id: auth, type: auth, scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, body_format: raw}
+      - {id: up, type: http_request, url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 5s, error_on_status: [5xx]}
+      - {id: resp, type: respond, passthrough: true}
+      - {id: fail, type: respond, status: 502, body: "upstream failed"}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>up, up>resp, up:on_error>fail]
+
+  # Rate limit: on_error carries RequestHead. The fallback still has to read
+  # the body before it can respond 429 instead of the default rate-limit status.
+  rate_or_429:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/limited, methods: [POST]}
+      - {id: rl, type: rate_limit, rpm: 60, burst: 1, key_by: source_ip}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: ok, type: respond, status: 200, body: ok}
+      - {id: body2, type: read_body, max_bytes: 1048576}
+      - {id: na2, type: no_auth}
+      - {id: env2, type: envelope, body_format: json}
+      - {id: limited, type: respond, status: 429, body: "rate limited"}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>ok, rl:on_error>body2, body2>na2, na2>env2, env2>limited]
+
+  # Auth failure: on_error carries RawRequest. no_auth marks it verified so
+  # envelope can decode and the sender gets 401 instead of the default auth status.
+  auth_or_401:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/signed, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: ok, type: respond, status: 200, body: ok}
+      - {id: na, type: no_auth}
+      - {id: env2, type: envelope, body_format: json}
+      - {id: unauth, type: respond, status: 401, body: "unauthorized"}
+    edges: [in>body, body>auth, auth>env, env>ok, auth:on_error>na, na>env2, env2>unauth]
+
+  # Envelope parse failure: on_error carries Verified. A second envelope with
+  # body_format: raw always succeeds, then respond 400.
+  parse_or_400:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/json, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: ok, type: respond, status: 200, body: ok}
+      - {id: raw, type: envelope, body_format: raw}
+      - {id: bad, type: respond, status: 400, body: "invalid json"}
+    edges: [in>body, body>auth, auth>env, env>ok, env:on_error>raw, raw>bad]

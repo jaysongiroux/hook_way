@@ -6,13 +6,10 @@
 # HEAD of a Redis list via LPUSH. Consumers read with BRPOP (blocking right-pop)
 # or RPOP for a simple, FIFO work-queue pattern.
 #
-# Bounding the list length (LPUSH + LTRIM-cap best practice):
-#   Set redis_options.max_len to a positive integer. Hookway appends the message
-#   with LPUSH and then issues LTRIM to keep the list within max_len entries
-#   (dropping the oldest entries from the tail). This bounds memory usage
-#   without a separate background job. Set to 0 (or omit) for an unbounded list,
-#   but be aware that an unbounded list can grow without limit if consumers fall
-#   behind.
+# Bounding the list length (LPUSH + LTRIM) is not available from YAML:
+#   redis_options.max_len is not a publish-node field. Lists are unbounded
+#   unless consumers trim. consumer_group, ttl, and key_template are invalid
+#   for redis_list.
 #
 # Valkey is fully supported; point redis.url at a Valkey node.
 
@@ -78,7 +75,7 @@ flows:
       - {id: env, type: envelope, body_format: json}
       # List key (without the key_prefix, if set). Must match
       # ^[a-zA-Z0-9._-]{1,128}$
-      # V1 route set redis_options.max_len: 50000 (not a publish-node field).
+      # Previously set redis_options.max_len: 50000 (not a publish-node field).
       # NOTE: consumer_group, ttl, and key_template are NOT valid for
       # redis_list — validation will reject them.
       - {id: out, type: publish, destination: events, target: webhooks.list, create: true}

@@ -36,7 +36,7 @@ import (
 // FlowServer serves schema_version 2 flows through the graph executor.
 type FlowServer struct {
 	cfg            flowconfig.Config
-	v1cfg          config.Config
+	process        config.Config
 	publisher      queue.Publisher
 	logger         *slog.Logger
 	metrics        *metrics.Metrics
@@ -176,7 +176,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	headers, queries := flowconfig.AuthenticationRedactions(cfg)
 	cfg.Security.RedactedHeaderDenylist = append(append([]string(nil), cfg.Security.RedactedHeaderDenylist...), headers...)
 	extra.QueryDenylist = queries
-	v1cfg := cfg.ServingConfig()
+	processCfg := cfg.ServingConfig()
 	extra.Publishers = queueResolver{pub: pub}
 	extra.Logger = logger
 	extra.HeaderDenylist = cfg.Security.RedactedHeaderDenylist
@@ -207,7 +207,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	}
 	s := &FlowServer{
 		cfg:          cfg,
-		v1cfg:        v1cfg,
+		process:      processCfg,
 		publisher:    pub,
 		logger:       logger,
 		metrics:      m,
@@ -266,7 +266,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	if cfg.Server.MaxInflightRequests > 0 {
 		s.inflight = make(chan struct{}, cfg.Server.MaxInflightRequests)
 	}
-	s.metrics.RegisterConfig(v1cfg)
+	s.metrics.RegisterConfig(processCfg)
 	s.readiness = newReadinessProber(pub, m, logger, cfg.Server.ReadinessInterval, cfg.Server.ReadinessTimeout)
 	s.routes()
 	return s, nil
@@ -331,20 +331,20 @@ func methodSet(methods []string) map[string]struct{} {
 	return out
 }
 
-func (s *FlowServer) v1() *Server {
+func (s *FlowServer) helpers() *Server {
 	return &Server{
-		cfg: s.v1cfg, logger: s.logger, metrics: s.metrics,
+		cfg: s.process, logger: s.logger, metrics: s.metrics,
 		trustedProxies: s.trustedProxies, readiness: s.readiness, replay: s.replay,
 	}
 }
 
 func (s *FlowServer) routes() {
-	s.mux.HandleFunc("/health", s.v1().handleLive)
-	s.mux.HandleFunc("/healthz", s.v1().handleLive)
+	s.mux.HandleFunc("/health", s.helpers().handleLive)
+	s.mux.HandleFunc("/healthz", s.helpers().handleLive)
 	s.mux.HandleFunc("/ready", s.handleReady)
 	s.mux.HandleFunc("/readyz", s.handleReady)
 	if s.cfg.Metrics.Enabled && s.cfg.Metrics.Addr == "" {
-		s.mux.Handle(s.cfg.Metrics.Path, s.v1().metricsHandler())
+		s.mux.Handle(s.cfg.Metrics.Path, s.helpers().metricsHandler())
 	}
 	s.mux.HandleFunc("/", s.handleFlow)
 }
@@ -352,7 +352,7 @@ func (s *FlowServer) routes() {
 func (s *FlowServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
-	requestID := s.v1().requestID(r)
+	requestID := s.helpers().requestID(r)
 	traceID := traceIDFromRequest(r)
 	traceparent := traceparentFromRequest(r, traceID)
 	w.Header().Set("X-Request-ID", requestID)
@@ -363,7 +363,7 @@ func (s *FlowServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.metrics.Inflight(1)
 	defer s.metrics.Inflight(-1)
 	rw := &recoveringResponseWriter{ResponseWriter: w}
-	defer s.v1().recoverHandlerPanic(rw, requestID, traceID)
+	defer s.helpers().recoverHandlerPanic(rw, requestID, traceID)
 	s.mux.ServeHTTP(rw, r)
 }
 
@@ -378,7 +378,7 @@ func (s *FlowServer) HTTPServer() *http.Server {
 }
 
 func (s *FlowServer) MetricsServer() *http.Server {
-	return s.v1().MetricsServer()
+	return s.helpers().MetricsServer()
 }
 
 func (s *FlowServer) StartReadinessProbe(ctx context.Context) <-chan struct{} {
@@ -468,7 +468,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sourceIP := s.v1().sourceIP(r)
+	sourceIP := s.helpers().sourceIP(r)
 	head := flowconfig.HeadFromRequest(r, pathVars, sourceIP)
 	head.RequestID = requestIDFromContext(r.Context())
 	head.TraceID = traceIDFromContext(r.Context())
@@ -505,7 +505,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			}
 			captured = true
 			capturedID = ev.ID
-			s.v1().captureEvent(r.Context(), ev)
+			s.helpers().captureEvent(r.Context(), ev)
 		},
 		OnNode: func(ev graph.NodeEvent) {
 			outcome := "ok"
@@ -562,7 +562,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	published, failed := deliveryMaps(mf, term)
 	if captured {
-		s.v1().recordOutcome(r.Context(), capturedID, deliveriesFromResults(published, failed))
+		s.helpers().recordOutcome(r.Context(), capturedID, deliveriesFromResults(published, failed))
 	}
 	if runErr != nil {
 		status = statusFromNodeError(runErr)

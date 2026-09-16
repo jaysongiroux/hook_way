@@ -12,7 +12,7 @@ export const NODE_HELP: Record<string, string> = {
   replay_guard: "Drops a request whose event key was already seen within the TTL.",
   envelope: "Decodes the verified body into the event object later nodes work with.",
   filter: "Continues only when the event matches; otherwise drop or reject.",
-  lookup: "Loads extra data (env, file, DynamoDB, …) and attaches it to the event.",
+  lookup: "Embedding-only: loads extra data when a provider is injected. Standalone CLI/serve reject it.",
   transform: "Rewrites the event (field map, changed-fields diff, or XML prune).",
   code: "Runs a short sandboxed JavaScript snippet against a copy of body, vars, and headers.",
   switch: "Sends the event out exactly one labelled port, based on the first matching case.",
@@ -140,9 +140,10 @@ export const SERVER_FIELD_HELP: Record<string, string> = {
   shutdown_timeout: "How long SIGTERM waits for in-flight work, e.g. 10s.",
   publish_timeout: "Deadline for delivering after the request is accepted, e.g. 10s.",
   max_inflight_requests: "Concurrent webhooks before shedding with 503. 0 uses the default; -1 disables the cap.",
-  fanout_concurrency: "Reserved bound for skip_failed fan-out. 0 means the built-in default. Fan-out is sequential today.",
+  fanout_concurrency: "Concurrent publishes per request when delivery_failure_policy is skip_failed. 0 uses the default of 8. Also sizes the async webhook delivery worker pool.",
   readiness_interval: "How often destinations are probed for /ready, e.g. 10s.",
   readiness_timeout: "Per-probe deadline, e.g. 5s.",
+  readiness_require_all: "When true, /ready is 503 if any flow is unready. Default: 200 while at least one flow is ready.",
 };
 
 export const DEST_FIELD_HELP: Record<string, string> = {
@@ -162,7 +163,7 @@ export const DEST_FIELD_HELP: Record<string, string> = {
   namespace: "Temporal namespace.",
   timeout: "HTTP timeout for this destination.",
   delivery_mode: "envelope sends the Hookway event; proxy forwards the original request.",
-  mode: "standalone, sentinel, or cluster.",
+  mode: "Redis topology: single, sentinel, or cluster.",
   key_prefix: "Prefix applied to Redis keys.",
 };
 

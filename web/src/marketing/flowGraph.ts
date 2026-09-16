@@ -1,21 +1,21 @@
 // The fan-out diagram shown on the overview, kept as data so the SVG and the
 // narrow-screen card list render from one source of truth.
 //
-// The shape mirrors what Hookway actually supports: route-level filters gate
-// individual branches, so a route whose chain fails is dropped while the other
-// routes still deliver. See examples/filters.yaml.
+// Node anatomy matches the builder: yaml id, type, summary, port handles.
+// Topology is still the marketing story: route-level filters gate two of three
+// publish branches. See examples/filters.yaml.
+
+import { NODE_SCHEMAS, nodeHasOnError } from "../graph/nodeSchema";
 
 export type FlowKind = "endpoint" | "filter" | "destination";
 
 export interface FlowNode {
   id: string;
   kind: FlowKind;
-  /** Primary line inside the card. */
-  label: string;
+  yamlId: string;
+  nodeType: string;
   /** Detail line; unique across nodes so tests and readers can tell them apart. */
-  sub: string;
-  /** Hometap accent used for the card's top bar. */
-  accent: string;
+  summary: string;
   column: number;
   row: number;
 }
@@ -27,44 +27,70 @@ export interface FlowEdge {
 
 export const LAYOUT = {
   width: 900,
-  height: 280,
+  height: 340,
   nodeW: 200,
-  nodeH: 60,
-  colX: [8, 350, 692],
-  rowY: [10, 110, 210],
+  nodeH: 90,
+  nodeHShort: 68,
+  handle: 5,
+  colX: [12, 350, 688],
+  rowY: [16, 126, 236],
 } as const;
 
 export const FLOW_NODES: FlowNode[] = [
   {
     id: "ep",
     kind: "endpoint",
-    label: "POST /webhooks/github",
-    sub: "verified with hmac_sha256",
-    accent: "#366CED",
+    yamlId: "in",
+    nodeType: "http_trigger",
+    summary: "/webhooks/github",
     column: 0,
     row: 1,
   },
-  { id: "f1", kind: "filter", label: "Filter", sub: "X-GitHub-Event = push", accent: "#7070FF", column: 1, row: 0 },
+  {
+    id: "f1",
+    kind: "filter",
+    yamlId: "pushes",
+    nodeType: "filter",
+    summary: "X-GitHub-Event = push",
+    column: 1,
+    row: 0,
+  },
   {
     id: "f2",
     kind: "filter",
-    label: "Filter",
-    sub: "repository.private = false",
-    accent: "#7070FF",
+    yamlId: "public",
+    nodeType: "filter",
+    summary: "repository.private = false",
     column: 1,
     row: 2,
   },
-  { id: "sqs", kind: "destination", label: "Amazon SQS", sub: "orders", accent: "#25BE8A", column: 2, row: 0 },
+  {
+    id: "sqs",
+    kind: "destination",
+    yamlId: "orders",
+    nodeType: "publish",
+    summary: "orders → github-events",
+    column: 2,
+    row: 0,
+  },
   {
     id: "rabbit",
     kind: "destination",
-    label: "RabbitMQ",
-    sub: "github-events",
-    accent: "#434C5E",
+    yamlId: "stream",
+    nodeType: "publish",
+    summary: "events → github-pushes",
     column: 2,
     row: 1,
   },
-  { id: "s3", kind: "destination", label: "Amazon S3", sub: "raw/github", accent: "#70DAFF", column: 2, row: 2 },
+  {
+    id: "s3",
+    kind: "destination",
+    yamlId: "archive",
+    nodeType: "publish",
+    summary: "archive → raw/github",
+    column: 2,
+    row: 2,
+  },
 ];
 
 export const FLOW_EDGES: FlowEdge[] = [
@@ -82,9 +108,33 @@ export interface Box {
   h: number;
 }
 
+export interface NodeChrome {
+  input: string;
+  output: string;
+  showIn: boolean;
+  showOut: boolean;
+  showError: boolean;
+}
+
+/** nodeChrome mirrors builder FlowNode handle rules from the catalog. */
+export function nodeChrome(n: FlowNode): NodeChrome {
+  const meta = NODE_SCHEMAS[n.nodeType];
+  const input = meta?.input ?? "Envelope";
+  const output = meta?.output ?? "Envelope";
+  return {
+    input,
+    output,
+    showIn: input !== "None",
+    showOut: output !== "Terminal",
+    showError: nodeHasOnError(n.nodeType),
+  };
+}
+
 /** nodeBox resolves a node's column and row to its rectangle in the viewBox. */
 export function nodeBox(n: FlowNode): Box {
-  return { x: LAYOUT.colX[n.column], y: LAYOUT.rowY[n.row], w: LAYOUT.nodeW, h: LAYOUT.nodeH };
+  const h = nodeChrome(n).showError ? LAYOUT.nodeH : LAYOUT.nodeHShort;
+  const y = LAYOUT.rowY[n.row] + (LAYOUT.nodeH - h) / 2;
+  return { x: LAYOUT.colX[n.column], y, w: LAYOUT.nodeW, h };
 }
 
 /**
@@ -104,6 +154,6 @@ export function edgePath(from: FlowNode, to: FlowNode): string {
 
 /** A sentence describing the flow, used as the diagram's accessible name. */
 export function flowDescription(): string {
-  const dests = FLOW_NODES.filter((n) => n.kind === "destination").map((n) => n.label);
-  return `One endpoint fanning out to ${dests.join(", ")}, with route-level filters on two of the three branches.`;
+  const dests = FLOW_NODES.filter((n) => n.kind === "destination").map((n) => n.yamlId);
+  return `One flow fanning out to ${dests.join(", ")}, with route-level filters on two of the three branches.`;
 }

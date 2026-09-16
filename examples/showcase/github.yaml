@@ -1,4 +1,4 @@
-# Minimal valid V2 webhook ingest flow. Used by `hookway validate` and serving
+# Minimal valid webhook ingest flow. Used by `hookway validate` and serving
 # gates. Requires GITHUB_WEBHOOK_SECRET and WEBHOOK_URL in the environment.
 # rate_limit is process-local (pod-scoped); N pods means N× the limit (D11).
 schema_version: 2

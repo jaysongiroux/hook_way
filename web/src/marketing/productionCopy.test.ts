@@ -3,7 +3,6 @@ import { PRODUCTION_CARDS } from "./productionCopy";
 
 test("the section covers six themes as compact tiles", () => {
   expect(PRODUCTION_CARDS).toHaveLength(6);
-  expect(new Set(PRODUCTION_CARDS.map((c) => c.accent)).size).toBe(6);
   for (const c of PRODUCTION_CARDS) {
     expect(c.title.length).toBeGreaterThan(0);
     expect(c.valueLabel.length).toBeGreaterThan(0);

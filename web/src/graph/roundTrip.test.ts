@@ -7,7 +7,7 @@ import { fromConfig } from "./fromConfig";
 import { toConfig } from "./toConfig";
 import { layout } from "./layout";
 
-const examplesDir = join(dirname(fileURLToPath(import.meta.url)), "../../../examples/v2");
+const examplesDir = join(dirname(fileURLToPath(import.meta.url)), "../../../examples/showcase");
 
 function normalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalize);

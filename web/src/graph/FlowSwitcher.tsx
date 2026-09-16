@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Group, Menu, Modal, Stack, Text, TextInput } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useGraphStore } from "./store";
+import { DARK } from "../tokens";
 
 export function FlowSwitcher() {
   const [opened, { open, close }] = useDisclosure(false);
@@ -36,9 +37,22 @@ export function FlowSwitcher() {
 
   return (
     <>
-      <Menu>
+      <Menu position="bottom-start" shadow="md">
         <Menu.Target>
-          <Button size="xs" variant="light" aria-label="Active flow">
+          <Button
+            size="xs"
+            variant="default"
+            aria-label="Active flow"
+            styles={{
+              root: {
+                fontFamily: "ui-monospace, Menlo, monospace",
+                borderColor: DARK.border,
+                background: DARK.surface,
+                maxWidth: 200,
+              },
+              label: { overflow: "hidden", textOverflow: "ellipsis" },
+            }}
+          >
             {activeFlow}
           </Button>
         </Menu.Target>

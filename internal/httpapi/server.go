@@ -19,8 +19,7 @@ import (
 )
 
 // Server holds HTTP helpers shared by FlowServer (metrics, source IP,
-// request/trace ids, panic recovery, replay capture). The V1 handleWebhook
-// pipeline was removed in Chunk 9.
+// request/trace ids, panic recovery, replay capture).
 type Server struct {
 	cfg            config.Config
 	logger         *slog.Logger

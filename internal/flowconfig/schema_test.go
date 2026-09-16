@@ -14,7 +14,7 @@ func TestNodeSchemasMatchCatalogAndRoundTrip(t *testing.T) {
 	}
 	for name, want := range wantedCatalog {
 		got, ok := schemas[name]
-		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.Schema == nil {
+		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != allowsOnError(name, want.in) || got.Schema == nil {
 			t.Errorf("%s schema metadata = %+v, found=%v", name, got, ok)
 		}
 		if got.Schema != nil && got.Schema.Type != "object" {

@@ -29,7 +29,7 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
   }
   const sourceHandle = c.sourceHandle ?? HANDLE_OUT;
   if (sourceHandle === HANDLE_ON_ERROR) {
-    if (from.input === "None") return false;
+    if (!from.on_error) return false;
     return portAccepts(to.input, from.input);
   }
   if (src.data.nodeType === "switch") {

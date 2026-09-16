@@ -1,5 +1,3 @@
-import { DARK } from "../tokens";
-
 // Copy for the production bento. Each tile headlines one verifiable number and
 // one line; the long form stays in docs/ so there is a single source of truth.
 //
@@ -17,7 +15,6 @@ export interface ProductionCard {
   valueLabel: string;
   /** One supporting sentence. */
   line: string;
-  accent: string;
 }
 
 export const PRODUCTION_CARDS: ProductionCard[] = [
@@ -27,7 +24,6 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     value: "256",
     valueLabel: "default in-flight ceiling",
     line: "Excess requests get a 503 and Retry-After before the body is ever buffered.",
-    accent: DARK.accent,
   },
   {
     id: "retries",
@@ -35,7 +31,6 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     value: "3",
     valueLabel: "webhook attempts, 500ms to 30s",
     line: "Webhook, Kafka and RabbitMQ back off, honour a 429, then dead-letter.",
-    accent: "#7070FF",
   },
   {
     id: "metrics",
@@ -43,15 +38,13 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     value: "45",
     valueLabel: "Prometheus metrics exported",
     line: "With a Grafana dashboard in the repo that a test keeps matching the metric names.",
-    accent: "#25BE8A",
   },
   {
     id: "controls",
-    title: "Controls per endpoint",
+    title: "Controls per flow",
     value: "11",
     valueLabel: "signature schemes",
-    line: "Verification fails closed, and rate limits and replay protection are set per endpoint.",
-    accent: DARK.highlight,
+    line: "Verification fails closed, and rate limits and replay protection are set per flow.",
   },
   {
     id: "replay",
@@ -59,7 +52,6 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     value: "4",
     valueLabel: "replay API routes",
     line: "Accepted events land in Postgres and re-deliver one at a time or in bulk.",
-    accent: "#35B2AD",
   },
   {
     id: "packaging",
@@ -67,6 +59,5 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     value: "1",
     valueLabel: "static binary, non-root",
     line: "A scratch image with a TLS 1.2 floor wherever a destination speaks TLS.",
-    accent: "#A3B4D3",
   },
 ];

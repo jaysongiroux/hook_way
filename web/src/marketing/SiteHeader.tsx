@@ -1,5 +1,7 @@
-import { Anchor, Box, Container, Group, Text } from "@mantine/core";
+import { Anchor, Box, Container, Group } from "@mantine/core";
 import { Link } from "react-router-dom";
+import { Logo } from "../brand/Logo";
+import { HEADER_HEIGHT, HEADER_STYLE } from "../brand/chrome";
 import { DOC_LINKS, GITHUB_REPO } from "./links";
 import { DARK } from "../tokens";
 
@@ -10,22 +12,15 @@ export function SiteHeader() {
     <Box
       component="header"
       style={{
-        borderBottom: `1px solid ${DARK.border}`,
-        background: "rgba(21, 32, 51, 0.85)",
-        backdropFilter: "blur(8px)",
+        ...HEADER_STYLE,
         position: "sticky",
         top: 0,
         zIndex: 10,
       }}
     >
       <Container size="lg">
-        <Group h={60} justify="space-between">
-          <Group gap={8}>
-            <Box style={{ width: 10, height: 10, borderRadius: 3, background: DARK.accent }} />
-            <Text fw={700} c={DARK.text} size="md">
-              Hookway
-            </Text>
-          </Group>
+        <Group h={HEADER_HEIGHT} justify="space-between">
+          <Logo to="/" />
           <Group gap="lg">
             <Anchor href={CONFIG_DOC.href} target="_blank" rel="noopener noreferrer" size="sm" c={DARK.muted}>
               Docs

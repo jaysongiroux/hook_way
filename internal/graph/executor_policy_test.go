@@ -172,8 +172,7 @@ func TestCompileRejectsUnknownDeliveryFailurePolicy(t *testing.T) {
 	}
 }
 
-// TestSkipFailedRunsDestinationsConcurrently restores the coverage V1 had as
-// TestWebhookFanoutHonorsConcurrencyLimit. With skip_failed no destination
+// TestSkipFailedRunsDestinationsConcurrently: with skip_failed no destination
 // gates another, so four 100ms publishes must take ~100ms, not ~400ms.
 // Serialising them makes request latency the SUM of destination latencies,
 // which is what docs/configuration.md promises it is not.
@@ -311,8 +310,7 @@ func TestSkipFailedCapturesOnceAcrossConcurrentDestinations(t *testing.T) {
 	}
 }
 
-// TestSkipFailedPrefersRealErrorOverContextError mirrors V1's
-// TestWebhookFanoutFailureDoesNotMaskRootCauseWithContextCanceled: when one
+// TestSkipFailedPrefersRealErrorOverContextError: when one
 // destination is cancelled and another fails for a real reason, the reported
 // error must be the real one or the root cause is lost from logs and replay.
 func TestSkipFailedPrefersRealErrorOverContextError(t *testing.T) {

@@ -2,10 +2,9 @@
 #
 # Reference config for a Kafka destination.
 #
-# The route `target` is the Kafka topic. Delivery is at-least-once via
-# acks=all. An optional per-route partition_key derives the Kafka message key
-# (which selects the partition) — reuse the same source model as FIFO group ids:
-# static | endpoint | header | body, with an optional fallback.
+# The publish `target` is the Kafka topic. kafka_options
+# (partition_key, partitions, replication_factor) are not publish-node fields;
+# messages are produced without a key and topic create uses broker defaults.
 
 schema_version: 2
 server:
@@ -53,7 +52,7 @@ flows:
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, body_format: json}
-      # Kafka topic name. V1 route set kafka_options.partition_key from
+      # Kafka topic name. Previously set kafka_options.partition_key from
       # body.account.id with endpoint fallback (not a publish-node field).
       - {id: out1, type: publish, destination: events, target: billing-events, create: true}
       # No partition_key → round-robin across partitions.

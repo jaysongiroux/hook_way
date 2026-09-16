@@ -1,73 +1,63 @@
-// Dark surface tokens for the marketing page only. The builder keeps the light
-// Mantine theme, so these are applied explicitly rather than by switching the
-// provider's colour scheme.
+// Shared surface tokens for the marketing overview and the builder.
+// Institutional light: office daylight, paper and steel, no neon-on-navy.
 //
 // Every pair below was checked with contrastRatio (see tokens.test.ts) rather
-// than by eye. Measured against the canvas: white 16.3:1, muted 6.4:1,
-// accent 3.5:1 (large text and UI only), accentText 6.9:1.
+// than by eye.
 export const DARK = {
-  /** Page canvas. Hometap's text navy, used here as the base. */
-  bg: "#152033",
-  /** Lifted surface for cards and tiles. */
-  surface: "#1B2840",
-  /** Recessed band, for code blocks and the closing call to action. */
-  recessed: "#0F1826",
-  /** Hairline border, visible without reading as a hard rule. */
-  border: "#2A3A57",
-  text: "#FFFFFF",
-  muted: "#8FA3C7",
-  /** Hometap Accent 1. Fills and large text only; 3.5:1 on the canvas. */
-  accent: "#366CED",
-  /** A lighter step of the accent, for small text that must be coloured. */
-  accentText: "#7FA9F5",
-  /** Hometap Accent 4, used sparingly for the event pulse. */
-  highlight: "#70DAFF",
+  /** Page canvas. Cool institutional gray, not cream and not navy. */
+  bg: "#F4F5F7",
+  /** Lifted surface for cards, panels, and node bodies. */
+  surface: "#FFFFFF",
+  /** Recessed band, for code blocks and alternating sections. */
+  recessed: "#EBEEF2",
+  /** Hairline border. */
+  border: "#C5CBD4",
+  text: "#14181F",
+  muted: "#3E4A59",
+  /** Steel blue. Fills, links, and large text. */
+  accent: "#0C447C",
+  /** Same steel, dark enough for small text on the canvas. */
+  accentText: "#0C447C",
+  /** No second accent. Highlight is the same steel, not cyan. */
+  highlight: "#0C447C",
 } as const;
 
 // NODE is the shared identity palette for graph nodes, used by the builder
 // canvas and by the marketing page's builder frame so the two match.
-//
-// Measured on DARK.surface: endpoint border 3.2:1, destination 3.8:1, filter
-// 6.2:1, labels above 6:1, badge text 7.7:1 on its tint. The previous
-// destination border (#434C5E) measured 1.7:1 and was effectively invisible.
 export const NODE = {
   border: {
-    endpoint: "#366CED",
-    destination: "#6D82AB",
-    filter: "#25BE8A",
+    endpoint: "#0C447C",
+    destination: "#4A5568",
+    filter: "#1B5E3B",
   },
   label: {
-    endpoint: "#7FA9F5",
-    destination: "#FFFFFF",
-    filter: "#FFFFFF",
+    endpoint: "#0C447C",
+    destination: "#14181F",
+    filter: "#14181F",
   },
   /** Subtle tint behind the destination type badge. */
-  badgeBg: "#24365C",
-  badgeText: "#C6D0E3",
+  badgeBg: "#D8DDE4",
+  badgeText: "#14181F",
 } as const;
 
 // PORT colours handles by payload type so illegal wiring is visible, not just
-// refused. Measured on DARK.surface (3:1 UI boundary) except on_error which is
-// a warning accent on the same card.
+// refused. Muted enough to sit on white cards without reading as decoration.
 export const PORT: Record<string, string> = {
-  None: "#8FA3C7",
-  RequestHead: "#366CED",
-  RawRequest: "#E6B450",
-  Verified: "#25BE8A",
-  Envelope: "#70DAFF",
-  Terminal: "#C6D0E3",
-  on_error: "#F07178",
+  None: "#5C6778",
+  RequestHead: "#0C447C",
+  RawRequest: "#7A4E0E",
+  Verified: "#1B5E3B",
+  Envelope: "#0C447C",
+  Terminal: "#4A5568",
+  on_error: "#8F2D2D",
 };
 
-// EDGE colours for the builder canvas. The defaults React Flow ships are
-// tuned for a light background: a thin #b1b1b7 line reads as warm grey against
-// navy, and the unselected stroke was left to React Flow entirely.
 export const EDGE = {
-  /** Resting stroke and arrowhead; ~4:1 on the canvas. */
-  line: "#6D82AB",
-  selected: "#366CED",
+  /** Resting stroke and arrowhead. */
+  line: "#5C6778",
+  selected: "#0C447C",
   /** Border on the target-name pill that sits on the canvas. */
-  labelBorder: "#4A5C80",
+  labelBorder: "#C5CBD4",
 } as const;
 
 const linearize = (channel: number): number => {

@@ -1,5 +1,5 @@
 import { expect, test, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { Canvas } from "./Canvas";
@@ -24,4 +24,5 @@ test("Canvas mounts a React Flow surface fed by the store", () => {
     </MantineProvider>,
   );
   expect(container.querySelector(".react-flow")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Arrange nodes" })).toBeInTheDocument();
 });

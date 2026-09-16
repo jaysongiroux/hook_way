@@ -73,7 +73,7 @@ type ServerConfig struct {
 	// rejected at load time.
 	ReadinessTimeout time.Duration
 	// ReadinessRequireAll, when true, makes /ready return 503 if any flow is
-	// unready (V1 AND-aggregation). The default is false: /ready stays 200
+	// unready (AND-aggregation). The default is false: /ready stays 200
 	// when at least one flow is ready so one bad destination does not take
 	// unrelated flows out of rotation (D9).
 	ReadinessRequireAll bool
@@ -348,7 +348,7 @@ func ExpandEnvLenient(raw string) (expanded string, missing []string) {
 	return expandEnvCollect(raw, false)
 }
 
-// ExpandEnvStrict is the load-time expander used by V1 Load and V2 LoadBytes
+// ExpandEnvStrict is the load-time expander used by LoadBytes
 // when environment substitution is requested. Unset variables are reported in
 // missing and expanded is empty in that case.
 func ExpandEnvStrict(raw string) (expanded string, missing []string) {

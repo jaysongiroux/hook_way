@@ -169,9 +169,9 @@ func assertCommittedSchema(t *testing.T, rel string, args []string) {
 	}
 }
 
-func TestRunValidateRejectsV1Config(t *testing.T) {
+func TestRunValidateRejectsEndpointsConfig(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "v1.yaml")
+	path := filepath.Join(dir, "endpoints.yaml")
 	body := `server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -201,18 +201,18 @@ endpoints:
 		t.Fatalf("code = %d, want 1 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "schema_version 1 (endpoints:) is no longer supported") {
-		t.Fatalf("stderr = %q, want V1 migration error", stderr.String())
+		t.Fatalf("stderr = %q, want endpoints: migration error", stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "docs/configuration.md") {
 		t.Fatalf("stderr = %q, want docs pointer", stderr.String())
 	}
 }
 
-func TestRunValidateV2Examples(t *testing.T) {
+func TestRunValidateShowcaseExamples(t *testing.T) {
 	t.Setenv("WEBHOOK_URL", "https://example.test/hooks")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret")
 
-	root := filepath.Join("..", "..", "examples", "v2")
+	root := filepath.Join("..", "..", "examples", "showcase")
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"validate", "--config", filepath.Join(root, "github.yaml")}, &stdout, &stderr)
 	if code != 0 {

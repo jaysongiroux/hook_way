@@ -8,7 +8,7 @@ import (
 
 // DefaultXMLPruneRules is the load-bearing DocMagic order. Later rules assume
 // earlier ones have already run. Universal-gateway pipeline.js is not in this
-// repo; predicates below are the documented V2 contract, tested against
+// repo; predicates below are the documented contract, tested against
 // synthetic MISMO-shaped fixtures.
 var DefaultXMLPruneRules = []string{
 	RuleRemoveEmptySelfClosingElements,
@@ -150,7 +150,7 @@ func removeMatching(el *Element, drop func(*Element) bool) {
 	el.Children = kept
 }
 
-// isHardcodedOnlyParty is the V2 contract for rule 3:
+// isHardcodedOnlyParty is the contract for rule 3:
 // a PARTY with Hardcoded="true"/"1"/"yes", a HARDCODED child, or neither
 // INDIVIDUAL nor LEGAL_ENTITY descendants (role-only stub).
 func isHardcodedOnlyParty(el *Element) bool {

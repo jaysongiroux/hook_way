@@ -21,7 +21,7 @@ type NodeEvent struct {
 type RunOptions struct {
 	PublishTimeout time.Duration
 	// FanoutConcurrency bounds concurrent destination publishes for
-	// skip_failed fan-out, matching V1's publishRoutesSkipFailed worker pool.
+	// skip_failed fan-out, matching the publishRoutesSkipFailed worker pool.
 	// stop_on_failure stays sequential: it must not attempt a destination
 	// after an earlier one failed. <= 0 means 8.
 	FanoutConcurrency int
@@ -236,7 +236,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		// A destination that fails for any reason -- including a panic
 		// inside the publisher, which arrives here as a bare error -- is a
 		// retryable delivery failure. Without this, a panicking publisher
-		// would surface as 500 and lose V1's 503-so-the-sender-retries
+		// would surface as 500 and lose the 503-so-the-sender-retries
 		// contract (gaps doc C1).
 		var ne NodeError
 		if b.spec.Detached && !errors.As(err, &ne) {
@@ -373,7 +373,7 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 
 // followSkipFailed attempts every destination and succeeds when at least one
 // does. Destinations run concurrently, bounded by RunOptions.FanoutConcurrency,
-// matching V1's publishRoutesSkipFailed worker pool: with skip_failed the whole
+// matching the publishRoutesSkipFailed worker pool: with skip_failed the whole
 // point is that no destination gates another, so serialising them would make
 // request latency the SUM of destination latencies instead of the max.
 //
@@ -420,7 +420,7 @@ func (e *execution) followSkipFailed(ctx context.Context, id string, out Payload
 	close(jobs)
 	wg.Wait()
 
-	// Report a real failure over a cancellation. V1 did the same
+	// Report a real failure over a cancellation. The same rule
 	// (publishRoutesSkipFailed): when one destination times out, its siblings
 	// can fail with a context error that would otherwise mask the root cause
 	// in logs and in the replay record.

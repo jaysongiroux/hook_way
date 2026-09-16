@@ -49,6 +49,9 @@ cmd/hookway-wasm/harness/wasm_exec.js
 web/node_modules/
 web/dist/
 web/.vite/
+web/playwright-report/
+web/test-results/
+web/blob-report/
 web/public/hookway.wasm
 web/public/wasm_exec.js
 # tsc -b (composite build) byproducts
@@ -65,3 +68,4 @@ internal/editor/webui/*
 
 # Real webhook captures used only by the V2 signature compatibility spike.
 v2/spikes/fixtures/
+node_modules/

@@ -16,7 +16,7 @@ class HookwayDB extends Dexie {
 }
 
 const db = new HookwayDB();
-const CURRENT = "current";
+const CURRENT = "current.v4";
 
 export async function saveGraph(doc: GraphDocument): Promise<void> {
   try {
