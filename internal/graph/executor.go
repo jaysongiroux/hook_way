@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -17,7 +18,10 @@ type NodeEvent struct {
 
 type RunOptions struct {
 	PublishTimeout time.Duration
-	// FanoutConcurrency is reserved for skip_failed. stop_on_failure is sequential.
+	// FanoutConcurrency bounds concurrent destination publishes for
+	// skip_failed fan-out, matching V1's publishRoutesSkipFailed worker pool.
+	// stop_on_failure stays sequential: it must not attempt a destination
+	// after an earlier one failed. <= 0 means 8.
 	FanoutConcurrency int
 	// OnNode runs once after each attempted node, including failures and panics.
 	// An observer panic is isolated: instrumentation must not alter delivery.
@@ -55,7 +59,7 @@ func (f *Flow) Run(ctx context.Context, in Payload, opts RunOptions) (term Termi
 	if err != nil {
 		return term, err
 	}
-	e := execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
+	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
 	err = e.node(ctx, f.root, seed)
 	if err != nil {
 		// Node order is stable and unattempted destinations never masquerade as success.
@@ -71,11 +75,54 @@ func (f *Flow) Run(ctx context.Context, in Payload, opts RunOptions) (term Termi
 }
 
 type execution struct {
-	flow                *Flow
-	opts                RunOptions
+	flow *Flow
+	opts RunOptions
+
+	// mu guards every field below. skip_failed fan-out runs sibling
+	// destination publishes concurrently, so all per-request state is
+	// touched from multiple goroutines. stop_on_failure is sequential and
+	// pays only an uncontended lock.
+	mu                  sync.Mutex
 	term                Terminal
 	visited, suppressed map[string]bool
 	beforeDetachedDone  bool
+}
+
+func (e *execution) markVisited(id string) {
+	e.mu.Lock()
+	e.visited[id] = true
+	e.mu.Unlock()
+}
+
+func (e *execution) addDelivery(d Delivery) {
+	e.mu.Lock()
+	e.term.Deliveries = append(e.term.Deliveries, d)
+	e.mu.Unlock()
+}
+
+func (e *execution) addCompensation(c Compensation) {
+	e.mu.Lock()
+	e.term.Compensations = append(e.term.Compensations, c)
+	e.mu.Unlock()
+}
+
+// setResponse records a respond node's reply, reporting an error if one was
+// already recorded. At most one response may be written per request.
+func (e *execution) setResponse(r *Response) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.term.Response != nil {
+		return errors.New("more than one response produced")
+	}
+	e.term.Response = r
+	return nil
+}
+
+func (e *execution) fanoutLimit() int {
+	if e.opts.FanoutConcurrency <= 0 {
+		return 8
+	}
+	return e.opts.FanoutConcurrency
 }
 
 func (e *execution) delivery(b *bound, err error, unattempted bool) Delivery {
@@ -84,9 +131,15 @@ func (e *execution) delivery(b *bound, err error, unattempted bool) Delivery {
 	return d
 }
 func (e *execution) suppress(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.suppressLocked(id)
+}
+
+func (e *execution) suppressLocked(id string) {
 	for _, edge := range e.flow.out[id] {
 		e.suppressed[edge.To] = true
-		e.suppress(edge.To)
+		e.suppressLocked(edge.To)
 	}
 }
 func (e *execution) node(ctx context.Context, id string, in Payload) (err error) {
@@ -99,7 +152,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 			return fmt.Errorf("node %q compensation input: %w", id, err)
 		}
 	}
-	e.visited[id] = true
+	e.markVisited(id)
 	nctx := ctx
 	cancel := func() {}
 	if b.spec.Detached {
@@ -125,10 +178,8 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	}
 	if isTerminal {
 		if terminal.Response != nil && !b.spec.Detached {
-			if e.term.Response != nil {
-				err = errors.Join(err, errors.New("more than one response produced"))
-			} else {
-				e.term.Response = terminal.Response
+			if setErr := e.setResponse(terminal.Response); setErr != nil {
+				err = errors.Join(err, setErr)
 			}
 		}
 		if b.spec.Detached {
@@ -139,7 +190,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 				if d.Err == nil && runErr != nil {
 					d.Err = runErr
 				}
-				e.term.Deliveries = append(e.term.Deliveries, d)
+				e.addDelivery(d)
 				if outcome.Err != nil && runErr == nil {
 					err = errors.Join(err, d.Err)
 				}
@@ -149,18 +200,27 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		// Node-returned payloads cannot inject release callbacks.
 	}
 	if b.spec.Detached && (!isTerminal || len(terminal.Deliveries) == 0) {
-		e.term.Deliveries = append(e.term.Deliveries, e.delivery(b, err, false))
+		e.addDelivery(e.delivery(b, err, false))
 	}
 	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err})
 	// A successful reservation must be released even when its output is malformed.
 	if runErr == nil && isComp {
-		e.term.Compensations = append(e.term.Compensations, Compensation{NodeID: id, Node: comp, Input: saved})
+		e.addCompensation(Compensation{NodeID: id, Node: comp, Input: saved})
 	}
 	if err != nil {
 		if handled := e.followOnError(ctx, id, in); handled == nil {
 			return nil
 		} else if !errors.Is(handled, errNoOnError) {
 			return handled
+		}
+		// A destination that fails for any reason -- including a panic
+		// inside the publisher, which arrives here as a bare error -- is a
+		// retryable delivery failure. Without this, a panicking publisher
+		// would surface as 500 and lose V1's 503-so-the-sender-retries
+		// contract (gaps doc C1).
+		var ne NodeError
+		if b.spec.Detached && !errors.As(err, &ne) {
+			err = NodeError{NodeID: id, Status: 503, Err: err}
 		}
 		return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
 	}
@@ -196,10 +256,20 @@ func observe(fn func(NodeEvent), ev NodeEvent) {
 }
 
 func (e *execution) runBeforeDetached(in Payload) {
-	if e.beforeDetachedDone || e.opts.BeforeDetached == nil {
+	if e.opts.BeforeDetached == nil {
 		return
 	}
+	// Claim the once-flag under the lock: skip_failed fan-out can reach two
+	// detached nodes concurrently, and a second capture INSERT would both
+	// duplicate the replay row and make writes-per-event scale with
+	// destination count (decision D8).
+	e.mu.Lock()
+	already := e.beforeDetachedDone
 	e.beforeDetachedDone = true
+	e.mu.Unlock()
+	if already {
+		return
+	}
 	defer func() { _ = recover() }()
 	e.opts.BeforeDetached(in)
 }
@@ -273,30 +343,77 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 	return nil
 }
 
+// followSkipFailed attempts every destination and succeeds when at least one
+// does. Destinations run concurrently, bounded by RunOptions.FanoutConcurrency,
+// matching V1's publishRoutesSkipFailed worker pool: with skip_failed the whole
+// point is that no destination gates another, so serialising them would make
+// request latency the SUM of destination latencies instead of the max.
+//
+// Only reached when every successor is detached (see followSuccessors), so the
+// nodes run here are destination publishes: terminal, non-recursing, and
+// already isolated from the request context. All shared state they touch goes
+// through execution's mutex.
 func (e *execution) followSkipFailed(ctx context.Context, id string, out Payload, successors []Edge) error {
+	if len(successors) == 1 {
+		if err := e.node(ctx, successors[0].To, out); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// Clone per destination before fanning out: a publisher must never observe
+	// a payload another destination is mutating.
+	payloads := make([]Payload, len(successors))
+	for i := range successors {
+		next, err := clonePayload(out)
+		if err != nil {
+			return fmt.Errorf("node %q fan-out: %w", id, err)
+		}
+		payloads[i] = next
+	}
+
+	errs := make([]error, len(successors))
+	limit := min(e.fanoutLimit(), len(successors))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range limit {
+		wg.Go(func() {
+			// Each worker writes only errs[i] for the indices it pulls, so
+			// the slice needs no lock; execution's own state is guarded by
+			// e.mu inside node.
+			for i := range jobs {
+				errs[i] = e.node(ctx, successors[i].To, payloads[i])
+			}
+		})
+	}
+	for i := range successors {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+
+	// Report a real failure over a cancellation. V1 did the same
+	// (publishRoutesSkipFailed): when one destination times out, its siblings
+	// can fail with a context error that would otherwise mask the root cause
+	// in logs and in the replay record.
 	var firstErr error
-	var ok int
-	for _, edge := range successors {
-		next := out
-		var err error
-		if len(successors) > 1 {
-			next, err = clonePayload(out)
-			if err != nil {
-				return fmt.Errorf("node %q fan-out: %w", id, err)
-			}
+	ok := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case firstErr == nil, isContextErr(firstErr) && !isContextErr(err):
+			firstErr = err
 		}
-		if err = e.node(ctx, edge.To, next); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		ok++
 	}
 	if ok == 0 {
 		return firstErr
 	}
 	return nil
+}
+
+func isContextErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func successEdges(edges []Edge) []Edge {

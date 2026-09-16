@@ -8,7 +8,7 @@
 
 **Status:** complete and independently accepted on 2026-09-15. Implementation is in
 `0d4cdd3`; review fixes are in `59975bd`. See `HANDOFF.md`, `../IMPLEMENTATION.md`, and
-the repository root `progress_report.md`.
+`v2/progress_report.md`.
 **Depends on:** Chunk 0 (spikes) — gate only; no code dependency
 **Unlocks:** every other chunk
 **Verification gate:** `go test -race ./internal/graph/` passes, coverage > 85%, and a config

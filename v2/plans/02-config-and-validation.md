@@ -2,7 +2,7 @@
 
 **Status:** implemented; local verification gate passed. Shared config decoding, the
 17-node catalog/schema, V2 loading, policy lint, and CLI/config API routing are in the
-working tree. See `../../progress_report.md`. **Depends on:** Chunk 1 (`internal/graph`
+working tree. See `../progress_report.md`. **Depends on:** Chunk 1 (`internal/graph`
 compiler and registry)
 **Unlocks:** Chunk 3
 **Verification gate:**

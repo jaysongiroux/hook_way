@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -45,6 +46,10 @@ type FlowServer struct {
 	mux            *http.ServeMux
 	readiness      *readinessProber
 	replay         ReplayCapturer
+	// closers holds resources with background goroutines -- currently
+	// secret_ref resolvers, each of which runs a refresh ticker. Close()
+	// stops them; without this they outlive the server they belong to.
+	closers []io.Closer
 }
 
 var nodeTracer = otel.Tracer("hookway")
@@ -135,13 +140,28 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	extra.Logger = logger
 	extra.HeaderDenylist = cfg.Security.RedactedHeaderDenylist
 	extra.HeaderAllowlist = cfg.Security.ForwardedHeaderAllowlist
+	// secret_ref resolvers each start a refresh goroutine, so they must be
+	// retained and closed. Collected here because extra.Secrets is invoked
+	// during NewRegistryWithOptions, before the FlowServer exists.
+	var closers []io.Closer
+	closeAll := func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}
 	if extra.Secrets == nil {
 		extra.Secrets = func(o flowconfig.SecretRefOptions) (flowconfig.SecretsFunc, error) {
-			return bindSecretRef(o, logger, m)
+			fn, closer, err := bindSecretRef(o, logger, m)
+			if err != nil {
+				return nil, err
+			}
+			closers = append(closers, closer)
+			return fn, nil
 		}
 	}
 	reg, err := flowconfig.NewRegistryWithOptions(extra)
 	if err != nil {
+		closeAll()
 		return nil, err
 	}
 	s := &FlowServer{
@@ -163,6 +183,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		fc := cfg.Flows[name]
 		path, methods, destByNode, err := triggerRouting(fc)
 		if err != nil {
+			closeAll()
 			return nil, fmt.Errorf("flow %q: %w", name, err)
 		}
 		compiled, compileErr := graph.Compile(name, fc, reg)
@@ -181,6 +202,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		}
 		pattern, err := vars.ParsePath(path)
 		if err != nil {
+			closeAll()
 			return nil, fmt.Errorf("flow %q path: %w", name, err)
 		}
 		if pattern.IsLiteral() {
@@ -189,6 +211,11 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			s.patternPaths = append(s.patternPaths, flowPattern{name: name, pattern: pattern})
 		}
 	}
+	// Assigned after the compile loop, not in the literal above: node
+	// constructors (and therefore extra.Secrets) run inside graph.Compile, so
+	// closers is still empty when the struct is built. Copying the slice
+	// header early would drop every resolver.
+	s.closers = closers
 	s.trustedProxies = parseCIDRs(cfg.Security.TrustedProxies)
 	if cfg.Server.MaxInflightRequests > 0 {
 		s.inflight = make(chan struct{}, cfg.Server.MaxInflightRequests)
@@ -312,7 +339,18 @@ func (s *FlowServer) StartReadinessProbe(ctx context.Context) <-chan struct{} {
 	return s.readiness.run(ctx)
 }
 
-func (s *FlowServer) Close() error { return nil }
+// Close releases resources holding background goroutines. Safe to call more
+// than once: closers is cleared so a second call is a no-op.
+func (s *FlowServer) Close() error {
+	var errs []error
+	for _, c := range s.closers {
+		if err := c.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	s.closers = nil
+	return errors.Join(errs...)
+}
 
 func (s *FlowServer) SetReplayCapturer(c ReplayCapturer) {
 	s.replay = c
@@ -571,19 +609,22 @@ func replayEventFromEnvelope(flow string, env graph.Envelope, eventID string) re
 	}
 }
 
-func bindSecretRef(o flowconfig.SecretRefOptions, logger *slog.Logger, m *metrics.Metrics) (flowconfig.SecretsFunc, error) {
+// bindSecretRef builds a secret resolver and returns both its lookup function
+// and its closer. The closer must be retained: the resolver runs a refresh
+// ticker goroutine that otherwise outlives the server.
+func bindSecretRef(o flowconfig.SecretRefOptions, logger *slog.Logger, m *metrics.Metrics) (flowconfig.SecretsFunc, io.Closer, error) {
 	ref := secretref.Ref{Provider: o.Provider, Name: o.Name}
 	if o.Refresh != "" {
 		d, err := time.ParseDuration(o.Refresh)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ref.Refresh = d
 	}
 	if o.Overlap != "" {
 		d, err := time.ParseDuration(o.Overlap)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ref.Overlap = d
 	}
@@ -591,9 +632,9 @@ func bindSecretRef(o flowconfig.SecretRefOptions, logger *slog.Logger, m *metric
 		m.SecretRefreshFailure(ref.Provider, ref.Name)
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return r.Secrets, nil
+	return r.Secrets, r, nil
 }
 
 type flowReadyState struct {

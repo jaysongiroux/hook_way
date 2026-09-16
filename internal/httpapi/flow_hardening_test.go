@@ -5,10 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/metrics"
 )
 
 func githubPOST(body []byte) *http.Request {
@@ -475,3 +478,56 @@ flows:
       - {id: out, type: publish, destination: primary, target: revenuecat-events}
     edges: [in>body, body>auth, auth>env, env>out]
 `
+
+// TestFlowServerCloseStopsSecretRefreshGoroutines guards against the resolver
+// leak: bindSecretRef starts a refresh ticker per secret_ref, and if the
+// server drops the closer those goroutines outlive it. Constructing and
+// closing many servers must not grow the goroutine count.
+func TestFlowServerCloseStopsSecretRefreshGoroutines(t *testing.T) {
+	t.Setenv("HOOKWAY_TEST_ROTATING_SECRET", "testsecret")
+	// testFlowYAML with the auth node's inline secret swapped for a
+	// secret_ref, which is what starts the refresh goroutine.
+	src := strings.Replace(testFlowYAML,
+		"secret: testsecret, signature_header: X-Hub-Signature-256",
+		`signature_header: X-Hub-Signature-256, secret_ref: {provider: env, name: HOOKWAY_TEST_ROTATING_SECRET, refresh: "1s"}`,
+		1)
+	if src == testFlowYAML {
+		t.Fatal("fixture substitution failed; testFlowYAML changed shape")
+	}
+	cfg := loadFlowCfg(t, src)
+
+	// Warm up once so one-off runtime goroutines are not counted as growth.
+	warm, err := NewFlowServer(cfg, &fakePublisher{}, slog.New(slog.DiscardHandler), metrics.New())
+	if err != nil {
+		t.Fatalf("NewFlowServer() = %v", err)
+	}
+	if err := warm.Close(); err != nil {
+		t.Fatalf("Close() = %v", err)
+	}
+	settle()
+	before := runtime.NumGoroutine()
+
+	for range 20 {
+		s, err := NewFlowServer(cfg, &fakePublisher{}, slog.New(slog.DiscardHandler), metrics.New())
+		if err != nil {
+			t.Fatalf("NewFlowServer() = %v", err)
+		}
+		if err := s.Close(); err != nil {
+			t.Fatalf("Close() = %v", err)
+		}
+	}
+	settle()
+
+	if grew := runtime.NumGoroutine() - before; grew > 2 {
+		t.Fatalf("goroutines grew by %d across 20 construct/Close cycles; "+
+			"secret_ref refresh tickers are leaking", grew)
+	}
+}
+
+// settle gives closed goroutines a moment to actually exit before counting.
+func settle() {
+	for range 50 {
+		runtime.Gosched()
+		time.Sleep(2 * time.Millisecond)
+	}
+}
