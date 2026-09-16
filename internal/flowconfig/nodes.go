@@ -279,19 +279,6 @@ func (n stubNode) Run(context.Context, graph.Payload) (graph.Payload, error) {
 	return nil, fmt.Errorf("%w: %s", errNotImplemented, n.name)
 }
 
-type passthroughNode struct{ name string }
-
-func (n passthroughNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
-	if in == nil {
-		return nil, fmt.Errorf("%s: nil payload", n.name)
-	}
-	return in, nil
-}
-
-func Register(reg *graph.Registry) error {
-	return RegisterWithOptions(reg, RegistryOptions{})
-}
-
 func RegisterWithOptions(reg *graph.Registry, opts RegistryOptions) error {
 	if reg == nil {
 		return errors.New("flowconfig: nil graph registry")

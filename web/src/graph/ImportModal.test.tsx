@@ -14,8 +14,7 @@ test("importing flow YAML populates the store graph", () => {
       <ImportModal opened onClose={() => {}} />
     </MantineProvider>,
   );
-  const yaml = `schema_version: 2
-server: { addr: ":8080", max_body_bytes: 1048576 }
+  const yaml = `server: { addr: ":8080", max_body_bytes: 1048576 }
 destinations:
   d: { type: webhook, webhook: { url: https://example.test } }
 flows:

@@ -13,7 +13,6 @@
 # `on_existing_conflict` is NOT valid for mongodb destinations — the field is
 # rejected at config validation time. Do not set it on mongodb entries.
 
-schema_version: 2
 server:
   addr: ":8089"
   max_body_bytes: 1048576

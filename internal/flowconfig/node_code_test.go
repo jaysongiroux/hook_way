@@ -52,7 +52,6 @@ func TestCodeNodeSyntaxErrorFailsAtLoad(t *testing.T) {
 		t.Fatal("syntax error accepted at node construction")
 	}
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -164,5 +163,45 @@ func TestReviewCodeHonorsConfiguredHeaderPolicy(t *testing.T) {
 	body := out.(graph.Envelope).Body.(map[string]string)
 	if body["x-partner"] != "redacted" || body["x-hidden"] != "" || body["x-request-id"] != "visible" {
 		t.Fatalf("header policy bypass: %#v", body)
+	}
+}
+
+// TestCodeNodeCannotReadCredentialsEvenWithPermissiveAllowlist is a security
+// regression test. scriptHeaders passes the flow's configured header
+// allowlist/denylist through to FilterHeaders, so an operator could plausibly
+// widen it far enough to expose credentials to user-authored JavaScript.
+// logging.SensitiveHeader redaction is unconditional -- it applies even when a
+// header is explicitly allowlisted -- and this test pins that.
+func TestCodeNodeCannotReadCredentialsEvenWithPermissiveAllowlist(t *testing.T) {
+	sensitive := map[string]string{
+		"Authorization":       "Bearer super-secret",
+		"Cookie":              "session=secret",
+		"X-Hub-Signature-256": "sha256=deadbeef",
+		"X-Api-Key":           "api-key-value",
+		"X-Webhook-Secret":    "shhh",
+	}
+	hdr := http.Header{}
+	for k, v := range sensitive {
+		hdr.Set(k, v)
+	}
+	hdr.Set("Content-Type", "application/json")
+
+	// Deliberately permissive: every sensitive header is explicitly allowed.
+	allowlist := []string{"Authorization", "Cookie", "X-Hub-Signature-256", "X-Api-Key", "X-Webhook-Secret", "Content-Type"}
+
+	got := scriptHeaders(hdr, allowlist, nil)
+
+	for name, secret := range sensitive {
+		value, present := got[strings.ToLower(name)]
+		if present && value == secret {
+			t.Errorf("script can read %s = %q; credentials must be redacted regardless of allowlist", name, value)
+		}
+		if present && value != "redacted" {
+			t.Errorf("%s = %q, want \"redacted\"", name, value)
+		}
+	}
+	// A non-sensitive header must still be readable, or the node is useless.
+	if got["content-type"] != "application/json" {
+		t.Errorf("content-type = %q, want it readable", got["content-type"])
 	}
 }

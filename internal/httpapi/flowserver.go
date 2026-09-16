@@ -455,6 +455,17 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": "internal error"})
 		return
 	}
+	// URL.Path arrives percent-decoded, so "%2e%2e%2f" becomes "../" only
+	// after ServeMux has routed. Reject traversal in a captured path variable
+	// before it can be rendered into a proxied upstream URL.
+	if name, unsafe := flowconfig.UnsafePathVar(pathVars); unsafe {
+		status = http.StatusBadRequest
+		s.logger.Warn("rejected request: path variable contains a traversal segment",
+			"flow", mf.name, "variable", name,
+			"request_id", requestIDFromContext(r.Context()))
+		writeJSON(w, status, map[string]string{"error": "bad request"})
+		return
+	}
 	if s.inflight != nil {
 		select {
 		case s.inflight <- struct{}{}:

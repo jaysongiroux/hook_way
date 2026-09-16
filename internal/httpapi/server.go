@@ -90,7 +90,6 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) Close() error { return nil }
 
 func (s *Server) sourceIP(r *http.Request) string {
 	peer := peerHost(r.RemoteAddr)

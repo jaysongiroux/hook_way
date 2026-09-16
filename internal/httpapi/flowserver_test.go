@@ -18,7 +18,6 @@ import (
 )
 
 const testFlowYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -176,7 +175,6 @@ func TestPanickingNodeReturns500(t *testing.T) {
 }
 
 const replayFlowYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -199,7 +197,6 @@ flows:
 `
 
 const filterDropReplayYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -271,7 +268,6 @@ func TestFilterSilentDropKeepsReservation(t *testing.T) {
 }
 
 const skipFailedFlowYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -406,7 +402,6 @@ func TestPublishMessageAttributesReachQueueMessage(t *testing.T) {
 
 func TestBrokenFlowRegistersPathWith500Not404(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}

@@ -16,7 +16,6 @@
 # AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to
 # http://localhost:4566 to use LocalStack during development.
 
-schema_version: 2
 server:
   addr: ":8087"
   max_body_bytes: 1048576

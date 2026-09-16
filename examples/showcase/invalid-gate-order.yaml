@@ -1,6 +1,5 @@
 # Expected to fail validation: a gate node is wired after read_body.
 # The error must name both RequestHead and RawRequest (invariants I1-I4).
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1024

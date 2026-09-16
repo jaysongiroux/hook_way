@@ -105,9 +105,6 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "read config: %v\n", err)
 		return 1
 	}
-	version, detectErr := flowconfig.DetectSchemaVersion(data)
-	schema2 := detectErr == nil && version == 2
-
 	if *jsonOut {
 		resp := configapi.ValidateWithEnv(data, !*noEnv)
 		enc := json.NewEncoder(stdout)
@@ -122,11 +119,6 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		return 0
-	}
-
-	if !schema2 {
-		fmt.Fprintln(stderr, config.ConfigValidationError{Issues: []config.ValidationIssue{flowconfig.UnsupportedSchemaIssue()}})
-		return 1
 	}
 
 	var issues []config.ValidationIssue
@@ -222,18 +214,6 @@ func editorAPIKey(configFlag string) (string, error) {
 	path, err := config.ResolvePath(configFlag)
 	if err != nil {
 		return "", nil // no config ⇒ unauthenticated (standalone editor)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	version, err := flowconfig.DetectSchemaVersion(data)
-	if err != nil {
-		return "", err
-	}
-	if version != 2 {
-		iss := flowconfig.UnsupportedSchemaIssue()
-		return "", fmt.Errorf("%s: %s", iss.Message, iss.Suggestion)
 	}
 	cfg, issues := flowconfig.Load(path)
 	if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
@@ -337,24 +317,6 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		logger.Error("config path required", "error", err)
 		return 1
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		appMetrics.ConfigLoadFailure("load")
-		logger.Error("config load failed", "error", err)
-		return 1
-	}
-	schemaVersion := 1
-	if v, detectErr := flowconfig.DetectSchemaVersion(data); detectErr == nil {
-		schemaVersion = v
-	}
-
-	if schemaVersion != 2 {
-		appMetrics.ConfigLoadFailure("load")
-		iss := flowconfig.UnsupportedSchemaIssue()
-		logger.Error("config load failed", "error", iss.Message, "suggestion", iss.Suggestion)
-		return 1
-	}
-
 	flowCfg, issues := flowconfig.Load(path)
 	issues = append(issues, flowconfig.Lint(flowCfg)...)
 	issues = append(issues, flowconfig.StandaloneIssues(flowCfg)...)

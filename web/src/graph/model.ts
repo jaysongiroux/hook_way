@@ -4,7 +4,7 @@ import { defaultNodeOptions, isNodeType, NODE_TYPES } from "./nodeSchema";
 export const DEFAULT_SERVER: Record<string, unknown> = { addr: ":8080", max_body_bytes: 1048576 };
 export const DEFAULT_FLOW = "main";
 
-export interface FlowNodeData extends Record<string, unknown> {
+interface FlowNodeData extends Record<string, unknown> {
   nodeType: string;
   options: Record<string, unknown>;
   yamlId: string;
@@ -12,7 +12,6 @@ export interface FlowNodeData extends Record<string, unknown> {
 }
 
 export type HookwayNode = Node<FlowNodeData>;
-export type HookwayEdge = Edge;
 
 export interface FlowSnapshot {
   nodes: HookwayNode[];

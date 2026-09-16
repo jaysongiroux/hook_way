@@ -7,7 +7,7 @@
 
 import { NODE_SCHEMAS, nodeHasOnError } from "../graph/nodeSchema";
 
-export type FlowKind = "endpoint" | "filter" | "destination";
+type FlowKind = "endpoint" | "filter" | "destination";
 
 export interface FlowNode {
   id: string;

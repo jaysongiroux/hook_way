@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -89,11 +91,11 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 			Err: fmt.Errorf("http_request %q: expected Envelope, got %T", n.id, in),
 		}
 	}
-	url, err := n.template.Render(env.Vars)
+	target, err := n.template.Render(env.Vars)
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
-	url = collapseDoubleSlashInPath(url)
+	target = cleanOutboundPath(collapseDoubleSlashInPath(target))
 	method := http.MethodPost
 	if n.opts.ForwardMethod && env.V.Raw.Head.Method != "" {
 		method = env.V.Raw.Head.Method
@@ -104,7 +106,7 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	}
 	nctx, cancel := context.WithTimeout(ctx, n.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(nctx, method, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(nctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
@@ -175,6 +177,13 @@ func (n httpRequestNode) shouldForward(name string) bool {
 	if canon == "Authorization" && !n.explicitAuth {
 		return false
 	}
+	// Cookie authenticates the caller to Hookway's own origin, so forwarding
+	// it by default would hand a session credential to a third-party
+	// upstream. Opt in explicitly via forward_headers if an upstream really
+	// shares the caller's session.
+	if canon == "Cookie" && !n.forward[canon] {
+		return false
+	}
 	if len(n.forward) > 0 {
 		return n.forward[canon]
 	}
@@ -224,6 +233,31 @@ func outboundBody(env graph.Envelope, mode string) ([]byte, string, error) {
 	default:
 		return nil, "", fmt.Errorf("http_request: unknown body mode %q", mode)
 	}
+}
+
+// cleanOutboundPath normalizes the rendered upstream path, resolving any "."
+// and ".." segments. Defense in depth: UnsafePathVar already rejects traversal
+// in captured path variables at the trigger, but a hand-written url template
+// could also introduce them, and an upstream must never receive a path whose
+// meaning depends on its own normalization behavior.
+func cleanOutboundPath(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Path == "" {
+		return rawURL
+	}
+	cleaned := path.Clean(u.Path)
+	if cleaned == "." {
+		cleaned = "/"
+	}
+	if !strings.HasPrefix(cleaned, "/") {
+		cleaned = "/" + cleaned
+	}
+	// path.Clean drops a meaningful trailing slash; restore it.
+	if strings.HasSuffix(u.Path, "/") && !strings.HasSuffix(cleaned, "/") {
+		cleaned += "/"
+	}
+	u.Path = cleaned
+	return u.String()
 }
 
 func collapseDoubleSlashInPath(rawURL string) string {

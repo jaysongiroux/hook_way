@@ -28,8 +28,7 @@ type ValidateResponse struct {
 }
 
 // Validate parses and validates raw YAML config bytes, returning structured
-// issues. schema_version other than 2 is a migration error (severity "error").
-// Policy lint may emit "warning".
+// issues. Policy lint may emit "warning"; everything else is "error".
 //
 // This is the function internal/editor's POST /validate calls. It must NEVER
 // expand ${VAR} references against the process environment: the editor
@@ -38,13 +37,6 @@ type ValidateResponse struct {
 // which fields end up populated. It delegates to flowconfig.ValidateBytes
 // (non-expanding) — do not route this through ValidateWithEnv(..., true).
 func Validate(data []byte) ValidateResponse {
-	version, err := flowconfig.DetectSchemaVersion(data)
-	if err != nil {
-		return preserveSeverity(flowconfig.ValidateBytes(data))
-	}
-	if version != 2 {
-		return errorSeverity([]config.ValidationIssue{flowconfig.UnsupportedSchemaIssue()})
-	}
 	return preserveSeverity(flowconfig.ValidateBytes(data))
 }
 
@@ -72,7 +64,6 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 	if !expand {
 		return Validate(data)
 	}
-	version, err := flowconfig.DetectSchemaVersion(data)
 	expanded, missing := config.ExpandEnvLenient(string(data))
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range config.MissingEnvIssues(missing) {
@@ -83,14 +74,7 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 			Severity:   "warning",
 		})
 	}
-	var structural ValidateResponse
-	if err != nil {
-		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
-	} else if version != 2 {
-		structural = errorSeverity([]config.ValidationIssue{flowconfig.UnsupportedSchemaIssue()})
-	} else {
-		structural = preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
-	}
+	structural := preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
 
 	var parsed any
 	canCorrelate := yaml.Unmarshal([]byte(expanded), &parsed) == nil
@@ -199,18 +183,6 @@ func preserveSeverity(issues []config.ValidationIssue) ValidateResponse {
 	return out
 }
 
-func errorSeverity(issues []config.ValidationIssue) ValidateResponse {
-	out := ValidateResponse{Issues: []Issue{}}
-	for _, iss := range issues {
-		out.Issues = append(out.Issues, Issue{
-			Field:      iss.Field,
-			Message:    iss.Message,
-			Suggestion: iss.Suggestion,
-			Severity:   "error",
-		})
-	}
-	return out
-}
 
 // Schema returns the JSON Schema describing the config YAML.
 func Schema() ([]byte, error) {

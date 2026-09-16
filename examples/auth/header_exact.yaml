@@ -12,7 +12,6 @@
 # remove_bearer: true strips the leading "Bearer " prefix before comparison,
 # so secret should be just the token value, not the full header value.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

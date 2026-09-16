@@ -21,7 +21,6 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown>;
   const destinations = pruneEmpty(doc.destinations, true);
   const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig, false) : { ...DEFAULT_SERVER };
   const config: Record<string, unknown> = {
-    schema_version: 2,
     server,
     destinations: destinations ?? {},
     ...pruneEmpty(doc.configExtra, false),

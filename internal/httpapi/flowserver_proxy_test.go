@@ -25,7 +25,6 @@ func TestProxyFlowReturnsUpstreamResponse(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {}
 flows:
@@ -74,7 +73,6 @@ flows:
 
 func TestProxyFlowWrongTokenIs401(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations: {}
 flows:
@@ -113,7 +111,6 @@ func TestXMLProxyFlowSendsPrunedBody(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {}
 flows:

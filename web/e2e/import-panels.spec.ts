@@ -40,7 +40,12 @@ for (const fixture of exampleFixtures()) {
       const nodes = flowNodes(fixture.config, flow);
       expect(nodes.map((n) => n.id)).not.toHaveLength(0);
       for (const node of nodes) {
-        await expect(builder.inspector().getByRole("button", { name: `Select ${node.id}` })).toBeVisible();
+        // exact: true is required -- accessible-name matching is substring by
+        // default, so "Select body" also matches a sibling "Select body2"
+        // node and trips Playwright's strict mode.
+        await expect(
+          builder.inspector().getByRole("button", { name: `Select ${node.id}`, exact: true }),
+        ).toBeVisible();
       }
 
       for (const node of nodes) {

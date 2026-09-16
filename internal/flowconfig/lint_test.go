@@ -80,7 +80,6 @@ func TestLint(t *testing.T) {
 }
 
 const cleanLintYAML = `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}

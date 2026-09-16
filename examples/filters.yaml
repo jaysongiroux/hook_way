@@ -27,7 +27,6 @@
 # value fails the condition (never errors), including ne. A non-JSON body fails
 # every body condition except not_exists.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

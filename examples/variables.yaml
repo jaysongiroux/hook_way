@@ -12,7 +12,6 @@
 # envelope.Vars automatically. Body fields can be copied with a transform
 # field_map node. Unresolved templates fail closed at publish.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

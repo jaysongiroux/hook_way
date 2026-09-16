@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { DARK } from "../tokens";
 
 // BORDER is the sidebar's hairline, shared by section frames and route cards.
-export const BORDER = DARK.border;
+const BORDER = DARK.border;
 
 export interface SectionSpec {
   /** Stable identity for the open/closed state. */

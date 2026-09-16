@@ -123,10 +123,34 @@ The optional replay store and its API (see [Configuration § Replay](configurati
 - **Separate listener.** The replay API is served on `replay.addr`, a dedicated listener distinct from the public webhook port (`server.addr`). Keep `replay.addr` off the internet-facing network path and behind the same network controls (firewalls, private subnets, VPN) you'd use for any admin-plane traffic — it is not designed to be reachable from the same network as webhook senders.
 - **Mandatory authentication.** `replay.enabled: true` requires a non-empty `security.api_key`; config validation rejects the config otherwise. This is enforced (not merely recommended) because the replay API is not read-only — `POST /replay/replay` and `POST /replay/events/{id}/replay` re-inject stored payloads into live destinations, so an unauthenticated instance of this API would let anyone replay arbitrary captured traffic. Callers authenticate the same way as the metrics endpoint: `Authorization: Bearer <security.api_key>`.
 - **Capture scope.** Only events that pass the flow's own authentication are ever captured — a request that fails auth verification is rejected before capture, so the replay store cannot become a side channel for unauthenticated payloads. Set `replay.skip_unauthenticated: true` to additionally exclude `no_auth` flows from capture, since those flows have no caller identity to attribute a captured event to.
-- **Best-effort capture, readiness-gated store.** Writing a captured event (or its delivery outcome) to the replay store is strictly best-effort: a store error or panic is caught, logged, and counted in `hookway_replay_capture_failures_total{op}` — it never blocks the webhook response or changes its status code. When replay is enabled, the store's reachability is AND-joined into every flow's readiness (and exposed as `hookway_replay_store_up`) so a store outage does not silently accept events that cannot be captured. Schema version 2 still keeps unrelated *destination* failures from sidelining healthy flows. `/health`/`/healthz` stay liveness-only.
+- **Best-effort capture, readiness-gated store.** Writing a captured event (or its delivery outcome) to the replay store is strictly best-effort: a store error or panic is caught, logged, and counted in `hookway_replay_capture_failures_total{op}` — it never blocks the webhook response or changes its status code. When replay is enabled, the store's reachability is AND-joined into every flow's readiness (and exposed as `hookway_replay_store_up`) so a store outage does not silently accept events that cannot be captured. Unrelated *destination* failures still do not sideline healthy flows. `/health`/`/healthz` stay liveness-only.
 - **Replay identity and idempotency.** A replayed event is always a new envelope: fresh `id`, `replay_of` set to the original event id, hop count reset to `0`. Consumers that dedupe on `id` (the documented contract) process every replay as a new event; correlate with `replay_of`. `reprocess` only changes `idempotency_key`, which ingest leaves empty — `false` keeps the stored value, `true` mints a new UUID. That flag only matters for consumers still keyed on `idempotency_key`.
 - **Failed and unattempted routes are replayable.** On `stop_on_failure`, the first failed destination and any routes not yet attempted are recorded as `failed` delivery rows, so `POST /replay/events/{id}/replay` has a destination list even when the inbound webhook returned `503`.
 - **Proxy-mode webhook replay.** Capture persists the original raw body (`raw_body_base64`) and unredacted request headers (`orig_headers`) in the replay store so a proxy-mode webhook destination can be reconstructed on replay. Those fields are store-only — they are not published to other destinations.
+
+## Sync proxy (`http_request` / `respond`)
+
+A proxy flow confines callers to whatever path its `url` template builds. Two
+protections keep that boundary real:
+
+- **Percent-encoded path traversal is rejected.** `net/http` hands handlers an
+  already percent-decoded `URL.Path`, so Go's router redirects a literal
+  `/proxy/../admin` but `/proxy/..%2f..%2fadmin` only becomes `../..` after
+  routing. Hookway rejects any request whose captured path variable contains a
+  `..` segment with `400`, before the value can be rendered into an upstream
+  URL — an upstream that normalized `/safe/../../admin` to `/admin` would
+  otherwise escape the configured prefix. The outbound path is additionally
+  normalized with `path.Clean` as defense in depth. Names that merely contain
+  dots (`..hidden`, `a..b`) are unaffected.
+- **Caller credentials are not forwarded upstream.** `Authorization` and
+  `Cookie` authenticate the caller *to Hookway*, so forwarding them would hand
+  a credential to a third party. Both are withheld unless explicitly named in
+  `forward_headers`. Hop-by-hop and framing headers
+  (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade`,
+  `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailer`, `Host`,
+  `Content-Length`), plus any field nominated by the inbound `Connection`
+  header, are dropped in both directions. On the response side `Set-Cookie` is
+  stripped so an upstream cannot set a cookie on Hookway's origin.
 
 ## Code node
 

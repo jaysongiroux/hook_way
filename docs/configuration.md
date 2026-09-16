@@ -2,14 +2,14 @@
 
 Hookway reads one YAML config file. Set it with `HOOKWAY_CONFIG` or pass `--config`; the flag wins. YAML string values support `${ENV_NAME}` expansion.
 
-Startup parses and validates the config before connecting to its destinations or serving traffic. The file must set `schema_version: 2` and define `flows:` (not `endpoints:`). A `schema_version: 1` document, an omitted version, or an `endpoints:` config fails with a migration error pointing here. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping flow paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
+Startup parses and validates the config before connecting to its destinations or serving traffic. The file defines `flows:`. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping flow paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
 
 Example validation output:
 
 ```txt
 config validation failed
 - server.addr: listen address is required Suggestion: set server.addr to a host:port such as ":8080"
-- schema_version: schema_version 1 (endpoints:) is no longer supported Suggestion: set schema_version: 2 and rewrite endpoints: as flows:; see docs/configuration.md
+- flows.github.nodes[2].secret: secret is required Suggestion: set secret or secret_ref
 ```
 
 ## Server
@@ -770,10 +770,9 @@ When `create: true` and the target does not exist, it is created with the config
 
 ## Flows
 
-A flow is the request pipeline. Trigger paths must not overlap another flow or the reserved health/readiness/metrics paths. Flow names are internal identifiers; the public HTTP path comes from the `http_trigger` node, not from the flow name. Config files must set `schema_version: 2`. `endpoints:` is rejected.
+A flow is the request pipeline. Trigger paths must not overlap another flow or the reserved health/readiness/metrics paths. Flow names are internal identifiers; the public HTTP path comes from the `http_trigger` node, not from the flow name.
 
 ```yaml
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -846,7 +845,7 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
-- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`). See `examples/showcase/proxy.yaml` and `examples/on_error.yaml`.
+- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`, and a request whose path variable contains a `..` segment is rejected with `400`. See [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
 - `transform`: `changed_fields`, `field_map`, `xml_prune`.
 - `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node).

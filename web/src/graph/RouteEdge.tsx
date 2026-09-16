@@ -4,7 +4,7 @@ import { DARK, EDGE } from "../tokens";
 
 const PARALLEL_GAP = 32;
 
-export function RouteEdge({
+function RouteEdge({
   id,
   sourceX,
   sourceY,

@@ -12,7 +12,6 @@
 # Timestamped schemes (hmac_sha256_ts_*) require timestamp_tolerance.
 # Non-timestamped schemes ignore timestamp_tolerance.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

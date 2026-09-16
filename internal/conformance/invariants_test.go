@@ -26,7 +26,7 @@ import (
 )
 
 // TestI1_LoopHopCheckRunsBeforeBodyRead asserts invariant I1 from
-// v2/00-v1-baseline.md §2: the loop-hop check runs before the body is
+// docs/invariants.md I1: the loop-hop check runs before the body is
 // buffered, so a terminal 4xx stops a webhook loop cheaply.
 func TestI1_LoopHopCheckRunsBeforeBodyRead(t *testing.T) {
 	srv := newServer(t, gatedYAML(), nil)
@@ -123,7 +123,6 @@ func TestI4_RateLimitRunsBeforeBodyRead(t *testing.T) {
 // cannot consume RawRequest, so wiring it directly to read_body cannot load.
 func TestI5_NothingActsOnUnverifiedPayload(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -158,7 +157,6 @@ func TestI6_AuthVerifiesRawBytes(t *testing.T) {
 // consumes Verified, so wiring it before auth cannot load.
 func TestI7_ReplayReservationAfterAuth(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -319,7 +317,6 @@ func TestI12_BrokenFilterChainFailsClosed(t *testing.T) {
 // build still answers its path with 500, not 404.
 func TestI13_BrokenFlowRegistersPathWith500Not404(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}

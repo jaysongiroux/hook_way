@@ -1,7 +1,6 @@
 # Expected to fail validation and list every problem, not just the first:
 # unknown node type, duplicate node id, dangling non-Terminal leaf, and a
 # publish that names a missing destination.
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1024

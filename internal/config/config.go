@@ -3,7 +3,6 @@ package config
 import (
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"regexp"
@@ -414,19 +413,6 @@ func issuesFromError(err error) []ValidationIssue {
 	return []ValidationIssue{{Field: "config", Message: err.Error()}}
 }
 
-func (s Service) Validate(path string) error {
-	_, err := s.Load(path)
-	return err
-}
-
-func MustLoad(path string) Config {
-	cfg, err := Load(path)
-	if err != nil {
-		panic(err)
-	}
-	return cfg
-}
-
 func ResolvePath(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -435,10 +421,6 @@ func ResolvePath(flagValue string) (string, error) {
 		return env, nil
 	}
 	return "", errors.New("config path required via --config or HOOKWAY_CONFIG")
-}
-
-func ConfigFlag() *string {
-	return flag.String("config", "", "path to Hookway YAML config")
 }
 
 // defaultMaxInflightRequests is the concurrent-request cap applied when

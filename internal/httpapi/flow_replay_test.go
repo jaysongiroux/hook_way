@@ -97,7 +97,6 @@ func TestFlowCaptureIsBestEffort(t *testing.T) {
 
 func TestSkipUnauthenticatedNoAuthFlowNotCaptured(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}

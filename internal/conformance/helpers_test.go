@@ -164,7 +164,6 @@ func flowYAML(extraNodes, afterEnv, serverLines string) string {
 		afterEnv = ", env>out"
 	}
 	return `
-schema_version: 2
 server:
 ` + serverLines + `
 destinations:

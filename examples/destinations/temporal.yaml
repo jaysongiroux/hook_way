@@ -14,7 +14,6 @@
 # sender retries. Enable the replay store (see examples/replay.yaml) to record
 # every event with its per-destination outcome and re-publish failures.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

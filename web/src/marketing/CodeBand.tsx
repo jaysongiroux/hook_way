@@ -4,7 +4,6 @@ import { DARK } from "../tokens";
 
 // A complete flow with a shared destination connection.
 const LINES: { text: string; kind: "key" | "value" | "comment" | "plain" }[] = [
-  { text: "schema_version: 2", kind: "key" },
   { text: "flows:", kind: "key" },
   { text: "  github:", kind: "key" },
   { text: "    nodes:", kind: "key" },

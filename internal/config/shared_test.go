@@ -47,7 +47,6 @@ endpoints:
 
 func TestDecodeSharedYAMLUsesDiskShapeAndDefaults(t *testing.T) {
 	const src = `
-schema_version: 2
 server:
   addr: ":8081"
   read_timeout: 2s
@@ -85,7 +84,7 @@ destinations:
       url: https://example.test/hooks
 flows: {}
 `
-	shared, issues := DecodeSharedYAML([]byte(src), "test", "schema_version", "flows")
+	shared, issues := DecodeSharedYAML([]byte(src), "test", "flows")
 	if len(issues) != 0 {
 		t.Fatalf("DecodeSharedYAML issues = %#v", issues)
 	}

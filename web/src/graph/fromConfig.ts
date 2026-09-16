@@ -3,7 +3,7 @@ import type { FlowSnapshot, GraphDocument, HookwayNode } from "./model";
 import { DEFAULT_FLOW, DEFAULT_SERVER } from "./model";
 import { HANDLE_IN, HANDLE_OUT, edgePort } from "./connection";
 
-const MANAGED_TOP = new Set(["schema_version", "server", "destinations", "flows"]);
+const MANAGED_TOP = new Set(["server", "destinations", "flows"]);
 
 export function fromConfig(config: Record<string, unknown>): GraphDocument {
   const flowsRaw = isObject(config.flows) ? config.flows : {};
@@ -83,7 +83,7 @@ function parseFlow(raw: Record<string, unknown>): FlowSnapshot {
   return { nodes, edges, deliveryFailurePolicy: policy || undefined };
 }
 
-export function parseEdge(spec: string): { from: string; port: string; to: string } | null {
+function parseEdge(spec: string): { from: string; port: string; to: string } | null {
   const cut = spec.split(">");
   if (cut.length !== 2) return null;
   const to = cut[1].trim();

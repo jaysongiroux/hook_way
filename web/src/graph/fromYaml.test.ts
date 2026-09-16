@@ -3,7 +3,6 @@ import { fromYaml } from "./fromYaml";
 
 test("parses flow YAML into positioned nodes + edges", () => {
   const yaml = `
-schema_version: 2
 server: { addr: ":8080", max_body_bytes: 1048576 }
 destinations:
   primary: { type: webhook, webhook: { url: https://example.test } }
@@ -23,7 +22,6 @@ flows:
 
 test("layouts inactive flows so they are not stacked at the origin", () => {
   const yaml = `
-schema_version: 2
 server: { addr: ":8080" }
 destinations:
   primary: { type: webhook, webhook: { url: https://example.test } }

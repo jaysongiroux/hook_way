@@ -1,7 +1,6 @@
 # Synchronous proxy flow used by the Chunk 6 verification gate.
 # DIGIFI_BASE should have no trailing slash (e.g. http://127.0.0.1:9999).
 # SF_TOKEN is compared to the inbound X-Auth header.
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 10485760

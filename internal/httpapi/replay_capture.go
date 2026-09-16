@@ -29,16 +29,6 @@ type ReplayCapturer interface {
 	RecordOutcome(ctx context.Context, id string, deliveries []replaystore.Delivery) error
 }
 
-// SetReplayCapturer wires a replay store into the server after construction
-// (main.go, once config.Replay.Enabled and the store connects) or a test's
-// fake. Capture stays disabled (Server.replay == nil) until this is called.
-func (s *Server) SetReplayCapturer(c ReplayCapturer) {
-	s.replay = c
-	if pinger, ok := c.(interface{ Ping(context.Context) error }); ok {
-		s.readiness.setReplayPing(pinger.Ping)
-	}
-}
-
 // envelopeToMessage copies every event-level field from env into a
 // queue.Message, leaving DestinationQueueID/Queue at env's own endpoint-level
 // values (not any one route's). publishRoute calls this and then overrides

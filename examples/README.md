@@ -1,7 +1,7 @@
 # Examples
 
 This directory contains complete, valid Hookway configurations organized by concern.
-Every `.yaml` file is a self-contained `schema_version: 2` flow config that passes `go run ./cmd/hookway validate`.
+Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hookway validate`.
 
 ## Canonical config
 

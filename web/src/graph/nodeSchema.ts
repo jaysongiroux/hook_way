@@ -42,10 +42,6 @@ export function isNodeType(s: string): s is string {
   return Object.prototype.hasOwnProperty.call(NODE_SCHEMAS, s);
 }
 
-export function nodeSchema(type: string): NodeSchemaMeta | undefined {
-  return NODE_SCHEMAS[type];
-}
-
 /** Whether the builder should draw an on_error handle for this catalog type. */
 export function nodeHasOnError(type: string): boolean {
   return NODE_SCHEMAS[type]?.on_error === true;

@@ -93,7 +93,7 @@ Immutable conflicts (e.g., FIFO vs standard queue type) always fail startup rega
 ## Config builder
 
 The web UI at `/builder` (served by `hookway editor` after `make ui`, or via
-`make web-dev`) is a **config generator**. It exports `schema_version: 2` YAML
+`make web-dev`) is a **config generator**. It exports config YAML
 for you to validate and deploy; it does not manage a running instance.
 
 ```bash
@@ -131,4 +131,5 @@ See:
 - [CLI](docs/cli.md)
 - [Configuration](docs/configuration.md)
 - [Security](docs/security.md)
+- [Request-pipeline invariants](docs/invariants.md)
 - [Local Development](docs/local-development.md)

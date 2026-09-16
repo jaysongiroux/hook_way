@@ -68,6 +68,9 @@ jobs:
       - name: Vet
         run: make lint
 
+      - name: Dead code
+        run: make deadcode
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -81,6 +84,9 @@ jobs:
 
       - name: Web unit tests
         run: make web-test
+
+      - name: Web dead code (knip)
+        run: make web-knip
 
       - name: Cache Playwright browsers
         uses: actions/cache@v4

@@ -14,7 +14,6 @@ import (
 )
 
 const lookupFlowYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

@@ -13,9 +13,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is a schema_version 2 document: shared process settings plus named flows.
+// Config is a Hookway config document: shared process settings plus named flows.
 type Config struct {
-	SchemaVersion int
 	Server        config.ServerConfig
 	Security      config.SecurityConfig
 	Metrics       config.MetricsConfig
@@ -23,21 +22,6 @@ type Config struct {
 	Replay        config.ReplayConfig
 	Destinations  map[string]config.DestinationConfig
 	Flows         map[string]graph.FlowConfig
-}
-
-// DetectSchemaVersion reads only schema_version. Absent or 0 means version 1.
-func DetectSchemaVersion(data []byte) (int, error) {
-	var head struct {
-		SchemaVersion int `yaml:"schema_version"`
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&head); err != nil {
-		return 0, err
-	}
-	if head.SchemaVersion == 0 {
-		return 1, nil
-	}
-	return head.SchemaVersion, nil
 }
 
 // Load reads path and expands environment variables strictly.
@@ -49,7 +33,7 @@ func Load(path string) (Config, []config.ValidationIssue) {
 	return LoadBytes(data, path, true)
 }
 
-// LoadBytes decodes a schema_version 2 document, compiles every flow, and reports every
+// LoadBytes decodes a config document, compiles every flow, and reports every
 // structural problem it can find. Policy lint is a separate pass.
 func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.ValidationIssue) {
 	if expandEnv {
@@ -61,15 +45,10 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	}
 
 	var issues []config.ValidationIssue
-	version, err := DetectSchemaVersion(data)
-	if err != nil {
-		return Config{}, []config.ValidationIssue{cfgIssue("config", fmt.Sprintf("invalid YAML syntax in %s: %v", source, err), "")}
-	}
-	if version != 2 {
-		return Config{}, []config.ValidationIssue{UnsupportedSchemaIssue()}
-	}
-
-	shared, sharedIssues := config.DecodeSharedYAML(data, source, "schema_version", "flows")
+	// Only `flows` is tolerated alongside the shared process settings; it is
+	// decoded separately below. Every other top-level key -- including
+	// `endpoints` -- is reported as unknown by the strict decoder.
+	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows")
 	issues = append(issues, sharedIssues...)
 	issues = append(issues, shared.ValidationIssues()...)
 
@@ -77,7 +56,6 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	issues = append(issues, flowIssues...)
 
 	cfg := Config{
-		SchemaVersion: 2,
 		Server:        shared.Server,
 		Security:      shared.Security,
 		Metrics:       shared.Metrics,
@@ -282,14 +260,6 @@ func RoutingIssues(cfg Config) []config.ValidationIssue {
 		}
 	}
 	return issues
-}
-
-// UnsupportedSchemaIssue is the error for schema_version 1, an omitted
-// version (DetectSchemaVersion reports 1), or any other non-2 document.
-func UnsupportedSchemaIssue() config.ValidationIssue {
-	return cfgIssue("schema_version",
-		"schema_version 1 (endpoints:) is no longer supported",
-		"set schema_version: 2 and rewrite endpoints: as flows:; see docs/configuration.md")
 }
 
 func cfgIssue(field, message, suggestion string) config.ValidationIssue {

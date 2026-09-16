@@ -19,7 +19,6 @@
 # Valkey is fully supported: it speaks the same RESP protocol.
 # Point redis.url at a Valkey node and no other change is needed.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

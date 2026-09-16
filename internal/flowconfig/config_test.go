@@ -8,54 +8,37 @@ import (
 	"github.com/jasongiroux/hookway/internal/config"
 )
 
-func TestDetectSchemaVersion(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-		want int
-	}{
-		{"explicit 2", "schema_version: 2\nflows: {}\n", 2},
-		{"explicit 1", "schema_version: 1\nendpoints: {}\n", 1},
-		{"absent means 1", "endpoints: {}\n", 1},
+// TestLoadBytesRejectsLegacyTopLevelKeys pins the fresh-reset contract: there
+// is no config version field and no endpoints-based format, so both are just
+// unknown top-level keys. If a version-detection path is ever reintroduced,
+// the schema_version case here starts passing for the wrong reason and this
+// test fails.
+func TestLoadBytesRejectsLegacyTopLevelKeys(t *testing.T) {
+	cases := []struct{ name, src, wantField string }{
+		{"endpoints", "endpoints:\n  github:\n    path: /webhooks/github\n", "endpoints"},
+		{"schema_version", "schema_version: 2\nflows: {}\n", "schema_version"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := DetectSchemaVersion([]byte(tc.src))
-			if err != nil {
-				t.Fatalf("DetectSchemaVersion() = %v", err)
+			_, issues := LoadBytes([]byte(tc.src), "test", false)
+			if len(issues) == 0 {
+				t.Fatalf("LoadBytes(%q) = no issues; %q must be rejected as an unknown field", tc.src, tc.wantField)
 			}
-			if got != tc.want {
-				t.Errorf("= %d, want %d", got, tc.want)
+			var found bool
+			for _, iss := range issues {
+				if iss.Field == tc.wantField && strings.Contains(iss.Message, "not found") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("issues = %+v, want an unknown-field error on %q", issues, tc.wantField)
 			}
 		})
 	}
 }
 
-func TestLoadBytesRejectsEndpointsConfigs(t *testing.T) {
-	wantMsg := "schema_version 1 (endpoints:) is no longer supported"
-	wantHint := "schema_version: 2"
-	cases := []string{
-		"schema_version: 1\nendpoints: {}\n",
-		"endpoints:\n  github:\n    path: /webhooks/github\n",
-		"server:\n  addr: \":8080\"\n",
-	}
-	for _, src := range cases {
-		_, issues := LoadBytes([]byte(src), "test", false)
-		if len(issues) != 1 {
-			t.Fatalf("src %q: issues = %+v, want exactly the migration error", src, issues)
-		}
-		if issues[0].Field != "schema_version" || !strings.Contains(issues[0].Message, wantMsg) {
-			t.Fatalf("src %q: issue = %+v, want %q", src, issues[0], wantMsg)
-		}
-		if !strings.Contains(issues[0].Suggestion, wantHint) || !strings.Contains(issues[0].Suggestion, "docs/configuration.md") {
-			t.Fatalf("src %q: suggestion = %q", src, issues[0].Suggestion)
-		}
-	}
-}
-
 func TestLoadBytesValidFlow(t *testing.T) {
 	const src = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -78,9 +61,6 @@ flows:
 	cfg, issues := LoadBytes([]byte(src), "test", false)
 	if len(issues) > 0 {
 		t.Fatalf("LoadBytes() issues = %+v, want none", issues)
-	}
-	if cfg.SchemaVersion != 2 {
-		t.Errorf("SchemaVersion = %d, want 2", cfg.SchemaVersion)
 	}
 	if _, ok := cfg.Flows["github"]; !ok {
 		t.Fatal("flow github missing")
@@ -136,7 +116,6 @@ func TestOnErrorExampleIsValid(t *testing.T) {
 
 func TestLoadBytesRejectsGateAfterReadBody(t *testing.T) {
 	const src = `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -163,7 +142,6 @@ flows:
 
 func TestLoadBytesAggregatesAcrossFlows(t *testing.T) {
 	const src = `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -184,7 +162,6 @@ flows:
 
 func TestLoadBytesRejectsUnknownField(t *testing.T) {
 	const src = `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 flows:
   a:
@@ -200,7 +177,6 @@ flows:
 
 func TestLoadBytesRejectsDuplicateTriggerPaths(t *testing.T) {
 	const src = `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -219,7 +195,7 @@ flows:
 }
 
 func TestLoadBytesSetsExplicitErrorSeverity(t *testing.T) {
-	_, issues := LoadBytes([]byte("schema_version: 2\nserver: {addr: ':8080'}\n"), "test", false)
+	_, issues := LoadBytes([]byte("server: {addr: ':8080'}\n"), "test", false)
 	if len(issues) == 0 {
 		t.Fatal("expected issues")
 	}

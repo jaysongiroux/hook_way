@@ -46,7 +46,7 @@ The repo wrapper is:
 make validate
 ```
 
-Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping flow paths, unsupported backends, unsupported delivery failure policies, missing publish destinations, unknown destination ids, invalid IP allowlist entries, and missing secrets. Unknown auth schemes fail closed at runtime. JWT requires body binding. Auth may read a query parameter via `source.kind: query`. Standalone lookup nodes are rejected until provider binding is implemented. A `schema_version: 1` / `endpoints:` document is a migration error (exit 1) pointing at `docs/configuration.md`.
+Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping flow paths, unsupported backends, unsupported delivery failure policies, missing publish destinations, unknown destination ids, invalid IP allowlist entries, and missing secrets. Unknown auth schemes fail closed at runtime. JWT requires body binding. Auth may read a query parameter via `source.kind: query`. Standalone lookup nodes are rejected until provider binding is implemented.
 
 Plain `validate` expands `${VAR}` references against the process environment (same as serving) and hard-fails — nonzero exit, no other output — if any referenced variable is unset.
 
@@ -141,7 +141,7 @@ the binary with `make ui`:
 
 - `/` → the project overview, which links to these docs and the examples.
 - `/builder` → the config builder. It is a **config generator**: drag nodes,
-  export `schema_version: 2` YAML, and deploy that file yourself. It does not
+  export the config YAML, and deploy that file yourself. It does not
   connect to a running Hookway instance, edit live flows, or show executions.
   The canvas refuses illegal port wiring. Export validates in-browser (WASM)
   and falls back to `POST /validate`.

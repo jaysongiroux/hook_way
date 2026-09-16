@@ -4,7 +4,7 @@ import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 beforeEach(() => resetIdCounters());
 
-test("exports schema_version 2 flows, not endpoints", () => {
+test("exports flows with no version field and no endpoints key", () => {
   const trigger = createNode("http_trigger", { x: 0, y: 0 });
   const pub = createNode("publish", { x: 0, y: 0 });
   pub.data.options = { destination: "primary", target: "gh-webhooks" };
@@ -14,7 +14,9 @@ test("exports schema_version 2 flows, not endpoints", () => {
     edges: [{ id: "e1", source: trigger.id, target: pub.id, sourceHandle: "out", targetHandle: "in" }],
     destinations: { primary: { type: "webhook", webhook: { url: "https://x" } } },
   });
-  expect(config.schema_version).toBe(2);
+  // No config version field exists: the export must not invent one, and
+  // there is no legacy endpoints key to fall back to.
+  expect(config.schema_version).toBeUndefined();
   expect(config.endpoints).toBeUndefined();
   const flow = (config.flows as Record<string, { nodes: unknown[]; edges: string[] }>).main;
   expect(flow.edges).toEqual([`${trigger.data.yamlId}>${pub.data.yamlId}`]);

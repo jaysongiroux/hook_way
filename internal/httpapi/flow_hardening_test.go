@@ -259,7 +259,6 @@ func TestMetricsAPIKeyOnDedicatedPort(t *testing.T) {
 
 func TestSpoofedForwardedHeaderIgnoredUnlessPeerIsTrustedProxy(t *testing.T) {
 	src := `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1024
@@ -432,7 +431,6 @@ func TestNewFlowServerWarnsWhenFlowUsesNoAuth(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -469,7 +467,6 @@ func TestNewFlowServerDoesNotWarnWithoutNoAuth(t *testing.T) {
 }
 
 const headerExactYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1024

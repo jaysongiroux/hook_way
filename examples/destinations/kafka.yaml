@@ -6,7 +6,6 @@
 # (partition_key, partitions, replication_factor) are not publish-node fields;
 # messages are produced without a key and topic create uses broker defaults.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

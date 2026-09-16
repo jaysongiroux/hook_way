@@ -1,4 +1,4 @@
-.PHONY: test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: deadcode web-knip test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -44,6 +44,11 @@ web-dev:
 
 web-test:
 	cd web && npm run test
+
+# knip fails on unused files, exports, types, and dependencies so the UI does
+# not re-accumulate dead surface area.
+web-knip:
+	cd web && npx --yes knip@6.36.0
 
 web-e2e:
 	cd web && npm run test:e2e
@@ -110,6 +115,14 @@ test-all:
 
 lint:
 	$(GO) vet ./...
+
+# deadcode fails the build on any unreachable function. Every package here is
+# internal/ or a main, so "unreachable" means genuinely dead rather than
+# exported-for-consumers.
+deadcode:
+	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./... 2>/dev/null)"; \
+	if [ -n "$$out" ]; then echo "dead code found:"; echo "$$out"; exit 1; fi
+	@echo "no dead code"
 
 validate:
 	$(GO) run ./cmd/hookway validate --config $(CONFIG)

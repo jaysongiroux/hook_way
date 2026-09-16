@@ -220,7 +220,6 @@ func onErrorRecoveryCases(t *testing.T) map[string]func(*testing.T) {
 		},
 		"auth": func(t *testing.T) {
 			src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -240,7 +239,6 @@ flows:
 		},
 		"replay_guard": func(t *testing.T) {
 			src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -268,7 +266,6 @@ flows:
 		},
 		"envelope": func(t *testing.T) {
 			src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -354,7 +351,6 @@ flows:
 
 func requestHeadFailYAML(failNode string) string {
 	return fmt.Sprintf(`
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -381,7 +377,6 @@ func envelopeFailYAML(failNode, extraNodes, edges string) string {
 		extraNodes = extraNodes + "\n"
 	}
 	return fmt.Sprintf(`
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:

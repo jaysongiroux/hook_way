@@ -13,7 +13,6 @@ import (
 )
 
 const twoFlowYAML = `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1024

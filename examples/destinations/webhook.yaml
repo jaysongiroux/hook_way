@@ -38,7 +38,6 @@
 # flow, put a `loop_guard` on that flow — `security.loop_protection` is leftover
 # YAML and is not wired to inbound rejection. See docs/configuration.md.
 
-schema_version: 2
 server:
   addr: ":8088"
   max_body_bytes: 1048576

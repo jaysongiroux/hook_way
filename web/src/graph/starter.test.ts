@@ -18,7 +18,7 @@ function allNodes(doc: ReturnType<typeof starterDocument>): HookwayNode[] {
 }
 
 test("the production YAML is the builder starter", () => {
-  expect(PRODUCTION_YAML).toContain("schema_version: 2");
+  expect(PRODUCTION_YAML).not.toContain("schema_version");
   expect(PRODUCTION_YAML).toContain("delivery_failure_policy: skip_failed");
   expect(PRODUCTION_YAML).toContain("ack:on_error>dlq");
 });

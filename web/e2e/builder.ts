@@ -73,7 +73,9 @@ export class BuilderPage {
     if ((await this.inspector().getByRole("button", { name: "Back to flow" }).count()) > 0) {
       await this.inspector().getByRole("button", { name: "Back to flow" }).click();
     }
-    await this.inspector().getByRole("button", { name: `Select ${id}` }).click();
+    // exact: true -- see the note in import-panels.spec.ts: substring name
+    // matching makes "Select body" ambiguous with "Select body2".
+    await this.inspector().getByRole("button", { name: `Select ${id}`, exact: true }).click();
     await expect(this.inspector().getByLabel("Id", { exact: true })).toHaveValue(id);
   }
 

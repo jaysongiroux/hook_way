@@ -7,7 +7,7 @@
 **Reviewed at commit:** `612e372` (branch `main`, clean tree)
 **Scope:** whole repository — Go services, config layer, CI/release pipeline, docs, web UI, deployment story
 
-### Status vs current Hookway (`schema_version: 2`)
+### Status vs current Hookway
 
 | Item | Now |
 |---|---|

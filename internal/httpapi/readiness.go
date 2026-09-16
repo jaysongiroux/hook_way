@@ -112,18 +112,6 @@ func (p *readinessProber) setReplayPing(ping func(context.Context) error) {
 	p.replayPing = ping
 }
 
-func (p *readinessProber) status(now time.Time) (error, bool) {
-	res := p.result.Load()
-	if res == nil {
-		return errNotProbed, false
-	}
-	if age := now.Sub(res.checkedAt); age > stalenessFactor*p.interval {
-		p.logStaleOnce(res.checkedAt, age)
-		return fmt.Errorf("readiness result is stale (last probed %s ago)", age.Round(time.Second)), false
-	}
-	return res.err, res.err == nil
-}
-
 func (p *readinessProber) destinationSnapshot(now time.Time) (dest map[string]error, replayErr error, ready bool, err error) {
 	res := p.result.Load()
 	if res == nil {

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { DARK } from "../tokens";
 
 /** Mark size used in both navbars so the product identity does not shift. */
-export const LOGO_MARK_SIZE = 28;
+const LOGO_MARK_SIZE = 28;
 
 export function LogoMark({ size = LOGO_MARK_SIZE }: { size?: number }) {
   return (

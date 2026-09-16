@@ -66,7 +66,7 @@ const linearize = (channel: number): number => {
 };
 
 /** relativeLuminance implements the WCAG 2.1 definition. */
-export function relativeLuminance(hex: string): number {
+function relativeLuminance(hex: string): number {
   const h = hex.replace("#", "");
   const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
   return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);

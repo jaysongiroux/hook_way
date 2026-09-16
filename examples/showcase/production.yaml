@@ -5,7 +5,6 @@
 #
 # Requires GITHUB_WEBHOOK_SECRET, ARCHIVE_BUCKET, RABBITMQ_URL, KAFKA_BROKER_*,
 # POSTGRES_URL, DIGIFI_BASE, and SF_TOKEN in the environment.
-schema_version: 2
 server:
   addr: ":8080"
   read_timeout: "5s"

@@ -66,6 +66,11 @@ web/vite.config.d.ts
 internal/editor/webui/*
 !internal/editor/webui/.gitkeep
 
-# Real webhook captures used only by the V2 signature compatibility spike.
-v2/spikes/fixtures/
 node_modules/
+
+# macOS finder metadata
+.DS_Store
+**/.DS_Store
+
+# scratch build output
+/tmp/

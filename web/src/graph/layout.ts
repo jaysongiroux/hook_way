@@ -43,7 +43,7 @@ export function maybeLayout(nodes: HookwayNode[], edges: Edge[]): HookwayNode[] 
   return nodesStacked(nodes) ? layout(nodes, edges) : nodes;
 }
 
-export function layoutSnapshot(snap: FlowSnapshot): FlowSnapshot {
+function layoutSnapshot(snap: FlowSnapshot): FlowSnapshot {
   return { ...snap, nodes: layout(snap.nodes, snap.edges) };
 }
 

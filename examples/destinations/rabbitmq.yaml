@@ -4,7 +4,6 @@
 # One flow fans out to two destinations: a primary exchange with dead-letter
 # support and an audit exchange with minimal options.
 
-schema_version: 2
 server:
   addr: ":8080"
   read_timeout: "5s"

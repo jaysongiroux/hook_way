@@ -18,6 +18,6 @@ test("renders exported YAML for the current graph", () => {
       <ExportModal opened onClose={() => {}} />
     </MantineProvider>,
   );
-  expect(screen.getByText(/schema_version/)).toBeInTheDocument();
+  expect(screen.getByText(/flows:/)).toBeInTheDocument();
   expect(screen.getByText(/http_trigger/)).toBeInTheDocument();
 });

@@ -1,7 +1,7 @@
 import { NODE_TYPES } from "./nodeSchema";
 
 /** One sentence per catalog node — palette, inspector, and empty-canvas teaching. */
-export const NODE_HELP: Record<string, string> = {
+const NODE_HELP: Record<string, string> = {
   http_trigger: "HTTP entry point: the public path and methods that start this flow.",
   loop_guard: "Rejects a request that has already passed through Hookway too many times.",
   ip_allowlist: "Allows the request only when the client IP is in one of the listed CIDRs.",
@@ -146,7 +146,7 @@ export const SERVER_FIELD_HELP: Record<string, string> = {
   readiness_require_all: "When true, /ready is 503 if any flow is unready. Default: 200 while at least one flow is ready.",
 };
 
-export const DEST_FIELD_HELP: Record<string, string> = {
+const DEST_FIELD_HELP: Record<string, string> = {
   url: "Connection or HTTP URL. ${ENV} references are expanded at load.",
   uri: "MongoDB connection URI.",
   brokers: "Kafka bootstrap brokers, comma-separated host:port.",

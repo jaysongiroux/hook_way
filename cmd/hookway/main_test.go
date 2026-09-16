@@ -35,7 +35,7 @@ func TestRunValidateAcceptsValidConfig(t *testing.T) {
 func TestRunValidateRejectsInvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid.yaml")
-	if err := os.WriteFile(path, []byte("schema_version: 2\nserver:\n  addr: ''\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  addr: ''\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -169,7 +169,7 @@ func assertCommittedSchema(t *testing.T, rel string, args []string) {
 	}
 }
 
-func TestRunValidateRejectsEndpointsConfig(t *testing.T) {
+func TestRunValidateRejectsLegacyEndpointsKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "endpoints.yaml")
 	body := `server:
@@ -200,11 +200,11 @@ endpoints:
 	if code != 1 {
 		t.Fatalf("code = %d, want 1 (stdout=%s stderr=%s)", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "schema_version 1 (endpoints:) is no longer supported") {
-		t.Fatalf("stderr = %q, want endpoints: migration error", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "docs/configuration.md") {
-		t.Fatalf("stderr = %q, want docs pointer", stderr.String())
+	// There is no legacy config format, so `endpoints:` is simply an unknown
+	// top-level key -- the same error any other typo produces.
+	if !strings.Contains(stderr.String(), "endpoints") ||
+		!strings.Contains(stderr.String(), "not found") {
+		t.Fatalf("stderr = %q, want an unknown-field error naming endpoints", stderr.String())
 	}
 }
 
@@ -253,8 +253,7 @@ func TestRunValidateShowcaseExamples(t *testing.T) {
 func TestEditorAPIKeyFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := `schema_version: 2
-server:
+	body := `server:
   addr: ":8080"
   max_body_bytes: 1048576
 security:
@@ -301,8 +300,7 @@ func TestEditorAPIKeyNoConfigIsUnauthenticated(t *testing.T) {
 // configMissingEnvVarYAML is otherwise-valid except its rabbitmq url
 // references an environment variable that is (deliberately) never set in
 // these tests.
-const configMissingEnvVarYAML = `schema_version: 2
-server:
+const configMissingEnvVarYAML = `server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -403,7 +401,7 @@ func TestRun_ValidateJSONEmitsIssuesEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
 	// Missing server.addr → a validation issue.
-	if err := os.WriteFile(path, []byte("schema_version: 2\nserver:\n  max_body_bytes: 1048576\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("server:\n  max_body_bytes: 1048576\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -465,8 +463,7 @@ func TestRunServe_MetricsBindFailureIsFatal(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := fmt.Sprintf(`schema_version: 2
-server:
+	body := fmt.Sprintf(`server:
   addr: %q
   max_body_bytes: 1048576
 metrics:
@@ -527,8 +524,7 @@ func TestRunServe_ReplayEnabledWithoutAPIKeyFailsFast(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := fmt.Sprintf(`schema_version: 2
-server:
+	body := fmt.Sprintf(`server:
   addr: %q
   max_body_bytes: 1048576
 destinations:

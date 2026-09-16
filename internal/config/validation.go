@@ -74,16 +74,6 @@ func validationError(field, message, suggestion string) ValidationIssue {
 	return ValidationIssue{Field: field, Message: message, Suggestion: suggestion}
 }
 
-func validationErrors(issues ...ValidationIssue) []ValidationIssue {
-	var out []ValidationIssue
-	for _, issue := range issues {
-		if issue.Field != "" {
-			out = append(out, issue)
-		}
-	}
-	return out
-}
-
 func configValidationError(issues []ValidationIssue) error {
 	if len(issues) == 0 {
 		return nil

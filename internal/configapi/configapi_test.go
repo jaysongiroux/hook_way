@@ -6,28 +6,30 @@ import (
 	"testing"
 )
 
-func TestValidate_RejectsEndpointsConfig(t *testing.T) {
-	for _, src := range []string{
-		"schema_version: 1\nendpoints: {}\n",
-		"endpoints:\n  github:\n    path: /webhooks/github\n",
+func TestValidate_RejectsLegacyTopLevelKeys(t *testing.T) {
+	// There is no config version field and no endpoints format, so both are
+	// ordinary unknown top-level keys at error severity.
+	for _, tc := range []struct{ name, src, field string }{
+		{"endpoints", "endpoints: {}\n", "endpoints"},
+		{"schema_version", "schema_version: 2\nflows: {}\n", "schema_version"},
 	} {
-		resp := Validate([]byte(src))
-		if len(resp.Issues) != 1 {
-			t.Fatalf("src %q: issues = %#v, want the migration error", src, resp.Issues)
-		}
-		iss := resp.Issues[0]
-		if iss.Severity != "error" || !strings.Contains(iss.Message, "schema_version 1 (endpoints:) is no longer supported") {
-			t.Fatalf("src %q: issue = %#v", src, iss)
-		}
-		if !strings.Contains(iss.Suggestion, "schema_version: 2") || !strings.Contains(iss.Suggestion, "flows:") || !strings.Contains(iss.Suggestion, "docs/configuration.md") {
-			t.Fatalf("src %q: suggestion = %q", src, iss.Suggestion)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			resp := Validate([]byte(tc.src))
+			var found bool
+			for _, iss := range resp.Issues {
+				if iss.Field == tc.field && iss.Severity == "error" && strings.Contains(iss.Message, "not found") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("issues = %+v, want an error-severity unknown-field issue on %q", resp.Issues, tc.field)
+			}
+		})
 	}
 }
 
 func TestValidate_ValidConfigMarshalsEmptyIssuesArray(t *testing.T) {
-	resp := Validate([]byte(`schema_version: 2
-server:
+	resp := Validate([]byte(`server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -53,7 +55,7 @@ flows:
 }
 
 func TestValidate_InvalidConfigSetsErrorSeverity(t *testing.T) {
-	resp := Validate([]byte("schema_version: 2\nserver:\n  max_body_bytes: 1048576\n"))
+	resp := Validate([]byte("server:\n  max_body_bytes: 1048576\n"))
 	if len(resp.Issues) == 0 {
 		t.Fatal("expected at least one issue")
 	}
@@ -75,8 +77,7 @@ func TestSchema_ReturnsValidJSON(t *testing.T) {
 	}
 }
 
-const configMissingEnvVar = `schema_version: 2
-server:
+const configMissingEnvVar = `server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -121,7 +122,7 @@ func TestValidateWithEnv_NoExpandSkipsMissingVarEntirely(t *testing.T) {
 }
 
 func TestValidateWithEnv_ExpandTrueStillReportsStructuralErrors(t *testing.T) {
-	resp := ValidateWithEnv([]byte("schema_version: 2\nserver:\n  max_body_bytes: 1048576\n"), true)
+	resp := ValidateWithEnv([]byte("server:\n  max_body_bytes: 1048576\n"), true)
 	if len(resp.Issues) == 0 {
 		t.Fatal("expected at least one structural issue")
 	}
@@ -132,8 +133,7 @@ func TestValidateWithEnv_ExpandTrueStillReportsStructuralErrors(t *testing.T) {
 	}
 }
 
-const configWebhookURLMissingEnvVar = `schema_version: 2
-server:
+const configWebhookURLMissingEnvVar = `server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -189,8 +189,7 @@ func TestValidateWithEnv_MissingWebhookURLDowngradesFormatCheckToWarning(t *test
 	_ = sawURLIssue // downgraded-to-warning or absent are both acceptable per spec
 }
 
-const configWebhookURLGenuinelyInvalid = `schema_version: 2
-server:
+const configWebhookURLGenuinelyInvalid = `server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -320,8 +319,7 @@ func TestValidate_ExfilBoundary_SetEnvVarValueNeverLeaks(t *testing.T) {
 // raw value in the issue message — when (and only when) envRef is NOT
 // expanded against the environment.
 func exfilBoundaryConfig(envRef string) string {
-	return `schema_version: 2
-server:
+	return `server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -342,7 +340,6 @@ flows:
 
 func TestValidate_PreservesLintWarningSeverity(t *testing.T) {
 	src := `
-schema_version: 2
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test/hooks"}}

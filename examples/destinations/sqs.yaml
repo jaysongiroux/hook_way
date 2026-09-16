@@ -7,7 +7,6 @@
 # AWS credential chain (IAM role, environment, ~/.aws). Set both to use
 # static credentials, or set endpoint to http://localhost:4566 for LocalStack.
 
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1048576

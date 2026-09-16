@@ -117,7 +117,6 @@ func TestReadinessGaugePerDestination(t *testing.T) {
 	down := &fakePublisher{readyErr: errors.New("down destination unavailable")}
 	rp := queue.NewRoutingPublisher(map[string]queue.Publisher{"up_dest": up, "down_dest": down})
 	src := `
-schema_version: 2
 server:
   addr: ":8080"
   max_body_bytes: 1024
