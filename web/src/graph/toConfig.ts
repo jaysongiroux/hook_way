@@ -82,19 +82,12 @@ function pruneEmpty(obj: Record<string, unknown>, keepEmptyObject: boolean): Rec
 }
 
 function pruneValue(v: unknown): unknown {
-  if (v === undefined || v === null || v === "") return undefined;
-  if (typeof v === "boolean") return v ? true : undefined;
-  if (Array.isArray(v)) {
-    const items = v.map(pruneValue).filter((x) => x !== undefined);
-    return items.length > 0 ? items : undefined;
-  }
-  if (typeof v === "object") {
-    const nested: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      const pruned = pruneValue(val);
-      if (pruned !== undefined) nested[k] = pruned;
-    }
-    return Object.keys(nested).length > 0 ? nested : undefined;
+  // Only absent editor values may be omitted. False/null/empty values have
+  // meaning in destination settings, filter predicates and arbitrary JSON.
+  if (v === undefined) return undefined;
+  if (Array.isArray(v)) return v.map(pruneValue);
+  if (v !== null && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v).filter(([, value]) => value !== undefined).map(([key, value]) => [key, pruneValue(value)]));
   }
   return v;
 }

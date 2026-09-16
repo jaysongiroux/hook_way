@@ -46,7 +46,7 @@ The repo wrapper is:
 make validate
 ```
 
-Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping flow paths, unsupported backends, unsupported delivery failure policies, missing publish destinations, unknown destination ids, unsupported auth schemes, unsafe queue names, invalid header names, invalid IP allowlist entries, and missing secrets. A `schema_version: 1` / `endpoints:` document is a migration error (exit 1) pointing at `docs/configuration.md`.
+Validation rejects unknown YAML fields, missing required settings, invalid durations, duplicate or overlapping flow paths, unsupported backends, unsupported delivery failure policies, missing publish destinations, unknown destination ids, invalid IP allowlist entries, and missing secrets. Unknown auth schemes fail closed at runtime. JWT requires body binding, and standalone lookup nodes are rejected until provider binding is implemented. A `schema_version: 1` / `endpoints:` document is a migration error (exit 1) pointing at `docs/configuration.md`.
 
 Plain `validate` expands `${VAR}` references against the process environment (same as serving) and hard-fails — nonzero exit, no other output — if any referenced variable is unset.
 

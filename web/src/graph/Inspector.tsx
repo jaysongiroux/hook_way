@@ -1,6 +1,7 @@
 import { Select, Stack, Text, Textarea, TextInput } from "@mantine/core";
 import { useGraphStore } from "./store";
 import { NODE_SCHEMAS, DEST_TYPES } from "./nodeSchema";
+import { nodeFieldHelp, nodeHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
 import { Sections, type SectionSpec } from "./InspectorSections";
 import { yamlIdOf } from "./model";
@@ -42,11 +43,17 @@ export function Inspector() {
     return (
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
-          Select a node to edit its properties, or set flow-level options here.
+          Click a node to edit it. These settings apply to the whole flow.
         </Text>
-        <TextInput label="Flow name" value={activeFlow} onChange={(e) => renameFlow(e.currentTarget.value)} />
+        <TextInput
+          label="Flow name"
+          description="YAML key. The public URL comes from the http_trigger path."
+          value={activeFlow}
+          onChange={(e) => renameFlow(e.currentTarget.value)}
+        />
         <Select
           label="Delivery failure policy"
+          description="Default: stop at the first failed publish. skip_failed tries every publish and returns 202 if any succeed."
           data={[
             { value: "", label: "stop_on_failure (default)" },
             { value: "skip_failed", label: "skip_failed" },
@@ -72,7 +79,13 @@ export function Inspector() {
       label: "Options",
       badge: node.data.nodeType,
       render: () => (
-        <SchemaForm schema={meta?.schema} value={node.data.options} onChange={setOptions} enums={enums} />
+        <SchemaForm
+          schema={meta?.schema}
+          value={node.data.options}
+          onChange={setOptions}
+          enums={enums}
+          fieldHelp={(field) => nodeFieldHelp(node.data.nodeType, field)}
+        />
       ),
     },
     {
@@ -97,12 +110,18 @@ export function Inspector() {
       <Text fw={600} size="sm" tt="uppercase" c="dimmed">
         {node.data.nodeType}
       </Text>
+      {nodeHelp(node.data.nodeType) && (
+        <Text size="sm" c="dimmed" lh={1.4}>
+          {nodeHelp(node.data.nodeType)}
+        </Text>
+      )}
       <Text size="xs" c="dimmed">
         {meta ? `${meta.input} → ${meta.output}` : ""}
         {meta?.detached ? " · detached" : ""}
       </Text>
       <TextInput
         label="Id"
+        description="YAML node id used in edges, e.g. in>out."
         value={yamlIdOf(node)}
         onChange={(e) => updateNodeData(node.id, { yamlId: e.currentTarget.value })}
       />

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"gopkg.in/yaml.v3"
 )
 
@@ -101,6 +102,7 @@ func (c Config) ServingConfig() config.Config {
 	for name, fc := range c.Flows {
 		path := "/"
 		var dests []config.EndpointDestinationConfig
+		variables := map[string]config.VariableConfig{}
 		for _, nc := range fc.Nodes {
 			switch nc.Type {
 			case "http_trigger":
@@ -109,13 +111,20 @@ func (c Config) ServingConfig() config.Config {
 				}
 			case "publish":
 				if opts, err := decodeOptions[PublishOptions](nc); err == nil && opts.Destination != "" {
+					// Reuse the destination factory's existing safe-name matcher.
+					// V2 variables are resolved by nodes, not the V1 variable resolver.
+					if tpl, err := vars.Parse(opts.Target); err == nil {
+						for _, name := range tpl.Names() {
+							variables[name] = config.VariableConfig{Pattern: "^[a-zA-Z0-9._-]{1,128}$"}
+						}
+					}
 					dests = append(dests, config.EndpointDestinationConfig{
 						Destination: opts.Destination, Target: opts.Target, Create: opts.Create,
 					})
 				}
 			}
 		}
-		cfg.Endpoints[name] = config.EndpointConfig{Enabled: true, Path: path, Destinations: dests}
+		cfg.Endpoints[name] = config.EndpointConfig{Enabled: true, Path: path, Destinations: dests, Variables: variables}
 	}
 	return cfg
 }
@@ -124,7 +133,7 @@ func (c Config) ServingConfig() config.Config {
 // path and the editor. It includes policy lint.
 func ValidateBytes(data []byte) []config.ValidationIssue {
 	cfg, issues := LoadBytes(data, "config", false)
-	return append(issues, Lint(cfg)...)
+	return append(append(issues, Lint(cfg)...), StandaloneIssues(cfg)...)
 }
 
 func decodeFlows(data []byte, source string) (map[string]graph.FlowConfig, []config.ValidationIssue) {
@@ -209,23 +218,10 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 }
 
 func crossFlowIssues(cfg Config) []config.ValidationIssue {
-	var issues []config.ValidationIssue
-	claimed := map[string]string{}
+	issues := RoutingIssues(cfg)
 	for _, name := range sortedKeys(cfg.Flows) {
 		for _, nc := range cfg.Flows[name].Nodes {
 			switch nc.Type {
-			case "http_trigger":
-				opts, err := decodeOptions[HTTPTriggerOptions](nc)
-				if err != nil || opts.Path == "" {
-					continue
-				}
-				if prev, ok := claimed[opts.Path]; ok {
-					issues = append(issues, v2Issue("flows."+name,
-						fmt.Sprintf("trigger path %s is already claimed by flow %q", opts.Path, prev),
-						"give each flow a unique http_trigger path"))
-					continue
-				}
-				claimed[opts.Path] = name
 			case "publish":
 				opts, err := decodeOptions[PublishOptions](nc)
 				if err != nil || opts.Destination == "" {
@@ -239,6 +235,50 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 						opts.Destination, strings.Join(sortedKeys(cfg.Destinations), ", ")),
 					"reference an existing destinations.* id"))
 			}
+		}
+	}
+	return issues
+}
+
+// RoutingIssues is shared by validation and serving so an ambiguous path
+// cannot silently select a different flow's authentication policy.
+func RoutingIssues(cfg Config) []config.ValidationIssue {
+	type route struct {
+		name    string
+		pattern vars.PathPattern
+	}
+	var routes []route
+	var issues []config.ValidationIssue
+	reserved := []string{"/health", "/healthz", "/ready", "/readyz"}
+	if cfg.Metrics.Enabled && cfg.Metrics.Addr == "" {
+		reserved = append(reserved, cfg.Metrics.Path)
+	}
+	for _, name := range sortedKeys(cfg.Flows) {
+		for _, nc := range cfg.Flows[name].Nodes {
+			if nc.Type != "http_trigger" {
+				continue
+			}
+			opts, err := TriggerOptions(nc)
+			if err != nil {
+				continue
+			}
+			pattern, err := vars.ParsePath(opts.Path)
+			if err != nil {
+				issues = append(issues, v2Issue("flows."+name, err.Error(), "use a valid http_trigger path"))
+				continue
+			}
+			for _, path := range reserved {
+				rp, err := vars.ParsePath(path)
+				if err == nil && vars.Overlap(pattern, rp) {
+					issues = append(issues, v2Issue("flows."+name, fmt.Sprintf("trigger path %s overlaps reserved path %s", opts.Path, path), "choose a separate webhook path"))
+				}
+			}
+			for _, prev := range routes {
+				if vars.Overlap(pattern, prev.pattern) {
+					issues = append(issues, v2Issue("flows."+name, fmt.Sprintf("trigger path %s is already claimed by or overlaps flow %q (%s)", opts.Path, prev.name, prev.pattern.String()), "give each flow a non-overlapping http_trigger path"))
+				}
+			}
+			routes = append(routes, route{name, pattern})
 		}
 	}
 	return issues
@@ -282,4 +322,44 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// StandaloneIssues rejects features that require an embedding-only binding.
+// Keep graph validation usable with explicitly injected providers in tests/hosts.
+func StandaloneIssues(cfg Config) []config.ValidationIssue {
+	var issues []config.ValidationIssue
+	for _, name := range sortedKeys(cfg.Flows) {
+		for _, nc := range cfg.Flows[name].Nodes {
+			if nc.Type == "lookup" {
+				issues = append(issues, v2Issue("flows."+name, "lookup requires an injected provider; the standalone server has no lookup provider configuration", "use path variables or transform field_map; standalone lookup binding is not implemented"))
+			}
+		}
+	}
+	return issues
+}
+
+// AuthenticationRedactions includes configured credential sources even when
+// their names do not match the built-in sensitive-header heuristic.
+func AuthenticationRedactions(cfg Config) (headers, queries []string) {
+	for _, fc := range cfg.Flows {
+		for _, nc := range fc.Nodes {
+			if nc.Type != "auth" {
+				continue
+			}
+			o, err := decodeOptions[AuthOptions](nc)
+			if err != nil {
+				continue
+			}
+			if o.Source != nil {
+				if o.Source.Kind == "query" {
+					queries = append(queries, o.Source.Key)
+				} else {
+					headers = append(headers, o.Source.Key)
+				}
+			} else if o.SignatureHeader != "" {
+				headers = append(headers, o.SignatureHeader)
+			}
+		}
+	}
+	return headers, queries
 }

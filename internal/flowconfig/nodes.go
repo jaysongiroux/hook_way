@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jasongiroux/hookway/internal/auth"
 	"github.com/jasongiroux/hookway/internal/graph"
 	"github.com/jasongiroux/hookway/internal/transform"
 	"gopkg.in/yaml.v3"
@@ -184,6 +185,7 @@ type RegistryOptions struct {
 	Logger          *slog.Logger
 	HeaderDenylist  []string
 	HeaderAllowlist []string
+	QueryDenylist   []string
 }
 
 // SecretsFunc returns the currently-valid secret values for an auth node.
@@ -232,7 +234,9 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		}),
 		define("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, newReplayGuard),
 		define("envelope", graph.PortVerified, graph.PortEnvelope, false, validateEnvelope, func(id string, o EnvelopeOptions) graph.Node {
-			return newEnvelopeNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
+			n := newEnvelopeNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist).(envelopeNode)
+			n.queryDenylist = opts.QueryDenylist
+			return n
 		}),
 		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode),
 		define("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, func(id string, o LookupOptions) graph.Node {
@@ -245,7 +249,15 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		define("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) graph.Node {
 			return newTransformNode(id, o, opts.Logger)
 		}),
-		defineErr("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, newCodeNode),
+		defineErr("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, func(id string, o CodeOptions) (graph.Node, error) {
+			n, err := newCodeNode(id, o)
+			if err != nil {
+				return nil, err
+			}
+			code := n.(codeNode)
+			code.allowlist, code.denylist = opts.HeaderAllowlist, opts.HeaderDenylist
+			return code, nil
+		}),
 		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
 		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) graph.Node {
 			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
@@ -341,6 +353,13 @@ func require(name, value string) error {
 }
 
 func validateAuth(o AuthOptions) error {
+	if o.Scheme == auth.SchemeNoAuth {
+		return errors.New("use the explicit no_auth node instead of auth.scheme: no_auth")
+	}
+	if strings.HasPrefix(o.Scheme, "jwt_") && strings.TrimSpace(o.BodyHashClaim) == "" {
+		return errors.New("body_hash_claim is required for JWT raw-body binding")
+	}
+
 	if err := require("scheme", o.Scheme); err != nil {
 		return err
 	}
@@ -472,11 +491,17 @@ func validateCode(o CodeOptions) error {
 	return validateDuration("timeout", o.Timeout, false)
 }
 func validateSwitch(o SwitchOptions) error {
+	if o.Default == "on_error" {
+		return errors.New("switch port on_error is reserved")
+	}
 	if len(o.Cases) == 0 {
 		return errors.New("cases is required")
 	}
 	seen := make(map[string]struct{}, len(o.Cases))
 	for i, c := range o.Cases {
+		if c.Port == "on_error" {
+			return errors.New("switch port on_error is reserved")
+		}
 		if c.Port == "" || c.When.Source == "" || c.When.Path == "" || c.When.Operator == "" {
 			return fmt.Errorf("cases[%d] requires port and a complete condition", i)
 		}

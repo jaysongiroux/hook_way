@@ -35,12 +35,13 @@ func newAuthNode(id string, opts AuthOptions, logger *slog.Logger, secrets Secre
 		}
 	}
 	spec := auth.Spec{
-		Scheme:           defaultAuthScheme(opts.Scheme),
-		Secret:           opts.Secret,
-		RemoveBearer:     opts.RemoveBearer,
-		ExpectedIssuer:   opts.ExpectedIssuer,
-		ExpectedAudience: opts.ExpectedAudience,
-		BodyHashClaim:    opts.BodyHashClaim,
+		TimestampTolerance: 5 * time.Minute,
+		Scheme:             defaultAuthScheme(opts.Scheme),
+		Secret:             opts.Secret,
+		RemoveBearer:       opts.RemoveBearer,
+		ExpectedIssuer:     opts.ExpectedIssuer,
+		ExpectedAudience:   opts.ExpectedAudience,
+		BodyHashClaim:      opts.BodyHashClaim,
 	}
 	if opts.TimestampTolerance != "" {
 		if d, err := time.ParseDuration(opts.TimestampTolerance); err == nil {
@@ -99,11 +100,12 @@ func (n authNode) verify(ctx context.Context, credential string, body []byte) er
 		return auth.ErrUnauthorized
 	}
 	spec := auth.Spec{
-		Scheme:           defaultAuthScheme(n.opts.Scheme),
-		RemoveBearer:     n.opts.RemoveBearer,
-		ExpectedIssuer:   n.opts.ExpectedIssuer,
-		ExpectedAudience: n.opts.ExpectedAudience,
-		BodyHashClaim:    n.opts.BodyHashClaim,
+		TimestampTolerance: 5 * time.Minute,
+		Scheme:             defaultAuthScheme(n.opts.Scheme),
+		RemoveBearer:       n.opts.RemoveBearer,
+		ExpectedIssuer:     n.opts.ExpectedIssuer,
+		ExpectedAudience:   n.opts.ExpectedAudience,
+		BodyHashClaim:      n.opts.BodyHashClaim,
 	}
 	if n.opts.TimestampTolerance != "" {
 		if d, err := time.ParseDuration(n.opts.TimestampTolerance); err == nil {

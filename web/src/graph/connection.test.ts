@@ -47,8 +47,16 @@ test("self-loop is invalid", () => {
   expect(isValidConnection({ source: n.id, target: n.id, sourceHandle: "out", targetHandle: "in" }, [n], [])).toBe(false);
 });
 
-test("duplicate legal edges remain allowed", () => {
+test("duplicate edges are refused", () => {
   const { from, to, nodes } = pair("envelope", "filter");
   const edges: Edge[] = [{ id: "e1", source: from.id, target: to.id }];
-  expect(isValidConnection(connect(from, to), nodes, edges)).toBe(true);
+  expect(isValidConnection(connect(from, to), nodes, edges)).toBe(false);
 });
+
+ test("refuses cycles and undeclared switch ports", () => {
+ const {from,to,nodes}=pair("filter","filter");
+ expect(isValidConnection(connect(from,to),nodes,[{id:"back",source:to.id,target:from.id}])).toBe(false);
+ const sw=pair("switch","publish");
+ expect(isValidConnection(connect(sw.from,sw.to,"ghost"),sw.nodes,[])).toBe(false);
+ expect(isValidConnection(connect(sw.from,sw.to,"matched"),sw.nodes,[])).toBe(true);
+ });

@@ -210,3 +210,44 @@ func issuesText(issues []config.ValidationIssue) string {
 	}
 	return b.String()
 }
+
+func TestReviewRejectsAmbiguousAndReservedTriggerPaths(t *testing.T) {
+	for _, path := range []string{"/webhooks/{id}", "/healthz"} {
+		src := `schema_version: 2
+flows:
+  open:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/test}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope}
+      - {id: out, type: respond, status: 200}
+    edges: [in>body, body>auth, auth>env, env>out]
+  secure:
+    nodes:
+      - {id: in, type: http_trigger, path: "` + path + `"}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: auth, scheme: exact, secret: s, signature_header: Authorization}
+      - {id: env, type: envelope}
+      - {id: out, type: respond, status: 200}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+		_, issues := LoadBytes([]byte(src), "routing", false)
+		if !containsIssue(issues, "overlaps") {
+			t.Fatalf("path %s: %v", path, issues)
+		}
+	}
+}
+
+func TestReviewServingConfigPreservesDynamicTargetMatcher(t *testing.T) {
+	src := strings.Replace(cleanLintYAML, "target: t", "target: '{route}-events'", 1)
+	cfg, issues := LoadBytes([]byte(src), "dynamic", false)
+	if len(issues) > 0 {
+		t.Fatal(issues)
+	}
+	for _, endpoint := range cfg.ServingConfig().Endpoints {
+		if endpoint.PatternSources()["route"] == "" {
+			t.Fatal("factory cannot match rendered target without a pattern")
+		}
+	}
+}

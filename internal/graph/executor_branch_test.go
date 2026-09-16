@@ -60,26 +60,19 @@ func TestRunFollowsDefaultLabelledPort(t *testing.T) {
 
 func TestRunErrorsWhenSelectedPortHasNoSuccessor(t *testing.T) {
 	rec := &recorder{}
-	f := mustCompile(t, labelledSwitchFlow(), labelledRegistry(t, rec, "missing", []string{"matched", "default", "missing"}))
+	f := mustCompile(t, labelledSwitchFlow(), labelledRegistry(t, rec, "missing", []string{"matched", "default"}))
 	_, err := f.Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second})
 	if err == nil || !strings.Contains(err.Error(), "no successor for port") {
 		t.Fatalf("Run() = %v, want no-successor error (not a silent drop)", err)
 	}
 }
 
-func TestRunFansOutAllSuccessorsOfSelectedPort(t *testing.T) {
+func TestCompileRejectsMultipleSuccessorsOfSelectedPort(t *testing.T) {
 	rec := &recorder{}
-	fc := flowConfig([][2]string{
-		{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"},
-		{"sw", "process"}, {"a", "dest"}, {"b", "dest"},
-	}, "in>body", "body>auth", "auth>env", "env>sw", "sw:matched>a", "sw:matched>b")
-	f := mustCompile(t, fc, labelledRegistry(t, rec, "matched", []string{"matched"}))
-	if _, err := f.Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second}); err != nil {
-		t.Fatal(err)
-	}
-	got := rec.entries()
-	if !containsID(got, "a") || !containsID(got, "b") {
-		t.Fatalf("same-port fan-out = %q, want both dests", strings.Join(got, ","))
+	fc := flowConfig([][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}, {"sw", "process"}, {"a", "dest"}, {"b", "dest"}}, "in>body", "body>auth", "auth>env", "env>sw", "sw:matched>a", "sw:matched>b")
+	_, err := Compile("bad", fc, labelledRegistry(t, rec, "matched", []string{"matched"}))
+	if err == nil || !strings.Contains(err.Error(), "exactly one successor") {
+		t.Fatalf("Compile() = %v", err)
 	}
 }
 

@@ -12,7 +12,7 @@ function useSelectionRing(id: string, color: string): CSSProperties {
   return selected ? { outline: `2px solid ${color}`, outlineOffset: 2 } : {};
 }
 
-const CARD: CSSProperties = { minWidth: 160, background: DARK.surface };
+const CARD: CSSProperties = { minWidth: 168, background: DARK.surface };
 
 function handleStyle(port: string): CSSProperties {
   return { background: PORT[port] ?? NODE.border.endpoint, width: 10, height: 10 };
@@ -26,6 +26,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const summary = nodeSummary(data.nodeType, data.options);
   const labelled = data.nodeType === "switch" ? switchPorts(data.options) : [];
   const showDefaultOut = output !== "Terminal" && labelled.length === 0;
+  const showError = input !== "None";
   return (
     <Paper withBorder radius="md" p="xs" style={{ ...CARD, borderColor: color, ...useSelectionRing(id, color) }}>
       {input !== "None" && (
@@ -66,14 +67,27 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
           }}
         />
       ))}
-      {input !== "None" && (
-        <Handle
-          type="source"
-          position={Position.Bottom}
-          id={HANDLE_ON_ERROR}
-          title="on_error"
-          style={handleStyle("on_error")}
-        />
+      {showError && (
+        <>
+          <Text
+            className="nodrag nopan"
+            size="xs"
+            fw={600}
+            c={PORT.on_error}
+            mt={8}
+            style={{ fontSize: 10, letterSpacing: "0.03em", textAlign: "center", lineHeight: 1.2 }}
+          >
+            on error
+          </Text>
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id={HANDLE_ON_ERROR}
+            title="on error — if this node fails, the same input is sent along this red handle"
+            aria-label="on error"
+            style={{ ...handleStyle("on_error"), bottom: -5 }}
+          />
+        </>
       )}
     </Paper>
   );

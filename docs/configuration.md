@@ -789,7 +789,7 @@ When `create: true` and the target does not exist, it is created with the config
 
 ## Flows
 
-A flow is the request pipeline. Flow names are internal identifiers; the public HTTP path comes from the `http_trigger` node, not from the flow name. Config files must set `schema_version: 2`. `endpoints:` is rejected.
+A flow is the request pipeline. Trigger paths must not overlap another flow or the reserved health/readiness/metrics paths. Flow names are internal identifiers; the public HTTP path comes from the `http_trigger` node, not from the flow name. Config files must set `schema_version: 2`. `endpoints:` is rejected.
 
 ```yaml
 schema_version: 2
@@ -824,8 +824,8 @@ Flow fields:
 - `http_trigger`: `path` (must start with `/`, unique among flows; `{name}` captures a path segment into envelope vars) and `methods` (default `[POST]`; `ANY` skips 405).
 - `loop_guard`: rejects inbound `X-Hookway-Hops` at `max_hops` with 400.
 - `ip_allowlist`: `cidrs` list of IPs or CIDR ranges; mismatch is 403. Source IP honors `security.trusted_proxy_headers` / `trusted_proxies`.
-- `rate_limit`: pod-scoped token bucket (`rpm`, optional `burst`, `key_by: ip`). N pods means N× the configured RPM (D11).
-- `read_body`: `max_bytes` (omit to inherit `server.max_body_bytes`); oversize is 413.
+- `rate_limit`: pod-scoped token bucket (`rpm`, optional `burst`, `key_by: source_ip` or `header.<name>`). N pods means N× the configured RPM (D11).
+- `read_body`: required positive `max_bytes` (the per-node cap; values above `server.max_body_bytes` produce a lint warning); oversize is 413.
 - `replay_guard`: process-local replay cache (`ttl`, `max_entries`, `key` template). N pods means N allowed replays (W5). The reservation is released on retryable publish failure so a broker outage does not become a permanent `409`.
 
 ### Auth
@@ -840,26 +840,26 @@ Each flow builds its verifier once at startup from the `auth` (or `no_auth`) nod
   - `hmac_sha1_hex` (`hmac_sha256`): prefixed hex HMAC-SHA1. *Example: GitHub legacy `X-Hub-Signature`.*
   - `exact` (`header_exact`): constant-time compare of `signature_header` to `secret`. Use `remove_bearer: true` to strip a leading `Bearer` prefix. *Example: RevenueCat `Authorization`.*
   - `basic` (`header_exact`): HTTP Basic against the configured `user:pass` secret.
-  - `no_auth`: accepts every request. Hookway logs a startup warning. Reserve it for trusted internal traffic.
-  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): Bearer JWT from `signature_header`. `body_hash_claim` binds the token to the raw body unless `allow_unbound_body: true`.
+  - Use the separate `no_auth` node for intentional unverified traffic; `auth.scheme: no_auth` is rejected.
+  - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): Bearer JWT from `signature_header`. `body_hash_claim` is required and binds the token to the raw body. There is no V2 opt-out.
 - `secret` or `secret_ref`: required except for `no_auth`. See [Secret references](#secret-references-schema_version-2).
 - `signature_header`: header Hookway reads; not required for `no_auth`.
-- `timestamp_tolerance`: default `5m`; required for timestamped HMAC and JWT.
+- `timestamp_tolerance`: defaults to `5m`; timestamped HMAC uses it as the freshness window, JWT as clock leeway.
 
 HMAC schemes verify the **raw** body bytes. New providers are added by registering a scheme in `internal/auth`.
 
 ### Envelope and publish
 
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
-- `publish`: `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
+- `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
 - `http_request`: outbound request; see the proxy examples under `examples/v2/`.
 - `transform`: `changed_fields`, `field_map`, `xml_prune`.
-- `lookup`: resolve a variable from dynamodb / http / postgres (injected at serve time).
+- `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the V2 YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node-schema_version-2).
-- `switch`: labelled fan-out on `Envelope.Branch`.
+- `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path.
 
-`stop_on_failure` (default) publishes `publish` successors sequentially and returns `503` on the first failure. `skip_failed` attempts every publish and returns `202` when at least one succeeds, with `failed_destinations` listing skipped failures.
+`stop_on_failure` (default) publishes `publish` successors sequentially and returns `503` on the first failure. `skip_failed` attempts every direct publish successor with bounded concurrency and returns `202` when at least one succeeds, with `failed_destinations` listing failures. Fan-out through processing nodes remains sequential and stops on error. Filter drops are successful branch termination.
 
 ### Filtering
 
@@ -880,7 +880,7 @@ A `filter` node is a list of AND-combined conditions. Place it after `envelope` 
 - `operator`: `eq`/`ne` (type-aware); `gt`/`gte`/`lt`/`lte` (numeric); `contains`/`prefix`/`suffix`; `regex` (RE2, compiled at load); `exists`/`not_exists`.
 - `value`: comparison value. Omit for `exists`/`not_exists`.
 
-Header values are strings, so numeric/bool operators parse them (`"42"` matches `eq: 42`). A missing or incomparable value fails the condition, including `ne`. A non-JSON body fails every `body` condition except `not_exists`. Drops are counted by `hookway_filtered_total` and logged at Info with the failing condition — never the header or body value. When a body-sourced condition fails because the body did not parse as JSON, `level` is `body_unparsed`.
+Header values are strings, so numeric/bool operators parse them (`"42"` matches `eq: 42`). A missing or incomparable value fails the condition, including `ne`. A non-JSON body fails every `body` condition except `not_exists`. Silent drops are counted by `hookway_filtered_total` with `level="flow"`. Per-node metrics record execution; condition values are not logged.
 
 Config files pass through `os.ExpandEnv` before parsing, so `$name` inside a `regex` value is expanded. Escape or avoid literal `$`-prefixed tokens.
 
@@ -978,7 +978,7 @@ Hookway emits structured `slog` JSON logs. Each log record carries a consistent 
 | `destination` | publish path, startup | Stable destination id from the config map (e.g. `billing`). |
 | `target` | publish path, startup | Queue/topic/routing-key/stream name (e.g. `stripe-events`). |
 | `event_id` | publish path | Envelope event id; correlates with the `idempotency_key` in the published message. |
-| `endpoint` | publish path | Webhook endpoint name (e.g. `stripe_billing`). |
+| `endpoint` | publish path | Flow name (e.g. `stripe_billing`); the metric label remains `endpoint` for compatibility. |
 | `request_id` | publish path | Value of the configured `request_id_header`, when present. |
 | `trace_id` | publish path | Trace id propagated from the inbound request, when present. |
 | `error` | error/warn records | Go error string. |

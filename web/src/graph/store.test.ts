@@ -33,6 +33,13 @@ test("onConnect adds a valid trigger->read_body edge and rejects a gate after re
   expect(useGraphStore.getState().edges).toHaveLength(1);
 });
 
+test("addFlow returns false for an empty or duplicate name", () => {
+  expect(useGraphStore.getState().addFlow("")).toBe(false);
+  expect(useGraphStore.getState().addFlow("main")).toBe(false);
+  expect(useGraphStore.getState().addFlow("billing")).toBe(true);
+  expect(useGraphStore.getState().activeFlow).toBe("billing");
+});
+
 test("setGraph replaces the document and clears selection", () => {
   const n = createNode("filter", { x: 0, y: 0 });
   useGraphStore.getState().setSelected("x");

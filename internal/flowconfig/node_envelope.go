@@ -37,10 +37,11 @@ func (c CapturedEvent) CloneBody() (any, error) {
 }
 
 type envelopeNode struct {
-	id        string
-	format    string
-	allowlist []string
-	denylist  []string
+	id            string
+	format        string
+	allowlist     []string
+	denylist      []string
+	queryDenylist []string
 }
 
 func newEnvelopeNode(id string, opts EnvelopeOptions, allowlist, denylist []string) graph.Node {
@@ -82,6 +83,11 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 	if err != nil {
 		return nil, graph.NodeError{
 			NodeID: n.id, Status: http.StatusInternalServerError, Err: err,
+		}
+	}
+	for _, key := range n.queryDenylist {
+		if _, exists := event.Query[key]; exists {
+			event.Query[key] = []string{"redacted"}
 		}
 	}
 	if head.EventID != "" {

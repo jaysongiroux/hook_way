@@ -54,24 +54,24 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 	if len(n.opts.MessageAttributes) > 0 {
 		attrs, attrErr := renderMessageAttributes(n.opts.MessageAttributes, env.Vars)
 		if attrErr != nil {
-			term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: attrErr}}}
+			term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: attrErr}}}
 			return term, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: attrErr}
 		}
 		env.MessageAttributes = attrs
 	}
 	if n.resolver == nil {
 		err := fmt.Errorf("publish %q: no publisher resolver", n.id)
-		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: err}}}
+		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: err}
 	}
 	pub, err := n.resolver.Resolve(n.opts.Destination)
 	if err != nil {
-		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: err}}}
+		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: err}
 	}
 	if err := pub.Publish(ctx, n.opts.Destination, rendered, env); err != nil {
-		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: err}}}
+		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: err}
 	}
-	return graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target}}}, nil
+	return graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered}}}, nil
 }

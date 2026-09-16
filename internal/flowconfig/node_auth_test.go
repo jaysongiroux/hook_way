@@ -157,3 +157,13 @@ func TestAuthSecretRefAcceptsAnyCurrentSecret(t *testing.T) {
 	}
 }
 
+func TestReviewAuthRequiresExplicitTrustAndJWTBodyBinding(t *testing.T) {
+	for _, scheme := range []string{"no_auth", "jwt_hs256", "jwt_rs256", "jwt_es256"} {
+		if err := validateAuth(AuthOptions{Scheme: scheme, Secret: "s"}); err == nil {
+			t.Fatalf("accepted %s without explicit trust/body binding", scheme)
+		}
+	}
+	if err := validateAuth(AuthOptions{Scheme: "jwt_hs256", Secret: "s", BodyHashClaim: "body_sha256"}); err != nil {
+		t.Fatal(err)
+	}
+}

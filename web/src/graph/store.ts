@@ -28,7 +28,7 @@ interface GraphState extends GraphDocument {
   setSelectedEdge: (id: string | null) => void;
   setGraph: (doc: GraphDocument) => void;
   setActiveFlow: (name: string) => void;
-  addFlow: (name: string) => void;
+  addFlow: (name: string) => boolean;
   renameFlow: (name: string) => void;
   document: () => GraphDocument;
   clear: () => void;
@@ -120,7 +120,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   addFlow: (name) => {
     const trimmed = name.trim();
     const s = get();
-    if (!trimmed || trimmed === s.activeFlow || s.otherFlows[trimmed]) return;
+    if (!trimmed || trimmed === s.activeFlow || s.otherFlows[trimmed]) return false;
     set({
       otherFlows: { ...s.otherFlows, [s.activeFlow]: snapshotOf(s) },
       activeFlow: trimmed,
@@ -130,6 +130,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       selectedId: null,
       selectedEdgeId: null,
     });
+    return true;
   },
   renameFlow: (name) => {
     const trimmed = name.trim();

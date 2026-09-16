@@ -315,3 +315,15 @@ func TestHeaderExactSchemeAlias(t *testing.T) {
 		t.Fatalf("header_exact should alias to exact, got %q", defaultAuthScheme("header_exact"))
 	}
 }
+
+func TestReviewConnectionNominatedHeadersAreRemoved(t *testing.T) {
+	src := http.Header{"Connection": {"X-Internal, X-Other"}, "X-Internal": {"private"}, "X-Other": {"private"}, "X-Public": {"visible"}}
+	n := newHTTPRequestNode("up", HTTPRequestOptions{URL: "https://example.test"}, nil, nil).(httpRequestNode)
+	req, _ := http.NewRequest(http.MethodPost, "https://example.test", nil)
+	n.copyForwardedHeaders(req, src)
+	for _, h := range []http.Header{req.Header, filterPassthroughHeaders(src)} {
+		if h.Get("X-Internal") != "" || h.Get("X-Other") != "" || h.Get("X-Public") != "visible" {
+			t.Fatalf("hop-by-hop leak: %v", h)
+		}
+	}
+}

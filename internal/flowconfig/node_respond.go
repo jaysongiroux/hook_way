@@ -67,9 +67,10 @@ func (n respondNode) Run(_ context.Context, in graph.Payload) (graph.Payload, er
 
 func filterPassthroughHeaders(src http.Header) http.Header {
 	out := http.Header{}
+	nominated := connectionHeaders(src)
 	for k, vs := range src {
 		canon := http.CanonicalHeaderKey(k)
-		if isHopByHop(canon) || canon == "Set-Cookie" {
+		if nominated[canon] || isHopByHop(canon) || canon == "Set-Cookie" {
 			continue
 		}
 		out[canon] = append([]string(nil), vs...)

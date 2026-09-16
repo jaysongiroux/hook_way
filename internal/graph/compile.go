@@ -234,6 +234,30 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		}
 	}
 
+	// A selector emits exactly one successor per declared label. Fan-out
+	// belongs on the selected path, not on the selector's labelled output.
+	for _, id := range f.order {
+		selector, ok := f.nodes[id].node.(PortDeclarer)
+		if !ok {
+			continue
+		}
+		counts := map[string]int{}
+		for _, edge := range f.out[id] {
+			if edge.FromPort == "on_error" {
+				continue
+			}
+			counts[edge.FromPort]++
+		}
+		if counts[""] > 0 {
+			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q requires labelled successors", id))
+		}
+		for _, port := range selector.OutPorts() {
+			if counts[port] != 1 {
+				ce.Problems = append(ce.Problems, fmt.Sprintf("node %q port %q requires exactly one successor", id, port))
+			}
+		}
+	}
+
 	// (8): acyclicity.
 	if cycle := f.findCycle(); cycle != nil {
 		ce.Problems = append(ce.Problems, fmt.Sprintf("cycle: %s", strings.Join(cycle, " -> ")))

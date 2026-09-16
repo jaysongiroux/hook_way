@@ -26,6 +26,7 @@ func TestFlowCaptureInsertBeforePublishContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.SetReplayCapturer(fake)
 
 	body := []byte(`{"ok":true}`)
@@ -70,6 +71,7 @@ func TestFlowCaptureIsBestEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.SetReplayCapturer(&fakeReplayCapturer{captureErr: errors.New("insert failed")})
 	body := []byte(`{"ok":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
@@ -115,6 +117,7 @@ flows:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	fake := &fakeReplayCapturer{}
 	srv.SetReplayCapturer(fake)
 	req := httptest.NewRequest(http.MethodPost, "/open", bytes.NewReader([]byte(`{}`)))
@@ -136,6 +139,7 @@ func TestV2RedeliveryPublishesCapturedEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	fake := &fakeReplayCapturer{}
 	srv.SetReplayCapturer(fake)
 	body := []byte(`{"ok":true}`)

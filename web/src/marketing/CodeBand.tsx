@@ -2,26 +2,26 @@ import { Box, Group, Stack, Text } from "@mantine/core";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
 
-// A trimmed but real config: one endpoint that verifies a signature and fans
-// the event out to two destinations.
+// A complete V2 flow with a shared destination connection.
 const LINES: { text: string; kind: "key" | "value" | "comment" | "plain" }[] = [
-  { text: "endpoints:", kind: "key" },
+  { text: "schema_version: 2", kind: "key" },
+  { text: "flows:", kind: "key" },
   { text: "  github:", kind: "key" },
-  { text: "    path: /webhooks/github", kind: "value" },
-  { text: "    auth:", kind: "key" },
-  { text: "      type: hmac_sha256", kind: "value" },
-  { text: "      secret: ${GITHUB_WEBHOOK_SECRET}", kind: "value" },
-  { text: "    routes:", kind: "key" },
-  { text: "      - destination: orders", kind: "value" },
-  { text: "        target: github-events", kind: "value" },
-  { text: "      - destination: archive", kind: "value" },
-  { text: "        target: raw/github", kind: "value" },
-  { text: "", kind: "plain" },
+  { text: "    nodes:", kind: "key" },
+  { text: "      - {id: in, type: http_trigger, path: /webhooks/github}", kind: "value" },
+  { text: "      - {id: body, type: read_body, max_bytes: 1048576}", kind: "value" },
+  { text: "      - id: auth", kind: "value" },
+  { text: "        type: auth", kind: "value" },
+  { text: "        scheme: hmac_sha256_hex", kind: "value" },
+  { text: "        signature_header: X-Hub-Signature-256", kind: "value" },
+  { text: "        secret: ${GITHUB_WEBHOOK_SECRET}", kind: "value" },
+  { text: "      - {id: env, type: envelope}", kind: "value" },
+  { text: "      - {id: out, type: publish, destination: orders, target: github-events}", kind: "value" },
+  { text: "    edges: [in>body, body>auth, auth>env, env>out]", kind: "value" },
   { text: "destinations:", kind: "key" },
   { text: "  orders:", kind: "key" },
-  { text: "    type: sqs", kind: "value" },
-  { text: "  archive:", kind: "key" },
-  { text: "    type: s3", kind: "value" },
+  { text: "    type: webhook", kind: "value" },
+  { text: "    webhook: {url: \"https://example.com/events\"}", kind: "value" },
 ];
 
 const COLOR = {
@@ -38,8 +38,8 @@ export function CodeBand() {
   return (
     <Section
       eyebrow="Configuration"
-      title="The whole integration is one file"
-      lead="No SDK to install and no handler to deploy. Declare the endpoint, the verification, and where events should land."
+      title="Define the flow in YAML"
+      lead="No SDK to install and no handler to deploy. Declare the flow, the verification, and where events should land."
     >
       <Box
         style={{

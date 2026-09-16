@@ -29,6 +29,7 @@ func TestRequestIDPropagatesToResponseEnvelopeAndLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"ok":true}`)
 	req := githubPOST(body)
 	req.Header.Set("X-Request-ID", "req_abc")
@@ -149,6 +150,7 @@ func TestMaxInflightReturnsServiceUnavailableWhenSaturated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"ok":true}`)
 	go func() {
 		srv.ServeHTTP(httptest.NewRecorder(), githubPOST(body))
@@ -175,6 +177,7 @@ func TestMetricsServedOnSeparatePortWhenAddrSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -202,6 +205,7 @@ func TestMetricsRequiresAPIKeyWhenConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -233,6 +237,7 @@ func TestMetricsAPIKeyOnDedicatedPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	ms := srv.MetricsServer()
 	if ms == nil {
 		t.Fatal("expected a dedicated metrics server")
@@ -280,6 +285,7 @@ flows:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"ok":true}`)
 	req := githubPOST(body)
 	req.RemoteAddr = "198.51.100.5:1234"
@@ -370,6 +376,7 @@ func TestForwardedHeaderAllowlistDropsUnlistedHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"ok":true}`)
 	req := githubPOST(body)
 	req.Header.Set("X-Secret-Internal", "leak-me")
@@ -395,6 +402,7 @@ func TestHeaderExactAuthAcceptsMatchingAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"id":"evt_1","type":"INITIAL_PURCHASE"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer rc-token")
@@ -410,6 +418,7 @@ func TestHeaderExactAuthRejectsWrongToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader([]byte(`{"id":"evt_1"}`)))
 	req.Header.Set("Authorization", "Bearer wrong")
 	rec := httptest.NewRecorder()

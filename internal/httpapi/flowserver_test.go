@@ -62,6 +62,7 @@ func newTestFlowServer(t *testing.T, pub *fakePublisher) *FlowServer {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	return srv
 }
 
@@ -123,6 +124,7 @@ func TestFlowServerOversizeBodyReturns413(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"action":"opened"}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
@@ -235,6 +237,7 @@ func TestPublishFailureReleasesReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"action":"opened"}`)
 	if rec := postSignedFlow(srv, body); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("first attempt = %d, want 503", rec.Code)
@@ -257,6 +260,7 @@ func TestFilterSilentDropKeepsReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"action":"opened"}`)
 	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
 		t.Fatalf("first attempt = %d, want 202 (silent drop looks like success)", rec.Code)
@@ -301,6 +305,7 @@ func TestSkipFailedPartialSuccessReturns202WithFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	rec := postSignedFlow(srv, []byte(`{"action":"opened"}`))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
@@ -330,6 +335,7 @@ func TestSkipFailedAllFailuresReturn503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	rec := postSignedFlow(srv, []byte(`{"action":"opened"}`))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503: %s", rec.Code, rec.Body.String())
@@ -345,6 +351,7 @@ func TestSkipFailedPartialSuccessReleasesReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"action":"opened"}`)
 	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
 		t.Fatalf("first = %d %s", rec.Code, rec.Body.String())
@@ -363,6 +370,7 @@ func TestSkipFailedFullSuccessKeepsReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"action":"opened"}`)
 	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
 		t.Fatalf("first = %d %s", rec.Code, rec.Body.String())
@@ -382,6 +390,7 @@ func TestPublishMessageAttributesReachQueueMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	rec := postSignedFlow(srv, []byte(`{"action":"opened"}`))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
@@ -418,6 +427,7 @@ flows:
 	if err != nil {
 		t.Fatalf("broken flow must still construct a server: %v", err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

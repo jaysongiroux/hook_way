@@ -43,6 +43,7 @@ flows:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	req := httptest.NewRequest(http.MethodPut, "/salesforce/proxy/api/v1/thing?a=1", strings.NewReader(`{"k":"v"}`))
 	req.Header.Set("X-Auth", "testtoken")
 	req.Header.Set("Authorization", "Bearer leaked")
@@ -91,6 +92,7 @@ flows:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	req := httptest.NewRequest(http.MethodPut, "/salesforce/proxy/x", strings.NewReader(`{}`))
 	req.Header.Set("X-Auth", "nope")
 	rec := httptest.NewRecorder()
@@ -130,6 +132,7 @@ flows:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	inbound := `<ROOT><EMPTY/><KEEP>ok</KEEP></ROOT>`
 	req := httptest.NewRequest(http.MethodPost, "/digifi/docmagic", strings.NewReader(inbound))
 	req.Header.Set("X-Auth", "testtoken")

@@ -13,11 +13,12 @@ function wrap() {
   );
 }
 
-test("renders a palette entry for every catalog node type", () => {
+test("renders a palette entry with a short description for every catalog node type", () => {
   wrap();
   for (const type of NODE_TYPES) {
     expect(screen.getByText(nodeLabel(type))).toBeInTheDocument();
   }
+  expect(screen.getByText(/decodes the verified body/i)).toBeInTheDocument();
 });
 
 test("dragging an item sets the node type on the dataTransfer", () => {

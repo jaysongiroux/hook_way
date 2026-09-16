@@ -21,6 +21,7 @@ import (
 
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/flowconfig"
+	"github.com/jasongiroux/hookway/internal/graph"
 	"github.com/jasongiroux/hookway/internal/httpapi"
 )
 
@@ -187,15 +188,32 @@ func TestI8_FiltersRunBeforeVariableResolution(t *testing.T) {
 			"      - {id: look, type: lookup, provider: dynamodb, key: '{missing}', name: route}\n",
 		", env>filt, filt>look, look>out",
 		"")
-	srv := newServer(t, src, nil)
-	body := []byte(`{"event":"deleted"}`)
-	rec := post(srv, signedRequest(http.MethodPost, "/webhooks/github", body))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("filtered request = %d %s (want 202, never a variable-resolution error)", rec.Code, rec.Body.String())
+
+	cfg := loadCfg(t, src)
+	calls := 0
+	reg, err := flowconfig.NewRegistryWithOptions(flowconfig.RegistryOptions{Lookups: func(flowconfig.LookupOptions) flowconfig.LookupFunc {
+		return func(context.Context, string) (string, bool, error) {
+			calls++
+			return "", false, errors.New("must not resolve")
+		}
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(rec.Body.String(), "unbound") || strings.Contains(rec.Body.String(), "lookup") {
-		t.Fatalf("filtered request leaked a variable error: %s", rec.Body.String())
+	for name, fc := range cfg.Flows {
+		flow, err := graph.Compile(name, fc, reg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := []byte(`{"event":"deleted"}`)
+		req := signedRequest(http.MethodPost, "/webhooks/github", body)
+		ctx := flowconfig.WithBodyReader(req.Context(), req.Body)
+		term, err := flow.Run(ctx, flowconfig.HeadFromRequest(req, nil, "127.0.0.1"), graph.RunOptions{PublishTimeout: time.Second})
+		if err != nil || len(term.Deliveries) != 0 || calls != 0 {
+			t.Fatalf("filter drop: err=%v deliveries=%v lookup calls=%d", err, term.Deliveries, calls)
+		}
 	}
+
 }
 
 // TestI9_CaptureInsertBeforePublishContext asserts the capture INSERT finishes
@@ -209,6 +227,7 @@ func TestI9_CaptureInsertBeforePublishContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	cap := &blockingCapturer{started: make(chan struct{}), release: make(chan struct{})}
 	srv.SetReplayCapturer(cap)
 
@@ -318,6 +337,7 @@ flows:
 	if err != nil {
 		t.Fatalf("broken flow must still construct a server: %v", err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	rec := post(srv, httptest.NewRequest(http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`)))
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("I13: broken flow answered 404; a config error must not look unconfigured")

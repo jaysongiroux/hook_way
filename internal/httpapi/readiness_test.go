@@ -28,6 +28,7 @@ func newReadyFlowServer(t *testing.T, pub queue.Publisher, logger *slog.Logger, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	return srv
 }
 
@@ -142,6 +143,7 @@ flows:
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 
 	expected := `

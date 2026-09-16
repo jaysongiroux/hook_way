@@ -1,5 +1,6 @@
 import { Drawer, Stack, Text, TextInput, NumberInput } from "@mantine/core";
 import { useGraphStore } from "./store";
+import { SERVER_FIELD_HELP } from "./help";
 
 // The managed keys of the top-level `server:` block. Unknown server keys the UI
 // doesn't list here still ride along untouched (setServerConfig merges patches).
@@ -33,9 +34,9 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
     <Drawer opened={opened} onClose={onClose} position="right" title="Server settings">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
-          The top-level <Text span ff="monospace">server:</Text> block. <Text span ff="monospace">addr</Text> and{" "}
-          <Text span ff="monospace">max_body_bytes</Text> are required; timeouts accept durations like{" "}
-          <Text span ff="monospace">5s</Text>.
+          Process-wide <Text span ff="monospace">server:</Text> settings written into the exported YAML.{" "}
+          <Text span ff="monospace">addr</Text> and <Text span ff="monospace">max_body_bytes</Text> are required.
+          Timeouts are Go durations such as <Text span ff="monospace">5s</Text> or <Text span ff="monospace">1m</Text>.
         </Text>
         {SERVER_FIELDS.map((f) => {
           const val = serverConfig[f.key];
@@ -44,6 +45,7 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
               <NumberInput
                 key={f.key}
                 label={f.label}
+                description={SERVER_FIELD_HELP[f.key]}
                 value={val === "" || val == null ? "" : Number(val)}
                 onChange={(v) => setServerConfig({ [f.key]: v })}
                 min={f.min}
@@ -54,6 +56,7 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
             <TextInput
               key={f.key}
               label={f.label}
+              description={SERVER_FIELD_HELP[f.key]}
               placeholder={f.placeholder}
               value={String(val ?? "")}
               onChange={(e) => setServerConfig({ [f.key]: e.currentTarget.value })}

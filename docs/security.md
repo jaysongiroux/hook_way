@@ -4,7 +4,7 @@ Hookway verifies webhook authentication before publishing to its destinations (R
 
 ## Auth Schemes
 
-Each `auth` node builds its verifier once at startup from `scheme` (HMAC schemes default to `hmac_sha256_ts_colon` when omitted). An unknown scheme fails closed — the flow rejects every request rather than accepting unverified traffic.
+Each `auth` node requires an explicit `scheme`. Inline secrets build a verifier at startup; `secret_ref` uses the cached current/overlap values. An unknown scheme fails closed — the flow rejects every request rather than accepting unverified traffic.
 
 ### `hmac_sha256_ts_colon` (timestamped, `hmac_sha256`)
 
@@ -16,7 +16,7 @@ Prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (used by G
 
 ### `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`)
 
-Verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm, so a token whose `alg` does not match (including `alg: none`) is rejected. `secret` holds the HMAC secret (`jwt_hs256`) or a PEM public key (`jwt_rs256`/`jwt_es256`). `exp` is required and `timestamp_tolerance` is the clock-skew leeway; optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. `body_hash_claim` is required and binds the token to the raw body; set `allow_unbound_body: true` to opt out (the JWT then authenticates the caller but not the payload).
+Verify a Bearer JWT read from `signature_header` (typically `Authorization`). Each scheme pins exactly one signing algorithm, so a token whose `alg` does not match (including `alg: none`) is rejected. `secret` holds the HMAC secret (`jwt_hs256`) or a PEM public key (`jwt_rs256`/`jwt_es256`). `exp` is required and `timestamp_tolerance` is the clock-skew leeway; optional `expected_issuer`/`expected_audience` enforce `iss`/`aud`. `body_hash_claim` is required and binds the token to the raw body; V2 has no unbound-body opt-out.
 
 ### `no_auth` (`no_auth`)
 
@@ -40,7 +40,7 @@ Put secrets in environment variables and reference them from YAML with `${ENV_NA
 
 - Only configured flow paths are accepted for ingress.
 - Empty bodies are rejected.
-- Body size is capped by `server.max_body_bytes`.
+- Body size is capped by each `read_body.max_bytes`; `server.max_body_bytes` is a lint reference, not an inherited cap.
 - Server timeouts are configured from YAML.
 - Shutdown handles `SIGINT` and `SIGTERM`.
 - `/healthz` reports process liveness for container healthchecks.
@@ -54,11 +54,11 @@ Rate limiting uses `golang.org/x/time/rate` token buckets keyed by source IP. Bu
 
 When `X-Forwarded-For` is honored, Hookway does **not** take the leftmost entry (that value is client-supplied and trivially spoofed). Instead it walks the comma-separated list right to left — the direction proxies append in — skipping any entry that itself falls within `trusted_proxies`, and uses the first (rightmost) entry that isn't a known proxy as the client IP. If every entry is a trusted proxy, the leftmost entry is used. A malformed entry stops the walk immediately and falls back to the last known-good hop rather than continuing toward the client-controlled end, so a crafted invalid entry can't be used to smuggle a different address into scope. This stops a client from spoofing `X-Forwarded-For` (e.g. prepending an allowlisted IP, or rotating fake addresses) to evade the IP allowlist or per-IP rate limit. Configure `trusted_proxies` to your load balancer/ingress ranges in production; leaving `trusted_proxy_headers` on with `trusted_proxies` empty trusts any peer and treats the rightmost `X-Forwarded-For` entry as the client IP with no proxy hops recognized to skip.
 
-For horizontally scaled deployments, use a shared edge or gateway limiter, or replace the process-local limiter with Redis or another shared backend. Process-local rate limits are useful as defense in depth but do not enforce a global quota across replicas.
+For horizontally scaled deployments, enforce global quotas at a shared edge or gateway limiter. Hookway V2 has no Redis/shared limiter mode. Process-local rate limits are useful as defense in depth but do not enforce a global quota across replicas.
 
 ## Replay Protection
 
-Replay protection is process-local. It blocks repeated signatures seen by the same process, but a replay can pass if a load balancer sends it to a different replica. Production deployments that require strict replay rejection should use sticky routing by endpoint/signature or a shared replay store such as Redis.
+Replay protection is process-local. By default it keys on a hash of raw body bytes; an explicit key can use headers/path variables. A replay can pass on another replica (N pods permit N reservations). Hookway V2 has no cluster-wide replay guard; the optional replay capture database does not provide one. Consumers must deduplicate.
 
 ## Header Redaction and Allowlisting
 

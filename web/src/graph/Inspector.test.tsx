@@ -21,7 +21,7 @@ beforeEach(() => {
 
 test("shows flow options when nothing is selected", () => {
   wrap();
-  expect(screen.getByText(/select a node/i)).toBeInTheDocument();
+  expect(screen.getByText(/click a node/i)).toBeInTheDocument();
   expect(screen.getByLabelText("Flow name")).toBeInTheDocument();
 });
 
@@ -29,6 +29,7 @@ test("editing a trigger path updates the store", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap();
+  expect(screen.getByText(/HTTP entry point/i)).toBeInTheDocument();
   const pathInput = screen.getByLabelText("path") as HTMLInputElement;
   fireEvent.change(pathInput, { target: { value: "/webhooks/github" } });
   expect(useGraphStore.getState().nodes[0].data.options.path).toBe("/webhooks/github");

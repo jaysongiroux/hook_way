@@ -32,7 +32,7 @@ test("a real config sample is shown rather than described", () => {
   wrap();
   // The sample must look like the YAML a user would actually write.
   const sample = screen.getByLabelText("Example Hookway configuration");
-  expect(sample.textContent).toContain("endpoints:");
+  expect(sample.textContent).toContain("flows:");
   expect(sample.textContent).toContain("hmac_sha256");
   expect(sample.textContent).toContain("destinations:");
 });

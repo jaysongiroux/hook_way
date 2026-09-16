@@ -12,6 +12,8 @@ import (
 // NodeEvent contains only config-bounded identity, suitable for metric labels.
 type NodeEvent struct {
 	NodeID, NodeType string
+	Target           string
+	Dropped          bool
 	Duration         time.Duration
 	Err              error
 }
@@ -85,7 +87,7 @@ type execution struct {
 	mu                  sync.Mutex
 	term                Terminal
 	visited, suppressed map[string]bool
-	beforeDetachedDone  bool
+	beforeDetached      sync.Once
 }
 
 func (e *execution) markVisited(id string) {
@@ -136,6 +138,13 @@ func (e *execution) suppress(id string) {
 	e.suppressLocked(id)
 }
 
+func (e *execution) suppressBranch(id string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.suppressed[id] = true
+	e.suppressLocked(id)
+}
+
 func (e *execution) suppressLocked(id string) {
 	for _, edge := range e.flow.out[id] {
 		e.suppressed[edge.To] = true
@@ -144,6 +153,16 @@ func (e *execution) suppressLocked(id string) {
 }
 func (e *execution) node(ctx context.Context, id string, in Payload) (err error) {
 	b := e.flow.nodes[id]
+	errorInput := in
+	for _, edge := range e.flow.out[id] {
+		if edge.FromPort == "on_error" {
+			errorInput, err = clonePayload(in)
+			if err != nil {
+				return fmt.Errorf("node %q error input: %w", id, err)
+			}
+			break
+		}
+	}
 	var saved Payload
 	comp, isComp := b.node.(Compensator)
 	if isComp {
@@ -187,6 +206,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 				// Identity, configured target, and attempted state are executor-owned.
 				// A destination controls only its outcome error.
 				d := e.delivery(b, outcome.Err, false)
+				d.RenderedTarget = outcome.RenderedTarget
 				if d.Err == nil && runErr != nil {
 					d.Err = runErr
 				}
@@ -202,13 +222,13 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	if b.spec.Detached && (!isTerminal || len(terminal.Deliveries) == 0) {
 		e.addDelivery(e.delivery(b, err, false))
 	}
-	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err})
+	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err, Target: b.target, Dropped: isTerminal && b.spec.Type == "filter" && err == nil})
 	// A successful reservation must be released even when its output is malformed.
 	if runErr == nil && isComp {
 		e.addCompensation(Compensation{NodeID: id, Node: comp, Input: saved})
 	}
 	if err != nil {
-		if handled := e.followOnError(ctx, id, in); handled == nil {
+		if handled := e.followOnError(ctx, id, errorInput); handled == nil {
 			return nil
 		} else if !errors.Is(handled, errNoOnError) {
 			return handled
@@ -259,19 +279,12 @@ func (e *execution) runBeforeDetached(in Payload) {
 	if e.opts.BeforeDetached == nil {
 		return
 	}
-	// Claim the once-flag under the lock: skip_failed fan-out can reach two
-	// detached nodes concurrently, and a second capture INSERT would both
-	// duplicate the replay row and make writes-per-event scale with
-	// destination count (decision D8).
-	e.mu.Lock()
-	already := e.beforeDetachedDone
-	e.beforeDetachedDone = true
-	e.mu.Unlock()
-	if already {
-		return
-	}
-	defer func() { _ = recover() }()
-	e.opts.BeforeDetached(in)
+	// All publishers must wait for the single capture, including its panic
+	// recovery, before starting their individual publish timeout (I9/I15).
+	e.beforeDetached.Do(func() {
+		defer func() { _ = recover() }()
+		e.opts.BeforeDetached(in)
+	})
 }
 
 func selectedBranch(out Payload) string {
@@ -293,6 +306,9 @@ func (e *execution) followOnError(ctx context.Context, id string, in Payload) er
 	if len(edges) == 0 {
 		return errNoOnError
 	}
+	for _, edge := range successEdges(e.flow.out[id]) {
+		e.suppressBranch(edge.To)
+	}
 	for _, edge := range edges {
 		next := in
 		if len(edges) > 1 {
@@ -310,12 +326,19 @@ func (e *execution) followOnError(ctx context.Context, id string, in Payload) er
 }
 
 func (e *execution) followSuccessors(ctx context.Context, id string, out Payload) error {
+	for _, edge := range e.flow.out[id] {
+		if edge.FromPort == "on_error" {
+			e.suppressBranch(edge.To)
+		}
+	}
 	successors := successEdges(e.flow.out[id])
 	if selected := selectedBranch(out); selected != "" || labelledSuccessors(successors) {
 		var matched []Edge
 		for _, edge := range successors {
 			if edge.FromPort == selected || (selected == "" && edge.FromPort == "") {
 				matched = append(matched, edge)
+			} else {
+				e.suppressBranch(edge.To)
 			}
 		}
 		if len(matched) == 0 {
@@ -323,6 +346,11 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 			return fmt.Errorf("node %q (%s): no successor for port %q", id, b.spec.Type, selected)
 		}
 		successors = matched
+		// Selection belongs to this node, not the rest of the selected path.
+		if env, ok := out.(Envelope); ok {
+			env.Branch = ""
+			out = env
+		}
 	}
 	if e.flow.skipFailed && allDetached(e.flow, successors) {
 		return e.followSkipFailed(ctx, id, out, successors)

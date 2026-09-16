@@ -5,10 +5,15 @@ import { theme } from "../theme";
 import { SchemaForm } from "./SchemaForm";
 import type { JSONSchema } from "./nodeSchema";
 
-function wrap(schema: JSONSchema, value: unknown, onChange: (v: unknown) => void) {
+function wrap(
+  schema: JSONSchema,
+  value: unknown,
+  onChange: (v: unknown) => void,
+  fieldHelp?: (name: string) => string | undefined,
+) {
   return render(
     <MantineProvider theme={theme}>
-      <SchemaForm schema={schema} value={value} onChange={onChange} />
+      <SchemaForm schema={schema} value={value} onChange={onChange} fieldHelp={fieldHelp} />
     </MantineProvider>,
   );
 }
@@ -35,6 +40,12 @@ test("renders string, number, boolean, enum, array, nested object, and required 
   expect(screen.getByText("retry")).toBeInTheDocument();
   expect(screen.getByLabelText("max attempts")).toBeInTheDocument();
   expect(screen.getByPlaceholderText("3")).toBeInTheDocument();
+});
+
+test("shows field help under an input", () => {
+  const schema: JSONSchema = { type: "object", properties: { path: { type: "string" } } };
+  wrap(schema, { path: "/x" }, () => undefined, () => "Public URL path.");
+  expect(screen.getByText("Public URL path.")).toBeInTheDocument();
 });
 
 test("shows a validation message on blur when a required field is empty", () => {

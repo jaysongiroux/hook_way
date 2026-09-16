@@ -136,6 +136,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		var cfg flowconfig.Config
 		cfg, issues = flowconfig.LoadBytes(data, path, true)
 		issues = append(issues, flowconfig.Lint(cfg)...)
+		issues = append(issues, flowconfig.StandaloneIssues(cfg)...)
 	}
 	return printValidateResult(issues, *strict, path, stdout, stderr)
 }
@@ -355,6 +356,8 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 
 	v2cfg, issues := flowconfig.Load(path)
+	issues = append(issues, flowconfig.Lint(v2cfg)...)
+	issues = append(issues, flowconfig.StandaloneIssues(v2cfg)...)
 	if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
 		appMetrics.ConfigLoadFailure("load")
 		logger.Error("config load failed", "error", config.ConfigValidationError{Issues: blocking})

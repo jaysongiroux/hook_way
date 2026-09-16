@@ -51,6 +51,7 @@ func TestFlowReadyKeepsHealthyFlowWhenPeerDestinationIsDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -101,6 +102,7 @@ func TestReadyProbeCountEqualsUniqueDestinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 	if shared.readyCalls.Load() != 1 || other.readyCalls.Load() != 1 {
 		t.Fatalf("Ready calls alpha=%d beta=%d, want 1 each (unique dests, not flows×dests)",
@@ -129,6 +131,7 @@ func TestReadyRequireAllReturns503WhenAnyFlowIsUnready(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -144,6 +147,7 @@ func TestHealthzIgnoresDestinationState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -151,4 +155,3 @@ func TestHealthzIgnoresDestinationState(t *testing.T) {
 		t.Fatalf("/healthz = %d, want 200", rec.Code)
 	}
 }
-

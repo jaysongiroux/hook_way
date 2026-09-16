@@ -1,5 +1,6 @@
 import { Button, Drawer, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { DEST_SCHEMAS, DEST_TYPES, destSchema } from "./nodeSchema";
+import { destFieldHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
 
@@ -43,6 +44,7 @@ export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClos
               <Group justify="space-between" wrap="nowrap">
                 <TextInput
                   label="Name"
+                  description="Id used in publish.destination."
                   value={name}
                   onChange={(e) => {
                     const nextName = e.currentTarget.value.trim();
@@ -59,6 +61,7 @@ export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClos
               </Group>
               <Select
                 label="Type"
+                description="Backend this destination talks to."
                 data={DEST_TYPES}
                 value={type}
                 allowDeselect={false}
@@ -74,6 +77,7 @@ export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClos
                 schema={spec.schema}
                 value={blockValue}
                 onChange={(blockVal) => update(name, { type, [block]: blockVal as Record<string, unknown> })}
+                fieldHelp={destFieldHelp}
               />
             </Stack>
           );

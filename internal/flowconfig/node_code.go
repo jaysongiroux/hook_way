@@ -21,8 +21,9 @@ const (
 )
 
 type codeNode struct {
-	id string
-	rt *codenode.Runtime
+	id                  string
+	rt                  *codenode.Runtime
+	allowlist, denylist []string
 }
 
 func newCodeNode(id string, opts CodeOptions) (graph.Node, error) {
@@ -81,7 +82,7 @@ func (n codeNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, err
 	input := map[string]any{
 		"body":    body,
 		"vars":    maps.Clone(env.Vars),
-		"headers": scriptHeaders(env.V.Raw.Head.Header),
+		"headers": scriptHeaders(env.V.Raw.Head.Header, n.allowlist, n.denylist),
 	}
 	out, err := n.rt.Run(ctx, input)
 	if err != nil {
@@ -108,8 +109,8 @@ func (n codeNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, err
 	return env, nil
 }
 
-func scriptHeaders(h http.Header) map[string]string {
-	filtered := hooklogging.RedactHeaders(h, nil)
+func scriptHeaders(h http.Header, allowlist, denylist []string) map[string]string {
+	filtered := hooklogging.FilterHeaders(h, allowlist, denylist)
 	out := make(map[string]string, len(filtered))
 	for k, vs := range filtered {
 		if len(vs) > 0 {

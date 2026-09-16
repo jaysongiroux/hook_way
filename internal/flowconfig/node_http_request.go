@@ -156,8 +156,9 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 }
 
 func (n httpRequestNode) copyForwardedHeaders(req *http.Request, src http.Header) {
+	nominated := connectionHeaders(src)
 	for k, vs := range src {
-		if !n.shouldForward(k) {
+		if nominated[http.CanonicalHeaderKey(k)] || !n.shouldForward(k) {
 			continue
 		}
 		for _, v := range vs {

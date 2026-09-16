@@ -1,5 +1,6 @@
 import { Paper, Stack, Text } from "@mantine/core";
 import { NODE_SCHEMAS, NODE_TYPES, nodeLabel } from "./nodeSchema";
+import { nodeHelp, PALETTE_GROUP_HELP } from "./help";
 
 export const DND_MIME = "application/hookway-node";
 
@@ -18,9 +19,16 @@ export function Palette() {
       {GROUPS.map((group) =>
         group.types.length === 0 ? null : (
           <Stack key={group.title} gap="xs">
-            <Text fw={600} size="xs" tt="uppercase" c="dimmed">
-              {group.title}
-            </Text>
+            <div>
+              <Text fw={600} size="xs" tt="uppercase" c="dimmed">
+                {group.title}
+              </Text>
+              {PALETTE_GROUP_HELP[group.title] && (
+                <Text size="xs" c="dimmed" lh={1.35}>
+                  {PALETTE_GROUP_HELP[group.title]}
+                </Text>
+              )}
+            </div>
             {group.types.map((type) => (
               <Paper
                 key={type}
@@ -34,7 +42,12 @@ export function Palette() {
                 }}
                 style={{ cursor: "grab" }}
               >
-                <Text size="sm">{nodeLabel(type)}</Text>
+                <Text size="sm" fw={500}>
+                  {nodeLabel(type)}
+                </Text>
+                <Text size="xs" c="dimmed" lh={1.35}>
+                  {nodeHelp(type)}
+                </Text>
               </Paper>
             ))}
           </Stack>

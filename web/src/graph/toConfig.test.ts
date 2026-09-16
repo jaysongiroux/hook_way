@@ -32,3 +32,12 @@ test("labelled switch ports export as from:port>to", () => {
   const flow = (config.flows as Record<string, { edges: string[] }>).main;
   expect(flow.edges[0]).toBe(`${sw.data.yamlId}:matched>${pub.data.yamlId}`);
 });
+
+test("preserves explicit false, empty and null values in authored config", () => {
+  const node = createNode("filter", { x: 0, y: 0 });
+  node.data.options = { conditions: [{ source: "body", path: "active", operator: "eq", value: false }, { source: "body", path: "value", operator: "eq", value: null }], empty: "", list: [] };
+  const doc = { ...emptyDocument(), nodes: [node], configExtra: { metrics: { enabled: false } } };
+  const { config } = toConfig(doc);
+  expect(config.metrics).toEqual({ enabled: false });
+  expect((config.flows as any).main.nodes[0]).toMatchObject(node.data.options);
+});

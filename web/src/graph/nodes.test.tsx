@@ -39,13 +39,21 @@ test("FlowNode shows id, type, and a source handle", () => {
   expect(container.querySelector(".react-flow__handle-left")).toBeNull();
 });
 
-test("switch renders labelled output ports and on_error", () => {
+test("switch renders labelled output ports and an on-error handle", () => {
   resetIdCounters();
   const n = createNode("switch", { x: 0, y: 0 });
   const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
   expect(container.querySelector('[data-handleid="matched"]')).not.toBeNull();
   expect(container.querySelector('[data-handleid="default"]')).not.toBeNull();
   expect(container.querySelector('[data-handleid="on_error"]')).not.toBeNull();
+  expect(screen.getByText("on error")).toBeInTheDocument();
+});
+
+test("http_trigger has no on-error handle", () => {
+  resetIdCounters();
+  const n = createNode("http_trigger", { x: 0, y: 0 });
+  wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  expect(screen.queryByText("on error")).not.toBeInTheDocument();
 });
 
 test("node is outlined when selected", () => {

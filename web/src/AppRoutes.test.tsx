@@ -26,7 +26,7 @@ test("/builder mounts the config builder", async () => {
   renderAt("/builder");
   // The builder is lazy-loaded, so it arrives after the dynamic import settles.
   expect(await screen.findByText("Hookway Config")).toBeInTheDocument();
-  expect(screen.getByText("Inspector")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Inspector" })).toBeInTheDocument();
 });
 
 test("an unknown path falls back to the overview", () => {

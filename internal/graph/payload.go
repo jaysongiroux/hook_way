@@ -121,8 +121,10 @@ type Response struct {
 // scalability rule R3. The rendered value belongs in logs and span attributes.
 type Delivery struct {
 	NodeID string
-	Target string
-	Err    error
+	// RenderedTarget is delivery metadata for responses/replay, never a metric label.
+	RenderedTarget string
+	Target         string
+	Err            error
 	// Unattempted distinguishes a destination skipped after failure from a
 	// successful publish. Err can be nil in either case.
 	Unattempted bool

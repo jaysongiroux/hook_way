@@ -146,3 +146,23 @@ func TestCodeNodeDoesNotMutateOriginalBody(t *testing.T) {
 		t.Fatalf("script mutated the caller's body: %#v", orig)
 	}
 }
+
+func TestReviewCodeHonorsConfiguredHeaderPolicy(t *testing.T) {
+	reg, err := NewRegistryWithOptions(RegistryOptions{HeaderDenylist: []string{"X-Partner"}, HeaderAllowlist: []string{"X-Partner", "X-Request-Id"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("code")
+	node, err := spec.New(nodeConfigFromYAML(t, "code", `script: 'return {body: input.headers}'`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := node.Run(context.Background(), graph.Envelope{V: graph.Verified{Raw: graph.RawRequest{Head: graph.RequestHead{Header: http.Header{"X-Partner": {"credential"}, "X-Hidden": {"private"}, "X-Request-Id": {"visible"}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := out.(graph.Envelope).Body.(map[string]string)
+	if body["x-partner"] != "redacted" || body["x-hidden"] != "" || body["x-request-id"] != "visible" {
+		t.Fatalf("header policy bypass: %#v", body)
+	}
+}

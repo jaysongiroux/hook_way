@@ -578,7 +578,7 @@
           "refId": "A"
         }
       ],
-      "title": "Endpoints",
+      "title": "Flows",
       "transformations": [
         { "id": "labelsToFields", "options": { "mode": "columns" } },
         {
@@ -2386,7 +2386,7 @@
         "definition": "label_values(hookway_http_requests_total{job=~\"$job\", instance=~\"$instance\"}, endpoint)",
         "hide": 0,
         "includeAll": true,
-        "label": "Endpoint",
+        "label": "Flow",
         "multi": true,
         "name": "endpoint",
         "options": [],
