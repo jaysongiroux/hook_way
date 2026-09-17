@@ -854,11 +854,68 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
-- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`, and a request whose path variable contains a `..` segment is rejected with `400`. See [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
+- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`, and a request whose path variable contains a `..` segment is rejected with `400`. See [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
 - `transform`: `changed_fields`, `field_map`, `xml_prune`.
 - `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node).
 - `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path.
+
+#### Retrying an `http_request`
+
+`retry` is opt-in and off by default: with no block, or `max_attempts` of 1, the
+node makes exactly one attempt, which is the safe default for the
+non-idempotent POST it usually issues.
+
+```yaml
+- id: post
+  type: http_request
+  url: "${SLACK_WEBHOOK_URL}"
+  error_on_status: [4xx, 5xx]
+  retry: {max_attempts: 4, initial_backoff: 1s, max_backoff: 10s}
+```
+
+A retry is attempted for a transport error, a timeout, `429`, and any `5xx`.
+Every other status — including the rest of the `4xx` range — is terminal,
+because a payload the upstream rejected will not become acceptable on a second
+try. Backoff doubles with ±20% jitter and is capped by `max_backoff`; a `429`'s
+`Retry-After` header overrides the computed wait for that one attempt, clamped
+by `max_backoff` so a mistaken header cannot park the flow. Defaults are
+`500ms` and `30s`, matching the webhook destination.
+
+`retry` and `error_on_status` are independent: `retry` decides whether to
+re-attempt, `error_on_status` is applied once to the final attempt's status. A
+`max_backoff` or `initial_backoff` written without `max_attempts` of 2 or more
+is rejected rather than silently ignored.
+
+`timeout` is the budget for **each** attempt, not the whole sequence, so
+`timeout: 5s` with `max_attempts: 4` can run about 20s plus backoff. A sync
+flow (one ending in `respond`) holds the original caller for that whole time —
+keep `max_attempts` small there. Retry absorbs a burst against a rate-limited
+API; it does not fix sustained over-rate traffic, which needs a queue
+destination and a consumer.
+
+#### Builder templates
+
+The config UI's palette has a **Templates** group above the node types. A
+template drops several pre-wired nodes in at once — currently "Slack
+notification" and "Discord notification", which format an event and POST it to
+an incoming-webhook URL.
+
+Each template is backed by a complete config in `examples/templates/`, so
+`make validate-examples` validates it like any other example and a renamed node
+option cannot break the palette silently. The builder inserts only the node ids
+listed in the manifest (`web/src/graph/templates.ts`); the trigger and auth
+nodes at the top of each template file, and the `respond` node at the bottom,
+are there to make it a valid standalone config.
+
+Inserted nodes are renamed on collision (`fmt`, then `fmt_2`), so dropping the
+same template in twice is safe.
+
+After inserting, edit two things: the `code` node's script (what the message
+says) and the `http_request` node's `url` (which should stay an environment
+reference such as `${SLACK_WEBHOOK_URL}` — the webhook URL *is* the
+credential). Both templates treat a `4xx` as terminal, because a payload the
+platform rejected will not become acceptable on a retry.
 
 `stop_on_failure` (default) publishes `publish` successors sequentially and returns `503` on the first failure. `skip_failed` attempts every direct publish successor with bounded concurrency and returns `202` when at least one succeeds, with `failed_destinations` listing failures. Fan-out through processing nodes remains sequential and stops on error. Filter drops are successful branch termination.
 
