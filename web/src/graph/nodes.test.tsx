@@ -6,6 +6,7 @@ import { theme } from "../theme";
 import { FlowNode } from "./nodes";
 import { useGraphStore } from "./store";
 import { createNode, resetIdCounters } from "./model";
+import { NODE_SIZE } from "../tokens";
 
 function wrap(ui: React.ReactNode) {
   return render(
@@ -96,6 +97,31 @@ test("FlowNode omits the description line when there is none", () => {
   resetIdCounters();
   const n = createNode("auth", { x: 0, y: 0 });
   const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
-  // Scoped to card text: the port handles carry their own title attributes.
-  expect(container.querySelectorAll("p[title]")).toHaveLength(0);
+  // Scoped to card text: the port handles carry their own title attributes, and
+  // the summary line carries one because it ellipsises (see below).
+  const titled = [...container.querySelectorAll("p[title]")].map((el) => el.getAttribute("title"));
+  expect(titled).toEqual(["hmac_sha256_hex"]);
+});
+
+test("an ellipsised summary stays readable on hover", () => {
+  resetIdCounters();
+  const n = createNode("http_request", { x: 0, y: 0 });
+  const url = "https://hooks.slack.test/services/T0000000/B0000000/averylongsecrettoken";
+  n.data.options = { ...n.data.options, url };
+  wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  // The card is a fixed 208px, so a URL this long is cut off on screen. The
+  // full value has to remain reachable without opening the Inspector.
+  expect(screen.getByText(url)).toHaveAttribute("title", url);
+});
+
+test("the card renders at the shared NODE_SIZE width so the layout estimate is exact", () => {
+  resetIdCounters();
+  const n = createNode("read_body", { x: 0, y: 0 });
+  n.data.description = "Reads the raw body, rejecting anything over 1 MiB.";
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  const paper = container.querySelector(".mantine-Paper-root") as HTMLElement;
+  // A card that sizes to its text makes layout.ts's dagre estimate a lie, which
+  // is what bunched the nodes together on import and Arrange.
+  expect(paper.style.width).toBe(`${NODE_SIZE.width}px`);
+  expect(paper.style.minWidth).toBe("");
 });

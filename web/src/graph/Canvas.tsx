@@ -56,12 +56,14 @@ function CanvasInner() {
       const sel = e.id === selectedEdgeId;
       const markerEnd = {
         type: MarkerType.ArrowClosed,
-        width: 16,
-        height: 16,
+        width: EDGE.arrowSize,
+        height: EDGE.arrowSize,
         markerUnits: "userSpaceOnUse",
         color: sel ? EDGE.selected : EDGE.line,
       };
-      const style = sel ? { stroke: EDGE.selected, strokeWidth: 2.5 } : { stroke: EDGE.line, strokeWidth: 1.5 };
+      const style = sel
+        ? { stroke: EDGE.selected, strokeWidth: EDGE.selectedWidth }
+        : { stroke: EDGE.line, strokeWidth: EDGE.width };
       const g = groups.get(e.id);
       const port = e.sourceHandle && e.sourceHandle !== "out" ? String(e.sourceHandle) : "";
       return {

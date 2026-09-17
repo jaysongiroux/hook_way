@@ -52,12 +52,30 @@ export const PORT: Record<string, string> = {
   on_error: "#8F2D2D",
 };
 
+// NODE_SIZE is the card geometry, shared on purpose: layout.ts feeds these
+// numbers to dagre and nodes.tsx renders them, so the size the layout reserves
+// is the size the canvas actually draws. When the two drifted apart, cards were
+// laid out 180px wide and rendered up to 290px wide, which bunched them
+// together and let each card clip into its neighbour's text.
+export const NODE_SIZE = { width: 208, height: 96 } as const;
+
 export const EDGE = {
   /** Resting stroke and arrowhead. */
   line: "#5C6778",
   selected: "#0C447C",
   /** Border on the target-name pill that sits on the canvas. */
   labelBorder: "#C5CBD4",
+  /** Resting stroke width. Thin enough to stay quiet, thick enough to follow. */
+  width: 2.25,
+  selectedWidth: 3.25,
+  /** Arrowhead box, in canvas units (markerUnits: userSpaceOnUse). */
+  arrowSize: 20,
+  /**
+   * How far short of the target handle the path stops. React Flow runs an edge
+   * from handle centre to handle centre, so without this the arrowhead is drawn
+   * underneath the 10px handle dot and is invisible.
+   */
+  arrowGap: 14,
 } as const;
 
 const linearize = (channel: number): number => {

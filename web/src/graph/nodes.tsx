@@ -5,18 +5,29 @@ import type { HookwayNode } from "./model";
 import { NODE_SCHEMAS, nodeHasOnError, nodeLabel, switchPorts } from "./nodeSchema";
 import { HANDLE_IN, HANDLE_ON_ERROR, HANDLE_OUT } from "./connection";
 import { useGraphStore } from "./store";
-import { DARK, NODE, PORT } from "../tokens";
+import { DARK, NODE, NODE_SIZE, PORT } from "../tokens";
 
 function useSelectionRing(id: string, color: string): CSSProperties {
   const selected = useGraphStore((s) => s.selectedId === id);
   return selected ? { outline: `2px solid ${color}`, outlineOffset: 2 } : {};
 }
 
+// A fixed width, not a minimum: layout.ts reserves NODE_SIZE.width per node, so
+// a card that grew to fit its text would overlap the neighbour the layout had
+// made room for.
 const CARD: CSSProperties = {
-  minWidth: 176,
+  width: NODE_SIZE.width,
   background: DARK.surface,
   borderColor: DARK.border,
   overflow: "hidden",
+};
+
+// The type and summary lines are single-line facts (a node type, a path, a URL),
+// so they ellipsise rather than wrap. The description keeps its 2-line clamp.
+const ONE_LINE: CSSProperties = {
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
 };
 
 function handleStyle(port: string): CSSProperties {
@@ -57,7 +68,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
         <Text fw={600} size="sm" c={DARK.text}>
           {data.yamlId}
         </Text>
-        <Text size="xs" c={DARK.muted} style={{ fontFamily: "ui-monospace, Menlo, monospace" }}>
+        <Text size="xs" c={DARK.muted} style={{ ...ONE_LINE, fontFamily: "ui-monospace, Menlo, monospace" }}>
           {nodeLabel(data.nodeType)}
         </Text>
         {description && (
@@ -66,7 +77,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
           </Text>
         )}
         {summary && (
-          <Text size="xs" c={DARK.muted}>
+          <Text size="xs" c={DARK.muted} title={summary} style={ONE_LINE}>
             {summary}
           </Text>
         )}
