@@ -56,6 +56,26 @@ These are the configs the web builder round-trips. `make validate-examples` skip
 | `showcase/invalid-gate-order.yaml` | Invalid: gate after `read_body` (must fail validate). |
 | `showcase/invalid-many.yaml` | Invalid: several distinct problems reported together. |
 
+## Templates (`examples/templates/`)
+
+Each file here is both a runnable config and the source of a builder palette
+template. `make validate-examples` validates them like any other example, which
+is what stops a template from rotting when a node option changes.
+
+The config UI inserts only part of each file: the node ids listed in the
+`TEMPLATES` manifest (`web/src/graph/templates.ts`). The trigger, `read_body`,
+`auth`, and `envelope` nodes at the top of each flow — and the `respond` node
+at the bottom, which an `http_request` flow needs to compile — exist to make
+the file a valid standalone config and to show the pattern in context. They are
+not part of the inserted template. When you rename a node in one of these
+files, update the manifest; `web/src/graph/templates.test.ts` fails if the two
+disagree.
+
+| File | Pattern |
+| --- | --- |
+| `slack-notify.yaml` | Format an event and POST it to a Slack incoming webhook. |
+| `discord-notify.yaml` | Format an event and POST it to a Discord webhook. |
+
 ## Running validation
 
 ```bash

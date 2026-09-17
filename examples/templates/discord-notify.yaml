@@ -1,0 +1,46 @@
+# TEMPLATE: post an event summary to a Discord webhook.
+#
+# This file has two jobs. It is a complete, runnable config so that
+# `make validate-examples` proves the template still compiles against the
+# current node schema. It is also the source of a builder palette template:
+# the config UI extracts only the `fmt` and `post` nodes (see the TEMPLATES
+# manifest in web/src/graph/templates.ts) and drops them onto the canvas.
+# The trigger/read_body/auth/envelope prefix exists to make the file valid and
+# to show a complete flow; it is not part of the inserted template.
+#
+# Requires DISCORD_WEBHOOK_URL (the webhook URL, which is itself the
+# credential — never commit it) and DISCORD_SOURCE_SECRET (the HMAC secret of
+# whatever system posts TO Hookway).
+#
+# A Discord webhook allows about five requests per five seconds and answers a
+# malformed payload with 400 "Cannot send an empty message". A success is 204
+# No Content. A 4xx is terminal: fix the script, do not retry. Discord sends
+# Retry-After on a 429, which the retry block honors (clamped by max_backoff).
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+flows:
+  discord_notify:
+    nodes:
+      - {id: in, type: http_trigger, description: "Where the source system delivers its webhook.", path: /webhooks/discord-notify, methods: [POST]}
+      - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the sending system's HMAC signature.", scheme: hmac_sha256_hex, secret: "${DISCORD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Decodes the JSON event.", body_format: json}
+      - id: fmt
+        type: code
+        description: "Builds the Discord message payload. Edit the text to suit your event."
+        timeout: 50ms
+        script: |
+          const summary = input.body && input.body.summary ? String(input.body.summary) : 'event received';
+          return { body: { content: 'Hookway: ' + summary }, vars: input.vars };
+      - id: post
+        type: http_request
+        description: "Posts the message to the Discord webhook. 4xx is terminal; 429/5xx retry."
+        url: "${DISCORD_WEBHOOK_URL}"
+        body: transformed
+        timeout: 5s
+        error_on_status: [4xx, 5xx]
+        retry: {max_attempts: 5, initial_backoff: 1s, max_backoff: 15s}
+      - {id: ack, type: respond, description: "Acknowledges the source system once the Discord post succeeded. Not part of the inserted template.", status: 202, body: "notified"}
+    edges: [in>body, body>auth, auth>env, env>fmt, fmt>post, post>ack]

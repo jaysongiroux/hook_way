@@ -163,8 +163,12 @@ validate-examples:
 		ROUTING_TABLE=sandbox_ephemeral_routing_data \
 		ROUTING_DB_URL=postgres://localhost:5432/routing \
 		REPLAY_DB_URL=postgres://localhost:5432/db \
-		REPLAY_API_KEY=dummy; \
-	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/on_error.yaml examples/destinations/*.yaml examples/auth/*.yaml; do \
+		REPLAY_API_KEY=dummy \
+		SLACK_WEBHOOK_URL=https://hooks.slack.test/services/T000/B000/dummy \
+		SLACK_SOURCE_SECRET=dummy \
+		DISCORD_WEBHOOK_URL=https://discord.test/api/webhooks/000/dummy \
+		DISCORD_SOURCE_SECRET=dummy; \
+	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/on_error.yaml examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done; \
