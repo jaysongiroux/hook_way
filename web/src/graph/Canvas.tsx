@@ -16,7 +16,8 @@ import { nodeTypes } from "./nodes";
 import { edgeTypes } from "./RouteEdge";
 import { isValidConnection } from "./connection";
 import { createNode, isNodeKind } from "./model";
-import { DND_MIME } from "./Palette";
+import { DND_MIME, DND_TEMPLATE_MIME } from "./Palette";
+import { isTemplateId, templateSubgraph } from "./templates";
 import { useGraphStore } from "./store";
 import { Button, Text } from "@mantine/core";
 import { DARK, EDGE } from "../tokens";
@@ -46,6 +47,7 @@ function CanvasInner() {
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onConnect = useGraphStore((s) => s.onConnect);
   const addNode = useGraphStore((s) => s.addNode);
+  const insertSubgraph = useGraphStore((s) => s.insertSubgraph);
   const setSelected = useGraphStore((s) => s.setSelected);
   const setSelectedEdge = useGraphStore((s) => s.setSelectedEdge);
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
@@ -92,12 +94,20 @@ function CanvasInner() {
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
+      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      // Templates are checked first: a template drag carries only its own mime
+      // type, so a stray node-mime read would be empty and silently do nothing.
+      const templateId = e.dataTransfer.getData(DND_TEMPLATE_MIME);
+      if (isTemplateId(templateId)) {
+        const sub = templateSubgraph(templateId);
+        if (sub) insertSubgraph(sub, position);
+        return;
+      }
       const kind = e.dataTransfer.getData(DND_MIME);
       if (!isNodeKind(kind)) return;
-      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       addNode(createNode(kind, position));
     },
-    [screenToFlowPosition, addNode],
+    [screenToFlowPosition, addNode, insertSubgraph],
   );
 
   return (

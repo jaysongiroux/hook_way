@@ -22,6 +22,7 @@ const NODE_HELP: Record<string, string> = {
 };
 
 export const PALETTE_GROUP_HELP: Record<string, string> = {
+  Templates: "Several pre-wired nodes at once. Drop one in, then edit the script and URL.",
   Trigger: "Where the HTTP request enters.",
   "Request head": "Look at method, path, and headers before reading the body.",
   "Raw body": "Verify the payload bytes.",
