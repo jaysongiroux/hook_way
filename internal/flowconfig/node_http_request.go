@@ -17,6 +17,7 @@ import (
 
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jasongiroux/hookway/internal/retry"
 	"github.com/jasongiroux/hookway/internal/transform"
 	"github.com/jasongiroux/hookway/internal/vars"
 )
@@ -43,6 +44,7 @@ type httpRequestNode struct {
 	opts         HTTPRequestOptions
 	template     vars.Template
 	timeout      time.Duration
+	retry        retry.Policy
 	forward      map[string]bool
 	allowlist    map[string]bool
 	denylist     map[string]bool
@@ -58,6 +60,20 @@ func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist 
 	if opts.Timeout != "" {
 		if d, err := time.ParseDuration(opts.Timeout); err == nil && d > 0 {
 			timeout = d
+		}
+	}
+	// Retry defaults mirror the webhook destination (internal/queue/webhook.go)
+	// so operators learn one set of numbers. They only apply once the operator
+	// has opted in with max_attempts >= 2.
+	policy := retry.Policy{MaxAttempts: opts.Retry.MaxAttempts}
+	if policy.Attempts() > 1 {
+		policy.InitialBackoff = 500 * time.Millisecond
+		policy.MaxBackoff = 30 * time.Second
+		if d, err := time.ParseDuration(opts.Retry.InitialBackoff); err == nil && d > 0 {
+			policy.InitialBackoff = d
+		}
+		if d, err := time.ParseDuration(opts.Retry.MaxBackoff); err == nil && d > 0 {
+			policy.MaxBackoff = d
 		}
 	}
 	forward := map[string]bool{}
@@ -78,7 +94,7 @@ func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist 
 		deny[http.CanonicalHeaderKey(name)] = true
 	}
 	return httpRequestNode{
-		id: id, opts: opts, template: tpl, timeout: timeout,
+		id: id, opts: opts, template: tpl, timeout: timeout, retry: policy,
 		forward: forward, allowlist: allow, denylist: deny, explicitAuth: explicitAuth,
 	}
 }
@@ -104,11 +120,68 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusInternalServerError, Err: err}
 	}
+	attempts := n.retry.Attempts()
+	delay := n.retry.InitialBackoff
+	if delay <= 0 {
+		delay = retry.BackoffFloor
+	}
+	var res attemptResult
+	for attempt := 1; ; attempt++ {
+		res = n.send(ctx, method, target, body, contentType, env)
+		if attempt >= attempts || !res.retryable {
+			break
+		}
+		// A 429's Retry-After overrides the computed backoff for this wait,
+		// capped by max_backoff so a hostile or mistaken header cannot park
+		// the flow for hours.
+		wait := delay
+		if res.retryAfter > 0 {
+			wait = res.retryAfter
+			if n.retry.MaxBackoff > 0 && wait > n.retry.MaxBackoff {
+				wait = n.retry.MaxBackoff
+			}
+		}
+		if err := retry.Sleep(ctx, wait); err != nil {
+			return nil, graph.NodeError{
+				NodeID: n.id, Status: http.StatusGatewayTimeout,
+				Err: fmt.Errorf("http_request %q: retry aborted after %d attempts: %w", n.id, attempt, err),
+			}
+		}
+		delay = retry.NextBackoff(delay, n.retry.MaxBackoff)
+	}
+	if res.err != nil {
+		return nil, *res.err
+	}
+	if matchErrorOnStatus(res.status, n.opts.ErrorOnStatus) {
+		return nil, graph.NodeError{
+			NodeID: n.id, Status: http.StatusBadGateway,
+			Err: fmt.Errorf("http_request %q: upstream status %d", n.id, res.status),
+		}
+	}
+	env.Upstream = &graph.UpstreamResponse{Status: res.status, Header: res.header, Body: res.body}
+	return env, nil
+}
+
+// attemptResult is the outcome of one upstream attempt. Exactly one of err or
+// a response (status/header/body) is meaningful.
+type attemptResult struct {
+	status     int
+	header     http.Header
+	body       []byte
+	err        *graph.NodeError
+	retryable  bool
+	retryAfter time.Duration
+}
+
+// send performs one attempt. It builds a fresh *http.Request every call: the
+// body is an io.Reader, so reusing a request across attempts would send an
+// empty body on the second one.
+func (n httpRequestNode) send(ctx context.Context, method, target string, body []byte, contentType string, env graph.Envelope) attemptResult {
 	nctx, cancel := context.WithTimeout(ctx, n.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(nctx, method, target, bytes.NewReader(body))
 	if err != nil {
-		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+		return attemptResult{err: &graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}}
 	}
 	if n.opts.ForwardQuery {
 		req.URL.RawQuery = env.V.Raw.Head.Query.Encode()
@@ -129,32 +202,30 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 			status = http.StatusGatewayTimeout
 			err = fmt.Errorf("http_request %q: upstream timeout", n.id)
 		}
-		return nil, graph.NodeError{NodeID: n.id, Status: status, Err: err}
+		// A transport failure is the retryable case: the upstream may simply
+		// have been unreachable for a moment.
+		return attemptResult{retryable: true, err: &graph.NodeError{NodeID: n.id, Status: status, Err: err}}
 	}
 	defer resp.Body.Close()
 	limited := io.LimitReader(resp.Body, maxUpstreamBodyBytes+1)
 	respBody, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadGateway, Err: err}
+		return attemptResult{retryable: true, err: &graph.NodeError{NodeID: n.id, Status: http.StatusBadGateway, Err: err}}
 	}
 	if int64(len(respBody)) > maxUpstreamBodyBytes {
-		return nil, graph.NodeError{
+		return attemptResult{err: &graph.NodeError{
 			NodeID: n.id, Status: http.StatusBadGateway,
 			Err: fmt.Errorf("http_request %q: upstream body exceeds %d bytes", n.id, maxUpstreamBodyBytes),
+		}}
+	}
+	res := attemptResult{status: resp.StatusCode, header: resp.Header.Clone(), body: respBody}
+	if retry.RetryableStatus(resp.StatusCode) {
+		res.retryable = true
+		if resp.StatusCode == http.StatusTooManyRequests {
+			res.retryAfter = retry.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 		}
 	}
-	if matchErrorOnStatus(resp.StatusCode, n.opts.ErrorOnStatus) {
-		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusBadGateway,
-			Err: fmt.Errorf("http_request %q: upstream status %d", n.id, resp.StatusCode),
-		}
-	}
-	env.Upstream = &graph.UpstreamResponse{
-		Status: resp.StatusCode,
-		Header: resp.Header.Clone(),
-		Body:   respBody,
-	}
-	return env, nil
+	return res
 }
 
 func (n httpRequestNode) copyForwardedHeaders(req *http.Request, src http.Header) {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -325,5 +326,159 @@ func TestReviewConnectionNominatedHeadersAreRemoved(t *testing.T) {
 		if h.Get("X-Internal") != "" || h.Get("X-Other") != "" || h.Get("X-Public") != "visible" {
 			t.Fatalf("hop-by-hop leak: %v", h)
 		}
+	}
+}
+
+func retryEnvelope(body string) graph.Envelope {
+	return graph.Envelope{
+		V:    graph.Verified{Raw: graph.RawRequest{Head: graph.RequestHead{Method: http.MethodPost, Header: http.Header{}}, Body: []byte(body)}},
+		Vars: map[string]string{},
+	}
+}
+
+func TestHTTPRequestRetriesUntilSuccess(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ := io.ReadAll(r.Body)
+		if string(got) != `{"k":"v"}` {
+			t.Errorf("attempt %d body = %q, want the full payload resent", atomic.LoadInt32(&calls)+1, got)
+		}
+		if atomic.AddInt32(&calls, 1) < 3 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	node := mustHTTPRequestNode(t,
+		"url: "+upstream.URL+"\nretry:\n  max_attempts: 3\n  initial_backoff: 1ms\n  max_backoff: 5ms\n",
+		nil, nil)
+	out, err := node.Run(context.Background(), retryEnvelope(`{"k":"v"}`))
+	if err != nil {
+		t.Fatalf("Run() = %v, want success on the third attempt", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("upstream calls = %d, want 3", got)
+	}
+	if up := out.(graph.Envelope).Upstream; up == nil || up.Status != http.StatusOK {
+		t.Fatalf("upstream = %+v, want status 200", up)
+	}
+}
+
+func TestHTTPRequestDoesNotRetryTerminalStatus(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer upstream.Close()
+
+	node := mustHTTPRequestNode(t,
+		"url: "+upstream.URL+"\nretry:\n  max_attempts: 4\n  initial_backoff: 1ms\n",
+		nil, nil)
+	if _, err := node.Run(context.Background(), retryEnvelope("{}")); err != nil {
+		t.Fatalf("Run() = %v, want the 400 captured as the upstream response", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("upstream calls = %d, want 1 (a 4xx is terminal)", got)
+	}
+}
+
+func TestHTTPRequestHonorsRetryAfterOn429(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	// max_backoff caps the 1s Retry-After down to 20ms so the test stays fast
+	// while still proving the header was read and clamped.
+	node := mustHTTPRequestNode(t,
+		"url: "+upstream.URL+"\nretry:\n  max_attempts: 2\n  initial_backoff: 1ms\n  max_backoff: 20ms\n",
+		nil, nil)
+	start := time.Now()
+	if _, err := node.Run(context.Background(), retryEnvelope("{}")); err != nil {
+		t.Fatalf("Run() = %v, want success after the 429", err)
+	}
+	elapsed := time.Since(start)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("upstream calls = %d, want 2", got)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("elapsed = %v, want the 1s Retry-After clamped by max_backoff", elapsed)
+	}
+	if elapsed < 20*time.Millisecond {
+		t.Fatalf("elapsed = %v, want at least the 20ms clamped wait", elapsed)
+	}
+}
+
+func TestHTTPRequestRetryExhaustionAppliesErrorOnStatus(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+
+	node := mustHTTPRequestNode(t,
+		"url: "+upstream.URL+"\nerror_on_status: [5xx]\nretry:\n  max_attempts: 3\n  initial_backoff: 1ms\n  max_backoff: 2ms\n",
+		nil, nil)
+	_, err := node.Run(context.Background(), retryEnvelope("{}"))
+	var nodeErr graph.NodeError
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("Run() = %v, want a graph.NodeError after exhausting attempts", err)
+	}
+	if nodeErr.Status != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", nodeErr.Status)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("upstream calls = %d, want 3", got)
+	}
+}
+
+func TestHTTPRequestRetryStopsOnCancelledContext(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer upstream.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	node := mustHTTPRequestNode(t,
+		"url: "+upstream.URL+"\nretry:\n  max_attempts: 5\n  initial_backoff: 200ms\n  max_backoff: 200ms\n",
+		nil, nil)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := node.Run(ctx, retryEnvelope("{}")); err == nil {
+		t.Fatal("Run() = nil, want an error when the context is cancelled mid-backoff")
+	}
+	if got := atomic.LoadInt32(&calls); got > 2 {
+		t.Fatalf("upstream calls = %d, want the loop to stop at cancellation", got)
+	}
+}
+
+func TestHTTPRequestWithoutRetryMakesOneAttempt(t *testing.T) {
+	var calls int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+
+	node := mustHTTPRequestNode(t, "url: "+upstream.URL+"\n", nil, nil)
+	if _, err := node.Run(context.Background(), retryEnvelope("{}")); err != nil {
+		t.Fatalf("Run() = %v, want the 503 captured without error_on_status", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("upstream calls = %d, want exactly 1 with no retry block", got)
 	}
 }
