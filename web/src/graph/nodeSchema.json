@@ -251,6 +251,23 @@
             "raw",
             "transformed"
           ]
+        },
+        "retry": {
+          "properties": {
+            "max_attempts": {
+              "type": "integer",
+              "maximum": 10,
+              "minimum": 1
+            },
+            "initial_backoff": {
+              "type": "string"
+            },
+            "max_backoff": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
         }
       },
       "additionalProperties": false,

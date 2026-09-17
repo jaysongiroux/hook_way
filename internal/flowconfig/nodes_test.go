@@ -212,3 +212,76 @@ func TestEveryNodeTypeAcceptsDescription(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPRequestRetryValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "absent retry block is valid",
+			yaml: "url: https://example.test/hook\n",
+		},
+		{
+			name: "full retry block is valid",
+			yaml: "url: https://example.test/hook\nretry:\n  max_attempts: 4\n  initial_backoff: 500ms\n  max_backoff: 10s\n",
+		},
+		{
+			name: "explicit single attempt is valid",
+			yaml: "url: https://example.test/hook\nretry:\n  max_attempts: 1\n",
+		},
+		{
+			name:    "negative attempts rejected",
+			yaml:    "url: https://example.test/hook\nretry:\n  max_attempts: -1\n",
+			wantErr: "retry.max_attempts",
+		},
+		{
+			name:    "attempts above the ceiling rejected",
+			yaml:    "url: https://example.test/hook\nretry:\n  max_attempts: 50\n",
+			wantErr: "retry.max_attempts",
+		},
+		{
+			name:    "backoff without attempts rejected as a silent no-op",
+			yaml:    "url: https://example.test/hook\nretry:\n  initial_backoff: 1s\n",
+			wantErr: "max_attempts",
+		},
+		{
+			name:    "unparseable backoff rejected",
+			yaml:    "url: https://example.test/hook\nretry:\n  max_attempts: 3\n  initial_backoff: soon\n",
+			wantErr: "retry.initial_backoff",
+		},
+		{
+			name:    "zero backoff rejected",
+			yaml:    "url: https://example.test/hook\nretry:\n  max_attempts: 3\n  initial_backoff: 0s\n",
+			wantErr: "retry.initial_backoff",
+		},
+		{
+			name:    "initial greater than max rejected",
+			yaml:    "url: https://example.test/hook\nretry:\n  max_attempts: 3\n  initial_backoff: 30s\n  max_backoff: 5s\n",
+			wantErr: "must not exceed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, err := NewRegistryWithOptions(RegistryOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec, _ := reg.Lookup("http_request")
+			_, err = spec.New(nodeConfigFromYAML(t, "http_request", tc.yaml))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected an error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}

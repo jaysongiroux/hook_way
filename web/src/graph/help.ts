@@ -80,6 +80,7 @@ const NODE_FIELD_HELP: Record<string, string> = {
   "http_request.headers": "Extra headers to send. Values may use ${vars}.",
   "http_request.error_on_status": "Status classes that fail this node, e.g. 5xx.",
   "http_request.body": "raw sends the original bytes; transformed sends the current event body.",
+  "http_request.retry": "Optional: re-attempt transport errors, timeouts, 429, and 5xx. Leave empty for a single attempt.",
   "publish.destination": "Id of an entry in Destinations.",
   "publish.target": "Queue, topic, routing key, or webhook path on that destination.",
   "publish.create": "Declare the queue/topic at startup when the backend supports it.",
@@ -110,6 +111,12 @@ const COMMON_FIELD_HELP: Record<string, string> = {
   cache: "Optional in-process cache for lookup results.",
   url: "HTTP(S) URL.",
   timeout: "Duration string such as 5s or 1m.",
+  // Keyed "<parent>.<child>" because SchemaForm's nestedHelp asks for the
+  // qualified name first, and nodeFieldHelp only consults this map (not
+  // NODE_FIELD_HELP) for a dotted field.
+  "retry.max_attempts": "Total attempts including the first. 1 (or empty) means no retry. Max 10.",
+  "retry.initial_backoff": "Wait before the second attempt, doubled with jitter each time. Defaults to 500ms.",
+  "retry.max_backoff": "Ceiling for any single wait, including a 429's Retry-After. Defaults to 30s.",
 };
 
 export function nodeHelp(type: string): string {

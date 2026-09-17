@@ -126,6 +126,18 @@ type HTTPRequestOptions struct {
 	Headers        map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	ErrorOnStatus  []string          `yaml:"error_on_status,omitempty" json:"error_on_status,omitempty"`
 	Body           string            `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed"`
+	Retry          HTTPRetryOptions  `yaml:"retry,omitempty" json:"retry,omitempty"`
+}
+
+// HTTPRetryOptions is the opt-in retry budget for an http_request node. A zero
+// value — an absent or empty `retry:` block — means exactly one attempt, which
+// is the historical behavior and the safe default for the non-idempotent POST
+// this node usually issues. Retries cover transport errors, timeouts, 429, and
+// 5xx; every other status is terminal.
+type HTTPRetryOptions struct {
+	MaxAttempts    int    `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty" jsonschema:"minimum=1,maximum=10"`
+	InitialBackoff string `yaml:"initial_backoff,omitempty" json:"initial_backoff,omitempty"`
+	MaxBackoff     string `yaml:"max_backoff,omitempty" json:"max_backoff,omitempty"`
 }
 type PublishOptions struct {
 	Destination       string         `yaml:"destination" json:"destination" jsonschema:"required"`
@@ -508,7 +520,46 @@ func validateHTTPRequest(o HTTPRequestOptions) error {
 	default:
 		return fmt.Errorf("http_request.body %q must be raw or transformed", o.Body)
 	}
+	if err := validateHTTPRetry(o.Retry); err != nil {
+		return err
+	}
 	return validateDuration("timeout", o.Timeout, false)
+}
+
+// validateHTTPRetry rejects a retry block that cannot do what it looks like it
+// does. In particular a backoff set without max_attempts >= 2 is rejected
+// rather than silently ignored: retry is opt-in through max_attempts, so a
+// lone backoff value is always a half-written config.
+func validateHTTPRetry(o HTTPRetryOptions) error {
+	if o.MaxAttempts < 0 {
+		return errors.New("retry.max_attempts must not be negative")
+	}
+	if o.MaxAttempts > 10 {
+		return errors.New("retry.max_attempts must be 10 or fewer")
+	}
+	if o.MaxAttempts < 2 && (o.InitialBackoff != "" || o.MaxBackoff != "") {
+		return errors.New("retry.initial_backoff and retry.max_backoff have no effect without retry.max_attempts of 2 or more")
+	}
+	if err := validateDuration("retry.initial_backoff", o.InitialBackoff, false); err != nil {
+		return err
+	}
+	if err := validateDuration("retry.max_backoff", o.MaxBackoff, false); err != nil {
+		return err
+	}
+	if o.InitialBackoff != "" && o.MaxBackoff != "" {
+		initial, err := time.ParseDuration(o.InitialBackoff)
+		if err != nil {
+			return fmt.Errorf("retry.initial_backoff: %w", err)
+		}
+		maxBackoff, err := time.ParseDuration(o.MaxBackoff)
+		if err != nil {
+			return fmt.Errorf("retry.max_backoff: %w", err)
+		}
+		if initial > maxBackoff {
+			return errors.New("retry.initial_backoff must not exceed retry.max_backoff")
+		}
+	}
+	return nil
 }
 func validatePublish(o PublishOptions) error {
 	if err := require("destination", o.Destination); err != nil {
