@@ -10,6 +10,8 @@ import {
 import { isValidConnection } from "./connection";
 import { layout, maybeLayout } from "./layout";
 import { emptyDocument, seedCounters, type GraphDocument, type HookwayNode, type FlowSnapshot } from "./model";
+import { offsetSubgraph, renameSubgraph } from "./subgraph";
+import type { TemplateSubgraph } from "./templates";
 
 let edgeSeq = 0;
 
@@ -20,6 +22,7 @@ interface GraphState extends GraphDocument {
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (c: Connection) => void;
   addNode: (n: HookwayNode) => void;
+  insertSubgraph: (sub: TemplateSubgraph, position: { x: number; y: number }) => void;
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
   updateEdgeData: (id: string, patch: Record<string, unknown>) => void;
   setServerConfig: (patch: Record<string, unknown>) => void;
@@ -61,6 +64,17 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({ edges: [...edges, edge] });
   },
   addNode: (n) => set({ nodes: [...get().nodes, n] }),
+  // insertSubgraph drops a palette template onto the canvas. Ids are renamed
+  // against everything already in this flow (a second insert of the same
+  // template would otherwise export duplicate `id:` keys), and positions are
+  // translated so the template lands where it was dropped instead of on top
+  // of the existing graph.
+  insertSubgraph: (sub, position) => {
+    const { nodes, edges } = get();
+    const taken = new Set(nodes.flatMap((n) => [n.id, String(n.data.yamlId ?? n.id)]));
+    const placed = offsetSubgraph(renameSubgraph(sub, taken), position);
+    set({ nodes: [...nodes, ...placed.nodes], edges: [...edges, ...placed.edges] });
+  },
   updateNodeData: (id, patch) =>
     set({
       nodes: get().nodes.map((n) =>
