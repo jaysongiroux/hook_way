@@ -57,7 +57,10 @@ export const PORT: Record<string, string> = {
 // is the size the canvas actually draws. When the two drifted apart, cards were
 // laid out 180px wide and rendered up to 290px wide, which bunched them
 // together and let each card clip into its neighbour's text.
-export const NODE_SIZE = { width: 208, height: 96 } as const;
+//
+// handle is the diameter of a port dot, drawn by nodes.tsx. It is a token
+// because the RouteEdge geometry test asserts against it.
+export const NODE_SIZE = { width: 208, height: 96, handle: 10 } as const;
 
 export const EDGE = {
   /** Resting stroke and arrowhead. */
@@ -71,11 +74,23 @@ export const EDGE = {
   /** Arrowhead box, in canvas units (markerUnits: userSpaceOnUse). */
   arrowSize: 20,
   /**
-   * How far short of the target handle the path stops. React Flow runs an edge
-   * from handle centre to handle centre, so without this the arrowhead is drawn
-   * underneath the 10px handle dot and is invisible.
+   * The canvas gap you actually see between the arrow's point and the near edge
+   * of the target port dot. RouteEdge stops the path this far short of the
+   * connection point React Flow hands it; without any gap the arrowhead is
+   * drawn over the dot and is never seen.
+   *
+   * This is the visible gap 1:1, not an offset to a dot centre. Two facts make
+   * it come out that way, both measured in Chromium rather than reasoned about:
+   * React Flow's arrowhead marker uses refX/refY of 0 with the polyline's tip
+   * at 0,0, so the tip lands exactly on the path's end point; and the target
+   * connection point it reports sits on the dot's near edge, not its centre.
+   * An earlier version of this token subtracted a dot radius on the assumption
+   * the connection point was the centre, which silently left the gap at 9px.
+   *
+   * 1 reads as the arrow touching the dot while keeping the whole arrowhead on
+   * open canvas. canvas-geometry.spec.ts holds the budget as its own literal.
    */
-  arrowGap: 14,
+  arrowGap: 1,
 } as const;
 
 const linearize = (channel: number): number => {

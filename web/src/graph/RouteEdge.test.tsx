@@ -68,6 +68,31 @@ test("a route edge renders an arrowhead marker showing data direction", () => {
   expect(path.getAttribute("marker-end")).toBeTruthy();
 });
 
+// jsdom lays out no handles, so this can only pin that the path stops arrowGap
+// short of the connection point -- the arithmetic RouteEdge is responsible for.
+// Whether that lands 4px from the dot depends on where React Flow puts the
+// connection point, which only a real browser knows; validation.spec.ts
+// measures the rendered gap.
+test("the path stops arrowGap short of the target connection point", () => {
+  const { a, b } = pair();
+  const { container } = render(
+    <MantineProvider theme={theme}>
+      <ReactFlowProvider>
+        <div style={{ width: 600, height: 400 }}>
+          <ReactFlow
+            nodes={[a, b]}
+            edges={[{ id: "e1", source: a.id, target: b.id, type: "route" }]}
+            edgeTypes={edgeTypes}
+          />
+        </div>
+      </ReactFlowProvider>
+    </MantineProvider>,
+  );
+  const d = (container.querySelector(".react-flow__edge-path") as SVGPathElement).getAttribute("d") ?? "";
+  const endX = Number(d.trim().split(/[\s,]+/).at(-2));
+  expect(b.position.x - endX).toBeCloseTo(EDGE.arrowGap, 5);
+});
+
 test("the selected edge's chip is highlighted", () => {
   useGraphStore.setState({ selectedId: null, selectedEdgeId: "e1" });
   const { a, b } = pair();

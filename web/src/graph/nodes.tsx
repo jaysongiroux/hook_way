@@ -31,7 +31,7 @@ const ONE_LINE: CSSProperties = {
 };
 
 function handleStyle(port: string): CSSProperties {
-  return { background: PORT[port] ?? NODE.border.endpoint, width: 10, height: 10 };
+  return { background: PORT[port] ?? NODE.border.endpoint, width: NODE_SIZE.handle, height: NODE_SIZE.handle };
 }
 
 // Two lines keeps cards a predictable height on a dense canvas; the full text
