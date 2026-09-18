@@ -168,8 +168,10 @@ validate-examples:
 		SLACK_SOURCE_SECRET=dummy \
 		DISCORD_WEBHOOK_URL=https://discord.test/api/webhooks/000/dummy \
 		DISCORD_SOURCE_SECRET=dummy \
+		XML_SOURCE_SECRET=dummy \
+		XML_UPSTREAM_URL=https://upstream.test/xml \
 		HOOKWAY_API_KEY=dummy; \
-	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/on_error.yaml examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
+	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/on_error.yaml examples/xml.yaml examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done; \

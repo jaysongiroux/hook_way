@@ -63,21 +63,30 @@ func (n codeNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, err
 			Err: fmt.Errorf("code %q: expected Envelope, got %T", n.id, in),
 		}
 	}
-	if _, isXML := env.Body.(transform.Document); isXML {
-		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusBadRequest,
-			Err: fmt.Errorf("code %q: XML bodies are not a script input; use transform xml_prune", n.id),
+	// An XML body goes to the script as an explicitly tagged node tree (see
+	// xmlscript.go) and must come back in the same shape. A convenience
+	// mapping was rejected: it cannot round-trip attributes, repeated
+	// siblings, or mixed content, so a script that read and returned a body
+	// would silently drop parts of the document.
+	wasXML := false
+	var body any
+	switch xmlBody := env.Body.(type) {
+	case transform.Document:
+		wasXML, body = true, xmlToScript(xmlBody)
+	case *transform.Document:
+		if xmlBody == nil {
+			return nil, graph.NodeError{
+				NodeID: n.id, Status: http.StatusBadRequest,
+				Err: fmt.Errorf("code %q: xml body is nil", n.id),
+			}
 		}
-	}
-	if _, isXML := env.Body.(*transform.Document); isXML {
-		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusBadRequest,
-			Err: fmt.Errorf("code %q: XML bodies are not a script input; use transform xml_prune", n.id),
+		wasXML, body = true, xmlToScript(*xmlBody)
+	default:
+		cloned, err := cloneJSONValue(env.Body)
+		if err != nil {
+			return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: fmt.Errorf("code %q: body: %w", n.id, err)}
 		}
-	}
-	body, err := cloneJSONValue(env.Body)
-	if err != nil {
-		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: fmt.Errorf("code %q: body: %w", n.id, err)}
+		body = cloned
 	}
 	input := map[string]any{
 		"body":    body,
@@ -96,8 +105,21 @@ func (n codeNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, err
 			Err: fmt.Errorf("code %q: script must return an object {body, vars}, got %T", n.id, out),
 		}
 	}
-	if body, exists := result["body"]; exists {
-		env.Body = body
+	if returned, exists := result["body"]; exists {
+		if wasXML {
+			// Keep the body an XML Document: a downstream xml_prune, and an
+			// http_request with body: transformed, both type-switch on it.
+			doc, convErr := scriptToXML(returned)
+			if convErr != nil {
+				return nil, graph.NodeError{
+					NodeID: n.id, Status: http.StatusBadRequest,
+					Err: fmt.Errorf("code %q: %w", n.id, convErr),
+				}
+			}
+			env.Body = doc
+		} else {
+			env.Body = returned
+		}
 	}
 	if varsVal, exists := result["vars"]; exists {
 		varsOut, err := asStringMap(varsVal)

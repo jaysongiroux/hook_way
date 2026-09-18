@@ -137,6 +137,48 @@ test("the billing ingest templates verify the provider signature layout", () => 
   expect(paddle.nodes.some((n) => n.data.nodeType === "publish")).toBe(false);
 });
 
+test("the xml template keeps the envelope, filter, prune and forward consistent", () => {
+  const xml = templateSubgraph("xml-ingest")!;
+  // The whole pipeline travels together: xml_prune only validates behind an
+  // xml envelope, so a front/back split would insert an invalid config.
+  expect(xml.nodes.map((n) => n.data.nodeType)).toEqual([
+    "http_trigger",
+    "loop_guard",
+    "rate_limit",
+    "read_body",
+    "auth",
+    "replay_guard",
+    "envelope",
+    "filter",
+    "code",
+    "transform",
+    "http_request",
+  ]);
+  expect(xml.nodes.find((n) => n.data.nodeType === "envelope")!.data.options.body_format).toBe("xml");
+
+  const prune = xml.nodes.find((n) => n.data.nodeType === "transform")!;
+  expect(prune.data.options.kind).toBe("xml_prune");
+  expect((prune.data.options.rules as string[]).length).toBeGreaterThan(0);
+
+  // The filter teaches the XML path syntax, so it must read the body rather
+  // than a header.
+  const conditions = xml.nodes.find((n) => n.data.nodeType === "filter")!.data.options
+    .conditions as Array<Record<string, unknown>>;
+  expect(conditions[0].source).toBe("body");
+  expect(String(conditions[0].path)).toContain(".");
+
+  // The script must return the body it was given, or the prune below it has
+  // nothing to walk.
+  const script = String(xml.nodes.find((n) => n.data.nodeType === "code")!.data.options.script);
+  expect(script).toContain("input.body");
+  expect(script).toContain("children");
+
+  const post = xml.nodes.find((n) => n.data.nodeType === "http_request")!;
+  expect(post.data.options.body).toBe("transformed");
+  expect(post.data.options.url).toBe("${XML_UPSTREAM_URL}");
+  expect(post.data.options.forward_headers).toBeUndefined();
+});
+
 test("every template config authenticates inbound traffic and keeps secrets out of YAML", () => {
   for (const def of TEMPLATES) {
     expect(def.yaml, def.id).not.toMatch(/\btype:\s*no_auth\b/);

@@ -52,7 +52,7 @@ const NODE_FIELD_HELP: Record<string, string> = {
   "replay_guard.ttl": "How long a seen event key is remembered, e.g. 24h.",
   "replay_guard.max_entries": "In-memory cap for remembered keys in this process.",
   "replay_guard.key": "Event identity to remember. Empty uses the default id from the payload.",
-  "envelope.body_format": "How to decode the body: json, xml, or raw bytes wrapped as an event.",
+  "envelope.body_format": "How to decode the body: json objects, xml element tree, or raw bytes (raw leaves the body empty).",
   "filter.conditions": "All conditions must match for the event to continue.",
   "filter.on_no_match": "drop acknowledges 202 without publishing; reject fails the request.",
   "lookup.provider": "Where to read the extra data from (env, file, dynamodb, …).",
@@ -61,7 +61,7 @@ const NODE_FIELD_HELP: Record<string, string> = {
   "lookup.table": "Table or collection when the provider needs one.",
   "lookup.fallback": "Value to use when the lookup misses.",
   "lookup.negative_ttl": "How long to remember a miss so it is not re-fetched immediately.",
-  "transform.kind": "changed_fields diffs two objects; field_map copies paths; xml_prune walks XML.",
+  "transform.kind": "changed_fields and field_map need a json body; xml_prune needs an xml one. Validation rejects a mismatch.",
   "transform.from": "Source path for changed_fields.",
   "transform.to": "Destination path for changed_fields.",
   "transform.name": "Variable name that receives the transform result.",
@@ -118,6 +118,7 @@ const COMMON_FIELD_HELP: Record<string, string> = {
   "retry.max_attempts": "Total attempts including the first. 1 (or empty) means no retry. Max 10.",
   "retry.initial_backoff": "Wait before the second attempt, doubled with jitter each time. Defaults to 500ms.",
   "retry.max_backoff": "Ceiling for any single wait, including a 429's Retry-After. Defaults to 30s.",
+  "conditions.path": "Header name, or a dotted body path: JSON keys (repository.private) or XML elements with @ for attributes (LOAN.@id).",
 };
 
 export function nodeHelp(type: string): string {

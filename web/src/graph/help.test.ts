@@ -25,3 +25,14 @@ test("http_request retry copy resolves for the block and its nested keys", () =>
   expect(nodeFieldHelp("http_request", "retry.initial_backoff")).toMatch(/jitter/i);
   expect(nodeFieldHelp("http_request", "retry.max_backoff")).toMatch(/Retry-After/i);
 });
+
+test("filter path copy mentions both body shapes", () => {
+  const copy = nodeFieldHelp("filter", "conditions.path");
+  expect(copy).toBeDefined();
+  expect(copy).toMatch(/xml/i);
+  expect(copy).toMatch(/@/);
+});
+
+test("envelope body_format copy explains that raw leaves the body empty", () => {
+  expect(nodeFieldHelp("envelope", "body_format")).toMatch(/raw leaves the body empty/i);
+});

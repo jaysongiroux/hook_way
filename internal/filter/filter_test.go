@@ -208,3 +208,59 @@ func TestMatchReturnsFailingIndex(t *testing.T) {
 		t.Fatalf("Describe = %q %q %q", source, path, op)
 	}
 }
+
+func TestMatchResolvesXMLBody(t *testing.T) {
+	body := doc(t, `<MESSAGE><LOAN id="L1"><Amount>500</Amount></LOAN></MESSAGE>`)
+	for _, tc := range []struct {
+		name string
+		spec Spec
+		want bool
+	}{
+		{"element equals", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpEq, Value: "500"}, true},
+		{"element numeric compare", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpGt, Value: 100}, true},
+		{"element numeric compare below", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpLt, Value: 100}, false},
+		{"attribute equals", Spec{Source: SourceBody, Path: "LOAN.@id", Operator: OpEq, Value: "L1"}, true},
+		{"element exists", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpExists}, true},
+		{"missing element does not exist", Spec{Source: SourceBody, Path: "LOAN.Nope", Operator: OpNotExists}, true},
+		{"missing element exists is false", Spec{Source: SourceBody, Path: "LOAN.Nope", Operator: OpExists}, false},
+		{"regex on element text", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpRegex, Value: "^5[0-9]+$"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chain, issues := Compile([]Spec{tc.spec})
+			if len(issues) > 0 {
+				t.Fatalf("Compile issues: %+v", issues)
+			}
+			got, _ := chain.Match(http.Header{}, body)
+			if got != tc.want {
+				t.Fatalf("Match = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMatchXMLBodyByPointer guards the other shape an XML body arrives in:
+// node_code and node_transform both accept *transform.Document, so a filter
+// placed after one of them can see a pointer.
+func TestMatchXMLBodyByPointer(t *testing.T) {
+	d := doc(t, `<MESSAGE><LOAN><Amount>500</Amount></LOAN></MESSAGE>`)
+	chain, issues := Compile([]Spec{{Source: SourceBody, Path: "LOAN.Amount", Operator: OpEq, Value: "500"}})
+	if len(issues) > 0 {
+		t.Fatalf("Compile issues: %+v", issues)
+	}
+	if got, _ := chain.Match(http.Header{}, &d); !got {
+		t.Fatal("Match on *transform.Document = false, want true")
+	}
+}
+
+// TestMatchJSONBodyUnaffected is the regression guard: adding XML dispatch
+// must not change how a JSON body resolves.
+func TestMatchJSONBodyUnaffected(t *testing.T) {
+	body := map[string]any{"repository": map[string]any{"private": true}}
+	chain, issues := Compile([]Spec{{Source: SourceBody, Path: "repository.private", Operator: OpEq, Value: true}})
+	if len(issues) > 0 {
+		t.Fatalf("Compile issues: %+v", issues)
+	}
+	if got, _ := chain.Match(http.Header{}, body); !got {
+		t.Fatal("Match on a JSON body = false, want true")
+	}
+}

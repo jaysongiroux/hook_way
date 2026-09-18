@@ -2,6 +2,7 @@ import slackYaml from "../../../examples/templates/slack-notify.yaml?raw";
 import discordYaml from "../../../examples/templates/discord-notify.yaml?raw";
 import stripeYaml from "../../../examples/templates/stripe-ingest.yaml?raw";
 import paddleYaml from "../../../examples/templates/paddle-ingest.yaml?raw";
+import xmlYaml from "../../../examples/templates/xml-ingest.yaml?raw";
 import type { Edge } from "@xyflow/react";
 import { fromYaml } from "./fromYaml";
 import type { HookwayNode } from "./model";
@@ -43,6 +44,13 @@ export const TEMPLATES: TemplateDef[] = [
     help: "Verifies Paddle-Signature with a rotating secret, sheds loops and bursts, drops retries already seen, and builds the JSON envelope.",
     nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
     yaml: paddleYaml,
+  },
+  {
+    id: "xml-ingest",
+    label: "XML webhook",
+    help: "Verifies an HMAC over the raw bytes, parses the body into an XML element tree, filters on an element path, reads fields into vars, prunes empty elements, and forwards the document as application/xml. Inserts the whole pipeline because xml_prune only validates behind an xml envelope.",
+    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env", "only_loans", "tag", "prune", "post"],
+    yaml: xmlYaml,
   },
   {
     id: "slack-notify",

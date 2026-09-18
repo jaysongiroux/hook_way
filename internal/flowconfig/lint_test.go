@@ -137,3 +137,105 @@ func containsMessage(issues []config.ValidationIssue, want string) bool {
 	}
 	return false
 }
+
+func TestBodyFormatGuardRejectsUnreadableBodyCombinations(t *testing.T) {
+	cases := []struct {
+		name    string
+		flow    string
+		wantErr string
+	}{
+		{
+			name: "body filter after a raw envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: raw}
+      - {id: filt, type: filter, conditions: [{source: body, path: a.b, operator: exists}]}`,
+			wantErr: "body_format: raw",
+		},
+		{
+			name: "field_map transform on an xml body",
+			flow: `
+      - {id: env, type: envelope, body_format: xml}
+      - {id: filt, type: transform, kind: field_map, name: out, mappings: [{from: a, to: b}]}`,
+			wantErr: "field_map",
+		},
+		{
+			name: "xml_prune transform on a json body",
+			flow: `
+      - {id: env, type: envelope, body_format: json}
+      - {id: filt, type: transform, kind: xml_prune, rules: [remove_empty_parents]}`,
+			wantErr: "xml_prune",
+		},
+		{
+			name: "xml_prune transform after a raw envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: raw}
+      - {id: filt, type: transform, kind: xml_prune, rules: [remove_empty_parents]}`,
+			wantErr: "xml_prune",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertLint(t, loadAllowingIssues(t, bodyFormatFlow(tc.flow)), config.SeverityError, tc.wantErr)
+		})
+	}
+}
+
+func TestBodyFormatGuardAllowsWorkingCombinations(t *testing.T) {
+	cases := []struct {
+		name string
+		flow string
+	}{
+		{
+			name: "body filter after a json envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: json}
+      - {id: filt, type: filter, conditions: [{source: body, path: a.b, operator: exists}]}`,
+		},
+		{
+			// Task 1 made this work, so the guard must not reject it.
+			name: "body filter after an xml envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: xml}
+      - {id: filt, type: filter, conditions: [{source: body, path: LOAN.Amount, operator: exists}]}`,
+		},
+		{
+			name: "header filter after a raw envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: raw}
+      - {id: filt, type: filter, conditions: [{source: header, path: X-Event, operator: exists}]}`,
+		},
+		{
+			name: "xml_prune after an xml envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: xml}
+      - {id: filt, type: transform, kind: xml_prune, rules: [remove_empty_parents]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, issue := range Lint(loadAllowingIssues(t, bodyFormatFlow(tc.flow))) {
+				if issue.Severity == config.SeverityError {
+					t.Fatalf("unexpected error: %s (%s)", issue.Message, issue.Field)
+				}
+			}
+		})
+	}
+}
+
+// bodyFormatFlow wraps two mid-flow nodes in a complete, compilable flow. The
+// guard walks from the trigger, so the prefix and the terminal node have to be
+// real.
+func bodyFormatFlow(nodes string) string {
+	return `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+flows:
+  f:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}` + nodes + `
+      - {id: ack, type: respond, status: 202, body: ok}
+    edges: [in>body, body>auth, auth>env, env>filt, filt>ack]
+`
+}

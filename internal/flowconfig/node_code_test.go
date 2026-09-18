@@ -113,18 +113,121 @@ func TestCodeNodeCannotSeeIdentityOrSecret(t *testing.T) {
 	}
 }
 
-func TestCodeNodeRejectsXMLBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<ROOT/>`))
+func TestCodeNodeReadsXMLBody(t *testing.T) {
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN id="L1"><Amount>500</Amount></LOAN></MESSAGE>`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := newCodeNode("code", CodeOptions{Script: `return {body: input.body}`, Timeout: "1s"})
+	node, err := newCodeNode("code", CodeOptions{Timeout: "1s", Script: `
+		const loan = input.body.root.children[0];
+		return { body: input.body, vars: { amount: loan.children[0].text, id: loan.attr.id } };
+	`})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = node.Run(context.Background(), graph.Envelope{Body: doc})
-	if err == nil || !strings.Contains(err.Error(), "XML") {
-		t.Fatalf("err = %v, want XML rejection", err)
+	out, err := node.Run(context.Background(), graph.Envelope{Body: doc, Vars: map[string]string{}})
+	if err != nil {
+		t.Fatalf("Run() = %v, want the script to read the XML body", err)
+	}
+	env := out.(graph.Envelope)
+	if env.Vars["amount"] != "500" {
+		t.Fatalf("vars.amount = %q, want \"500\"", env.Vars["amount"])
+	}
+	if env.Vars["id"] != "L1" {
+		t.Fatalf("vars.id = %q, want \"L1\"", env.Vars["id"])
+	}
+}
+
+func TestCodeNodeRewritesXMLBodyAndKeepsItXML(t *testing.T) {
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN><Amount>500</Amount></LOAN></MESSAGE>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := newCodeNode("code", CodeOptions{Timeout: "1s", Script: `
+		const body = input.body;
+		body.root.children[0].children[0].text = '999';
+		return { body: body };
+	`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := node.Run(context.Background(), graph.Envelope{Body: doc, Vars: map[string]string{}})
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	// The body must come back as a Document, not as the script's map: a
+	// downstream xml_prune or an http_request with body: transformed both
+	// type-switch on transform.Document.
+	env := out.(graph.Envelope)
+	got, ok := env.Body.(transform.Document)
+	if !ok {
+		t.Fatalf("body = %T, want transform.Document", env.Body)
+	}
+	raw, err := transform.SerializeXML(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "<Amount>999</Amount>") {
+		t.Fatalf("serialized = %s, want the rewritten amount", raw)
+	}
+}
+
+func TestCodeNodeRejectsMalformedXMLReturn(t *testing.T) {
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN/></MESSAGE>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := newCodeNode("code", CodeOptions{Script: `return { body: { nope: true } };`, Timeout: "1s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = node.Run(context.Background(), graph.Envelope{Body: doc, Vars: map[string]string{}})
+	if err == nil {
+		t.Fatal("Run() = nil, want a rejection naming the expected xml shape")
+	}
+	if !strings.Contains(err.Error(), "root") {
+		t.Fatalf("error = %v, want it to name the missing \"root\"", err)
+	}
+}
+
+// A JSON flow must be untouched by the XML path.
+func TestCodeNodeJSONBodyUnaffected(t *testing.T) {
+	node, err := newCodeNode("code", CodeOptions{Script: `return { body: { n: input.body.n + 1 } };`, Timeout: "1s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := node.Run(context.Background(), graph.Envelope{Body: map[string]any{"n": float64(1)}, Vars: map[string]string{}})
+	if err != nil {
+		t.Fatalf("Run() = %v", err)
+	}
+	body := out.(graph.Envelope).Body.(map[string]any)
+	if got := body["n"]; got != int64(2) {
+		// goja exports integral arithmetic as int64, not float64, even when the
+		// operand came in as a float64 -- pin the type so a change there is
+		// visible rather than silently reshaping a JSON body.
+		t.Fatalf("body.n = %v (%T), want int64(2)", got, got)
+	}
+}
+
+// An XML script must not be able to reach back into the caller's Document, the
+// way cloneJSONValue stops a JSON script from mutating its input.
+func TestCodeNodeDoesNotMutateOriginalXMLBody(t *testing.T) {
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN><Amount>500</Amount></LOAN></MESSAGE>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := newCodeNode("code", CodeOptions{Timeout: "1s", Script: `
+		input.body.root.children[0].children[0].text = 'mutated';
+		return { body: input.body };
+	`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = node.Run(context.Background(), graph.Envelope{Body: doc, Vars: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Root.Children[0].Children[0].Text; got != "500" {
+		t.Fatalf("script mutated the caller's Document: Amount = %q, want \"500\"", got)
 	}
 }
 

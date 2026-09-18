@@ -1,0 +1,105 @@
+# TEMPLATE: accept a signed XML webhook, branch on its content, prune it, and
+# forward it as XML.
+#
+# This file has two jobs. It is a complete, runnable config so that
+# `make validate-examples` proves the template still compiles against the
+# current node schema. It is also the source of a builder palette template:
+# the config UI extracts `in` through `post` (see the TEMPLATES manifest in
+# web/src/graph/templates.ts) and drops them onto the canvas. The trailing
+# `ack` respond exists so the file is a valid standalone config; it is not
+# part of the inserted template.
+#
+# Unlike the other templates this one inserts a whole pipeline rather than a
+# front or back half. XML couples nodes that JSON leaves independent: a
+# `transform` `kind: xml_prune` only works behind an `envelope` with
+# `body_format: xml`, and `hookway validate` rejects the mismatch. Splitting
+# this into a separate "prune and forward" template would let you drop it
+# after a JSON ingest template and get a config that fails to validate, so the
+# XML nodes travel together with the envelope that feeds them.
+#
+# Requires XML_SOURCE_SECRET (the HMAC secret of the system posting TO
+# Hookway), XML_UPSTREAM_URL (where the pruned document is forwarded), and
+# HOOKWAY_API_KEY to keep /metrics off an open port.
+#
+# The HMAC is verified against the raw bytes before anything parses them (I6),
+# so a malformed or unsigned document never reaches the XML parser. The
+# inbound scheme is GitHub-style hex HMAC with no signed timestamp, so
+# replay_guard is what stops a captured document from being replayed. Do not
+# swap that auth node for no_auth.
+#
+# The `rules` on the prune node are the five fixed MISMO-shaped rules; they
+# are not a rule language. Drop the ones you do not want rather than trying to
+# express a predicate. See docs/configuration.md § XML bodies.
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "10s"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  forwarded_header_allowlist:
+    - Content-Type
+
+flows:
+  xml_ingest:
+    nodes:
+      - {id: in, type: http_trigger, description: "Where the source system posts its XML document.", path: /webhooks/xml-ingest, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Buffers the raw bytes so the signature can be verified before parsing.", max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: "Verifies the sending system's HMAC over the raw bytes."
+        scheme: hmac_sha256_hex
+        secret_ref: {provider: env, name: XML_SOURCE_SECRET, refresh: 15m, overlap: 5m}
+        signature_header: X-Hub-Signature-256
+      - {id: replay, type: replay_guard, description: "Drops a document already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Parses the verified bytes into an XML element tree.", body_format: xml}
+      # Filter paths address elements below the root by local name, with a
+      # leading @ for an attribute. Namespace prefixes are ignored, and
+      # repeated siblings resolve to the first in document order.
+      - {id: only_loans, type: filter, description: "Continues only for documents carrying a LOAN with an amount. Edit the path to suit your schema.", on_no_match: drop, conditions: [{source: body, path: LOAN.Amount, operator: exists}]}
+      - id: tag
+        type: code
+        description: "Reads fields off the element tree into vars for routing. Edit to suit your schema."
+        timeout: 50ms
+        script: |
+          // An XML body is a tagged node tree: {declaration, root}, where every
+          // element is {name, ns, attr, attrns, text, children}. Return the same
+          // shape so the body stays an XML document for the prune and forward
+          // below. attr is keyed by local name, so the vendor's namespace prefix
+          // does not matter here.
+          function child(el, name) {
+            return (el.children || []).find(function (c) { return c.name === name; });
+          }
+          const loan = child(input.body.root, 'LOAN');
+          const amount = loan ? (child(loan, 'Amount') || {}).text : '';
+          return {
+            body: input.body,
+            vars: {
+              loan_id: loan && loan.attr ? String(loan.attr.id || '') : '',
+              amount: String(amount || '0'),
+            },
+          };
+      - {id: prune, type: transform, description: "Drops empty and orphaned elements the upstream rejects. Five fixed rules, not a rule language.", kind: xml_prune, rules: [remove_empty_self_closing_elements, remove_empty_parents, prune_orphaned_relationships]}
+      - id: post
+        type: http_request
+        description: "Forwards the pruned document. body: transformed re-serializes the tree and sends application/xml."
+        url: "${XML_UPSTREAM_URL}"
+        body: transformed
+        timeout: 10s
+        error_on_status: [4xx, 5xx]
+        retry: {max_attempts: 4, initial_backoff: 1s, max_backoff: 10s}
+      - {id: ack, type: respond, description: "Acknowledges the source system once the forward succeeded. Not part of the inserted template.", status: 202, body: "accepted"}
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>only_loans, only_loans>tag, tag>prune, prune>post, post>ack]

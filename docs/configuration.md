@@ -893,11 +893,11 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 
 ### Envelope and publish
 
-- `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
+- `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). `json` decodes to an object; `xml` decodes to an element tree that `filter`, `code`, `transform` `xml_prune`, and `http_request` `body: transformed` all understand; `raw` leaves the body empty and publishes the bytes as `raw_body_base64`. Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
 - `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`, and a request whose path variable contains a `..` segment is rejected with `400`. See [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
-- `transform`: `changed_fields`, `field_map`, `xml_prune`.
+- `transform`: `changed_fields`, `field_map` (JSON bodies), `xml_prune` (XML bodies). `hookway validate` rejects a kind that does not match the `body_format` on the path reaching it.
 - `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node).
 - `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path.
@@ -912,6 +912,13 @@ template drops several pre-wired nodes in at once:
   via `secret_ref` (env, 15m refresh, 5m overlap), `replay_guard`, and
   `envelope`. Drop onto a new flow, then wire envelope to `publish` or a
   filter. Do not replace the auth node with `no_auth`.
+- **XML webhook** — the whole XML pipeline: the ingest prefix above with
+  `hmac_sha256_hex` over the raw bytes and a `body_format: xml` envelope, then
+  a `filter` on an element path, a `code` node reading the element tree, an
+  `xml_prune` `transform`, and an `http_request` with `body: transformed` that
+  forwards `application/xml`. This one inserts a whole pipeline rather than a
+  half, because `xml_prune` only validates behind an `xml` envelope — see
+  [XML bodies](#xml-bodies).
 - **Slack notification** / **Discord notification** — format an event and POST
   it to an incoming-webhook URL. The inserted pair does not forward inbound
   `Authorization` / `Cookie`; keep `url` as `${SLACK_WEBHOOK_URL}` /
@@ -950,15 +957,48 @@ A `filter` node is a list of AND-combined conditions. Place it after `envelope` 
       value: "push"
 ```
 
-- `source`: `header` reads the unredacted request header named by `path`. `body` walks a dotted JSON path (no array indexing).
+- `source`: `header` reads the unredacted request header named by `path`. `body` walks a dotted path into the decoded body: JSON object keys (`repository.private`), or — after an `envelope` with `body_format: xml` — element local names below the root, with a leading `@` for an attribute (`LOAN.Amount`, `LOAN.@id`). No array indexing, and repeated XML siblings resolve to the first in document order. A body condition after `body_format: raw` is rejected by `hookway validate`, because a raw envelope leaves the body empty.
 - `operator`: `eq`/`ne` (type-aware); `gt`/`gte`/`lt`/`lte` (numeric); `contains`/`prefix`/`suffix`; `regex` (RE2, compiled at load); `exists`/`not_exists`.
 - `value`: comparison value. Omit for `exists`/`not_exists`.
 
-Header values are strings, so numeric/bool operators parse them (`"42"` matches `eq: 42`). A missing or incomparable value fails the condition, including `ne`. A non-JSON body fails every `body` condition except `not_exists`. Silent drops are counted by `hookway_filtered_total` with `level="flow"`. Per-node metrics record execution; condition values are not logged.
+Header values are strings, so numeric/bool operators parse them (`"42"` matches `eq: 42`). A missing or incomparable value fails the condition, including `ne`. A body that is neither a JSON object nor an XML document (for example after `body_format: raw`) fails every `body` condition except `not_exists`; `hookway validate` rejects that combination rather than letting it drop every event silently. Silent drops are counted by `hookway_filtered_total` with `level="flow"`. Per-node metrics record execution; condition values are not logged.
 
 Config files pass through `os.ExpandEnv` before parsing, so `$name` inside a `regex` value is expanded. Escape or avoid literal `$`-prefixed tokens.
 
 See `examples/filters.yaml`.
+
+### XML bodies
+
+An `envelope` with `body_format: xml` parses the verified bytes into an element
+tree. The HMAC is always checked against the raw bytes first (I6), so a
+document is never parsed before it is trusted.
+
+What understands that tree:
+
+| Node | Behavior |
+| --- | --- |
+| `filter` | `source: body` paths address element local names below the root, `@name` for an attribute. A leaf compares as a string, so `gt`/`lt` work on numeric text. |
+| `code` | The script sees `{declaration, root}` with each element as `{name, ns, attr, attrns, text, children}`, and must return the same shape. |
+| `transform` | `kind: xml_prune` only. `field_map` and `changed_fields` are JSON-only and are rejected at validate time. |
+| `http_request` | `body: transformed` re-serializes the tree and sends `application/xml`. `body: raw` sends the original bytes. |
+| `publish` | Serializes the tree and base64-encodes it into the envelope's `raw_body_base64`, with `body: null`. |
+
+Limits worth knowing before you design a flow around it:
+
+- **Namespace prefixes are ignored** for filter paths and in the `code` shape's
+  `name`/`attr` keys — a vendor can change a prefix without changing what the
+  document means, and a filter should not break when they do. The namespace URI
+  is still available to a script as an element's `ns`, and per attribute in
+  `attrns`, so a script that returns the body it was given keeps them.
+- **Repeated siblings resolve to the first** in document order. A filter cannot
+  express "any `LOAN` has an amount over 500"; a `code` node can, by walking
+  `children`.
+- **`xml_prune` is five fixed rules**, not a rule language:
+  `remove_empty_self_closing_elements`, `remove_empty_parents`,
+  `remove_hardcoded_only_parties`, `remove_blank_general_partners`,
+  `prune_orphaned_relationships`.
+
+`examples/xml.yaml` is a complete flow using all of it.
 
 ### Variables
 
@@ -978,7 +1018,9 @@ See `examples/variables.yaml`.
 return { body: input.body, vars: { computed: String(input.body.id).toUpperCase() } };
 ```
 
-Input is a deep copy of `{body, vars, headers}`. Sensitive headers are redacted. The script cannot see `Verified`, raw request bytes, `Upstream`, or auth secrets. Return `{body, vars}`; omitted keys keep the previous envelope values. XML bodies are rejected — use `transform` `xml_prune`.
+Input is a deep copy of `{body, vars, headers}`. Sensitive headers are redacted. The script cannot see `Verified`, raw request bytes, `Upstream`, or auth secrets. Return `{body, vars}`; omitted keys keep the previous envelope values.
+
+An XML body (from `body_format: xml`) arrives as a tagged node tree — `{declaration, root}`, where each element is `{name, ns, attr, attrns, text, children}` — and the script must return the same shape, which keeps the body an XML document for a downstream `xml_prune` or a `body: transformed` forward. The shape is deliberately explicit rather than a convenience mapping of element names to values: a convenience mapping cannot represent attributes, repeated siblings, or mixed content, so a script that read and returned such a body would silently drop parts of the document. `attr` is keyed by local name so a script need not know the vendor's namespace prefix; `attrns` carries the namespace URI of any attribute that has one, keyed by the same local name, so a read-and-return script round-trips namespaces without having to think about them.
 
 Options:
 

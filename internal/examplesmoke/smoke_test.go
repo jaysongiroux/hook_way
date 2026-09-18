@@ -213,6 +213,8 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"DISCORD_WEBHOOK_URL":     upstreamURL,
 		"DISCORD_SOURCE_SECRET":   "discord-secret",
 		"HOOKWAY_API_KEY":         "hookway-api-key",
+		"XML_SOURCE_SECRET":       "xml-secret",
+		"XML_UPSTREAM_URL":        upstreamURL,
 	}
 	for k, v := range vals {
 		t.Setenv(k, v)
@@ -235,14 +237,41 @@ func rsaPublicPEM(t *testing.T) (*rsa.PrivateKey, string) {
 func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) *http.Request {
 	t.Helper()
 	path, method := triggerRoute(t, fc)
-	body := []byte(`{"summary":"example-smoke","action":"opened","ref":"refs/heads/main","repository":{"private":false,"full_name":"acme/demo"},"data":{"object":{"organizationId":"acme"}},"order":{"total":150,"currency":"USD"},"customer":{"id":"cust_1"}}`)
+	// An xml envelope parses the raw bytes as XML, so the JSON payload every
+	// other flow gets would 400 before reaching the nodes under test. The
+	// document carries LOAN.Amount because examples/xml.yaml filters on it.
+	body, contentType := []byte(`{"summary":"example-smoke","action":"opened","ref":"refs/heads/main","repository":{"private":false,"full_name":"acme/demo"},"data":{"object":{"organizationId":"acme"}},"order":{"total":150,"currency":"USD"},"customer":{"id":"cust_1"}}`), "application/json"
+	if envelopeBodyFormat(t, fc) == "xml" {
+		body, contentType = []byte(`<MESSAGE><LOAN id="L1"><Amount>150</Amount></LOAN></MESSAGE>`), "application/xml"
+	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-GitHub-Event", "push")
 	// showcase/production.yaml's trusted flow allowlists RFC1918 ranges.
 	req.RemoteAddr = "10.0.0.1:3456"
 	signRequest(t, req, fc, body, jwtPriv)
 	return req
+}
+
+// envelopeBodyFormat reports the body_format of the flow's first envelope node,
+// defaulting to the node's own default of json. A flow with envelopes on
+// different switch branches would need a per-path answer; no example has one.
+func envelopeBodyFormat(t *testing.T, fc graph.FlowConfig) string {
+	t.Helper()
+	for _, nc := range fc.Nodes {
+		if nc.Type != "envelope" {
+			continue
+		}
+		var opts flowconfig.EnvelopeOptions
+		if err := nc.Options.Decode(&opts); err != nil {
+			t.Fatalf("envelope options: %v", err)
+		}
+		if opts.BodyFormat != "" {
+			return opts.BodyFormat
+		}
+		return "json"
+	}
+	return "json"
 }
 
 func triggerRoute(t *testing.T, fc graph.FlowConfig) (path, method string) {

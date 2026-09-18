@@ -1,0 +1,174 @@
+package flowconfig
+
+import (
+	"encoding/xml"
+	"fmt"
+	"sort"
+
+	"github.com/jasongiroux/hookway/internal/transform"
+)
+
+// The code node hands scripts an XML body as an explicitly tagged node tree
+// rather than a convenience mapping of element names to values. A convenience
+// mapping cannot represent an attribute, two siblings with the same name, or
+// text sitting beside child elements, so a script that read such a body and
+// returned it would silently drop parts of the document. The shape is:
+//
+//	{
+//	  declaration: "<?xml version=\"1.0\"?>",
+//	  root: {
+//	    name:     "MESSAGE",
+//	    ns:       "",
+//	    attr:     {id: "L1"},
+//	    attrns:   {},
+//	    text:     "",
+//	    children: [ /* same shape, recursively */ ]
+//	  }
+//	}
+//
+// Every value is a string, map[string]any, or []any, so the tree is
+// JSON-cloneable and goja can marshal it without seeing a Go pointer type.
+//
+// attr is keyed by local name, matching the filter's path semantics, so a
+// script reads LOAN.attr.kind whatever prefix the vendor used. That alone is
+// lossy — it cannot tell ns:kind from kind, and an xmlns:ns declaration is
+// itself an attribute — so attrns carries the namespace URI of any attribute
+// that has one, keyed by the same local name. A script that only reads attr,
+// or that assigns a plain attribute, never has to know attrns exists; a script
+// that reads a body and returns it round-trips namespaces because attrns came
+// along for the ride.
+func xmlToScript(doc transform.Document) map[string]any {
+	return map[string]any{
+		"declaration": doc.Declaration,
+		"root":        elementToScript(doc.Root),
+	}
+}
+
+func elementToScript(e *transform.Element) any {
+	if e == nil {
+		return nil
+	}
+	attr := make(map[string]any, len(e.Attr))
+	attrns := map[string]any{}
+	for _, a := range e.Attr {
+		// Local names only, matching the filter's path semantics: a vendor can
+		// change a namespace prefix without changing what the document means.
+		attr[a.Name.Local] = a.Value
+		if a.Name.Space != "" {
+			attrns[a.Name.Local] = a.Name.Space
+		}
+	}
+	children := make([]any, 0, len(e.Children))
+	for _, c := range e.Children {
+		if converted := elementToScript(c); converted != nil {
+			children = append(children, converted)
+		}
+	}
+	return map[string]any{
+		"name":     e.Name.Local,
+		"ns":       e.Name.Space,
+		"attr":     attr,
+		"attrns":   attrns,
+		"text":     e.Text,
+		"children": children,
+	}
+}
+
+// scriptToXML rebuilds a Document from the shape above. It is strict: a script
+// that returns something else gets a message naming the expected shape rather
+// than a half-built tree that would serialize into a malformed document.
+func scriptToXML(v any) (transform.Document, error) {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return transform.Document{}, fmt.Errorf("xml body must be an object {declaration, root}, got %T", v)
+	}
+	rootVal, exists := obj["root"]
+	if !exists {
+		return transform.Document{}, fmt.Errorf("xml body is missing \"root\"")
+	}
+	root, err := scriptToElement(rootVal, "root")
+	if err != nil {
+		return transform.Document{}, err
+	}
+	if root == nil {
+		return transform.Document{}, fmt.Errorf("xml body \"root\" must not be null")
+	}
+	doc := transform.Document{Root: root}
+	if decl, ok := obj["declaration"].(string); ok {
+		doc.Declaration = decl
+	}
+	return doc, nil
+}
+
+func scriptToElement(v any, path string) (*transform.Element, error) {
+	if v == nil {
+		return nil, nil
+	}
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("xml %s must be an object {name, attr, text, children}, got %T", path, v)
+	}
+	nameVal, exists := obj["name"]
+	if !exists {
+		return nil, fmt.Errorf("xml %s is missing \"name\"", path)
+	}
+	name, ok := nameVal.(string)
+	if !ok || name == "" {
+		return nil, fmt.Errorf("xml %s \"name\" must be a non-empty string, got %v", path, nameVal)
+	}
+	out := &transform.Element{Name: xml.Name{Local: name}}
+	if ns, ok := obj["ns"].(string); ok {
+		out.Name.Space = ns
+	}
+	if textVal, exists := obj["text"]; exists && textVal != nil {
+		// goja returns float64 for a number; stringify rather than reject so a
+		// script can assign a computed value straight to text.
+		out.Text = stringify(textVal)
+	}
+	spaces := map[string]string{}
+	if nsVal, exists := obj["attrns"]; exists && nsVal != nil {
+		nsMap, ok := nsVal.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("xml %s \"attrns\" must be an object, got %T", path, nsVal)
+		}
+		for k, val := range nsMap {
+			spaces[k] = stringify(val)
+		}
+	}
+	if attrVal, exists := obj["attr"]; exists && attrVal != nil {
+		attrs, ok := attrVal.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("xml %s \"attr\" must be an object, got %T", path, attrVal)
+		}
+		for k, val := range attrs {
+			// An attribute with no attrns entry is unnamespaced, which is what
+			// a script that assigned attr.foo directly intends.
+			name := xml.Name{Local: k, Space: spaces[k]}
+			out.Attr = append(out.Attr, xml.Attr{Name: name, Value: stringify(val)})
+		}
+		sortAttrs(out.Attr)
+	}
+	if kidsVal, exists := obj["children"]; exists && kidsVal != nil {
+		kids, ok := kidsVal.([]any)
+		if !ok {
+			return nil, fmt.Errorf("xml %s \"children\" must be a list, got %T", path, kidsVal)
+		}
+		for i, kid := range kids {
+			child, err := scriptToElement(kid, fmt.Sprintf("%s.children[%d]", path, i))
+			if err != nil {
+				return nil, err
+			}
+			if child != nil {
+				out.Children = append(out.Children, child)
+			}
+		}
+	}
+	return out, nil
+}
+
+// sortAttrs gives attributes a deterministic order. They arrive from a JS
+// object, whose key order Go's map does not preserve, and an unstable order
+// would make the serialized document differ run to run.
+func sortAttrs(attrs []xml.Attr) {
+	sort.Slice(attrs, func(i, j int) bool { return attrs[i].Name.Local < attrs[j].Name.Local })
+}

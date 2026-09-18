@@ -1,7 +1,8 @@
 // Package filter evaluates AND-chains of conditions against a webhook's headers
-// and parsed JSON body. Chains are compiled once (regex included) from config and
-// evaluated per request, independent of the httpapi and queue packages so both
-// endpoint- and route-level filtering can share them.
+// and parsed body — JSON objects by dotted key, XML documents by dotted element
+// name with "@" for attributes. Chains are compiled once (regex included) from
+// config and evaluated per request, independent of the httpapi and queue
+// packages so both endpoint- and route-level filtering can share them.
 package filter
 
 import (
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jasongiroux/hookway/internal/transform"
 )
 
 // Source values.
@@ -314,6 +317,20 @@ func resolve(source, path string, headers http.Header, body any) (any, bool) {
 		}
 		return headers.Get(path), true
 	case SourceBody:
+		// An XML envelope puts a transform.Document on the body, which
+		// walkBodyPath cannot traverse: it asserts map[string]any and would
+		// report every path as missing, silently sending every event down the
+		// on_no_match path. Both shapes appear in practice — node_transform
+		// and node_code accept a pointer as well as a value.
+		switch xmlBody := body.(type) {
+		case transform.Document:
+			return walkXMLPath(xmlBody, path)
+		case *transform.Document:
+			if xmlBody == nil {
+				return nil, false
+			}
+			return walkXMLPath(*xmlBody, path)
+		}
 		return walkBodyPath(body, path)
 	}
 	return nil, false

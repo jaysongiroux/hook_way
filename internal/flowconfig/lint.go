@@ -89,7 +89,9 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			fmt.Sprintf("flow %q has no publish and no respond node; it can never deliver or reply", name),
 			"add a publish or respond node"))
 	}
-	return append(issues, append(parallelRespondIssues(prefix, fc), lookupBeforeFilterIssues(prefix, fc)...)...)
+	issues = append(issues, parallelRespondIssues(prefix, fc)...)
+	issues = append(issues, lookupBeforeFilterIssues(prefix, fc)...)
+	return append(issues, bodyFormatIssues(prefix, fc)...)
 }
 
 func lookupBeforeFilterIssues(prefix string, fc graph.FlowConfig) []config.ValidationIssue {
@@ -211,4 +213,153 @@ func reachableOfType(start string, out map[string][]string, types map[string]str
 	}
 	walk(start)
 	return found
+}
+
+// bodyFormatIssues rejects the combinations where a node inspects a body the
+// flow's envelope never produced in a readable form. All of these fail today
+// without a config-time error: a body filter after body_format: raw matches
+// nothing at all (the envelope leaves Body nil), and a transform whose kind
+// does not match the body's shape returns a runtime 400.
+//
+// It walks forward from the trigger, carrying the format established by the
+// last envelope on each path, because a flow may have several envelope nodes
+// on different branches of a switch — "does this flow contain an xml
+// envelope" is the wrong question. This mirrors lookupBeforeFilterIssues.
+func bodyFormatIssues(prefix string, fc graph.FlowConfig) []config.ValidationIssue {
+	type nodeInfo struct {
+		typ   string
+		index int
+		cfg   graph.NodeConfig
+	}
+	info := make(map[string]nodeInfo, len(fc.Nodes))
+	root := ""
+	for i, node := range fc.Nodes {
+		info[node.ID] = nodeInfo{typ: node.Type, index: i, cfg: node}
+		if node.Type == "http_trigger" && root == "" {
+			root = node.ID
+		}
+	}
+	if root == "" {
+		return nil
+	}
+	edges, _ := graph.ParseEdges(fc.Edges)
+	out := map[string][]string{}
+	for _, edge := range edges {
+		out[edge.From] = append(out[edge.From], edge.To)
+	}
+
+	type frame struct {
+		id     string
+		format string // "", "json", "xml", or "raw"
+	}
+	var issues []config.ValidationIssue
+	seen := map[string]bool{}
+	reported := map[string]bool{}
+	stack := []frame{{id: root}}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		key := cur.id + ":" + cur.format
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		node, known := info[cur.id]
+		if !known {
+			continue
+		}
+		format := cur.format
+		switch node.typ {
+		case "envelope":
+			format = "json" // the node's own default when body_format is unset
+			if opts, err := decodeOptions[EnvelopeOptions](node.cfg); err == nil && opts.BodyFormat != "" {
+				format = opts.BodyFormat
+			}
+		case "filter":
+			if !reported[cur.id] {
+				if issue, bad := filterBodyFormatIssue(prefix, node.index, cur.id, format, node.cfg); bad {
+					reported[cur.id] = true
+					issues = append(issues, issue)
+				}
+			}
+		case "transform":
+			if !reported[cur.id] {
+				if issue, bad := transformBodyFormatIssue(prefix, node.index, cur.id, format, node.cfg); bad {
+					reported[cur.id] = true
+					issues = append(issues, issue)
+				}
+			}
+		}
+		for _, next := range out[cur.id] {
+			stack = append(stack, frame{id: next, format: format})
+		}
+	}
+	return issues
+}
+
+// filterBodyFormatIssue rejects a body condition that can never resolve. Only
+// body_format: raw is unreadable now — json walks dotted keys and xml walks
+// dotted element names.
+func filterBodyFormatIssue(prefix string, index int, id, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
+	if format != "raw" {
+		return config.ValidationIssue{}, false
+	}
+	opts, err := decodeOptions[FilterOptions](nc)
+	if err != nil {
+		return config.ValidationIssue{}, false
+	}
+	for _, cond := range opts.Conditions {
+		if cond.Source == "body" {
+			return cfgIssue(
+				fmt.Sprintf("%s.nodes[%d].conditions", prefix, index),
+				fmt.Sprintf("filter %q reads source: body but reaches an envelope with body_format: raw, which leaves the body empty; every event would take on_no_match", id),
+				"use body_format: json or xml, or filter on source: header",
+			), true
+		}
+	}
+	return config.ValidationIssue{}, false
+}
+
+// transformBodyFormatIssue rejects a transform kind that does not match the
+// body's shape. Both mismatches are a runtime 400 in node_transform.go today.
+func transformBodyFormatIssue(prefix string, index int, id, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
+	opts, err := decodeOptions[TransformOptions](nc)
+	if err != nil {
+		return config.ValidationIssue{}, false
+	}
+	field := fmt.Sprintf("%s.nodes[%d].kind", prefix, index)
+	switch opts.Kind {
+	case "xml_prune":
+		if format != "xml" {
+			return cfgIssue(field,
+				fmt.Sprintf("transform %q uses kind: xml_prune but reaches an envelope with body_format: %s; the body is not an XML document and the node would fail at runtime", id, formatName(format)),
+				"set the envelope's body_format to xml, or use a json transform kind",
+			), true
+		}
+	case "field_map", "changed_fields":
+		if format == "xml" {
+			return cfgIssue(field,
+				fmt.Sprintf("transform %q uses kind: %s but reaches an envelope with body_format: xml; these kinds walk JSON and the node would fail at runtime", id, opts.Kind),
+				"use kind: xml_prune for XML bodies",
+			), true
+		}
+		if format == "raw" {
+			return cfgIssue(field,
+				fmt.Sprintf("transform %q uses kind: %s but reaches an envelope with body_format: raw, which leaves the body empty", id, opts.Kind),
+				"use body_format: json",
+			), true
+		}
+	}
+	return config.ValidationIssue{}, false
+}
+
+// formatName renders the walked format for a message; an empty format means no
+// envelope was reached on this path, which the port types already reject, so it
+// only appears in a message when a flow is malformed in some other way too.
+func formatName(format string) string {
+	if format == "" {
+		return "none"
+	}
+	return format
 }

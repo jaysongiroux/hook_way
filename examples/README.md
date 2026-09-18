@@ -12,6 +12,7 @@ Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hoo
 | `variables.yaml` | Routing variables reference: a path placeholder on `http_trigger` (`{envName}`) becomes `envelope.Vars`; a `transform` `field_map` copies a body field to `vars.tenant`; publish targets and a webhook `url` use `{name}` placeholders. Unresolved templates fail closed at publish. See `docs/configuration.md` § Variables. |
 | `replay.yaml` | Webhook-replay reference: one RabbitMQ flow plus `replay` enabled with a bounded Postgres-backed store (`ttl`, `max_events`, `cleanup_interval`) and its protected API on a separate `replay.addr` listener, authenticated via `security.api_key`. See `docs/configuration.md` § Replay and `docs/security.md` § Replay. |
 | `on_error.yaml` | Error-port reference: `http_request` 5xx to a DLQ (`ack:on_error>dlq`) or an explicit 502 (`up:on_error>fail`); `rate_limit:on_error` to a 429; `auth:on_error` to a 401; `envelope:on_error` to a 400. `http_trigger`, `read_body`, and `no_auth` have no error port. Also shows `http_request` `retry` combined with an `on_error` path. See `docs/configuration.md` § Flows. |
+| `xml.yaml` | XML reference: `body_format: xml`, a filter on an element path, a `code` node reading the DOM, `xml_prune`, and `body: transformed` forwarding. See `docs/configuration.md` § XML bodies. |
 
 ## Destination reference configs
 
@@ -70,8 +71,12 @@ standalone config. Ingest templates (`stripe-ingest`, `paddle-ingest`) insert
 the verified prefix (trigger, loop/rate guards, timestamped HMAC via
 `secret_ref`, replay guard, envelope); the trailing `publish` is the wrapper.
 Drop an ingest template onto a new flow, then wire envelope to your
-destination. When you rename a node in one of these files, update the
-manifest; `web/src/graph/templates.test.ts` fails if the two disagree.
+destination. `xml-ingest` is the exception to the front/back split: it inserts
+the whole pipeline, because `transform` `kind: xml_prune` only validates behind
+an `envelope` with `body_format: xml`, so a back half dropped after a JSON
+ingest template would not validate. When you rename a node in one of these
+files, update the manifest; `web/src/graph/templates.test.ts` fails if the two
+disagree.
 
 Every template file is a production-shaped config: secrets live in the
 environment (`secret_ref` with rotation overlap, webhook URLs as `${ENV}`),
@@ -85,6 +90,7 @@ allowlisted headers.
 | `paddle-ingest.yaml` | Paddle Billing ingest: same shape with `hmac_sha256_ts_colon` on `Paddle-Signature`. |
 | `slack-notify.yaml` | Format an event and POST it to a Slack incoming webhook. Wrapper still HMAC-authenticates the inbound caller. |
 | `discord-notify.yaml` | Format an event and POST it to a Discord webhook. Same inbound auth as Slack. |
+| `xml-ingest.yaml` | XML webhook ingest and forward: loop/rate guards, `hmac_sha256_hex` over the raw bytes via `secret_ref`, replay guard, `body_format: xml` envelope, a filter on an element path, a `code` node reading the element tree, `xml_prune`, and a `body: transformed` forward as `application/xml`. Inserts the whole pipeline. |
 
 ## Running validation
 
