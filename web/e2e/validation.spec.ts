@@ -88,7 +88,12 @@ test("a field_map transform behind a multipart envelope is reported as an error"
   const dialog = await builder.openConfigItem("Export YAML");
   const errors = dialog.getByTestId("validation-errors");
   await expect(errors).toBeVisible({ timeout: 15_000 });
+  await expect(errors).toContainText("uses kind: field_map");
   await expect(errors).toContainText("body_format: multipart");
-  await expect(errors).toContainText("read the parts in a code node instead");
+  // Only the message is asserted, not the issue's suggestion ("read the parts
+  // in a code node instead"). validate.ts carries a `suggestion` field and the
+  // CLI prints it, but nothing in the builder renders it -- for any issue, not
+  // just this one. Asserting it here would fail for a reason unrelated to the
+  // multipart guard.
   await expect(dialog.getByTestId("validation-ok")).toHaveCount(0);
 });
