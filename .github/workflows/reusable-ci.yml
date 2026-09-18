@@ -1,0 +1,255 @@
+# Called by CI (PRs / main) and Release. Runs the full gate in parallel:
+# Go unit/lint, race, web unit, Playwright, each integration suite, image+Trivy.
+# Does not publish anything.
+name: Reusable CI
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out (release tag). Empty uses checkout defaults for the event.
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.x"
+  NODE_VERSION: "20"
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Validate example configs
+        run: make validate-examples
+
+      - name: Unit tests
+        run: make test
+
+      - name: Invariant conformance
+        run: make conformance
+
+      - name: Vet
+        run: make lint
+
+      - name: Dead code
+        run: make deadcode
+
+  go-race:
+    name: Go race
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Race tests
+        run: make test-race
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Node schema drift
+        run: make node-schema-check
+
+      - name: Web unit tests
+        run: make web-test
+
+      - name: Web dead code (knip)
+        run: make web-knip
+
+  web-e2e:
+    name: Web e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: cd web && npx playwright install --with-deps chromium
+
+      - name: Playwright builder tests
+        run: make web-e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 14
+
+  integration:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: RabbitMQ
+            target: integration-test
+          - name: AWS
+            target: aws-integration-test
+          - name: Redis
+            target: redis-integration-test
+          - name: Postgres
+            target: postgres-integration-test
+          - name: MongoDB
+            target: mongodb-integration-test
+          - name: Kafka
+            target: kafka-integration-test
+          - name: Webhook
+            target: webhook-integration-test
+          - name: Temporal
+            target: temporal-integration-test
+          - name: Replay store
+            target: replaystore-integration-test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: ${{ matrix.name }} integration tests
+        run: make ${{ matrix.target }}
+
+  image:
+    name: Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Docker build
+        run: make docker-build
+
+      - name: Check UI is staged
+        run: make ui-check
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: hookway:local
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          limit-severities-for-sarif: true
+
+      - name: Upload vulnerability scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          if-no-files-found: error
+
+  # Single required check for branch protection. Adding jobs above does not
+  # require updating the protected-branch settings if this name stays stable.
+  success:
+    name: All checks passed
+    if: ${{ !cancelled() }}
+    needs:
+      - go
+      - go-race
+      - web
+      - web-e2e
+      - integration
+      - image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job did not succeed
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
+        run: exit 1

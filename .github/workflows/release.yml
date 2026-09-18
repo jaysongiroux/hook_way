@@ -1,139 +1,108 @@
-name: release
+# Cut a release from an existing v* tag. Re-runs CI, then publishes the
+# Docker Hub image (semver + latest for non-prereleases), syncs the Hub
+# description, and opens a GitHub Release. Pushes to main do not publish.
+name: Release
 
 on:
   push:
-    branches: ["main"]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing git tag to release (e.g. v1.2.3)
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
-env:
-  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
-  DOCKERHUB_IMAGE_NAME: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
-
 jobs:
-  release-check:
+  context:
+    name: Release context
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.out.outputs.tag }}
+      prerelease: ${{ steps.out.outputs.prerelease }}
+    steps:
+      - id: out
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG_INPUT: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            tag="$TAG_INPUT"
+          else
+            tag="$REF_NAME"
+          fi
+          tag="${tag#refs/tags/}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+            echo "Tag must look like v1.2.3 or v1.2.3-rc.1 (got: $tag)" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  checks:
+    name: Checks
+    needs: context
+    uses: ./.github/workflows/reusable-ci.yml
+    with:
+      ref: ${{ needs.context.outputs.tag }}
+
+  publish:
+    name: Publish
+    needs: [context, checks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: write
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+      DOCKERHUB_IMAGE_NAME: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
+      TAG: ${{ needs.context.outputs.tag }}
+      PRERELEASE: ${{ needs.context.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
           cache: true
 
-      - name: Validate example configs
-        run: make validate-examples
-
-      - name: Unit tests
-        run: make test
-
-      - name: Invariant conformance
-        run: make conformance
-
-      - name: Race tests
-        run: make test-race
-
-      - name: RabbitMQ integration tests
-        run: make integration-test
-
-      - name: AWS integration tests (LocalStack)
-        run: make aws-integration-test
-
-      - name: Redis integration tests (testcontainers)
-        run: make redis-integration-test
-
-      - name: Postgres integration tests (testcontainers)
-        run: make postgres-integration-test
-
-      - name: MongoDB integration tests (testcontainers)
-        run: make mongodb-integration-test
-
-      - name: Kafka integration tests (testcontainers)
-        run: make kafka-integration-test
-
-      - name: Webhook integration tests (testcontainers)
-        run: make webhook-integration-test
-
-      - name: Temporal integration tests (testcontainers)
-        run: make temporal-integration-test
-
-      - name: Replaystore integration tests (testcontainers)
-        run: make replaystore-integration-test
-
-      - name: Vet
-        run: make lint
-
-      - name: Dead code
-        run: make deadcode
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install web deps
         run: make web-install
 
-      - name: Node schema drift
-        run: make node-schema-check
-
-      - name: Web unit tests
-        run: make web-test
-
-      - name: Web dead code (knip)
-        run: make web-knip
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
-
-      - name: Install Playwright browsers
-        run: cd web && npx playwright install --with-deps chromium
-
-      - name: Playwright builder tests
-        run: make web-e2e
-
-      - name: Upload Playwright report
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: web/playwright-report/
-          retention-days: 14
-
+      # Dockerfile COPYs the staged embed bundle; without this the published
+      # image's editor is the placeholder page.
       - name: Build UI (WASM + SPA)
         run: make ui
 
-      - name: Docker build
-        run: make docker-build
-
-      - name: Vulnerability scan
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: hookway:local
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          limit-severities-for-sarif: true
-
-      - name: Upload vulnerability scan artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: trivy-results
-          path: trivy-results.sarif
-          if-no-files-found: error
+      - name: Check UI is staged
+        run: make ui-check
 
       - name: Check Docker Hub publishing config
-        if: github.event_name != 'pull_request'
         run: |
           test -n "$DOCKERHUB_USERNAME" || (echo "Missing GitHub Actions secret DOCKERHUB_USERNAME" && exit 1)
           test -n "$DOCKERHUB_NAMESPACE" || (echo "Missing GitHub Actions secret DOCKERHUB_NAMESPACE" && exit 1)
@@ -143,17 +112,15 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker metadata
-        if: github.event_name != 'pull_request'
         id: docker-meta
         uses: docker/metadata-action@v5
         with:
           images: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{raw}}
+            type=semver,pattern={{raw}},value=${{ env.TAG }}
+            type=raw,value=latest,enable=${{ env.PRERELEASE == 'false' }}
 
       - name: Resolve build version/commit
-        if: github.event_name != 'pull_request'
         id: build-info
         # Mirrors the Makefile's VERSION/COMMIT so the pushed image's
         # hookway_build_info and `hookway version` match a local `make
@@ -163,14 +130,12 @@ jobs:
           echo "commit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Push Docker image
-        if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -182,7 +147,6 @@ jobs:
             COMMIT=${{ steps.build-info.outputs.commit }}
 
       - name: Update Docker Hub description
-        if: github.event_name != 'pull_request'
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
@@ -190,3 +154,19 @@ jobs:
           repository: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
           readme-filepath: ./docs/dockerhub/README.md
           short-description: ${{ github.event.repository.description }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists"
+            exit 0
+          fi
+          extra=(--generate-notes --title "$TAG")
+          if [ "$PRERELEASE" = "true" ]; then
+            extra+=(--prerelease)
+          else
+            extra+=(--latest)
+          fi
+          gh release create "$TAG" "${extra[@]}"

@@ -25,8 +25,9 @@ It is designed for production webhook ingress where the receiving service should
 
 ## Image Tags
 
-- latest: latest build from the default branch
+- latest: latest stable GitHub release (a `vX.Y.Z` tag, not every commit on main)
 - vX.Y.Z: semantic release tags, for example v1.0.0
+- Pre-release tags such as vX.Y.Z-rc.1 are published but do not move latest
 
 ## Runtime
 

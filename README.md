@@ -123,9 +123,26 @@ make vuln-scan
 
 `make integration-test`, `make aws-integration-test`, `make redis-integration-test`, and `make test-all` use testcontainers and require Docker.
 
-Release checks run example-config validation, unit tests, race tests, RabbitMQ, AWS (LocalStack), and Redis integration tests, vet, Docker build, and image vulnerability scanning in GitHub Actions.
+## CI/CD
 
-On non-PR runs, the release workflow publishes the Docker image to Docker Hub. In GitHub, set Actions repository secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_NAMESPACE`, `DOCKERHUB_IMAGE_NAME`, and `DOCKERHUB_TOKEN`. `DOCKERHUB_USERNAME` is the Docker Hub account that owns the access token; `DOCKERHUB_NAMESPACE` is the user or organization that owns the image repository. Pushes to `main` publish `latest`; Git tags such as `v1.0.0` publish matching Docker tags. The workflow also syncs `docs/dockerhub/README.md` to the Docker Hub repository description. Docker Hub description sync requires `DOCKERHUB_TOKEN` to have read/write/delete scope and admin access to the Docker Hub repository.
+GitHub Actions is split by purpose. The same full gate runs everywhere tests run; jobs are parallel (Go, race, web, Playwright, each integration target, image + Trivy).
+
+- **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. Nothing is published.
+- **Release** (`.github/workflows/release.yml`) — pushing a `v*` tag (or dispatching the workflow with an existing tag). Re-runs CI, publishes the Docker image, syncs the Docker Hub description, and creates a GitHub Release with generated notes. Pushes to `main` do not publish.
+- **Security** (`.github/workflows/security.yml`) — weekly, on demand, and when `go.mod` / Docker / lockfiles change on `main`. Runs `govulncheck` and a Trivy image scan uploaded to GitHub code scanning.
+
+Cut a release from a commit already on `main`:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+Pre-release tags such as `v1.2.3-rc.1` create a GitHub pre-release and skip the Docker `latest` tag.
+
+On Docker Hub, set Actions repository secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_NAMESPACE`, `DOCKERHUB_IMAGE_NAME`, and `DOCKERHUB_TOKEN`. `DOCKERHUB_USERNAME` is the Docker Hub account that owns the access token; `DOCKERHUB_NAMESPACE` is the user or organization that owns the image repository. A `v1.0.0` tag publishes the matching Docker tag; non-prerelease tags also publish `latest`. The release job uses the GitHub Environment `release` (add required reviewers there if you want an approval gate). Docker Hub description sync requires `DOCKERHUB_TOKEN` to have read/write/delete scope and admin access to the Docker Hub repository.
+
+Require the `Checks / All checks passed` status on `main` so a green PR is one check, not a dozen.
 
 See:
 
