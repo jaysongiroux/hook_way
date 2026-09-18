@@ -111,11 +111,12 @@ See [CLI § Editor API](docs/cli.md#editor-api).
 ```bash
 make test                  # unit tests only (no Docker)
 make test-race             # unit tests with the race detector
+make test-examples         # boot every shipped example and POST a signed request
+make validate-examples     # `hookway validate` every config under examples/
 make integration-test      # RabbitMQ integration tests (testcontainers)
 make aws-integration-test  # SQS/SNS integration tests (LocalStack)
 make redis-integration-test # Redis/Valkey integration tests (testcontainers)
 make test-all              # everything: unit + RabbitMQ + AWS + Redis integration
-make validate-examples     # validate every config under examples/
 make lint
 make docker-build
 make vuln-scan
@@ -125,9 +126,9 @@ make vuln-scan
 
 ## CI/CD
 
-GitHub Actions is split by purpose. The same full gate runs everywhere tests run; jobs are parallel (Go, race, web, Playwright, each integration target, image + Trivy).
+GitHub Actions is split by purpose. The same full gate runs everywhere tests run; jobs are parallel (Go, race, shipped examples, web, Playwright, each integration target, image + Trivy).
 
-- **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. Nothing is published.
+- **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. Nothing is published. The **Examples** job validates every config under `examples/` and then boots each one, POSTing a signed request to every flow so the files we document cannot drift from what the server actually runs.
 - **Release** (`.github/workflows/release.yml`) — pushing a `v*` tag (or dispatching the workflow with an existing tag). Re-runs CI, publishes the Docker image, syncs the Docker Hub description, and creates a GitHub Release with generated notes. Pushes to `main` do not publish.
 - **Security** (`.github/workflows/security.yml`) — weekly, on demand, and when `go.mod` / Docker / lockfiles change on `main`. Runs `govulncheck` and a Trivy image scan uploaded to GitHub code scanning.
 

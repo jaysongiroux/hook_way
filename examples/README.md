@@ -82,6 +82,11 @@ disagree.
 # Validate the default config
 make validate
 
-# Validate all example files
+# Validate all example files (`hookway validate`, no server)
 make validate-examples
+
+# Boot every valid example, GET /healthz, and POST a signed request to each flow
+make test-examples
 ```
+
+`make test-examples` is what CI's Examples job runs after `validate-examples`. It uses a fake publisher (no Docker) and a loopback HTTP server for env-driven `http_request` URLs. Adding a new YAML under `examples/` automatically includes it; `invalid-*` files must fail validation.

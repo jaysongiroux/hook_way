@@ -1,4 +1,4 @@
-.PHONY: deadcode web-knip test test-all test-race conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -178,6 +178,13 @@ validate-examples:
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done
 
+# test-examples boots every valid example config and POSTs a signed request to
+# each flow. Destinations are faked; env-driven http_request URLs hit a loopback
+# server. This is stricter than validate-examples: JWT keys must parse, filters
+# and allowlists must accept a representative payload, and the graph must run.
+test-examples:
+	$(GO) test ./internal/examplesmoke -count=1 -timeout 5m
+
 run:
 	HOOKWAY_CONFIG=$(CONFIG) $(GO) run ./cmd/hookway
 
@@ -187,7 +194,7 @@ docker-build: ui
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint ui-check docker-build vuln-scan
+release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint ui-check docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build

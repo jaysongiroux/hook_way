@@ -1,6 +1,6 @@
 # Called by CI (PRs / main) and Release. Runs the full gate in parallel:
-# Go unit/lint, race, web unit, Playwright, each integration suite, image+Trivy.
-# Does not publish anything.
+# Go unit/lint, race, shipped example configs, web unit, Playwright, each
+# integration suite, image+Trivy. Does not publish anything.
 name: Reusable CI
 
 on:
@@ -35,9 +35,6 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Validate example configs
-        run: make validate-examples
-
       - name: Unit tests
         run: make test
 
@@ -49,6 +46,27 @@ jobs:
 
       - name: Dead code
         run: make deadcode
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Validate example configs
+        run: make validate-examples
+
+      - name: Serve and POST every example flow
+        run: make test-examples
 
   go-race:
     name: Go race
@@ -241,6 +259,7 @@ jobs:
     needs:
       - go
       - go-race
+      - examples
       - web
       - web-e2e
       - integration
