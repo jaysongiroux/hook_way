@@ -225,31 +225,6 @@ func TestWebhookEngineDrainDeliversQueued(t *testing.T) {
 	}
 }
 
-func TestParseRetryAfterIntegerSeconds(t *testing.T) {
-	got := parseRetryAfter("2", time.Now())
-	if got != 2*time.Second {
-		t.Fatalf("parseRetryAfter(%q) = %v, want 2s", "2", got)
-	}
-}
-
-func TestParseRetryAfterHTTPDate(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	future := now.Add(5 * time.Second)
-	header := future.Format(http.TimeFormat)
-	got := parseRetryAfter(header, now)
-	if got < 4*time.Second || got > 5*time.Second {
-		t.Fatalf("parseRetryAfter(%q) = %v, want ~5s", header, got)
-	}
-}
-
-func TestParseRetryAfterGarbageFallsBackToZero(t *testing.T) {
-	for _, header := range []string{"", "not-a-duration", "-5", "0", "Thursday"} {
-		if got := parseRetryAfter(header, time.Now()); got != 0 {
-			t.Fatalf("parseRetryAfter(%q) = %v, want 0 (fallback to computed backoff)", header, got)
-		}
-	}
-}
-
 // TestWebhookEngineUsesRetryAfterSecondsOverComputedBackoff guards the D8 fix:
 // a 429 with Retry-After must win over the (much smaller) configured
 // exponential backoff for the wait before the next attempt.

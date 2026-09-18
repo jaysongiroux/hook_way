@@ -11,11 +11,19 @@ func TestNextBackoffAppliesJitterWithinBand(t *testing.T) {
 	for _, base := range []time.Duration{100 * time.Millisecond, time.Second, 5 * time.Second} {
 		lower := time.Duration(float64(base) * 2 * 0.8)
 		upper := time.Duration(float64(base) * 2 * 1.2)
+		seen := map[time.Duration]bool{}
 		for i := 0; i < 200; i++ {
 			got := NextBackoff(base, 0)
 			if got < lower || got > upper {
 				t.Fatalf("NextBackoff(%v, 0) = %v, want within [%v, %v]", base, got, lower, upper)
 			}
+			seen[got] = true
+		}
+		// The band check alone would still pass if jitter were a constant
+		// factor. Callers backing off after a shared outage must not retry in
+		// lockstep, so the delays have to actually vary.
+		if len(seen) < 2 {
+			t.Fatalf("NextBackoff(%v, 0) returned only %v; expected jittered delays to vary", base, seen)
 		}
 	}
 }

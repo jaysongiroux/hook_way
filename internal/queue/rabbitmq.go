@@ -8,12 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"os"
 	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+
+	"github.com/jasongiroux/hookway/internal/retry"
 )
 
 const defaultPublisherChannels = 8
@@ -155,10 +156,10 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, destinationQueueID, que
 		if attempt == attempts {
 			break
 		}
-		if err := sleepContext(ctx, delay); err != nil {
+		if err := retry.Sleep(ctx, delay); err != nil {
 			return err
 		}
-		delay = nextBackoff(delay, p.maxBackoff())
+		delay = retry.NextBackoff(delay, p.maxBackoff())
 	}
 	return last
 }
@@ -428,7 +429,7 @@ func (p *RabbitMQPublisher) watchClose(conn *amqp.Connection) {
 		if waitErr := sleepContextOrClosed(p.closed, delay); waitErr != nil {
 			return
 		}
-		delay = nextBackoff(delay, p.maxBackoff())
+		delay = retry.NextBackoff(delay, p.maxBackoff())
 	}
 }
 
@@ -582,50 +583,6 @@ func (p *RabbitMQPublisher) dialTimeout() time.Duration {
 		return p.cfg.PublishTimeout
 	}
 	return 5 * time.Second
-}
-
-const backoffFloor = 100 * time.Millisecond
-
-// nextBackoff doubles delay (exponential backoff), applies +/-20% jitter so
-// many callers backing off after a shared outage (e.g. every RabbitMQ
-// publisher reconnecting, or every webhook destination hitting the same
-// downstream 5xx) don't retry in lockstep, then re-applies the floor and cap
-// so jitter can never push the result below the floor or above a configured
-// maxDelay. This is a runtime-path random source (not config/security
-// sensitive), so math/rand/v2 is fine.
-func nextBackoff(delay, maxDelay time.Duration) time.Duration {
-	if delay <= 0 {
-		delay = backoffFloor
-	}
-	delay *= 2
-	delay = jitter(delay)
-	if delay < backoffFloor {
-		delay = backoffFloor
-	}
-	if maxDelay > 0 && delay > maxDelay {
-		return maxDelay
-	}
-	return delay
-}
-
-// jitter multiplies d by a uniformly random factor in [0.8, 1.2) (+/-20%).
-func jitter(d time.Duration) time.Duration {
-	factor := 0.8 + rand.Float64()*0.4
-	return time.Duration(float64(d) * factor)
-}
-
-func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func sleepContextOrClosed(closed <-chan struct{}, delay time.Duration) error {

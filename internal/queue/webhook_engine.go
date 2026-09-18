@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/retry"
 )
 
 var errWebhookQueueFull = errors.New("webhook: delivery queue full")
@@ -306,10 +306,10 @@ func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics
 				wait = d.retry.MaxBackoff
 			}
 		}
-		if serr := sleepContext(ctx, wait); serr != nil {
+		if serr := retry.Sleep(ctx, wait); serr != nil {
 			return outcome, attempts, fmt.Errorf("webhook %q target %q: delivery aborted before retry (%s): %w", d.destID, d.target, outcome, serr)
 		}
-		delay = nextBackoff(delay, d.retry.MaxBackoff)
+		delay = retry.NextBackoff(delay, d.retry.MaxBackoff)
 	}
 	return outcome, attempts, nil // unreachable: loop returns on every path
 }
@@ -335,33 +335,10 @@ func (d *webhookDelivery) attempt(ctx context.Context, msg Message) (outcome str
 		if resp.StatusCode >= 500 {
 			return "5xx", true, 0
 		}
-		return "429", true, parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		return "429", true, retry.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	default:
 		return "4xx", false, 0 // terminal
 	}
-}
-
-// parseRetryAfter parses a Retry-After header per RFC 9110 §10.2.3: either an
-// integer number of seconds, or an HTTP-date. Returns 0 — meaning "fall back
-// to the computed backoff" — when the header is absent, malformed, or
-// resolves to a non-positive delay.
-func parseRetryAfter(header string, now time.Time) time.Duration {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(header); err == nil {
-		if secs <= 0 {
-			return 0
-		}
-		return time.Duration(secs) * time.Second
-	}
-	if when, err := http.ParseTime(header); err == nil {
-		if d := when.Sub(now); d > 0 {
-			return d
-		}
-	}
-	return 0
 }
 
 // buildWebhookRequest constructs the outbound request for the delivery mode.
