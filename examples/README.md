@@ -11,7 +11,7 @@ Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hoo
 | `filters.yaml` | Filtering reference: a filter node after envelope with a silent drop, a branch-level filter that fans out selectively, and `on_no_match: reject` (422) using numeric, regex, and `exists` operators. See `docs/configuration.md` § Filtering. |
 | `variables.yaml` | Routing variables reference: a path placeholder on `http_trigger` (`{envName}`) becomes `envelope.Vars`; a `transform` `field_map` copies a body field to `vars.tenant`; publish targets and a webhook `url` use `{name}` placeholders. Unresolved templates fail closed at publish. See `docs/configuration.md` § Variables. |
 | `replay.yaml` | Webhook-replay reference: one RabbitMQ flow plus `replay` enabled with a bounded Postgres-backed store (`ttl`, `max_events`, `cleanup_interval`) and its protected API on a separate `replay.addr` listener, authenticated via `security.api_key`. See `docs/configuration.md` § Replay and `docs/security.md` § Replay. |
-| `on_error.yaml` | Error-port reference: `http_request` 5xx to a DLQ (`ack:on_error>dlq`) or an explicit 502 (`up:on_error>fail`); `rate_limit:on_error` to a 429; `auth:on_error` to a 401; `envelope:on_error` to a 400. `http_trigger`, `read_body`, and `no_auth` have no error port. See `docs/configuration.md` § Flows. |
+| `on_error.yaml` | Error-port reference: `http_request` 5xx to a DLQ (`ack:on_error>dlq`) or an explicit 502 (`up:on_error>fail`); `rate_limit:on_error` to a 429; `auth:on_error` to a 401; `envelope:on_error` to a 400. `http_trigger`, `read_body`, and `no_auth` have no error port. Also shows `http_request` `retry` combined with an `on_error` path. See `docs/configuration.md` § Flows. |
 
 ## Destination reference configs
 

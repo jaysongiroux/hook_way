@@ -40,7 +40,7 @@ flows:
       - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
       - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
-      - {id: ack, type: http_request, description: "Posts the event to the ack URL; a 5xx takes the error port.", url: "https://example.test/hooks", timeout: 5s, error_on_status: [5xx]}
+      - {id: ack, type: http_request, description: "Posts the event to the ack URL; transient failures retry, then a 5xx takes the error port.", url: "https://example.test/hooks", timeout: 5s, error_on_status: [5xx], retry: {max_attempts: 3, initial_backoff: 500ms, max_backoff: 5s}}
       - {id: out, type: publish, description: "Normal path: deliver the acknowledged envelope.", destination: primary, target: github-webhooks}
       - {id: dlq, type: publish, description: "Error path: park the envelope so the sender still gets a 202.", destination: dlq, target: github-failed}
     edges: [in>rl, rl>body, body>auth, auth>env, env>ack, ack>out, ack:on_error>dlq]

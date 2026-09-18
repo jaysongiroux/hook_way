@@ -806,6 +806,48 @@ edges: [env>ack, ack>out, ack:on_error>dlq]
 
 See `examples/on_error.yaml` for `rate_limit`, `auth`, `envelope`, and `http_request`. `examples/showcase/production.yaml` uses `ack:on_error>dlq`.
 
+#### `http_request` retry
+
+`http_request` makes one attempt by default. Add a `retry:` block to re-attempt
+transient failures:
+
+```yaml
+- id: notify
+  type: http_request
+  url: "${SLACK_WEBHOOK_URL}"
+  body: transformed
+  timeout: 5s
+  retry:
+    max_attempts: 4        # total attempts including the first; 1 or absent = no retry, max 10
+    initial_backoff: 500ms # doubled with +/-20% jitter each attempt (default 500ms)
+    max_backoff: 10s       # ceiling for any single wait (default 30s)
+```
+
+- **What retries:** transport errors, timeouts, `429`, and `5xx`. Every other
+  status — including all other `4xx` — is terminal, because a payload the
+  upstream rejected will not become acceptable on a second try.
+- **`Retry-After`:** honored on a `429` (integer seconds or HTTP-date), clamped
+  by `max_backoff` so a mistaken or hostile header cannot park the flow.
+- **`timeout` is per attempt,** not a total deadline. `timeout: 5s` with
+  `max_attempts: 4` can take ~20s plus backoff. The loop still stops early when
+  the caller's context is cancelled.
+- **Sync flows:** a flow ending in `respond` holds the original caller for the
+  whole sequence. Keep `max_attempts` small (2-3) there, or move the call to an
+  async `publish` destination.
+- **`retry` and `error_on_status` are independent.** `retry` decides whether to
+  re-attempt; `error_on_status` is applied once, to the final attempt's status.
+  Combining them — retry the transient failures, then take `on_error` when the
+  attempts run out — is the intended production shape; see
+  `examples/on_error.yaml`.
+- **Retry is not rate limiting.** It absorbs a burst against a rate-limited API
+  (Slack incoming webhooks allow roughly one message per second; a Discord
+  webhook allows about five requests per five seconds). It does not help when a
+  flow's steady-state rate exceeds what the upstream permits — for that, publish
+  to a queue destination and pace the consumer.
+
+An `initial_backoff` or `max_backoff` without `max_attempts: 2` or more is
+rejected by `hookway validate` rather than silently ignored.
+
 Node fields (every type):
 
 - `id`: required. Unique within the flow; this is the name `edges` refer to.
@@ -859,40 +901,6 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 - `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node).
 - `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path.
-
-#### Retrying an `http_request`
-
-`retry` is opt-in and off by default: with no block, or `max_attempts` of 1, the
-node makes exactly one attempt, which is the safe default for the
-non-idempotent POST it usually issues.
-
-```yaml
-- id: post
-  type: http_request
-  url: "${SLACK_WEBHOOK_URL}"
-  error_on_status: [4xx, 5xx]
-  retry: {max_attempts: 4, initial_backoff: 1s, max_backoff: 10s}
-```
-
-A retry is attempted for a transport error, a timeout, `429`, and any `5xx`.
-Every other status — including the rest of the `4xx` range — is terminal,
-because a payload the upstream rejected will not become acceptable on a second
-try. Backoff doubles with ±20% jitter and is capped by `max_backoff`; a `429`'s
-`Retry-After` header overrides the computed wait for that one attempt, clamped
-by `max_backoff` so a mistaken header cannot park the flow. Defaults are
-`500ms` and `30s`, matching the webhook destination.
-
-`retry` and `error_on_status` are independent: `retry` decides whether to
-re-attempt, `error_on_status` is applied once to the final attempt's status. A
-`max_backoff` or `initial_backoff` written without `max_attempts` of 2 or more
-is rejected rather than silently ignored.
-
-`timeout` is the budget for **each** attempt, not the whole sequence, so
-`timeout: 5s` with `max_attempts: 4` can run about 20s plus backoff. A sync
-flow (one ending in `respond`) holds the original caller for that whole time —
-keep `max_attempts` small there. Retry absorbs a burst against a rate-limited
-API; it does not fix sustained over-rate traffic, which needs a queue
-destination and a consumer.
 
 #### Builder templates
 
