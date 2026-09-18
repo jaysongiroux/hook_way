@@ -344,6 +344,12 @@ func transformBodyFormatIssue(prefix string, index int, id, format string, nc gr
 				"use kind: xml_prune for XML bodies",
 			), true
 		}
+		if format == "multipart" {
+			return cfgIssue(field,
+				fmt.Sprintf("transform %q uses kind: %s but reaches an envelope with body_format: multipart; the parsed body is {fields, files}, not the event's JSON body, and the node would fail at runtime", id, opts.Kind),
+				"read the parts in a code node instead",
+			), true
+		}
 		if format == "raw" {
 			return cfgIssue(field,
 				fmt.Sprintf("transform %q uses kind: %s but reaches an envelope with body_format: raw, which leaves the body empty", id, opts.Kind),

@@ -151,8 +151,27 @@
           "enum": [
             "json",
             "xml",
-            "raw"
+            "raw",
+            "multipart"
           ]
+        },
+        "multipart": {
+          "properties": {
+            "max_parts": {
+              "type": "integer",
+              "maximum": 256,
+              "minimum": 1
+            },
+            "max_part_bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "include_content": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
         }
       },
       "additionalProperties": false,

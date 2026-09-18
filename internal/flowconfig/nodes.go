@@ -66,8 +66,46 @@ type ReplayGuardOptions struct {
 	Key        string `yaml:"key,omitempty" json:"key,omitempty"`
 }
 type EnvelopeOptions struct {
-	BodyFormat string `yaml:"body_format,omitempty" json:"body_format,omitempty" jsonschema:"enum=json,enum=xml,enum=raw"`
+	BodyFormat string           `yaml:"body_format,omitempty" json:"body_format,omitempty" jsonschema:"enum=json,enum=xml,enum=raw,enum=multipart"`
+	Multipart  MultipartOptions `yaml:"multipart,omitempty" json:"multipart,omitempty"`
 }
+
+// MultipartOptions bounds a body_format: multipart parse. The defaults are
+// deliberately modest rather than generous: the worst case an operator is
+// exposed to is max_parts x max_part_bytes held in memory, plus a 4/3 base64
+// copy of whatever content is carried, per in-flight request.
+type MultipartOptions struct {
+	MaxParts     int   `yaml:"max_parts,omitempty" json:"max_parts,omitempty" jsonschema:"minimum=1,maximum=256"`
+	MaxPartBytes int64 `yaml:"max_part_bytes,omitempty" json:"max_part_bytes,omitempty" jsonschema:"minimum=1"`
+	// IncludeContent is a pointer so an explicit false is distinguishable
+	// from an unset field; the default is true.
+	IncludeContent *bool `yaml:"include_content,omitempty" json:"include_content,omitempty"`
+}
+
+const (
+	defaultMultipartMaxParts     = 16
+	defaultMultipartMaxPartBytes = 1 << 20
+)
+
+// limits applies the documented defaults.
+func (o MultipartOptions) limits() multipartLimits {
+	lim := multipartLimits{
+		MaxParts:       o.MaxParts,
+		MaxPartBytes:   o.MaxPartBytes,
+		IncludeContent: true,
+	}
+	if lim.MaxParts <= 0 {
+		lim.MaxParts = defaultMultipartMaxParts
+	}
+	if lim.MaxPartBytes <= 0 {
+		lim.MaxPartBytes = defaultMultipartMaxPartBytes
+	}
+	if o.IncludeContent != nil {
+		lim.IncludeContent = *o.IncludeContent
+	}
+	return lim
+}
+
 type FilterConditionOptions struct {
 	Source   string `yaml:"source" json:"source" jsonschema:"required"`
 	Path     string `yaml:"path" json:"path" jsonschema:"required"`
@@ -417,8 +455,31 @@ func validateReplayGuard(o ReplayGuardOptions) error {
 	return validateDuration("ttl", o.TTL, false)
 }
 func validateEnvelope(o EnvelopeOptions) error {
-	if o.BodyFormat != "" && o.BodyFormat != "json" && o.BodyFormat != "xml" && o.BodyFormat != "raw" {
+	switch o.BodyFormat {
+	case "", "json", "xml", "raw", "multipart":
+	default:
 		return fmt.Errorf("unknown body_format %q", o.BodyFormat)
+	}
+	return validateMultipart(o)
+}
+
+// validateMultipart rejects a multipart block that cannot do what it looks
+// like it does. Options set without body_format: multipart are rejected rather
+// than silently ignored, the same reasoning as http_request's retry block: a
+// lone limit is always a half-written config.
+func validateMultipart(o EnvelopeOptions) error {
+	set := o.Multipart.MaxParts != 0 || o.Multipart.MaxPartBytes != 0 || o.Multipart.IncludeContent != nil
+	if set && o.BodyFormat != "multipart" {
+		return errors.New("multipart options have no effect without body_format: multipart")
+	}
+	if o.Multipart.MaxParts < 0 {
+		return errors.New("multipart.max_parts must not be negative")
+	}
+	if o.Multipart.MaxParts > 256 {
+		return errors.New("multipart.max_parts must be 256 or fewer")
+	}
+	if o.Multipart.MaxPartBytes < 0 {
+		return errors.New("multipart.max_part_bytes must not be negative")
 	}
 	return nil
 }

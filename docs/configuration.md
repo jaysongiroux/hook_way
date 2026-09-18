@@ -893,7 +893,7 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 
 ### Envelope and publish
 
-- `envelope`: builds the JSON envelope (`body_format: json|xml|raw`). `json` decodes to an object; `xml` decodes to an element tree that `filter`, `code`, `transform` `xml_prune`, and `http_request` `body: transformed` all understand; `raw` leaves the body empty and publishes the bytes as `raw_body_base64`. Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
+- `envelope`: builds the JSON envelope (`body_format: json|xml|raw|multipart`). `json` decodes to an object; `xml` decodes to an element tree that `filter`, `code`, `transform` `xml_prune`, and `http_request` `body: transformed` all understand; `multipart` decodes a `multipart/form-data` upload to `{fields, files}` (see [Multipart bodies](#multipart-bodies)); `raw` leaves the body empty and publishes the bytes as `raw_body_base64`. Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
 - `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`, and a request whose path variable contains a `..` segment is rejected with `400`. See [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
@@ -999,6 +999,70 @@ Limits worth knowing before you design a flow around it:
   `prune_orphaned_relationships`.
 
 `examples/xml.yaml` is a complete flow using all of it.
+
+### Multipart bodies
+
+`body_format: multipart` parses a `multipart/form-data` request into a shape
+the rest of the flow can address:
+
+```yaml
+- id: env
+  type: envelope
+  body_format: multipart
+  multipart:
+    max_parts: 4            # parts allowed before the request is rejected (default 16, max 256)
+    max_part_bytes: 2097152 # per-part cap (default 1 MiB)
+    include_content: true   # carry the bytes as base64 (default true)
+```
+
+The body becomes:
+
+```json
+{
+  "fields": {"account": "acct_1"},
+  "files": {
+    "document": {
+      "filename": "report.pdf",
+      "content_type": "application/pdf",
+      "size": 20481,
+      "content": "<base64>"
+    }
+  }
+}
+```
+
+Files are keyed by form field name rather than collected into a list, so the
+ordinary dotted-path filter reaches them: `files.document.content_type`. A
+repeated field name gets a `#2`, `#3` suffix in document order
+(`files.document#2.filename`). `code` sees the same object as `input.body`, and
+`publish` sends it as the envelope's `body`.
+
+The signature is always verified against the raw bytes before anything is
+parsed, so an unsigned upload never reaches the multipart reader.
+
+**Memory.** The whole request is buffered by `read_body`, and each carried part
+is held again, plus a base64 copy at 4/3 its size. Peak footprint per in-flight
+request is roughly the raw body plus `4/3 x` the carried content, and again per
+branch that clones the body. The bound you control is
+`max_parts x max_part_bytes` — the defaults are modest for that reason. Set
+`include_content: false` when you only route on metadata: each file then
+carries `size` and `content_omitted: true` instead of `content`, and the bytes
+are never copied. Genuinely large uploads want a streaming intake, which
+Hookway does not have.
+
+**Limits worth knowing before you design around it:**
+
+| Limit | Detail |
+| --- | --- |
+| Form-data only | `multipart/mixed` and `multipart/related` are rejected with `400`. |
+| Closing boundary required | A body with no closing `--boundary--` is rejected with `400`. `mime/multipart` reports a truncated body as a clean end of input, so without this check a cut-off upload would parse to zero parts instead of failing. |
+| No re-serialization | `http_request` `body: transformed` JSON-encodes the parsed shape, which is not a multipart body. To forward an upload unchanged, use `body: raw`, which sends the original bytes. |
+| Claimed types | `content_type` is what the vendor's part headers said, verbatim. There is no magic-byte sniffing, so a filter matches the claim, not the content. |
+| Repeated fields | Non-file fields keep the last value; files get `#2`/`#3` keys. |
+| Transform kinds | `field_map`, `changed_fields`, and `xml_prune` all reject a multipart body at validate time — read the parts in a `code` node instead. |
+| Statuses | Over `max_parts` or `max_part_bytes` is `413`; a malformed body or a non-form-data content type is `400`. |
+
+`examples/multipart.yaml` is a complete flow.
 
 ### Variables
 

@@ -52,7 +52,10 @@ const NODE_FIELD_HELP: Record<string, string> = {
   "replay_guard.ttl": "How long a seen event key is remembered, e.g. 24h.",
   "replay_guard.max_entries": "In-memory cap for remembered keys in this process.",
   "replay_guard.key": "Event identity to remember. Empty uses the default id from the payload.",
-  "envelope.body_format": "How to decode the body: json objects, xml element tree, or raw bytes (raw leaves the body empty).",
+  "envelope.body_format":
+    "How to decode the body: json objects, xml element tree, multipart form-data parts, or raw bytes (raw leaves the body empty).",
+  "envelope.multipart":
+    "Limits for body_format: multipart. Bounds how much of an upload is held in memory.",
   "filter.conditions": "All conditions must match for the event to continue.",
   "filter.on_no_match": "drop acknowledges 202 without publishing; reject fails the request.",
   "lookup.provider": "Where to read the extra data from (env, file, dynamodb, …).",
@@ -116,6 +119,10 @@ const COMMON_FIELD_HELP: Record<string, string> = {
   // qualified name first, and nodeFieldHelp only consults this map (not
   // NODE_FIELD_HELP) for a dotted field.
   "retry.max_attempts": "Total attempts including the first. 1 (or empty) means no retry. Max 10.",
+  "multipart.max_parts": "Parts allowed before the request is rejected with 413. Default 16, max 256.",
+  "multipart.max_part_bytes": "Per-part size cap in bytes. Default 1048576 (1 MiB).",
+  "multipart.include_content":
+    "Carry each file's bytes as base64. Turn off to keep metadata only and copy nothing.",
   "retry.initial_backoff": "Wait before the second attempt, doubled with jitter each time. Defaults to 500ms.",
   "retry.max_backoff": "Ceiling for any single wait, including a 429's Retry-After. Defaults to 30s.",
   "conditions.path": "Header name, or a dotted body path: JSON keys (repository.private) or XML elements with @ for attributes (LOAN.@id).",

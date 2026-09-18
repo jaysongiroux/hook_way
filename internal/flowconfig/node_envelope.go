@@ -39,6 +39,7 @@ func (c CapturedEvent) CloneBody() (any, error) {
 type envelopeNode struct {
 	id            string
 	format        string
+	multipart     multipartLimits
 	allowlist     []string
 	denylist      []string
 	queryDenylist []string
@@ -49,7 +50,10 @@ func newEnvelopeNode(id string, opts EnvelopeOptions, allowlist, denylist []stri
 	if format == "" {
 		format = "json"
 	}
-	return envelopeNode{id: id, format: format, allowlist: allowlist, denylist: denylist}
+	return envelopeNode{
+		id: id, format: format, multipart: opts.Multipart.limits(),
+		allowlist: allowlist, denylist: denylist,
+	}
 }
 
 func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
@@ -107,6 +111,22 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 	switch n.format {
 	case "raw":
 		event.Body = nil
+		out.Extra = CapturedEvent{Event: event}
+		return out, nil
+	case "multipart":
+		// The signature was already verified against the raw bytes (I6), so
+		// the parser only ever sees a trusted body. Bounds come from the
+		// node's multipart block; both failures carry their own status so a
+		// 413 reads differently from a 400 in the logs.
+		parsed, status, err := parseMultipart(head.Header.Get("Content-Type"), verified.Raw.Body, n.multipart)
+		if err != nil {
+			return nil, graph.NodeError{NodeID: n.id, Status: status, Err: fmt.Errorf("envelope %q: %w", n.id, err)}
+		}
+		// event.Body stays the captured JSON view (nil here, since a multipart
+		// body is not JSON); the parsed parts go on the branch body, which is
+		// what filter, code, and publish read.
+		event.Body = parsed
+		out.Body = parsed
 		out.Extra = CapturedEvent{Event: event}
 		return out, nil
 	case "xml":

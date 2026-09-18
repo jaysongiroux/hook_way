@@ -239,3 +239,58 @@ flows:
     edges: [in>body, body>auth, auth>env, env>filt, filt>ack]
 `
 }
+
+func TestMultipartBodyFormatGuard(t *testing.T) {
+	flow := func(nodes string) string {
+		return `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+flows:
+  f:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}` + nodes + `
+      - {id: ack, type: respond, status: 202, body: ok}
+    edges: [in>body, body>auth, auth>env, env>mid, mid>ack]
+`
+	}
+
+	t.Run("field_map transform on a multipart body is rejected", func(t *testing.T) {
+		src := flow(`
+      - {id: env, type: envelope, body_format: multipart}
+      - {id: mid, type: transform, kind: field_map, name: out, mappings: [{from: a, to: b}]}`)
+		assertLint(t, loadAllowingIssues(t, src), config.SeverityError, "field_map")
+	})
+
+	t.Run("xml_prune transform on a multipart body is rejected", func(t *testing.T) {
+		src := flow(`
+      - {id: env, type: envelope, body_format: multipart}
+      - {id: mid, type: transform, kind: xml_prune, rules: [remove_empty_parents]}`)
+		assertLint(t, loadAllowingIssues(t, src), config.SeverityError, "xml_prune")
+	})
+
+	t.Run("a body filter on a multipart body is allowed", func(t *testing.T) {
+		// This is the feature working: files.document.content_type resolves
+		// through the existing dotted-path code, so the guard must not reject it.
+		src := flow(`
+      - {id: env, type: envelope, body_format: multipart}
+      - {id: mid, type: filter, conditions: [{source: body, path: files.document.content_type, operator: eq, value: application/pdf}]}`)
+		for _, issue := range Lint(loadAllowingIssues(t, src)) {
+			if issue.Severity == config.SeverityError {
+				t.Fatalf("unexpected error: %s (%s)", issue.Message, issue.Field)
+			}
+		}
+	})
+
+	t.Run("a code node on a multipart body is allowed", func(t *testing.T) {
+		src := flow(`
+      - {id: env, type: envelope, body_format: multipart}
+      - {id: mid, type: code, timeout: 50ms, script: "return { vars: { n: String(Object.keys(input.body.files).length) } };"}`)
+		for _, issue := range Lint(loadAllowingIssues(t, src)) {
+			if issue.Severity == config.SeverityError {
+				t.Fatalf("unexpected error: %s (%s)", issue.Message, issue.Field)
+			}
+		}
+	})
+}

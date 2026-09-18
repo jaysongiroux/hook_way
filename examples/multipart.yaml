@@ -1,0 +1,57 @@
+# Multipart reference: inspecting a file upload delivered as
+# multipart/form-data, rather than treating the whole request as one blob.
+#
+# Requires UPLOAD_SOURCE_SECRET (the HMAC secret of the sending system).
+#
+# The HMAC is verified against the raw bytes before anything is parsed (I6),
+# so an unsigned upload never reaches the multipart reader. The limits below
+# are the memory bound: at most max_parts x max_part_bytes is held per
+# in-flight request, plus a 4/3 base64 copy of the carried content.
+server:
+  addr: ":8080"
+  max_body_bytes: 8388608
+
+destinations:
+  uploads:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.uploads"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+flows:
+  upload_intake:
+    nodes:
+      - {id: in, type: http_trigger, description: "Where the vendor posts the multipart upload.", path: /webhooks/upload, methods: [POST]}
+      - {id: body, type: read_body, description: "Buffers the whole request, including the file, so the signature can be verified.", max_bytes: 8388608}
+      - {id: auth, type: auth, description: "Verifies the HMAC over the raw multipart bytes, before any parsing.", scheme: hmac_sha256_hex, secret: "${UPLOAD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
+      - id: env
+        type: envelope
+        description: "Parses the parts into {fields, files}. Limits bound the memory a hostile upload can cost."
+        body_format: multipart
+        multipart:
+          max_parts: 4
+          max_part_bytes: 2097152
+          include_content: true
+      # Parts are addressed by form field name, so the existing dotted-path
+      # filter reaches them with no special syntax.
+      - {id: pdf_only, type: filter, description: "Continues only for a PDF in the document field.", on_no_match: reject, conditions: [{source: body, path: files.document.content_type, operator: eq, value: application/pdf}]}
+      - id: describe
+        type: code
+        description: "Lifts the upload's metadata into variables for routing. Reads metadata only; the bytes stay on the body."
+        timeout: 50ms
+        script: |
+          const doc = input.body.files.document;
+          return {
+            body: input.body,
+            vars: {
+              filename: String(doc.filename || ''),
+              size: String(doc.size || 0),
+              submitter: String((input.body.fields || {}).account || 'unknown')
+            }
+          };
+      - {id: out, type: publish, description: "Publishes the parsed upload; consumers read files.document.content as base64.", destination: uploads, target: uploads-received, create: true}
+    edges: [in>body, body>auth, auth>env, env>pdf_only, pdf_only>describe, describe>out]

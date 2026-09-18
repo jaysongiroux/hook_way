@@ -285,3 +285,93 @@ func TestHTTPRequestRetryValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvelopeMultipartValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "multipart format with no option block is valid",
+			yaml: "body_format: multipart\n",
+		},
+		{
+			name: "full option block is valid",
+			yaml: "body_format: multipart\nmultipart:\n  max_parts: 4\n  max_part_bytes: 2048\n  include_content: false\n",
+		},
+		{
+			name:    "options without the multipart format are rejected",
+			yaml:    "body_format: json\nmultipart:\n  max_parts: 4\n",
+			wantErr: "body_format: multipart",
+		},
+		{
+			name:    "negative max_parts rejected",
+			yaml:    "body_format: multipart\nmultipart:\n  max_parts: -1\n",
+			wantErr: "multipart.max_parts",
+		},
+		{
+			name:    "max_parts above the ceiling rejected",
+			yaml:    "body_format: multipart\nmultipart:\n  max_parts: 500\n",
+			wantErr: "multipart.max_parts",
+		},
+		{
+			name:    "negative max_part_bytes rejected",
+			yaml:    "body_format: multipart\nmultipart:\n  max_part_bytes: -1\n",
+			wantErr: "multipart.max_part_bytes",
+		},
+		{
+			name:    "unknown body_format still rejected",
+			yaml:    "body_format: nonsense\n",
+			wantErr: "unknown body_format",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, err := NewRegistryWithOptions(RegistryOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec, _ := reg.Lookup("envelope")
+			_, err = spec.New(nodeConfigFromYAML(t, "envelope", tc.yaml))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected an error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMultipartOptionDefaults(t *testing.T) {
+	// An empty block must produce the documented defaults, and include_content
+	// must default to true — a parse that silently dropped file bytes would be
+	// a surprising default.
+	lim := MultipartOptions{}.limits()
+	if lim.MaxParts != 16 {
+		t.Fatalf("MaxParts = %d, want 16", lim.MaxParts)
+	}
+	if lim.MaxPartBytes != 1<<20 {
+		t.Fatalf("MaxPartBytes = %d, want %d", lim.MaxPartBytes, 1<<20)
+	}
+	if !lim.IncludeContent {
+		t.Fatal("IncludeContent = false, want true by default")
+	}
+
+	// An explicit false must survive, which is why the field is a *bool: a
+	// plain bool cannot distinguish "unset" from "explicitly false".
+	no := false
+	if (MultipartOptions{IncludeContent: &no}).limits().IncludeContent {
+		t.Fatal("include_content: false was ignored")
+	}
+	if got := (MultipartOptions{MaxParts: 3, MaxPartBytes: 99}).limits(); got.MaxParts != 3 || got.MaxPartBytes != 99 {
+		t.Fatalf("explicit limits = %+v, want MaxParts 3 and MaxPartBytes 99", got)
+	}
+}

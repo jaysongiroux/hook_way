@@ -14,8 +14,10 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -213,6 +215,7 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"DISCORD_WEBHOOK_URL":     upstreamURL,
 		"DISCORD_SOURCE_SECRET":   "discord-secret",
 		"HOOKWAY_API_KEY":         "hookway-api-key",
+		"UPLOAD_SOURCE_SECRET":    "upload-secret",
 		"XML_SOURCE_SECRET":       "xml-secret",
 		"XML_UPSTREAM_URL":        upstreamURL,
 	}
@@ -241,8 +244,13 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) 
 	// other flow gets would 400 before reaching the nodes under test. The
 	// document carries LOAN.Amount because examples/xml.yaml filters on it.
 	body, contentType := []byte(`{"summary":"example-smoke","action":"opened","ref":"refs/heads/main","repository":{"private":false,"full_name":"acme/demo"},"data":{"object":{"organizationId":"acme"}},"order":{"total":150,"currency":"USD"},"customer":{"id":"cust_1"}}`), "application/json"
-	if envelopeBodyFormat(t, fc) == "xml" {
+	switch envelopeBodyFormat(t, fc) {
+	case "xml":
 		body, contentType = []byte(`<MESSAGE><LOAN id="L1"><Amount>150</Amount></LOAN></MESSAGE>`), "application/xml"
+	case "multipart":
+		// A multipart envelope needs a real boundary, and examples/multipart.yaml
+		// filters on files.document.content_type, so the part must claim PDF.
+		body, contentType = multipartBody(t)
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
@@ -251,6 +259,32 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) 
 	req.RemoteAddr = "10.0.0.1:3456"
 	signRequest(t, req, fc, body, jwtPriv)
 	return req
+}
+
+// multipartBody builds the upload examples/multipart.yaml expects: one
+// application/pdf part named "document" plus the sibling form field its code
+// node reads.
+func multipartBody(t *testing.T) ([]byte, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := w.WriteField("account", "acct_1"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := w.CreatePart(textproto.MIMEHeader{
+		"Content-Disposition": []string{`form-data; name="document"; filename="report.pdf"`},
+		"Content-Type":        []string{"application/pdf"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("%PDF-1.4 example-smoke")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), w.FormDataContentType()
 }
 
 // envelopeBodyFormat reports the body_format of the flow's first envelope node,

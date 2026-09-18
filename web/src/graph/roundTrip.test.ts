@@ -28,3 +28,18 @@ test.each(readdirSync(examplesDir).filter((f) => f.endsWith(".yaml")))("round-tr
   const { config } = toConfig({ ...model, nodes: layout(model.nodes, model.edges) });
   expect(normalize(config)).toEqual(normalize(parsed));
 });
+
+// examples/multipart.yaml is outside the showcase sweep above, but its nested
+// `multipart:` option block is the first nested object on a non-destination
+// node — if the builder's import/export path flattened or dropped it, the
+// block an operator typed in the inspector would vanish on export.
+test("round-trips the multipart example, nested option block included", () => {
+  const path = join(dirname(fileURLToPath(import.meta.url)), "../../../examples/multipart.yaml");
+  const parsed = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const model = fromConfig(parsed);
+  const { config } = toConfig({ ...model, nodes: layout(model.nodes, model.edges) });
+  // Named explicitly so the test fails loudly if the block is ever dropped,
+  // rather than passing by comparing two configs that both lost it.
+  expect(JSON.stringify(config)).toContain("max_part_bytes");
+  expect(normalize(config)).toEqual(normalize(parsed));
+});
