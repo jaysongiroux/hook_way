@@ -900,7 +900,8 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 - `transform`: `changed_fields`, `field_map` (JSON bodies), `xml_prune` (XML bodies). `hookway validate` rejects a kind that does not match the `body_format` on the path reaching it.
 - `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node).
-- `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path.
+- `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path. A case states its rule either as a single `when:` condition or as a `conditions:` list joined by `match: all` (default) or `match: any` — one spelling per case, not both.
+- `if_else`: a two-port `switch`. Conditions are the same `conditions:` list with the same `match: all|any`, and the event leaves by the `true` port when the rule holds and the `false` port when it does not. Both ports need an edge; to ignore one side, wire it at a terminal node rather than leaving it dangling. There is no failure to catch, so `if_else` takes no `on_error` edge.
 
 #### Builder templates
 

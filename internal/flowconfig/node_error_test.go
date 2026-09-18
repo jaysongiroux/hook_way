@@ -138,6 +138,15 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 				Run(context.Background(), graph.Envelope{Body: map[string]any{"event": "other"}})
 			return err
 		},
+		// if_else has no semantic failure: a condition that does not hold is
+		// the false branch, not an error. Only a mistyped payload fails.
+		"if_else": func(t *testing.T) error {
+			_, err := mustCatalogNode(t, "if_else",
+				"conditions: [{source: body, path: event, operator: eq, value: created}]\n",
+				RegistryOptions{}).
+				Run(context.Background(), graph.RequestHead{})
+			return err
+		},
 		"http_request": func(t *testing.T) error {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusBadGateway)

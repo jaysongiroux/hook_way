@@ -102,7 +102,15 @@ flows:
         cases:
           - port: main
             when: {source: body, path: ref, operator: eq, value: "refs/heads/main"}
-      - {id: orders, type: publish, description: "Order pipeline queue for main-branch pushes.", destination: orders, target: github-main, create: true}
+      - id: gate
+        type: if_else
+        description: "Private repos (or a forced push) go to the order pipeline; the rest go to Kafka."
+        match: any
+        conditions:
+          - {source: body, path: repository.private, operator: eq, value: true}
+          - {source: header, path: X-Hookway-Force, operator: exists}
+      - {id: orders, type: publish, description: "Order pipeline queue for private main-branch pushes.", destination: orders, target: github-main, create: true}
+      - {id: public_main, type: publish, description: "Kafka topic for public main-branch pushes.", destination: events, target: github-public, create: true}
       - {id: stream, type: publish, description: "Kafka topic for pushes to every other branch.", destination: events, target: github-pushes, create: true}
       - {id: dlq, type: publish, description: "Dead letter queue for failed acknowledgements.", destination: dlq, target: github-failed, create: true}
     edges:
@@ -119,8 +127,10 @@ flows:
       - snippet>ack
       - ack>route
       - ack:on_error>dlq
-      - route:main>orders
+      - route:main>gate
       - route:other>stream
+      - gate:true>orders
+      - gate:false>public_main
 
   proxy:
     nodes:

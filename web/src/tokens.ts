@@ -60,7 +60,13 @@ export const PORT: Record<string, string> = {
 //
 // handle is the diameter of a port dot, drawn by nodes.tsx. It is a token
 // because the RouteEdge geometry test asserts against it.
-export const NODE_SIZE = { width: 208, height: 96, handle: 10 } as const;
+//
+// padding is the card's inner inset, and has to be a number rather than the
+// Mantine "xs" spacing name: a labelled port row sits inside that padding but
+// its dot must straddle the card border, so nodes.tsx offsets the handle by
+// padding + handle/2 and would silently misalign if the two disagreed.
+// portRow is the height of one labelled port row.
+export const NODE_SIZE = { width: 208, height: 96, handle: 10, padding: 10, portRow: 18 } as const;
 
 export const EDGE = {
   /** Resting stroke and arrowhead. */

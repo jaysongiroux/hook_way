@@ -209,6 +209,69 @@ func TestMatchReturnsFailingIndex(t *testing.T) {
 	}
 }
 
+func TestMatchAnyRequiresOneCondition(t *testing.T) {
+	specs := []Spec{
+		{SourceBody, "ref", OpEq, "refs/heads/release"}, // fails against the fixture
+		{SourceBody, "count", OpEq, 42},                 // holds
+	}
+	chain, issues := CompileMode(specs, MatchAny)
+	if len(issues) != 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	ok, idx := chain.Match(nil, fixtureBody(t))
+	if !ok {
+		t.Fatal("any-chain should match when one condition holds")
+	}
+	// The decisive condition under MatchAny is the one that satisfied it, so
+	// Describe still names something a log reader can act on.
+	if idx != 1 {
+		t.Fatalf("want satisfying index 1, got %d", idx)
+	}
+	if _, path, _ := chain.Describe(idx); path != "count" {
+		t.Fatalf("Describe path = %q, want count", path)
+	}
+}
+
+func TestMatchAnyFailsWhenNoConditionHolds(t *testing.T) {
+	chain, issues := CompileMode([]Spec{
+		{SourceBody, "ref", OpEq, "refs/heads/release"},
+		{SourceBody, "count", OpEq, 7},
+	}, MatchAny)
+	if len(issues) != 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	ok, idx := chain.Match(nil, fixtureBody(t))
+	if ok {
+		t.Fatal("any-chain should not match when every condition fails")
+	}
+	// No single condition is to blame for an OR failing.
+	if idx != -1 {
+		t.Fatalf("want decisive index -1, got %d", idx)
+	}
+}
+
+func TestCompileModeDefaultsToAllAndReportsIssues(t *testing.T) {
+	if chain, issues := CompileMode(nil, MatchAny); len(issues) != 0 || !chain.Empty() {
+		t.Fatalf("empty any-chain should compile empty: %+v", issues)
+	} else if ok, _ := chain.Match(nil, nil); !ok {
+		t.Fatal("empty any-chain should match everything")
+	}
+	// Compile is CompileMode(MatchAll): both conditions must hold.
+	chain, issues := Compile([]Spec{
+		{SourceBody, "count", OpEq, 42},
+		{SourceBody, "count", OpEq, 7},
+	})
+	if len(issues) != 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	if ok, _ := chain.Match(nil, fixtureBody(t)); ok {
+		t.Fatal("all-chain should not match when a condition fails")
+	}
+	if _, issues := CompileMode([]Spec{{SourceBody, "x", OpRegex, "["}}, MatchAny); len(issues) != 1 {
+		t.Fatalf("want 1 issue for a bad regex, got %+v", issues)
+	}
+}
+
 func TestMatchResolvesXMLBody(t *testing.T) {
 	body := doc(t, `<MESSAGE><LOAN id="L1"><Amount>500</Amount></LOAN></MESSAGE>`)
 	for _, tc := range []struct {

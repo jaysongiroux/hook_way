@@ -321,6 +321,54 @@
       ]
     }
   },
+  "if_else": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "match": {
+          "type": "string",
+          "enum": [
+            "all",
+            "any"
+          ]
+        },
+        "conditions": {
+          "items": {
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": true
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "path",
+              "operator"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "conditions"
+      ]
+    }
+  },
   "ip_allowlist": {
     "input": "RequestHead",
     "output": "RequestHead",
@@ -582,6 +630,28 @@
       "properties": {
         "cases": {
           "items": {
+            "oneOf": [
+              {
+                "not": {
+                  "required": [
+                    "conditions"
+                  ]
+                },
+                "required": [
+                  "when"
+                ]
+              },
+              {
+                "not": {
+                  "required": [
+                    "when"
+                  ]
+                },
+                "required": [
+                  "conditions"
+                ]
+              }
+            ],
             "properties": {
               "port": {
                 "type": "string"
@@ -606,13 +676,44 @@
                   "path",
                   "operator"
                 ]
+              },
+              "match": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "any"
+                ]
+              },
+              "conditions": {
+                "items": {
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "operator": {
+                      "type": "string"
+                    },
+                    "value": true
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "path",
+                    "operator"
+                  ]
+                },
+                "type": "array",
+                "minItems": 1
               }
             },
             "additionalProperties": false,
             "type": "object",
             "required": [
-              "port",
-              "when"
+              "port"
             ]
           },
           "type": "array",

@@ -67,3 +67,22 @@ test("duplicate edges are refused", () => {
  expect(isValidConnection(connect(sw.from,sw.to,"ghost"),sw.nodes,[])).toBe(false);
  expect(isValidConnection(connect(sw.from,sw.to,"matched"),sw.nodes,[])).toBe(true);
  });
+
+test("if_else accepts only its true and false ports", () => {
+  const { from, to, nodes } = pair("if_else", "publish");
+  expect(isValidConnection(connect(from, to, "true"), nodes, [])).toBe(true);
+  expect(isValidConnection(connect(from, to, "false"), nodes, [])).toBe(true);
+  expect(isValidConnection(connect(from, to, "maybe"), nodes, [])).toBe(false);
+  // A labelled node has no unlabelled default output to fall back on.
+  expect(isValidConnection(connect(from, to, "out"), nodes, [])).toBe(false);
+});
+
+test("a labelled port takes exactly one edge", () => {
+  resetIdCounters();
+  const from = createNode("if_else", { x: 0, y: 0 });
+  const a = createNode("publish", { x: 100, y: 0 });
+  const b = createNode("publish", { x: 100, y: 80 });
+  const taken: Edge[] = [{ id: "e1", source: from.id, target: a.id, sourceHandle: "true" }];
+  expect(isValidConnection(connect(from, b, "true"), [from, a, b], taken)).toBe(false);
+  expect(isValidConnection(connect(from, b, "false"), [from, a, b], taken)).toBe(true);
+});

@@ -20,13 +20,7 @@ type switchNode struct {
 func newSwitchNode(id string, opts SwitchOptions) graph.Node {
 	n := switchNode{id: id, opts: opts, defPort: opts.Default}
 	for _, c := range opts.Cases {
-		ch, issues := filter.Compile([]filter.Spec{{
-			Source: c.When.Source, Path: c.When.Path, Operator: c.When.Operator, Value: c.When.Value,
-		}})
-		if len(issues) > 0 {
-			ch = filter.MatchNothing()
-		}
-		n.chains = append(n.chains, ch)
+		n.chains = append(n.chains, compileConditionSet(c.set()))
 		n.ports = append(n.ports, c.Port)
 	}
 	return n
@@ -48,7 +42,7 @@ func (n switchNode) Run(_ context.Context, in graph.Payload) (graph.Payload, err
 			Err: fmt.Errorf("switch %q: expected Envelope, got %T", n.id, in),
 		}
 	}
-	headers := env.V.Raw.Head.Header
+	headers := eventHeaders(env)
 	for i, ch := range n.chains {
 		if ok, _ := ch.Match(headers, env.Body); ok {
 			env.Branch = n.ports[i]

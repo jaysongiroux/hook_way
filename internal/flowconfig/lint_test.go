@@ -225,6 +225,63 @@ func TestBodyFormatGuardAllowsWorkingCombinations(t *testing.T) {
 // bodyFormatFlow wraps two mid-flow nodes in a complete, compilable flow. The
 // guard walks from the trigger, so the prefix and the terminal node have to be
 // real.
+// A body condition behind body_format: raw is uniformly false, so a routing
+// node degenerates to a single branch. The guard covers every node type that
+// routes on a condition, not just filter.
+func TestBodyFormatGuardCoversRoutingNodes(t *testing.T) {
+	flow := func(nodes, edges string) string {
+		return `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+flows:
+  f:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: raw}` + nodes + `
+      - {id: ack, type: respond, status: 202, body: ok}
+      - {id: nak, type: respond, status: 204, body: no}
+    edges: [in>body, body>auth, auth>env, ` + edges + `]
+`
+	}
+	cases := []struct {
+		name, nodes, edges, wantErr string
+	}{
+		{
+			name:    "switch case with a when condition",
+			nodes:   "\n      - {id: rt, type: switch, default: other, cases: [{port: hit, when: {source: body, path: a.b, operator: exists}}]}",
+			edges:   "env>rt, rt:hit>ack, rt:other>nak",
+			wantErr: `switch "rt" reads source: body`,
+		},
+		{
+			name:    "switch case with a conditions list",
+			nodes:   "\n      - {id: rt, type: switch, default: other, cases: [{port: hit, match: any, conditions: [{source: header, path: X-A, operator: exists}, {source: body, path: a.b, operator: exists}]}]}",
+			edges:   "env>rt, rt:hit>ack, rt:other>nak",
+			wantErr: `switch "rt" reads source: body`,
+		},
+		{
+			name:    "if_else",
+			nodes:   "\n      - {id: rt, type: if_else, conditions: [{source: body, path: a.b, operator: exists}]}",
+			edges:   "env>rt, rt:true>ack, rt:false>nak",
+			wantErr: `if_else "rt" reads source: body`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertLint(t, loadAllowingIssues(t, flow(tc.nodes, tc.edges)), config.SeverityError, tc.wantErr)
+		})
+	}
+
+	t.Run("header-only conditions are fine", func(t *testing.T) {
+		nodes := "\n      - {id: rt, type: if_else, conditions: [{source: header, path: X-A, operator: exists}]}"
+		issues := Lint(loadAllowingIssues(t, flow(nodes, "env>rt, rt:true>ack, rt:false>nak")))
+		if containsMessage(issues, "body_format: raw") {
+			t.Fatalf("issues = %q, want no body_format complaint", issuesText(issues))
+		}
+	})
+}
+
 func bodyFormatFlow(nodes string) string {
 	return `server:
   addr: ":8080"

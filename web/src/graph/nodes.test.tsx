@@ -50,6 +50,44 @@ test("switch renders labelled output ports and an on-error handle", () => {
   expect(screen.getByText("on error")).toBeInTheDocument();
 });
 
+test("labelled ports are named on the card, not just on hover", () => {
+  resetIdCounters();
+  const n = createNode("switch", { x: 0, y: 0 });
+  wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  // A bare dot gives no clue which branch it is; the name has to be visible.
+  expect(screen.getByText("matched")).toBeInTheDocument();
+  expect(screen.getByText("default")).toBeInTheDocument();
+});
+
+test("if_else renders true and false ports and no on-error handle", () => {
+  resetIdCounters();
+  const n = createNode("if_else", { x: 0, y: 0 });
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  expect(container.querySelector('[data-handleid="true"]')).not.toBeNull();
+  expect(container.querySelector('[data-handleid="false"]')).not.toBeNull();
+  expect(screen.getByText("true")).toBeInTheDocument();
+  expect(screen.getByText("false")).toBeInTheDocument();
+  // An if_else cannot fail, so an on_error handle would be dead wiring.
+  expect(container.querySelector('[data-handleid="on_error"]')).toBeNull();
+  // Labelled ports replace the default out handle rather than joining it.
+  expect(container.querySelector('[data-handleid="out"]')).toBeNull();
+});
+
+test("a long port name is truncated on the card and kept on hover", () => {
+  resetIdCounters();
+  const n = createNode("switch", { x: 0, y: 0 });
+  const port = "refs/heads/release-candidate-2026";
+  n.data.options = { cases: [{ port, when: { source: "body", path: "ref", operator: "eq" } }], default: "other" };
+  wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  const label = screen.getByText(port);
+  // The card is a fixed width, so the name is clipped rather than allowed to
+  // widen the node past what layout.ts reserved for it.
+  expect(label).toHaveAttribute("title", port);
+  expect(label.style.textOverflow).toBe("ellipsis");
+  expect(label.style.overflow).toBe("hidden");
+  expect(label.style.maxWidth).toBe(`${NODE_SIZE.width - 2 * NODE_SIZE.padding - NODE_SIZE.handle}px`);
+});
+
 test("http_trigger has no on-error handle", () => {
   resetIdCounters();
   const n = createNode("http_trigger", { x: 0, y: 0 });

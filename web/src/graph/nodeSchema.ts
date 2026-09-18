@@ -100,6 +100,7 @@ const EXTRA_DEFAULTS: Record<string, Record<string, unknown>> = {
   publish: { create: true },
   filter: { conditions: [{ source: "body", path: "", operator: "eq" }] },
   switch: { cases: [{ port: "matched", when: { source: "body", path: "", operator: "eq" } }], default: "default" },
+  if_else: { match: "all", conditions: [{ source: "body", path: "", operator: "eq" }] },
 };
 
 export function defaultNodeOptions(type: string, id: string): Record<string, unknown> {
@@ -133,7 +134,7 @@ export function defaultForSchema(schema: JSONSchema | undefined): unknown {
   }
 }
 
-export function switchPorts(options: Record<string, unknown>): string[] {
+function switchPorts(options: Record<string, unknown>): string[] {
   const ports: string[] = [];
   const cases = options.cases;
   if (Array.isArray(cases)) {
@@ -146,4 +147,16 @@ export function switchPorts(options: Record<string, unknown>): string[] {
   const fallback = String(options.default ?? "").trim();
   if (fallback && !ports.includes(fallback)) ports.push(fallback);
   return ports;
+}
+
+/**
+ * The labelled output ports a node exposes, mirroring graph.PortDeclarer in Go.
+ * An empty result means the node has the single default out handle instead.
+ * Both the canvas handles and connection validation read this, so a new
+ * branching node type is added here and nowhere else.
+ */
+export function labelledPorts(nodeType: string, options: Record<string, unknown>): string[] {
+  if (nodeType === "if_else") return ["true", "false"];
+  if (nodeType === "switch") return switchPorts(options);
+  return [];
 }

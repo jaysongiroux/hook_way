@@ -17,12 +17,14 @@ type NodeSchema struct {
 // allowsOnError is whether a catalog type can take a useful on_error edge.
 // http_trigger has no input. no_auth never fails a well-typed RawRequest.
 // read_body consumes the request body on a failed read, so re-reading is not a recovery path.
+// if_else cannot fail a well-typed Envelope either: a condition that does not
+// hold is the false branch, so there is no failure left for on_error to catch.
 func allowsOnError(name string, in graph.PortType) bool {
 	if in == graph.PortNone {
 		return false
 	}
 	switch name {
-	case "no_auth", "read_body":
+	case "no_auth", "read_body", "if_else":
 		return false
 	default:
 		return true
@@ -35,7 +37,7 @@ func NodeSchemas() map[string]NodeSchema {
 	reflector.Anonymous = true
 	reflector.DoNotReference = true
 	reflector.RequiredFromJSONSchemaTags = true
-	out := make(map[string]NodeSchema, 17)
+	out := make(map[string]NodeSchema, 18)
 	for _, def := range catalog(RegistryOptions{}) {
 		schema := reflector.Reflect(def.newOptions())
 		switch def.name {
@@ -43,6 +45,13 @@ func NodeSchemas() map[string]NodeSchema {
 			schema.OneOf = exclusivePropertyContract("secret", "secret_ref")
 		case "respond":
 			schema.OneOf = exclusivePropertyContract("status", "passthrough")
+		case "switch":
+			// The exclusivity is per case, not on the node. Without the Not
+			// clauses the builder cannot tell that when and conditions are two
+			// spellings of one rule rather than two fields to fill in.
+			if cases, ok := schema.Properties.Get("cases"); ok && cases.Items != nil {
+				cases.Items.OneOf = exclusivePropertyContract("when", "conditions")
+			}
 		}
 		out[def.name] = NodeSchema{
 			Input:    def.in.String(),

@@ -1,5 +1,5 @@
 import type { Connection, Edge } from "@xyflow/react";
-import { NODE_SCHEMAS, portAccepts, switchPorts } from "./nodeSchema";
+import { labelledPorts, NODE_SCHEMAS, portAccepts } from "./nodeSchema";
 import type { HookwayNode } from "./model";
 
 export const HANDLE_IN = "in";
@@ -32,8 +32,9 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
     if (!from.on_error) return false;
     return portAccepts(to.input, from.input);
   }
-  if (src.data.nodeType === "switch") {
-    if (!switchPorts(src.data.options).includes(sourceHandle)) return false;
+  const ports = labelledPorts(src.data.nodeType, src.data.options);
+  if (ports.length > 0) {
+    if (!ports.includes(sourceHandle)) return false;
     if (existing.some((e) => e.source === c.source && e.sourceHandle === sourceHandle)) return false;
   } else if (sourceHandle !== HANDLE_OUT) return false;
   return from.output !== "Terminal" && portAccepts(to.input, from.output);

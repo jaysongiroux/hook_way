@@ -114,8 +114,8 @@ func TestRun_SchemaNodesListsCatalog(t *testing.T) {
 			t.Errorf("schema --nodes missing %s", name)
 		}
 	}
-	if len(doc) != 17 {
-		t.Fatalf("schema --nodes listed %d types, want 17", len(doc))
+	if len(doc) != 18 {
+		t.Fatalf("schema --nodes listed %d types, want 18", len(doc))
 	}
 }
 

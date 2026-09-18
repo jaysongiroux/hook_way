@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { NODE_SCHEMAS, NODE_TYPES, DEST_TYPES, schemaRequired, schemaType, schemaProperties } from "./nodeSchema";
 
 test("every catalog node type has palette metadata", () => {
-  expect(NODE_TYPES).toHaveLength(17);
+  expect(NODE_TYPES).toHaveLength(18);
   for (const type of NODE_TYPES) {
     const meta = NODE_SCHEMAS[type];
     expect(meta.input, type).toBeTruthy();
@@ -13,6 +13,8 @@ test("every catalog node type has palette metadata", () => {
   expect(NODE_SCHEMAS.http_trigger.on_error).toBe(false);
   expect(NODE_SCHEMAS.read_body.on_error).toBe(false);
   expect(NODE_SCHEMAS.no_auth.on_error).toBe(false);
+  // if_else cannot fail: a condition that does not hold is the false branch.
+  expect(NODE_SCHEMAS.if_else.on_error).toBe(false);
   expect(NODE_SCHEMAS.rate_limit.on_error).toBe(true);
   expect(NODE_SCHEMAS.auth.on_error).toBe(true);
   expect(NODE_SCHEMAS.envelope.on_error).toBe(true);

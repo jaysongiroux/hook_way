@@ -29,6 +29,8 @@ export function exampleFixtures(): ExampleFixture[] {
     "replay.yaml",
     "variables.yaml",
     "on_error.yaml",
+    "xml.yaml",
+    "multipart.yaml",
     ...listYaml("destinations", () => true),
     ...listYaml("auth", () => true),
     ...listYaml("showcase", (file) => !file.includes("invalid")),

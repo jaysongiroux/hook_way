@@ -61,3 +61,34 @@ test("a gate wired after read_body reports the mismatched port types", async ({ 
   await expect(errors).toContainText("rate_limit) consumes RequestHead");
   await expect(dialog.getByTestId("validation-ok")).toHaveCount(0);
 });
+
+// The multipart guard is a validate-time lint, not a compile error: the graph
+// wires up fine and only fails once a request arrives. Its whole purpose is to
+// tell the operator *before* that, so this asserts the message survives the
+// WASM bridge and lands in the export dialog, not just that Lint() returns it.
+const MULTIPART_FIELD_MAP = `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+flows:
+  uploads:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: multipart}
+      - {id: mid, type: transform, kind: field_map, name: out, mappings: [{from: a, to: b}]}
+      - {id: ack, type: respond, status: 202, body: ok}
+    edges: [in>body, body>auth, auth>env, env>mid, mid>ack]
+`;
+
+test("a field_map transform behind a multipart envelope is reported as an error", async ({ page }) => {
+  const builder = new BuilderPage(page);
+  await builder.gotoReady();
+  await builder.importYaml(MULTIPART_FIELD_MAP);
+  const dialog = await builder.openConfigItem("Export YAML");
+  const errors = dialog.getByTestId("validation-errors");
+  await expect(errors).toBeVisible({ timeout: 15_000 });
+  await expect(errors).toContainText("body_format: multipart");
+  await expect(errors).toContainText("read the parts in a code node instead");
+  await expect(dialog.getByTestId("validation-ok")).toHaveCount(0);
+});

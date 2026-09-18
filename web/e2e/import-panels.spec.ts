@@ -7,10 +7,20 @@ import {
   flowNames,
   flowNodes,
   flowPolicy,
+  humanLabel,
   SERVER_LABELS,
   serverConfig,
 } from "./examples";
 import { expectYamlValue } from "./fields";
+
+// The control is a Select, so it renders the option label, not the config
+// value. Keep these in step with the `data` list in Inspector.tsx -- they
+// drifted apart once already, and the mismatch failed every fixture at once.
+const POLICY_LABELS: Record<string, string> = {
+  "": "Use default (stop on first failure)",
+  stop_on_failure: "Stop on first failure",
+  skip_failed: "Continue after failures",
+};
 
 for (const fixture of exampleFixtures()) {
   test(`imported ${fixture.name} appears in builder panels`, async ({ page }) => {
@@ -29,13 +39,7 @@ for (const fixture of exampleFixtures()) {
 
       const policy = flowPolicy(fixture.config, flow);
       const policyControl = builder.inspector().getByLabel("Delivery failure policy");
-      if (policy === "skip_failed") {
-        await expect(policyControl).toHaveValue("skip_failed");
-      } else if (policy === "stop_on_failure") {
-        await expect(policyControl).toHaveValue("stop_on_failure");
-      } else {
-        await expect(policyControl).toHaveValue("stop_on_failure (default)");
-      }
+      await expect(policyControl).toHaveValue(POLICY_LABELS[policy] ?? POLICY_LABELS[""]);
 
       const nodes = flowNodes(fixture.config, flow);
       expect(nodes.map((n) => n.id)).not.toHaveLength(0);
@@ -52,7 +56,12 @@ for (const fixture of exampleFixtures()) {
         await builder.selectNode(node.id);
         await expect(builder.inspector().getByLabel("Id", { exact: true })).toHaveValue(node.id);
         await expect(builder.inspector().getByLabel("Description")).toHaveValue(node.description);
-        await expect(builder.inspector().getByText(node.type, { exact: true }).first()).toBeVisible();
+        // The inspector shows the humanised label ("http trigger"), not the
+        // YAML type. This mirrors nodeLabel() in src/graph/nodeSchema.ts,
+        // which the e2e loader cannot import -- that module pulls in
+        // nodeSchema.json, and Playwright's ESM loader rejects the bare
+        // JSON import.
+        await expect(builder.inspector().getByText(humanLabel(node.type), { exact: true }).first()).toBeVisible();
         for (const [key, value] of Object.entries(node.options)) {
           await expectYamlValue(builder.inspector(), key, value);
         }

@@ -147,13 +147,37 @@ type CodeOptions struct {
 	MaxOutputBytes int64  `yaml:"max_output_bytes,omitempty" json:"max_output_bytes,omitempty" jsonschema:"minimum=1"`
 	MaxCallStack   int    `yaml:"max_call_stack,omitempty" json:"max_call_stack,omitempty" jsonschema:"minimum=1"`
 }
+// SwitchCaseOptions takes either the original single `when` condition or a
+// `conditions` list with a `match` combinator, never both. When is a pointer so
+// an absent block is distinguishable from an empty one.
 type SwitchCaseOptions struct {
-	Port string                 `yaml:"port" json:"port" jsonschema:"required"`
-	When FilterConditionOptions `yaml:"when" json:"when" jsonschema:"required"`
+	Port                string                  `yaml:"port" json:"port" jsonschema:"required"`
+	When                *FilterConditionOptions `yaml:"when,omitempty" json:"when,omitempty"`
+	ConditionSetOptions `yaml:",inline"`
 }
+
+// set normalizes either spelling into the shared shape.
+func (c SwitchCaseOptions) set() ConditionSetOptions {
+	if c.When != nil {
+		return ConditionSetOptions{Conditions: []FilterConditionOptions{*c.When}}
+	}
+	return c.ConditionSetOptions
+}
+
 type SwitchOptions struct {
 	Cases   []SwitchCaseOptions `yaml:"cases" json:"cases" jsonschema:"required,minItems=1"`
 	Default string              `yaml:"default,omitempty" json:"default,omitempty"`
+}
+
+// IfElseOptions is a switch with two fixed ports. conditions is required here,
+// which is why it does not embed ConditionSetOptions.
+type IfElseOptions struct {
+	Match      string                   `yaml:"match,omitempty" json:"match,omitempty" jsonschema:"enum=all,enum=any"`
+	Conditions []FilterConditionOptions `yaml:"conditions" json:"conditions" jsonschema:"required,minItems=1"`
+}
+
+func (o IfElseOptions) set() ConditionSetOptions {
+	return ConditionSetOptions{Match: o.Match, Conditions: o.Conditions}
 }
 type HTTPRequestOptions struct {
 	URL            string            `yaml:"url" json:"url" jsonschema:"required"`
@@ -309,6 +333,7 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			return code, nil
 		}),
 		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
+		define("if_else", graph.PortEnvelope, graph.PortEnvelope, false, validateIfElse, newIfElseNode),
 		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) graph.Node {
 			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
 		}),
@@ -562,8 +587,24 @@ func validateSwitch(o SwitchOptions) error {
 		if c.Port == "on_error" {
 			return errors.New("switch port on_error is reserved")
 		}
-		if c.Port == "" || c.When.Source == "" || c.When.Path == "" || c.When.Operator == "" {
-			return fmt.Errorf("cases[%d] requires port and a complete condition", i)
+		if c.Port == "" {
+			return fmt.Errorf("cases[%d] requires port", i)
+		}
+		if c.When != nil && len(c.Conditions) > 0 {
+			return fmt.Errorf("cases[%d]: set either when or conditions, not both", i)
+		}
+		if c.When == nil && len(c.Conditions) == 0 {
+			return fmt.Errorf("cases[%d] requires when or conditions", i)
+		}
+		if c.When != nil {
+			if c.Match != "" {
+				return fmt.Errorf("cases[%d]: match has no effect on a single when condition", i)
+			}
+			if c.When.Source == "" || c.When.Path == "" || c.When.Operator == "" {
+				return fmt.Errorf("cases[%d].when requires source, path, and operator", i)
+			}
+		} else if err := validateConditions(fmt.Sprintf("cases[%d].", i), c.Match, c.Conditions); err != nil {
+			return err
 		}
 		if _, ok := seen[c.Port]; ok {
 			return fmt.Errorf("duplicate switch port %q", c.Port)
@@ -571,6 +612,10 @@ func validateSwitch(o SwitchOptions) error {
 		seen[c.Port] = struct{}{}
 	}
 	return nil
+}
+
+func validateIfElse(o IfElseOptions) error {
+	return validateConditions("", o.Match, o.Conditions)
 }
 func validateHTTPRequest(o HTTPRequestOptions) error {
 	if err := require("url", o.URL); err != nil {

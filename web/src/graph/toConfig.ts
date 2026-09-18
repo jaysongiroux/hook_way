@@ -17,14 +17,16 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
     edges: doc.edges,
     deliveryFailurePolicy: doc.deliveryFailurePolicy,
   });
-  const destinations = pruneEmpty(doc.destinations, true);
-  const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig, false) : { ...DEFAULT_SERVER };
-  const config: Record<string, unknown> = {
-    server,
-    destinations: destinations ?? {},
-    ...pruneEmpty(doc.configExtra, false),
-    flows,
-  };
+  const destinations = pruneEmpty(doc.destinations);
+  const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig) : { ...DEFAULT_SERVER };
+  const config: Record<string, unknown> = { server };
+  // A proxy-style flow (http_request, no publish) declares no destinations at
+  // all, and examples/xml.yaml is one. Emitting `destinations: {}` there adds
+  // a key the operator never wrote and breaks import/export fidelity, so the
+  // block is omitted rather than emitted empty. fromConfig already treats a
+  // missing key as {}.
+  if (destinations) config.destinations = destinations;
+  Object.assign(config, pruneEmpty(doc.configExtra), { flows });
   return { config };
 }
 
@@ -57,13 +59,13 @@ function edgeToYaml(e: Edge, byRf: Map<string, HookwayNode>): string {
   return formatEdge(yamlIdOf(from), edgePort(e.sourceHandle), yamlIdOf(to));
 }
 
-function pruneEmpty(obj: Record<string, unknown>, keepEmptyObject: boolean): Record<string, unknown> | undefined {
+function pruneEmpty(obj: Record<string, unknown>): Record<string, unknown> | undefined {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
     const pruned = pruneValue(v);
     if (pruned !== undefined) out[k] = pruned;
   }
-  if (Object.keys(out).length === 0) return keepEmptyObject ? {} : undefined;
+  if (Object.keys(out).length === 0) return undefined;
   return out;
 }
 

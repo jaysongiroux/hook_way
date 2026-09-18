@@ -189,7 +189,7 @@ func parallelRespondIssues(prefix string, fc graph.FlowConfig) []config.Validati
 			issues = append(issues, cfgIssue(prefix+".edges",
 				fmt.Sprintf("respond nodes %s are reachable through parallel fan-out from %q; only one response may be written",
 					strings.Join(found, " and "), from),
-				"keep respond nodes on exclusive switch branches"))
+				"keep respond nodes on exclusive branches of a switch or if_else"))
 		}
 	}
 	return issues
@@ -276,9 +276,9 @@ func bodyFormatIssues(prefix string, fc graph.FlowConfig) []config.ValidationIss
 			if opts, err := decodeOptions[EnvelopeOptions](node.cfg); err == nil && opts.BodyFormat != "" {
 				format = opts.BodyFormat
 			}
-		case "filter":
+		case "filter", "switch", "if_else":
 			if !reported[cur.id] {
-				if issue, bad := filterBodyFormatIssue(prefix, node.index, cur.id, format, node.cfg); bad {
+				if issue, bad := conditionBodyFormatIssue(prefix, node.index, cur.id, node.typ, format, node.cfg); bad {
 					reported[cur.id] = true
 					issues = append(issues, issue)
 				}
@@ -298,27 +298,65 @@ func bodyFormatIssues(prefix string, fc graph.FlowConfig) []config.ValidationIss
 	return issues
 }
 
-// filterBodyFormatIssue rejects a body condition that can never resolve. Only
-// body_format: raw is unreadable now — json walks dotted keys and xml walks
-// dotted element names.
-func filterBodyFormatIssue(prefix string, index int, id, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
+// conditionBodyFormatIssue rejects a body condition that can never resolve.
+// Only body_format: raw is unreadable now — json walks dotted keys and xml
+// walks dotted element names. It covers every node type that routes on a
+// condition, because the failure is the same one each time: the body is empty,
+// so the condition is uniformly false and the node always takes its
+// no-match path.
+func conditionBodyFormatIssue(prefix string, index int, id, typ, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
 	if format != "raw" {
 		return config.ValidationIssue{}, false
 	}
-	opts, err := decodeOptions[FilterOptions](nc)
-	if err != nil {
+	conds, ok := nodeConditions(typ, nc)
+	if !ok {
 		return config.ValidationIssue{}, false
 	}
-	for _, cond := range opts.Conditions {
+	outcome := map[string]string{
+		"filter":  "every event would take on_no_match",
+		"switch":  "every event would take the default port",
+		"if_else": "every event would take the false port",
+	}[typ]
+	for _, cond := range conds {
 		if cond.Source == "body" {
 			return cfgIssue(
 				fmt.Sprintf("%s.nodes[%d].conditions", prefix, index),
-				fmt.Sprintf("filter %q reads source: body but reaches an envelope with body_format: raw, which leaves the body empty; every event would take on_no_match", id),
-				"use body_format: json or xml, or filter on source: header",
+				fmt.Sprintf("%s %q reads source: body but reaches an envelope with body_format: raw, which leaves the body empty; %s", typ, id, outcome),
+				"use body_format: json or xml, or match on source: header",
 			), true
 		}
 	}
 	return config.ValidationIssue{}, false
+}
+
+// nodeConditions flattens every condition a routing node evaluates, whichever
+// spelling it uses.
+func nodeConditions(typ string, nc graph.NodeConfig) ([]FilterConditionOptions, bool) {
+	switch typ {
+	case "filter":
+		opts, err := decodeOptions[FilterOptions](nc)
+		if err != nil {
+			return nil, false
+		}
+		return opts.Conditions, true
+	case "switch":
+		opts, err := decodeOptions[SwitchOptions](nc)
+		if err != nil {
+			return nil, false
+		}
+		var conds []FilterConditionOptions
+		for _, c := range opts.Cases {
+			conds = append(conds, c.set().Conditions...)
+		}
+		return conds, true
+	case "if_else":
+		opts, err := decodeOptions[IfElseOptions](nc)
+		if err != nil {
+			return nil, false
+		}
+		return opts.Conditions, true
+	}
+	return nil, false
 }
 
 // transformBodyFormatIssue rejects a transform kind that does not match the

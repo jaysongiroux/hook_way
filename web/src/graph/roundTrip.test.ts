@@ -29,6 +29,20 @@ test.each(readdirSync(examplesDir).filter((f) => f.endsWith(".yaml")))("round-tr
   expect(normalize(config)).toEqual(normalize(parsed));
 });
 
+// examples/xml.yaml and examples/multipart.yaml both sit outside the showcase
+// sweep above, so neither body format was covered by an import/export
+// round-trip until these two cases.
+test("round-trips the xml example, prune rules included", () => {
+  const path = join(dirname(fileURLToPath(import.meta.url)), "../../../examples/xml.yaml");
+  const parsed = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const model = fromConfig(parsed);
+  const { config } = toConfig({ ...model, nodes: layout(model.nodes, model.edges) });
+  // xml_prune's `rules` is the only array-of-strings option on a transform;
+  // naming it keeps the test from passing on two configs that both dropped it.
+  expect(JSON.stringify(config)).toContain("xml_prune");
+  expect(normalize(config)).toEqual(normalize(parsed));
+});
+
 // examples/multipart.yaml is outside the showcase sweep above, but its nested
 // `multipart:` option block is the first nested object on a non-destination
 // node — if the builder's import/export path flattened or dropped it, the
