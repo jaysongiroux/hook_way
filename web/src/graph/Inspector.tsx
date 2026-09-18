@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Group, Select, Stack, Text, Textarea, TextInput } from "@mantine/core";
 import { useGraphStore } from "./store";
-import { NODE_SCHEMAS, DEST_TYPES } from "./nodeSchema";
+import { NODE_SCHEMAS, DEST_TYPES, nodeLabel } from "./nodeSchema";
 import { nodeFieldHelp, nodeHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
 import { Sections, type SectionSpec } from "./InspectorSections";
@@ -55,11 +55,11 @@ export function Inspector() {
         <FlowNameField />
         <Select
           label="Delivery failure policy"
-          description="Default: stop at the first failed publish. skip_failed tries every publish and returns 202 if any succeed."
+          description="Controls publish failures. Continue after failures tries every publish and returns 202 when at least one succeeds."
           data={[
-            { value: "", label: "stop_on_failure (default)" },
-            { value: "stop_on_failure", label: "stop_on_failure" },
-            { value: "skip_failed", label: "skip_failed" },
+            { value: "", label: "Use default (stop on first failure)" },
+            { value: "stop_on_failure", label: "Stop on first failure" },
+            { value: "skip_failed", label: "Continue after failures" },
           ]}
           value={deliveryFailurePolicy ?? ""}
           allowDeselect={false}
@@ -71,26 +71,31 @@ export function Inspector() {
             <Text fw={600} size="xs" tt="uppercase" c="dimmed" style={{ letterSpacing: "0.08em" }}>
               Nodes
             </Text>
-            {nodes.map((n) => (
-              <Button
-                key={n.id}
-                size="xs"
-                variant="default"
-                fullWidth
-                justify="space-between"
-                aria-label={`Select ${yamlIdOf(n)}`}
-                onClick={() => setSelected(n.id)}
-              >
-                <Group justify="space-between" wrap="nowrap" gap="xs" w="100%">
-                  <Text ff="monospace" size="xs">
-                    {yamlIdOf(n)}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {n.data.nodeType}
-                  </Text>
-                </Group>
-              </Button>
-            ))}
+            <Stack gap={0} className="hookway-inspector-node-list">
+              {nodes.map((n) => (
+                <Button
+                  className="hookway-inspector-node"
+                  key={n.id}
+                  size="xs"
+                  variant="subtle"
+                  color="dark"
+                  radius={0}
+                  fullWidth
+                  justify="space-between"
+                  aria-label={`Select ${yamlIdOf(n)}`}
+                  onClick={() => setSelected(n.id)}
+                >
+                  <Group justify="space-between" wrap="nowrap" gap="xs" w="100%">
+                    <Text ff="monospace" size="xs" c="dark">
+                      {yamlIdOf(n)}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {nodeLabel(n.data.nodeType)}
+                    </Text>
+                  </Group>
+                </Button>
+              ))}
+            </Stack>
           </Stack>
         )}
       </Stack>
@@ -107,7 +112,7 @@ export function Inspector() {
     {
       value: "options",
       label: "Options",
-      badge: node.data.nodeType,
+      badge: nodeLabel(node.data.nodeType),
       render: () => (
         <SchemaForm
           schema={meta?.schema}
@@ -123,7 +128,7 @@ export function Inspector() {
   return (
     <Stack gap="sm" data-testid="inspector">
       <Text fw={600} size="xs" tt="uppercase" c="dimmed" style={{ letterSpacing: "0.08em" }}>
-        {node.data.nodeType}
+        {nodeLabel(node.data.nodeType)}
       </Text>
       {nodeHelp(node.data.nodeType) && (
         <Text size="sm" c="dimmed" lh={1.4}>

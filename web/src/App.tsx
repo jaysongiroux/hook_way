@@ -36,6 +36,9 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(true);
   const [paletteTab, setPaletteTab] = useState<PaletteTab>("nodes");
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const inspectorScrollKey = useGraphStore(
+    (s) => `${s.activeFlow}:${s.selectedId ?? "flow"}:${s.selectedEdgeId ?? "no-edge"}`,
+  );
   const { bodyRef, paletteWidth, inspectorWidth, setPalette, setInspector } = usePanelWidths();
 
   useEffect(() => {
@@ -72,7 +75,10 @@ export default function App() {
   };
 
   return (
-    <Box style={{ height: "100vh", display: "flex", flexDirection: "column", minHeight: 0, background: DARK.bg }}>
+    <Box
+      className="hookway-builder-root"
+      style={{ height: "100vh", display: "flex", flexDirection: "column", minHeight: 0, background: DARK.bg }}
+    >
       <style>{BUILDER_CSS}</style>
       <BuilderHeader
         paletteOpen={paletteOpen}
@@ -105,6 +111,7 @@ export default function App() {
           overlay={compact}
           side="left"
           width={paletteWidth}
+          scrollKey={paletteTab}
           onResize={(w) => setPalette(w, inspectorOpen && !compact, inspectorWidth)}
           onClose={() => setPaletteOpen(false)}
           headerContent={<PaletteTabs value={paletteTab} onChange={setPaletteTab} />}
@@ -120,6 +127,7 @@ export default function App() {
           overlay={compact}
           side="right"
           width={inspectorWidth}
+          scrollKey={inspectorScrollKey}
           onResize={(w) => setInspector(w, paletteOpen && !compact, paletteWidth)}
           onClose={() => setInspectorOpen(false)}
         >

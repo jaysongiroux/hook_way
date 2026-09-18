@@ -37,7 +37,7 @@ export function BuilderHeader({
           <Text size="sm" c={DARK.muted} fw={500} visibleFrom="sm">
             Builder
           </Text>
-          <Box aria-hidden style={TOOLBAR_DIVIDER} />
+          <Box aria-hidden visibleFrom="sm" style={TOOLBAR_DIVIDER} />
           <FlowSwitcher />
         </Group>
         <Group gap="xs" wrap="nowrap">
@@ -59,7 +59,7 @@ export function BuilderHeader({
               Inspector
             </Button>
           </Button.Group>
-          <Box aria-hidden style={TOOLBAR_DIVIDER} />
+          <Box aria-hidden visibleFrom="sm" style={TOOLBAR_DIVIDER} />
           <Menu position="bottom-end" shadow="md">
             <Menu.Target>
               <Button size="xs" variant="default">

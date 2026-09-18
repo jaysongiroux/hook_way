@@ -43,9 +43,10 @@ export function SchemaForm({
   const required = new Set(schemaRequired(schema));
   const obj = asObject(value);
   const oneOfNote = schema.oneOf?.length
-    ? `exactly one of: ${schema.oneOf
+    ? `Provide exactly one of: ${schema.oneOf
         .flatMap((alt) => (isSchemaObject(alt) ? (alt.required ?? []) : []))
-        .join(", ")}`
+        .map(humanLabel)
+        .join(" or ")}.`
     : undefined;
   return (
     <Stack gap="xs">

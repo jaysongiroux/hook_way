@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ActionIcon, Box, Group, ScrollArea, Text } from "@mantine/core";
+import { Box, CloseButton, Group, ScrollArea, Text } from "@mantine/core";
 import { DARK } from "../tokens";
 
-const PALETTE_MIN = 180;
+const PALETTE_MIN = 220;
 const PALETTE_MAX = 420;
-const INSPECTOR_MIN = 240;
+const INSPECTOR_MIN = 300;
 const INSPECTOR_MAX = 520;
 const CANVAS_MIN = 280;
 
@@ -66,6 +66,7 @@ export function SidePanel({
   overlay,
   side,
   width,
+  scrollKey,
   onResize,
   onClose,
   children,
@@ -81,17 +82,27 @@ export function SidePanel({
   overlay: boolean;
   side: "left" | "right";
   width: number;
+  /** Reset the panel viewport when its primary context changes. */
+  scrollKey?: string;
   onResize: (next: number) => void;
   onClose: () => void;
   children: ReactNode;
 }) {
   const start = useRef({ x: 0, w: 0 });
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (viewportRef.current) viewportRef.current.scrollTop = 0;
+  }, [scrollKey]);
+
   if (!open) return null;
   const grow = side === "left" ? 1 : -1;
+  const minWidth = side === "left" ? PALETTE_MIN : INSPECTOR_MIN;
+  const maxWidth = side === "left" ? PALETTE_MAX : INSPECTOR_MAX;
   return (
     <Box
       style={{
-        width,
+        width: overlay ? `min(${width}px, calc(100% - 40px))` : width,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
@@ -123,17 +134,20 @@ export function SidePanel({
             {title}
           </Text>
         )}
-        <ActionIcon aria-label={`Close ${title}`} variant="subtle" size="sm" color="gray" onClick={onClose}>
-          ×
-        </ActionIcon>
+        <CloseButton aria-label={`Close ${title}`} variant="subtle" size="sm" onClick={onClose} />
       </Group>
-      <ScrollArea type="auto" style={{ flex: 1, minHeight: 0 }} px="sm" pt="sm" pb="sm">
+      <ScrollArea viewportRef={viewportRef} type="auto" style={{ flex: 1, minHeight: 0 }} px="sm" pt="sm" pb="sm">
         {children}
       </ScrollArea>
       <Box
         role="separator"
+        tabIndex={0}
         aria-orientation="vertical"
         aria-label={`Resize ${title}`}
+        aria-valuemin={minWidth}
+        aria-valuemax={maxWidth}
+        aria-valuenow={width}
+        aria-valuetext={`${width} pixels`}
         onPointerDown={(e) => {
           e.preventDefault();
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -142,6 +156,12 @@ export function SidePanel({
         onPointerMove={(e) => {
           if (e.buttons !== 1) return;
           onResize(start.current.w + grow * (e.clientX - start.current.x));
+        }}
+        onKeyDown={(e) => {
+          const delta = e.key === "ArrowRight" ? 16 : e.key === "ArrowLeft" ? -16 : 0;
+          if (!delta) return;
+          e.preventDefault();
+          onResize(width + grow * delta);
         }}
         style={{
           position: "absolute",

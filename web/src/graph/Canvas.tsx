@@ -135,9 +135,8 @@ function CanvasInner() {
           style={{
             background: DARK.surface,
             border: `1px solid ${DARK.border}`,
-            borderRadius: 8,
+            borderRadius: 4,
             overflow: "hidden",
-            boxShadow: "0 8px 20px rgba(20, 24, 31, 0.10)",
           }}
         />
         <Panel position="bottom-left">
@@ -152,7 +151,6 @@ function CanvasInner() {
                 marginLeft: 44,
                 background: DARK.surface,
                 borderColor: DARK.border,
-                boxShadow: "0 8px 20px rgba(20, 24, 31, 0.10)",
               },
             }}
           >
@@ -169,11 +167,10 @@ function CanvasInner() {
               style={{
                 background: DARK.surface,
                 border: `1px solid ${DARK.border}`,
-                borderRadius: 8,
-                boxShadow: "0 8px 20px rgba(20, 24, 31, 0.08)",
+                borderRadius: 4,
               }}
             >
-              Drag a node from the left to start this flow.
+              Open Nodes to add a node, or start with a template.
             </Text>
           </Panel>
         )}
