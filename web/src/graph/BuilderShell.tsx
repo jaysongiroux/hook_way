@@ -61,6 +61,7 @@ export function usePanelWidths() {
 
 export function SidePanel({
   title,
+  headerContent,
   open,
   overlay,
   side,
@@ -70,6 +71,12 @@ export function SidePanel({
   children,
 }: {
   title: string;
+  /**
+   * Replaces the header row's title text — the palette puts its tab strip
+   * here so it stays fixed while the list scrolls. `title` is still required
+   * either way: it names the close and resize controls.
+   */
+  headerContent?: ReactNode;
   open: boolean;
   overlay: boolean;
   side: "left" | "right";
@@ -111,9 +118,11 @@ export function SidePanel({
         wrap="nowrap"
         style={{ borderBottom: `1px solid ${DARK.border}`, background: DARK.recessed, flexShrink: 0 }}
       >
-        <Text fw={600} size="xs" tt="uppercase" c={DARK.muted} style={{ letterSpacing: "0.08em" }}>
-          {title}
-        </Text>
+        {headerContent ?? (
+          <Text fw={600} size="xs" tt="uppercase" c={DARK.muted} style={{ letterSpacing: "0.08em" }}>
+            {title}
+          </Text>
+        )}
         <ActionIcon aria-label={`Close ${title}`} variant="subtle" size="sm" color="gray" onClick={onClose}>
           ×
         </ActionIcon>

@@ -1,7 +1,7 @@
 import { Box, Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { useDisclosure, useDocumentTitle, useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
-import { Palette } from "./graph/Palette";
+import { Palette, PaletteTabs, type PaletteTab } from "./graph/Palette";
 import { Canvas } from "./graph/Canvas";
 import { Inspector } from "./graph/Inspector";
 import { ExportModal } from "./graph/ExportModal";
@@ -34,6 +34,7 @@ export default function App() {
   const compact = useMediaQuery("(max-width: 64em)") ?? false;
   const compactRef = useRef(compact);
   const [paletteOpen, setPaletteOpen] = useState(true);
+  const [paletteTab, setPaletteTab] = useState<PaletteTab>("nodes");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const { bodyRef, paletteWidth, inspectorWidth, setPalette, setInspector } = usePanelWidths();
 
@@ -106,8 +107,9 @@ export default function App() {
           width={paletteWidth}
           onResize={(w) => setPalette(w, inspectorOpen && !compact, inspectorWidth)}
           onClose={() => setPaletteOpen(false)}
+          headerContent={<PaletteTabs value={paletteTab} onChange={setPaletteTab} />}
         >
-          <Palette />
+          <Palette tab={paletteTab} />
         </SidePanel>
         <Box style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
           <Canvas />
