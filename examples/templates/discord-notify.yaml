@@ -5,27 +5,59 @@
 # current node schema. It is also the source of a builder palette template:
 # the config UI extracts only the `fmt` and `post` nodes (see the TEMPLATES
 # manifest in web/src/graph/templates.ts) and drops them onto the canvas.
-# The trigger/read_body/auth/envelope prefix exists to make the file valid and
+# The trigger/gates/auth/envelope prefix exists to make the file valid and
 # to show a complete flow; it is not part of the inserted template.
 #
 # Requires DISCORD_WEBHOOK_URL (the webhook URL, which is itself the
-# credential — never commit it) and DISCORD_SOURCE_SECRET (the HMAC secret of
-# whatever system posts TO Hookway).
+# credential — never commit it), DISCORD_SOURCE_SECRET (the HMAC secret of
+# whatever system posts TO Hookway), and HOOKWAY_API_KEY to keep /metrics
+# off an open port.
+#
+# The inbound prefix is GitHub-style HMAC (no signed timestamp), so
+# replay_guard is what stops a captured body from being replayed. Do not
+# swap that auth node for no_auth. The outbound URL is an env reference, not
+# a value from the request, so a caller cannot redirect the POST.
 #
 # A Discord webhook allows about five requests per five seconds and answers a
 # malformed payload with 400 "Cannot send an empty message". A success is 204
 # No Content. A 4xx is terminal: fix the script, do not retry. Discord sends
 # Retry-After on a 429, which the retry block honors (clamped by max_backoff).
+# Inbound Authorization and Cookie are not forwarded to Discord.
 server:
   addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "10s"
   max_body_bytes: 1048576
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  forwarded_header_allowlist:
+    - Content-Type
 
 flows:
   discord_notify:
     nodes:
       - {id: in, type: http_trigger, description: "Where the source system delivers its webhook.", path: /webhooks/discord-notify, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
       - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
-      - {id: auth, type: auth, description: "Verifies the sending system's HMAC signature.", scheme: hmac_sha256_hex, secret: "${DISCORD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
+      - id: auth
+        type: auth
+        description: "Verifies the sending system's HMAC signature."
+        scheme: hmac_sha256_hex
+        secret_ref: {provider: env, name: DISCORD_SOURCE_SECRET, refresh: 15m, overlap: 5m}
+        signature_header: X-Hub-Signature-256
+      - {id: replay, type: replay_guard, description: "Drops a body already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
       - {id: env, type: envelope, description: "Decodes the JSON event.", body_format: json}
       - id: fmt
         type: code
@@ -43,4 +75,4 @@ flows:
         error_on_status: [4xx, 5xx]
         retry: {max_attempts: 5, initial_backoff: 1s, max_backoff: 15s}
       - {id: ack, type: respond, description: "Acknowledges the source system once the Discord post succeeded. Not part of the inserted template.", status: 202, body: "notified"}
-    edges: [in>body, body>auth, auth>env, env>fmt, fmt>post, post>ack]
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>fmt, fmt>post, post>ack]

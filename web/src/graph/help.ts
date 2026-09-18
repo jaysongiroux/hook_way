@@ -22,7 +22,7 @@ const NODE_HELP: Record<string, string> = {
 };
 
 export const PALETTE_GROUP_HELP: Record<string, string> = {
-  Templates: "Several pre-wired nodes at once. Drop one in, then edit the script and URL.",
+  Templates: "Ingest starters verify a signed webhook with loop, rate, and replay guards. Notification templates format an event and POST it without forwarding caller credentials.",
   Trigger: "Where the HTTP request enters.",
   "Request head": "Look at method, path, and headers before reading the body.",
   "Raw body": "Verify the payload bytes.",

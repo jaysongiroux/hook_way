@@ -96,7 +96,7 @@ The web UI at `/builder` (served by `hookway editor` after `make ui`, or via
 `make web-dev`) is a **config generator**. It exports config YAML
 for you to validate and deploy; it does not manage a running instance.
 
-The palette's **Templates** group drops in pre-wired patterns (Slack and Discord notifications) backed by validated configs in `examples/templates/`.
+The palette's **Templates** group drops in production-shaped patterns (Stripe and Paddle ingest with signature verification, loop/rate/replay guards, and rotating `secret_ref`; Slack and Discord notifications that POST to an env-held webhook URL) backed by validated configs in `examples/templates/`.
 
 ```bash
 make node-schema   # regenerate web/src/graph/{node,destination}Schema.json

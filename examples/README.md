@@ -62,19 +62,29 @@ Each file here is both a runnable config and the source of a builder palette
 template. `make validate-examples` validates them like any other example, which
 is what stops a template from rotting when a node option changes.
 
-The config UI inserts only part of each file: the node ids listed in the
-`TEMPLATES` manifest (`web/src/graph/templates.ts`). The trigger, `read_body`,
-`auth`, and `envelope` nodes at the top of each flow — and the `respond` node
-at the bottom, which an `http_request` flow needs to compile — exist to make
-the file a valid standalone config and to show the pattern in context. They are
-not part of the inserted template. When you rename a node in one of these
-files, update the manifest; `web/src/graph/templates.test.ts` fails if the two
-disagree.
+The config UI inserts only the node ids listed in the
+`TEMPLATES` manifest (`web/src/graph/templates.ts`). Notification templates
+(`slack-notify`, `discord-notify`) insert the format-and-POST pair; the
+trigger/auth prefix and trailing `respond` exist so the file is a valid
+standalone config. Ingest templates (`stripe-ingest`, `paddle-ingest`) insert
+the verified prefix (trigger, loop/rate guards, timestamped HMAC via
+`secret_ref`, replay guard, envelope); the trailing `publish` is the wrapper.
+Drop an ingest template onto a new flow, then wire envelope to your
+destination. When you rename a node in one of these files, update the
+manifest; `web/src/graph/templates.test.ts` fails if the two disagree.
+
+Every template file is a production-shaped config: secrets live in the
+environment (`secret_ref` with rotation overlap, webhook URLs as `${ENV}`),
+inbound traffic is authenticated (never `no_auth`), `/metrics` is on a
+private port behind `security.api_key`, and envelopes only forward
+allowlisted headers.
 
 | File | Pattern |
 | --- | --- |
-| `slack-notify.yaml` | Format an event and POST it to a Slack incoming webhook. |
-| `discord-notify.yaml` | Format an event and POST it to a Discord webhook. |
+| `stripe-ingest.yaml` | Stripe webhook ingest: loop/rate guards, `hmac_sha256_ts_dot` on `Stripe-Signature` via `secret_ref`, replay guard, JSON envelope. Wrapper publish HMAC-signs the next hop. |
+| `paddle-ingest.yaml` | Paddle Billing ingest: same shape with `hmac_sha256_ts_colon` on `Paddle-Signature`. |
+| `slack-notify.yaml` | Format an event and POST it to a Slack incoming webhook. Wrapper still HMAC-authenticates the inbound caller. |
+| `discord-notify.yaml` | Format an event and POST it to a Discord webhook. Same inbound auth as Slack. |
 
 ## Running validation
 

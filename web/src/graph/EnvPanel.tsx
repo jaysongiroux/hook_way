@@ -35,7 +35,8 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
     <Drawer opened={opened} onClose={onClose} position="right" title="Environment variables">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
-          Set these before running Hookway. Referenced via <Code>${"{VAR}"}</Code> in the config.
+          Set these before running Hookway. Referenced via <Code>${"{VAR}"}</Code> or{" "}
+          <Code>auth.secret_ref</Code> (provider env) in the config.
         </Text>
         {vars.length === 0 ? (
           <Text size="sm" c="dimmed">

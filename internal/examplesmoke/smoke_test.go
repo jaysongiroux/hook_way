@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -211,6 +212,7 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"SLACK_SOURCE_SECRET":     "slack-secret",
 		"DISCORD_WEBHOOK_URL":     upstreamURL,
 		"DISCORD_SOURCE_SECRET":   "discord-secret",
+		"HOOKWAY_API_KEY":         "hookway-api-key",
 	}
 	for k, v := range vals {
 		t.Setenv(k, v)
@@ -295,13 +297,16 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 			if scheme == "header_exact" {
 				scheme = auth.SchemeExact
 			}
+			secret := authSecret(t, opts)
 			switch scheme {
 			case auth.SchemeHMACSHA256Hex:
-				req.Header.Set(header, githubHMAC(opts.Secret, body))
+				req.Header.Set(header, githubHMAC(secret, body))
 			case auth.SchemeHMACSHA256TSColon:
-				req.Header.Set(header, paddleHMAC(opts.Secret, body, time.Now()))
+				req.Header.Set(header, paddleHMAC(secret, body, time.Now()))
+			case auth.SchemeHMACSHA256TSDot:
+				req.Header.Set(header, stripeHMAC(secret, body, time.Now()))
 			case auth.SchemeExact:
-				value := opts.Secret
+				value := secret
 				if opts.RemoveBearer {
 					value = "Bearer " + value
 				}
@@ -316,6 +321,24 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 	}
 }
 
+func authSecret(t *testing.T, opts flowconfig.AuthOptions) string {
+	t.Helper()
+	if opts.Secret != "" {
+		return opts.Secret
+	}
+	if opts.SecretRef == nil {
+		t.Fatal("auth node has neither secret nor secret_ref")
+	}
+	if opts.SecretRef.Provider != "env" {
+		t.Fatalf("smoke signer does not resolve secret_ref provider %q", opts.SecretRef.Provider)
+	}
+	secret := os.Getenv(opts.SecretRef.Name)
+	if secret == "" {
+		t.Fatalf("secret_ref env %s is empty", opts.SecretRef.Name)
+	}
+	return secret
+}
+
 func githubHMAC(secret string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
@@ -327,6 +350,13 @@ func paddleHMAC(secret string, body []byte, now time.Time) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(fmt.Sprintf("%d:%s", ts, body)))
 	return fmt.Sprintf("ts=%d;h1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
+}
+
+func stripeHMAC(secret string, body []byte, now time.Time) string {
+	ts := now.Unix()
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(fmt.Sprintf("%d.%s", ts, body)))
+	return fmt.Sprintf("t=%d,v1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
 }
 
 func signJWTRS256(t *testing.T, priv *rsa.PrivateKey, opts flowconfig.AuthOptions, body []byte) string {

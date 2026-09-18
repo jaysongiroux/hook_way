@@ -1,5 +1,7 @@
 import slackYaml from "../../../examples/templates/slack-notify.yaml?raw";
 import discordYaml from "../../../examples/templates/discord-notify.yaml?raw";
+import stripeYaml from "../../../examples/templates/stripe-ingest.yaml?raw";
+import paddleYaml from "../../../examples/templates/paddle-ingest.yaml?raw";
 import type { Edge } from "@xyflow/react";
 import { fromYaml } from "./fromYaml";
 import type { HookwayNode } from "./model";
@@ -29,16 +31,30 @@ export interface TemplateDef {
 
 export const TEMPLATES: TemplateDef[] = [
   {
+    id: "stripe-ingest",
+    label: "Stripe webhook",
+    help: "Verifies Stripe-Signature with a rotating secret, sheds loops and bursts, drops retries already seen, and builds the JSON envelope.",
+    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
+    yaml: stripeYaml,
+  },
+  {
+    id: "paddle-ingest",
+    label: "Paddle webhook",
+    help: "Verifies Paddle-Signature with a rotating secret, sheds loops and bursts, drops retries already seen, and builds the JSON envelope.",
+    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
+    yaml: paddleYaml,
+  },
+  {
     id: "slack-notify",
     label: "Slack notification",
-    help: "Formats the event as a Slack message and posts it to an incoming webhook URL.",
+    help: "Formats the event as a Slack message and posts it to an env-held incoming-webhook URL. 4xx is terminal; caller credentials are not forwarded.",
     nodeIds: ["fmt", "post"],
     yaml: slackYaml,
   },
   {
     id: "discord-notify",
     label: "Discord notification",
-    help: "Formats the event as a Discord message and posts it to a webhook URL.",
+    help: "Formats the event as a Discord message and posts it to an env-held webhook URL. 4xx is terminal; caller credentials are not forwarded.",
     nodeIds: ["fmt", "post"],
     yaml: discordYaml,
   },

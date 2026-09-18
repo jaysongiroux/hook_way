@@ -76,8 +76,77 @@ test("the chat templates post with the transformed body and retry transient fail
   for (const id of ["slack-notify", "discord-notify"]) {
     const post = templateSubgraph(id)!.nodes.find((n) => n.data.nodeType === "http_request")!;
     expect(post.data.options.body, id).toBe("transformed");
+    expect(post.data.options.forward_headers, id).toBeUndefined();
+    expect(post.data.options.forward_method, id).toBeFalsy();
+    expect(post.data.options.forward_query, id).toBeFalsy();
+    const statuses = post.data.options.error_on_status as string[] | undefined;
+    expect(statuses, id).toContain("4xx");
     const retry = post.data.options.retry as Record<string, unknown> | undefined;
     expect(retry, id).toBeDefined();
     expect(Number(retry!.max_attempts), id).toBeGreaterThan(1);
+  }
+});
+
+test("the billing ingest templates verify the provider signature layout", () => {
+  const stripe = templateSubgraph("stripe-ingest")!;
+  const stripeAuth = stripe.nodes.find((n) => n.data.nodeType === "auth")!;
+  expect(stripeAuth.data.options.scheme).toBe("hmac_sha256_ts_dot");
+  expect(stripeAuth.data.options.signature_header).toBe("Stripe-Signature");
+  expect(stripeAuth.data.options.secret).toBeUndefined();
+  expect(stripeAuth.data.options.secret_ref).toEqual({
+    provider: "env",
+    name: "STRIPE_WEBHOOK_SECRET",
+    refresh: "15m",
+    overlap: "5m",
+  });
+  expect(stripeAuth.data.options.timestamp_tolerance).toBe("5m");
+  expect(stripe.nodes.map((n) => n.data.nodeType)).toEqual([
+    "http_trigger",
+    "loop_guard",
+    "rate_limit",
+    "read_body",
+    "auth",
+    "replay_guard",
+    "envelope",
+  ]);
+  const stripeLimit = stripe.nodes.find((n) => n.data.nodeType === "rate_limit")!;
+  expect(stripeLimit.data.options.key_by).toBe("source_ip");
+  expect(stripe.nodes.some((n) => n.data.nodeType === "publish")).toBe(false);
+
+  const paddle = templateSubgraph("paddle-ingest")!;
+  const paddleAuth = paddle.nodes.find((n) => n.data.nodeType === "auth")!;
+  expect(paddleAuth.data.options.scheme).toBe("hmac_sha256_ts_colon");
+  expect(paddleAuth.data.options.signature_header).toBe("Paddle-Signature");
+  expect(paddleAuth.data.options.secret).toBeUndefined();
+  expect(paddleAuth.data.options.secret_ref).toEqual({
+    provider: "env",
+    name: "PADDLE_WEBHOOK_SECRET",
+    refresh: "15m",
+    overlap: "5m",
+  });
+  expect(paddleAuth.data.options.timestamp_tolerance).toBe("5m");
+  expect(paddle.nodes.map((n) => n.data.nodeType)).toEqual([
+    "http_trigger",
+    "loop_guard",
+    "rate_limit",
+    "read_body",
+    "auth",
+    "replay_guard",
+    "envelope",
+  ]);
+  expect(paddle.nodes.some((n) => n.data.nodeType === "publish")).toBe(false);
+});
+
+test("every template config authenticates inbound traffic and keeps secrets out of YAML", () => {
+  for (const def of TEMPLATES) {
+    expect(def.yaml, def.id).not.toMatch(/\btype:\s*no_auth\b/);
+    expect(def.yaml, def.id).not.toMatch(/insecure_skip_verify:\s*true/);
+    expect(def.yaml, def.id).toContain("secret_ref:");
+    expect(def.yaml, def.id).toContain("type: loop_guard");
+    expect(def.yaml, def.id).toContain("type: rate_limit");
+    expect(def.yaml, def.id).toContain("type: replay_guard");
+    expect(def.yaml, def.id).toContain("forwarded_header_allowlist:");
+    expect(def.yaml, def.id).toContain("api_key: \"${HOOKWAY_API_KEY}\"");
+    expect(def.yaml, def.id).not.toMatch(/secret:\s*["'][^$"']/);
   }
 });

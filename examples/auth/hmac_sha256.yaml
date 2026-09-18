@@ -49,4 +49,5 @@ flows:
       - {id: out, type: publish, destination: primary, target: github-webhooks, create: true}
     edges: [in>body, body>auth, auth>env, env>out]
 
-  # stripe_billing (hmac_sha256_ts_dot / Stripe-Signature) is omitted.
+  # stripe_billing (hmac_sha256_ts_dot / Stripe-Signature) lives in
+  # examples/templates/stripe-ingest.yaml.

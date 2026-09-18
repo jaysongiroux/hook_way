@@ -905,25 +905,33 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 #### Builder templates
 
 The config UI's palette has a **Templates** group above the node types. A
-template drops several pre-wired nodes in at once — currently "Slack
-notification" and "Discord notification", which format an event and POST it to
-an incoming-webhook URL.
+template drops several pre-wired nodes in at once:
+
+- **Stripe webhook** / **Paddle webhook** — ingest prefix: trigger,
+  `loop_guard`, `rate_limit`, `read_body`, the provider's timestamped HMAC
+  via `secret_ref` (env, 15m refresh, 5m overlap), `replay_guard`, and
+  `envelope`. Drop onto a new flow, then wire envelope to `publish` or a
+  filter. Do not replace the auth node with `no_auth`.
+- **Slack notification** / **Discord notification** — format an event and POST
+  it to an incoming-webhook URL. The inserted pair does not forward inbound
+  `Authorization` / `Cookie`; keep `url` as `${SLACK_WEBHOOK_URL}` /
+  `${DISCORD_WEBHOOK_URL}` (the URL *is* the credential). The standalone
+  wrapper around that pair still authenticates the inbound caller.
 
 Each template is backed by a complete config in `examples/templates/`, so
 `make validate-examples` validates it like any other example and a renamed node
 option cannot break the palette silently. The builder inserts only the node ids
-listed in the manifest (`web/src/graph/templates.ts`); the trigger and auth
-nodes at the top of each template file, and the `respond` node at the bottom,
-are there to make it a valid standalone config.
+listed in the manifest (`web/src/graph/templates.ts`).
 
 Inserted nodes are renamed on collision (`fmt`, then `fmt_2`), so dropping the
 same template in twice is safe.
 
-After inserting, edit two things: the `code` node's script (what the message
-says) and the `http_request` node's `url` (which should stay an environment
-reference such as `${SLACK_WEBHOOK_URL}` — the webhook URL *is* the
-credential). Both templates treat a `4xx` as terminal, because a payload the
-platform rejected will not become acceptable on a retry.
+After inserting a notification template, edit two things: the `code` node's
+script (what the message says) and the `http_request` node's `url` (which
+should stay an environment reference such as `${SLACK_WEBHOOK_URL}` — the
+webhook URL *is* the credential). Never paste a live webhook URL into the
+node. Both notification templates treat a `4xx` as terminal, because a payload
+the platform rejected will not become acceptable on a retry.
 
 `stop_on_failure` (default) publishes `publish` successors sequentially and returns `503` on the first failure. `skip_failed` attempts every direct publish successor with bounded concurrency and returns `202` when at least one succeeds, with `failed_destinations` listing failures. Fan-out through processing nodes remains sequential and stops on error. Filter drops are successful branch termination.
 

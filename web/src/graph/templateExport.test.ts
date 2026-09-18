@@ -25,3 +25,13 @@ test("two inserts of one template export unique ids and a scannable env var", ()
   // URL shows up in the environment panel with no extra wiring.
   expect(scanEnvVars(yaml)).toContain("SLACK_WEBHOOK_URL");
 });
+
+test("an inserted ingest template surfaces its rotating secret in the env scan", () => {
+  useGraphStore.getState().clear();
+  const sub = templateSubgraph("stripe-ingest")!;
+  useGraphStore.getState().insertSubgraph(sub, { x: 0, y: 0 });
+  const yaml = toYaml(toConfig(useGraphStore.getState().document()).config);
+  expect(scanEnvVars(yaml)).toContain("STRIPE_WEBHOOK_SECRET");
+  expect(yaml).toContain("secret_ref:");
+  expect(yaml).not.toMatch(/secret:\s*["'][^$"']/);
+});
