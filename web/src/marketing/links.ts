@@ -1,7 +1,7 @@
 // Every outbound link on the marketing site resolves from here, so the repo
 // path is stated once. The site deliberately links to the GitHub copies of the
 // docs instead of restating them.
-export const GITHUB_REPO = "https://github.com/StarwingAI/hook_way";
+export const GITHUB_REPO = "https://github.com/jaysongiroux/hook_way";
 
 /** repoBlob links a file at the repo's default branch. */
 export function repoBlob(path: string): string {
@@ -37,6 +37,6 @@ export const DOC_LINKS: DocLink[] = [
 export const EXAMPLES = {
   path: "examples",
   title: "Example configs",
-  description: "Ready-to-run YAML for each destination, filters, replay, variables, and on_error.",
+  description: "Ready-to-run YAML for XML, multipart uploads, conditional routing, replay, and every destination.",
   href: repoTree("examples"),
 };

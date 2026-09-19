@@ -26,8 +26,8 @@ export function FlowDiagram() {
   const wide = useMediaQuery("(min-width: 48em)", true);
   return (
     <Section
-      title="One webhook, every destination that needs it"
-      lead="Give a route its own filter and only that branch drops when the condition fails, while the rest still deliver."
+      title="Fan out without duplicate handlers"
+      lead="Put conditions on individual branches. One branch can stop without blocking delivery on the others."
     >
       {wide ? <DiagramSvg /> : <DiagramCards />}
     </Section>

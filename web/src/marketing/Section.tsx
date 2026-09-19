@@ -16,7 +16,11 @@ export function Section({
   return (
     <Box component="section" py={72} style={{ background: background ?? DARK.bg }}>
       <Container size="lg">
-        <Title order={2} c={DARK.text} style={{ fontSize: 32, letterSpacing: -0.4, fontWeight: 650 }}>
+        <Title
+          order={2}
+          c={DARK.text}
+          style={{ fontSize: "clamp(28px, 5vw, 32px)", lineHeight: 1.2, letterSpacing: -0.4, fontWeight: 650 }}
+        >
           {title}
         </Title>
         {lead && (

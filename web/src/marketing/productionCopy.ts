@@ -20,7 +20,7 @@ export interface ProductionCard {
 export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "load",
-    title: "Handles load predictably",
+    title: "Bounds in-flight work",
     value: "256",
     valueLabel: "default in-flight ceiling",
     line: "Excess requests get a 503 and Retry-After before the body is ever buffered.",
@@ -34,24 +34,24 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   },
   {
     id: "metrics",
-    title: "Metrics on day one",
+    title: "Exports Prometheus metrics",
     value: "45",
     valueLabel: "Prometheus metrics exported",
     line: "With a Grafana dashboard in the repo that a test keeps matching the metric names.",
   },
   {
     id: "controls",
-    title: "Controls per flow",
+    title: "Scopes controls per flow",
     value: "11",
     valueLabel: "signature schemes",
     line: "Verification fails closed, and rate limits and replay protection are set per flow.",
   },
   {
     id: "replay",
-    title: "Replay what happened",
+    title: "Re-delivers captured events",
     value: "4",
     valueLabel: "replay API routes",
-    line: "Accepted events land in Postgres and re-deliver one at a time or in bulk.",
+    line: "When replay is enabled, accepted events land in Postgres and can be re-delivered singly or in bulk.",
   },
   {
     id: "packaging",

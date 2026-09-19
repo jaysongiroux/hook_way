@@ -7,9 +7,9 @@ import { DOC_LINKS, EXAMPLES, GITHUB_REPO, repoBlob, repoTree } from "./links";
 const repoRoot = resolve(__dirname, "../../..");
 
 test("links point at the configured GitHub repo", () => {
-  expect(GITHUB_REPO).toBe("https://github.com/StarwingAI/hook_way");
-  expect(repoBlob("README.md")).toBe("https://github.com/StarwingAI/hook_way/blob/main/README.md");
-  expect(repoTree("examples")).toBe("https://github.com/StarwingAI/hook_way/tree/main/examples");
+  expect(GITHUB_REPO).toBe("https://github.com/jaysongiroux/hook_way");
+  expect(repoBlob("README.md")).toBe("https://github.com/jaysongiroux/hook_way/blob/main/README.md");
+  expect(repoTree("examples")).toBe("https://github.com/jaysongiroux/hook_way/tree/main/examples");
 });
 
 // The marketing site deliberately links out instead of restating the docs, so a

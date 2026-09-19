@@ -15,7 +15,7 @@ export function SiteFooter() {
             Self-hosted, and it stores nothing you do not configure.
           </Text>
           <Anchor href={GITHUB_REPO} target="_blank" rel="noopener noreferrer" size="xs" c={DARK.muted}>
-            StarwingAI/hook_way
+            jaysongiroux/hook_way
           </Anchor>
         </Group>
       </Container>

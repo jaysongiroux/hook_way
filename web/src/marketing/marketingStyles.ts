@@ -3,6 +3,11 @@ import { DARK } from "../tokens";
 export const LIFT_CLASS = "hookway-lift";
 export const BENTO_CLASS = "hookway-bento";
 export const TILE_CLASS = "hookway-tile";
+export const DESTINATION_ITEM_CLASS = "hookway-destination-item";
+export const MARQUEE_SHELL_CLASS = "hookway-marquee-shell";
+export const MARQUEE_VIEWPORT_CLASS = "hookway-marquee-viewport";
+export const MARQUEE_TRACK_CLASS = "hookway-marquee-track";
+export const MARQUEE_GROUP_CLASS = "hookway-marquee-group";
 
 export const MARKETING_CSS = `
 .${BENTO_CLASS} {
@@ -30,7 +35,78 @@ export const MARKETING_CSS = `
   border-color: ${DARK.accent};
   background-color: ${DARK.surface};
 }
+.${DESTINATION_ITEM_CLASS} {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 11px;
+  color: ${DARK.text};
+  background: ${DARK.bg};
+  border: 1px solid ${DARK.border};
+  border-radius: 4px;
+}
+.${DESTINATION_ITEM_CLASS} svg {
+  flex: 0 0 auto;
+  color: ${DARK.accent};
+}
+.${MARQUEE_SHELL_CLASS} {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 32px;
+}
+.${MARQUEE_VIEWPORT_CLASS} {
+  min-width: 0;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, black 28px, black calc(100% - 28px), transparent);
+}
+.${MARQUEE_TRACK_CLASS} {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  animation: hookway-destinations 42s linear infinite;
+}
+.${MARQUEE_TRACK_CLASS}[data-running="false"],
+.${MARQUEE_VIEWPORT_CLASS}:hover .${MARQUEE_TRACK_CLASS} {
+  animation-play-state: paused;
+}
+.${MARQUEE_GROUP_CLASS} {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  padding-right: 10px;
+}
+@keyframes hookway-destinations {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+@media (max-width: 62em) {
+  .${MARQUEE_SHELL_CLASS} {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .${LIFT_CLASS} { transition: none; }
+  .${MARQUEE_VIEWPORT_CLASS} {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .${MARQUEE_TRACK_CLASS} {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    animation: none;
+  }
+  .${MARQUEE_GROUP_CLASS}:first-child {
+    width: 100%;
+    padding-right: 0;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+  }
+  .${MARQUEE_GROUP_CLASS}[aria-hidden="true"] { display: none; }
 }
 `;

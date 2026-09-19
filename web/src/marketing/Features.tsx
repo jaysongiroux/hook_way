@@ -6,24 +6,36 @@ import { DARK } from "../tokens";
 const FEATURES: { span: 2 | 3 | 4 | 6; title: string; body: string }[] = [
   {
     span: 3,
-    title: "Verified on arrival",
-    body: "HMAC signatures, static header matching, or JWT bearer tokens, chosen per flow and named by wire format rather than by vendor.",
+    title: "JSON, XML, multipart, and raw bodies",
+    body: "Choose the body format each flow expects. XML elements and multipart file metadata remain addressable in routing conditions; raw bytes stay available for forwarding.",
   },
   {
     span: 3,
-    title: "Fan out anywhere",
-    body: "One event reaches every destination you route it to, each with its own target and its own filters.",
+    title: "Branch on request data",
+    body: "Use filter to stop a path, if/else for two outcomes, or switch for the first matching labelled route. The builder exposes every branch before export.",
   },
-  { span: 2, title: "Provisioned for you", body: "Queues, topics and streams created on first use." },
-  { span: 2, title: "Routed per request", body: "Targets filled from a path segment or a body field." },
-  { span: 2, title: "Safe under load", body: "Allowlists, rate limits and replay protection." },
+  {
+    span: 2,
+    title: "Verify before parsing",
+    body: "HMAC, static header, or JWT verification runs against the raw request and fails closed.",
+  },
+  {
+    span: 2,
+    title: "Transform or proxy",
+    body: "Use field maps, changed-field diffs, XML pruning, sandboxed JavaScript, or a controlled HTTP request.",
+  },
+  {
+    span: 2,
+    title: "Publish to existing infrastructure",
+    body: "Each publish node names a configured destination and target. Webhook, Kafka, and RabbitMQ add retries and dead-letter handling.",
+  },
 ];
 
 export function Features() {
   return (
     <Section
-      title="Everything between the sender and your systems"
-      lead="Hookway sits in front of your infrastructure and does the work you would otherwise write by hand for every integration."
+      title="Configure the full request path"
+      lead="The YAML graph records verification, parsing, branches, transforms, and delivery in one place. Application services do not need provider-specific webhook handlers."
     >
       <Bento>
         {FEATURES.map((f) => (

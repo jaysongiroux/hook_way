@@ -7,8 +7,8 @@ import { DARK } from "../tokens";
 export function Production() {
   return (
     <Section
-      title="The operational work is already done"
-      lead="Backpressure, retries and instrumentation ship in the binary. Every figure below is a default, not a roadmap item."
+      title="Operational controls ship with the binary"
+      lead="In-flight limits, retry policies, replay routes, and Prometheus metrics ship with Hookway. The numbers below are current defaults and counts."
       background={DARK.recessed}
     >
       <Bento>

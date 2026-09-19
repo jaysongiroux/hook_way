@@ -16,10 +16,10 @@ export function CtaBand() {
       <Container size="lg">
         <Stack align="center" gap="md">
           <Title order={2} c={DARK.text} ta="center" style={{ fontSize: 32, letterSpacing: -0.5, fontWeight: 650 }}>
-            Run it yourself in a minute
+            Run Hookway locally
           </Title>
           <Text size="md" c={DARK.muted} ta="center" maw={560}>
-            Clone the repo and bring up the example stack. Nothing to sign up for, and no account to create.
+            Clone the repository and start the example stack. No account or hosted control plane is required.
           </Text>
           <Group mt="xs">
             <Button component={Link} to="/builder" size="md" color="brand">

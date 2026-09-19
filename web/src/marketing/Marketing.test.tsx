@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { theme } from "../theme";
 import { Marketing } from "./Marketing";
 import { DOC_LINKS, GITHUB_REPO } from "./links";
+import { destinationPresentation } from "./destinationIdentity";
 
 function wrap() {
   return render(
@@ -19,7 +20,7 @@ function wrap() {
 test("the hero states what Hookway does and offers both calls to action", () => {
   wrap();
   const heading = screen.getByRole("heading", { level: 1 });
-  expect(heading).toBeInTheDocument();
+  expect(heading).toHaveTextContent(/receive, verify, and route webhooks/i);
   expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute("href", "/");
 
   const builderCta = screen.getByRole("link", { name: /open the builder/i });
@@ -27,6 +28,33 @@ test("the hero states what Hookway does and offers both calls to action", () => 
 
   const repoCta = screen.getByRole("link", { name: /github/i });
   expect(repoCta).toHaveAttribute("href", expect.stringContaining(GITHUB_REPO));
+});
+
+test("new payload and branching capabilities are marketable without duplicating the docs", () => {
+  wrap();
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/JSON, XML, multipart, and raw/i);
+  expect(main).toHaveTextContent(/if\/else for two outcomes/i);
+  expect(main).toHaveTextContent(/switch for the first matching labelled route/i);
+});
+
+test("the overview uses concrete product language instead of generic hype", () => {
+  wrap();
+  const copy = screen.getByRole("main").textContent!.toLowerCase();
+  for (const phrase of [
+    "seamless",
+    "effortless",
+    "game-changing",
+    "cutting-edge",
+    "next-level",
+    "supercharge",
+    "unlock the power",
+    "future-proof",
+    "all-in-one",
+    "transform your",
+  ]) {
+    expect(copy, `marketing copy must not use generic hype ("${phrase}")`).not.toContain(phrase);
+  }
 });
 
 test("a real config sample is shown rather than described", () => {
@@ -41,7 +69,7 @@ test("a real config sample is shown rather than described", () => {
 test("every destination type the builder supports is listed", () => {
   wrap();
   for (const t of ["rabbitmq", "sqs", "kafka", "temporal", "redis_stream", "webhook"]) {
-    expect(screen.getByText(t)).toBeInTheDocument();
+    expect(screen.getAllByText(destinationPresentation(t).label).length).toBeGreaterThanOrEqual(2);
   }
 });
 

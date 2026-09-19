@@ -15,11 +15,12 @@ export function Hero() {
             ta="center"
             style={{ fontSize: 44, lineHeight: 1.15, letterSpacing: -0.4, maxWidth: 720, fontWeight: 650 }}
           >
-            Webhooks in, anywhere out.
+            Receive, verify, and route webhooks.
           </Title>
           <Text size="lg" c={DARK.muted} ta="center" maw={620}>
-            Verify every incoming webhook, then publish it to the queues, streams, databases and services you already
-            run. One YAML file, no glue code.
+            Hookway is a self-hosted gateway for JSON, XML, multipart, and raw webhook payloads. Build a typed flow,
+            then deliver to the queues, streams, databases, and services you already run. The configuration stays in
+            one YAML file.
           </Text>
           <Group gap="sm" mt="xs">
             <Button component={Link} to="/builder" size="md" color="brand">

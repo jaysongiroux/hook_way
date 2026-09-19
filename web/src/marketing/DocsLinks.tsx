@@ -11,8 +11,8 @@ const CARDS = [...DOC_LINKS, EXAMPLES];
 export function DocsLinks() {
   return (
     <Section
-      title="Read it before you install it"
-      lead="Everything lives in the repository, versioned alongside the code."
+      title="Documentation is versioned with the code"
+      lead="Configuration, CLI, security, operations, and examples live in the repository."
       background={DARK.recessed}
     >
       <Bento>
