@@ -516,7 +516,7 @@ Hookway supports four Redis destination types. All share a common `redis:` conne
 | `redis_stream` | XADD to a Stream — durable; consumers may XREADGROUP | Recommended for at-least-once delivery. YAML has no `max_len` / `consumer_group`, so Hookway does not trim or create groups |
 | `redis_list` | LPUSH to a List — FIFO work queue | Simple competing-consumer queue. YAML has no `max_len`, so lists are unbounded unless consumers trim |
 | `redis_pubsub` | PUBLISH to a channel — live broadcast; lossy, not durable | Fire-and-forget; subscribers offline at delivery time miss the message |
-| `redis_kv` | SET a key per webhook — storage, not a queue | Latest-event overwrite. Default key `{prefix}:{flow}:{id}`. YAML has no `ttl`, so keys do not expire |
+| `redis_kv` | SET a key per webhook — storage, not a queue | Latest-event overwrite. Default key `{prefix}:{flow}:{id}`. YAML has no `ttl`, so keys do not expire. `publish.payload: object` stores decoded file bytes instead of the JSON Message |
 
 `redis_stream` is the recommended type for at-least-once webhook handoff. `redis_pubsub` is intentionally lossy — if no subscriber is connected at publish time, the message is silently dropped; use it only for live broadcast scenarios where occasional loss is acceptable.
 

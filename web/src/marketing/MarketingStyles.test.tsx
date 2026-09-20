@@ -12,6 +12,12 @@ test("the hover lift is defined and switched off under reduced motion", () => {
   expect(MARKETING_CSS).toMatch(/prefers-reduced-motion[\s\S]*transition:\s*none/);
 });
 
+test("page hero and use-case reveal motions respect reduced motion", () => {
+  expect(MARKETING_CSS).toContain("hookway-page-hero");
+  expect(MARKETING_CSS).toContain("hookway-use-case-reveal");
+  expect(MARKETING_CSS).toMatch(/prefers-reduced-motion[\s\S]*use-case-reveal[\s\S]*animation:\s*none/);
+});
+
 test("the destination marquee pauses when hidden or hovered and becomes static under reduced motion", () => {
   expect(MARKETING_CSS).toContain(`.${MARQUEE_TRACK_CLASS}[data-running="false"]`);
   expect(MARKETING_CSS).toMatch(/marquee-viewport:hover[\s\S]*animation-play-state:\s*paused/);

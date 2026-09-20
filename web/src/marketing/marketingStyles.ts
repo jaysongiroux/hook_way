@@ -8,6 +8,10 @@ export const MARQUEE_SHELL_CLASS = "hookway-marquee-shell";
 export const MARQUEE_VIEWPORT_CLASS = "hookway-marquee-viewport";
 export const MARQUEE_TRACK_CLASS = "hookway-marquee-track";
 export const MARQUEE_GROUP_CLASS = "hookway-marquee-group";
+export const PAGE_HERO_CLASS = "hookway-page-hero";
+export const USE_CASE_REVEAL_CLASS = "hookway-use-case-reveal";
+export const COMPARE_TABLE_CLASS = "hookway-compare-table";
+export const COMPARE_LEVEL_CLASS = "hookway-compare-level";
 
 export const MARKETING_CSS = `
 .${BENTO_CLASS} {
@@ -83,14 +87,57 @@ export const MARKETING_CSS = `
   from { transform: translate3d(0, 0, 0); }
   to { transform: translate3d(-50%, 0, 0); }
 }
+.${PAGE_HERO_CLASS} {
+  position: relative;
+}
+.${PAGE_HERO_CLASS}::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, ${DARK.border} 18%, ${DARK.border} 82%, transparent);
+  pointer-events: none;
+}
+.${USE_CASE_REVEAL_CLASS} {
+  animation: hookway-use-case-in 420ms ease both;
+}
+@keyframes hookway-use-case-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.${COMPARE_TABLE_CLASS} table {
+  min-width: 720px;
+}
+.${COMPARE_TABLE_CLASS} tbody tr {
+  transition: background-color 140ms ease;
+}
+.${COMPARE_TABLE_CLASS} tbody tr:hover {
+  background: ${DARK.bg};
+}
+.${COMPARE_LEVEL_CLASS}[data-level="yes"] { color: ${DARK.accent}; }
+.${COMPARE_LEVEL_CLASS}[data-level="partial"] { color: ${DARK.text}; }
+.${COMPARE_LEVEL_CLASS}[data-level="no"],
+.${COMPARE_LEVEL_CLASS}[data-level="n/a"] { color: ${DARK.muted}; }
+.hookway-compare-products {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
 @media (max-width: 62em) {
   .${MARQUEE_SHELL_CLASS} {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
+  .hookway-compare-products {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .${LIFT_CLASS} { transition: none; }
+  .${USE_CASE_REVEAL_CLASS} { animation: none; }
+  .${COMPARE_TABLE_CLASS} tbody tr { transition: none; }
   .${MARQUEE_VIEWPORT_CLASS} {
     -webkit-mask-image: none;
     mask-image: none;

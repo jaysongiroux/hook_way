@@ -1,11 +1,18 @@
 import { Anchor, Box, Container, Group } from "@mantine/core";
-import { Link } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import { Logo } from "../brand/Logo";
 import { HEADER_HEIGHT, HEADER_STYLE } from "../brand/chrome";
 import { DOC_LINKS, GITHUB_REPO } from "./links";
 import { DARK } from "../tokens";
 
 const CONFIG_DOC = DOC_LINKS.find((d) => d.path === "docs/configuration.md")!;
+
+const navLinkStyle = ({ isActive }: { isActive: boolean }) => ({
+  color: isActive ? DARK.accent : DARK.muted,
+  fontWeight: isActive ? 650 : 400,
+  textDecoration: "none",
+  fontSize: 14,
+});
 
 export function SiteHeader() {
   return (
@@ -22,6 +29,12 @@ export function SiteHeader() {
         <Group h={HEADER_HEIGHT} justify="space-between">
           <Logo to="/" />
           <Group gap="lg">
+            <NavLink to="/use-cases" style={navLinkStyle}>
+              Use cases
+            </NavLink>
+            <NavLink to="/compare" style={navLinkStyle}>
+              Compare
+            </NavLink>
             <Anchor href={CONFIG_DOC.href} target="_blank" rel="noopener noreferrer" size="sm" c={DARK.muted}>
               Docs
             </Anchor>
