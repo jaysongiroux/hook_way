@@ -335,7 +335,9 @@ func triggerRoute(t *testing.T, fc graph.FlowConfig) (path, method string) {
 }
 
 func fillPath(path string) string {
-	path = strings.ReplaceAll(path, "{envName}", "qa")
+	// examples/variables.yaml's code node allowlists qa-gm3, staging-portal, and
+	// portal. A generic "qa" would 400 as an unknown environment.
+	path = strings.ReplaceAll(path, "{envName}", "qa-gm3")
 	path = strings.ReplaceAll(path, "{rest...}", "echo")
 	path = strings.ReplaceAll(path, "{rest}", "echo")
 	return path
