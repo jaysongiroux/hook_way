@@ -146,9 +146,6 @@ func (p *RedisKVPublisher) Publish(ctx context.Context, _, target string, msg Me
 
 	var value string
 	if msg.PayloadMode == "object" {
-		if len(msg.ObjectBytes) == 0 {
-			return fmt.Errorf("redis_kv %q: object payload: empty object bytes", p.destID)
-		}
 		value = string(msg.ObjectBytes)
 	} else {
 		payload, err := json.Marshal(msg)

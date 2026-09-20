@@ -13,7 +13,7 @@ It is designed for production webhook ingress where the receiving service should
   - Redis Streams (redis_stream): durable XADD; consumers may use their own groups. YAML does not set MAXLEN or create a consumer group
   - Redis Lists (redis_list): LPUSH work-queue (unbounded unless you trim from the consumer side)
   - Redis Pub/Sub (redis_pubsub): fire-and-forget channel broadcast via PUBLISH (lossy; not durable)
-  - Redis Key-Value (redis_kv): SET at `{prefix}:{flow}:{id}` by default; YAML does not set a TTL. `publish.payload: object` stores decoded file bytes instead of the JSON Message
+  - Redis Key-Value (redis_kv): SET at `{prefix}:{endpoint}:{id}` by default; YAML does not set a TTL. `publish.payload: object` stores decoded file bytes instead of the JSON Message
   - Postgres: one row per event into a shared table (fixed envelope columns + jsonb), id-deduplicated via ON CONFLICT DO NOTHING
   - MongoDB: one BSON document per event into a collection per target (full event envelope, _id-deduplicated)
   - Kafka: one message per event to a topic, with optional SASL/TLS and topic creation. YAML does not set a partition key

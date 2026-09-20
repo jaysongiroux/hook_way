@@ -3,6 +3,7 @@ import { CodeBand } from "./CodeBand";
 import { CtaBand } from "./CtaBand";
 import { DestinationMarquee } from "./DestinationMarquee";
 import { DocsLinks } from "./DocsLinks";
+import { Explore } from "./Explore";
 import { Features } from "./Features";
 import { FlowDiagram } from "./FlowDiagram";
 import { Hero } from "./Hero";
@@ -23,6 +24,7 @@ export function Marketing() {
       <CodeBand />
       <FlowDiagram />
       <Production />
+      <Explore />
       <DocsLinks />
       <CtaBand />
     </MarketingShell>

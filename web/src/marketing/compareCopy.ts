@@ -6,9 +6,10 @@
 // event delivery product, not an inbound webhook gateway.
 
 export type SupportLevel = "yes" | "partial" | "no" | "n/a";
+type CompetitorId = "hookway" | "hookdeck" | "convoy";
 
 export interface Competitor {
-  id: string;
+  id: CompetitorId;
   name: string;
   role: string;
   sourceHref: string;
@@ -19,7 +20,7 @@ export interface CompareRow {
   id: string;
   capability: string;
   note?: string;
-  values: Record<string, { level: SupportLevel; detail: string }>;
+  values: Record<CompetitorId, { level: SupportLevel; detail: string }>;
 }
 
 export const COMPARE_INTRO = {
@@ -87,7 +88,10 @@ export const COMPARE_ROWS: CompareRow[] = [
     capability: "Body formats",
     values: {
       hookway: { level: "yes", detail: "JSON, XML element tree, multipart/form-data, raw" },
-      hookdeck: { level: "partial", detail: "JSON payloads with JavaScript transformations" },
+      hookdeck: {
+        level: "partial",
+        detail: "Preserves arbitrary request bodies; JavaScript transformations can convert formats such as XML to JSON",
+      },
       convoy: { level: "partial", detail: "JSON event payloads; transforms available on ingest" },
     },
   },
@@ -99,7 +103,7 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookway: {
         level: "yes",
         detail:
-          "13 types: RabbitMQ, SQS, SNS, S3, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, Temporal, webhook",
+          "13 catalog types: RabbitMQ, SQS, SNS, S3, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, plus Temporal task-queue wiring whose workflow settings are not yet exposed in standalone YAML",
       },
       hookdeck: { level: "partial", detail: "HTTP, CLI (local), and Mock API only" },
       convoy: {
@@ -164,14 +168,18 @@ export const COMPARE_ROWS: CompareRow[] = [
 export const COMPARE_OUTPOST_NOTE = {
   title: "About Hookdeck Outpost",
   body: "Hookdeck also publishes Outpost, a separate open-source outbound event delivery service with native destinations such as webhooks, SQS, S3, RabbitMQ, and Kafka. Outpost solves sending events to your customers’ endpoints and brokers. Hookway solves receiving third-party webhooks into your own infrastructure. They are complementary problem spaces, not drop-in substitutes.",
-  href: "https://hookdeck.com/docs/outpost/self-hosting/architecture",
-  label: "Hookdeck Outpost architecture",
+  href: "https://hookdeck.com/docs/outpost/overview",
+  label: "Hookdeck Outpost overview",
 } as const;
 
 export const COMPARE_SOURCES = [
   { href: "https://hookdeck.com/docs/destinations", label: "Hookdeck Destinations" },
+  { href: "https://hookdeck.com/docs/transformations", label: "Hookdeck Transformations" },
   { href: "https://hookdeck.com/event-gateway", label: "Hookdeck Event Gateway" },
+  { href: "https://hookdeck.com/docs/outpost/overview", label: "Hookdeck Outpost" },
   { href: "https://www.getconvoy.io/docs/home/introduction", label: "Convoy introduction" },
   { href: "https://www.getconvoy.io/docs/product-manual/sources", label: "Convoy Sources" },
+  { href: "https://www.getconvoy.io/docs/product-manual/functions", label: "Convoy Functions" },
+  { href: "https://www.getconvoy.io/docs/product-manual/metrics", label: "Convoy Metrics" },
   { href: "https://github.com/jaysongiroux/hook_way", label: "Hookway repository" },
 ] as const;

@@ -15,9 +15,10 @@
 # Object payload body contract: {content: "<base64>", filename?, content_type?}.
 # Supported destinations: s3, redis_kv. Default payload (envelope) still writes
 # the JSON Message for every destination type.
+# The 4 MiB code-node limits account for base64 expansion of the 2 MiB file cap.
 server:
   addr: ":8080"
-  max_body_bytes: 8388608
+  max_body_bytes: 3145728
 
 destinations:
   archive:
@@ -40,20 +41,22 @@ flows:
   upload_split:
     nodes:
       - {id: in, type: http_trigger, description: "Vendor posts multipart/form-data (fields + file).", path: /webhooks/upload-split, methods: [POST]}
-      - {id: body, type: read_body, description: "Buffers the whole request so HMAC can cover file bytes.", max_bytes: 8388608}
+      - {id: body, type: read_body, description: "Buffers the whole request so HMAC can cover file bytes.", max_bytes: 3145728}
       - {id: auth, type: auth, description: "Verifies HMAC over the raw multipart bytes before parsing.", scheme: hmac_sha256_hex, secret: "${UPLOAD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
       - id: env
         type: envelope
         description: "Parses parts into {fields, files}. include_content keeps file bytes for the S3 branch."
         body_format: multipart
         multipart:
-          max_parts: 4
+          max_parts: 2
           max_part_bytes: 2097152
           include_content: true
       - id: for_s3
         type: code
         description: "S3 object payload needs the file object itself as body (content + metadata)."
         timeout: 50ms
+        max_input_bytes: 4194304
+        max_output_bytes: 4194304
         script: |
           const files = (input.body && input.body.files) || {};
           const doc = files.document;
@@ -65,6 +68,7 @@ flows:
         type: code
         description: "Info branch body: form fields + file metadata, no base64 payload."
         timeout: 50ms
+        max_input_bytes: 4194304
         script: |
           const files = (input.body && input.body.files) || {};
           const meta = {};

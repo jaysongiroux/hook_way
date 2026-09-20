@@ -112,8 +112,15 @@ export function Compare() {
         lead="Cells summarise public documentation. Re-check the linked sources before relying on a cell in a purchase decision."
         background={DARK.recessed}
       >
-        <Box className={COMPARE_TABLE_CLASS} style={{ overflowX: "auto" }}>
+        <Box
+          className={COMPARE_TABLE_CLASS}
+          role="region"
+          aria-label="Scrollable comparison table"
+          tabIndex={0}
+          style={{ overflowX: "auto" }}
+        >
           <Table
+            aria-label="Feature and integration comparison"
             withTableBorder
             withColumnBorders
             horizontalSpacing="md"

@@ -176,14 +176,11 @@ func (p *S3Publisher) Publish(ctx context.Context, destinationID, target string,
 
 func s3PutBody(msg Message) ([]byte, string, error) {
 	if msg.PayloadMode == "object" {
-		if len(msg.ObjectBytes) == 0 {
-			return nil, "", fmt.Errorf("s3 object payload: empty object bytes")
+		contentType, err := normalizeObjectContentType(msg.ObjectContentType)
+		if err != nil {
+			return nil, "", err
 		}
-		ct := msg.ObjectContentType
-		if ct == "" {
-			ct = "application/octet-stream"
-		}
-		return msg.ObjectBytes, ct, nil
+		return msg.ObjectBytes, contentType, nil
 	}
 	body, err := json.Marshal(msg)
 	if err != nil {

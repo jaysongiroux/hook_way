@@ -11,7 +11,7 @@ func TestReviewRuntimeRejectsSchemaInvalidOptions(t *testing.T) {
 		{"rate_limit", "rpm: 60\nburst: -1\n"},
 		{"replay_guard", "max_entries: -1\n"},
 		{"lookup", "provider: dynamodb\nkey: id\ncache: {max_entries: -1}\n"},
-		{"code", "script: return input.body\nmax_output_bytes: -1\nmax_call_stack: -1\n"},
+		{"code", "script: return input.body\nmax_input_bytes: -1\nmax_output_bytes: -1\nmax_call_stack: -1\n"},
 		{"auth", "scheme: hmac_sha256_hex\nsecret_ref: {provider: vault, name: key}\n"},
 		{"auth", "scheme: header_exact\nsecret: value\nsource: {kind: cookie, key: token}\n"},
 		{"auth", "scheme: header_exact\nsecret: value\nsource: {kind: header, key: ''}\n"},

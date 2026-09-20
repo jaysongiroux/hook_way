@@ -205,6 +205,48 @@ func TestS3PublisherPublishesRawObjectPayload(t *testing.T) {
 	}
 }
 
+func TestS3PublisherPublishesEmptyObjectPayload(t *testing.T) {
+	fake := newFakeS3()
+	fake.seedBucket("events")
+	pub, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "events", Targets: []S3Target{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := Message{
+		ID: "evt_empty", ReceivedAt: time.Date(2026, 6, 29, 14, 30, 0, 0, time.UTC),
+		PayloadMode: "object", ObjectBytes: []byte{}, ObjectContentType: "application/octet-stream",
+	}
+	if err := pub.Publish(context.Background(), "archive", "uploads", msg); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(readAll(t, fake.puts[0])); got != 0 {
+		t.Fatalf("stored bytes = %d, want empty object", got)
+	}
+}
+
+func TestS3PublisherRejectsInvalidObjectContentType(t *testing.T) {
+	fake := newFakeS3()
+	fake.seedBucket("events")
+	pub, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "events", Targets: []S3Target{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pub.Publish(context.Background(), "archive", "uploads", Message{
+		ID: "evt_bad", ReceivedAt: time.Now(), PayloadMode: "object",
+		ObjectBytes: []byte("x"), ObjectContentType: "text/plain\r\nX-Evil: yes",
+	})
+	if err == nil {
+		t.Fatal("Publish accepted an invalid object Content-Type")
+	}
+	if len(fake.puts) != 0 {
+		t.Fatalf("PutObject calls = %d, want 0", len(fake.puts))
+	}
+}
+
 func TestS3PublisherSetsSSE(t *testing.T) {
 	fake := newFakeS3()
 	fake.seedBucket("events")

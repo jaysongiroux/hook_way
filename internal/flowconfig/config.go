@@ -15,13 +15,13 @@ import (
 
 // Config is a Hookway config document: shared process settings plus named flows.
 type Config struct {
-	Server        config.ServerConfig
-	Security      config.SecurityConfig
-	Metrics       config.MetricsConfig
-	Logging       config.LoggingConfig
-	Replay        config.ReplayConfig
-	Destinations  map[string]config.DestinationConfig
-	Flows         map[string]graph.FlowConfig
+	Server       config.ServerConfig
+	Security     config.SecurityConfig
+	Metrics      config.MetricsConfig
+	Logging      config.LoggingConfig
+	Replay       config.ReplayConfig
+	Destinations map[string]config.DestinationConfig
+	Flows        map[string]graph.FlowConfig
 }
 
 // Load reads path and expands environment variables strictly.
@@ -56,13 +56,13 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	issues = append(issues, flowIssues...)
 
 	cfg := Config{
-		Server:        shared.Server,
-		Security:      shared.Security,
-		Metrics:       shared.Metrics,
-		Logging:       shared.Logging,
-		Replay:        shared.Replay,
-		Destinations:  shared.Destinations,
-		Flows:         flows,
+		Server:       shared.Server,
+		Security:     shared.Security,
+		Metrics:      shared.Metrics,
+		Logging:      shared.Logging,
+		Replay:       shared.Replay,
+		Destinations: shared.Destinations,
+		Flows:        flows,
 	}
 	issues = append(issues, compileFlows(cfg)...)
 	issues = append(issues, crossFlowIssues(cfg)...)
@@ -198,7 +198,9 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 func crossFlowIssues(cfg Config) []config.ValidationIssue {
 	issues := RoutingIssues(cfg)
 	for _, name := range sortedKeys(cfg.Flows) {
-		for _, nc := range cfg.Flows[name].Nodes {
+		flow := cfg.Flows[name]
+		replayCaptured := replayCapturesFlow(cfg.Replay, flow)
+		for _, nc := range flow.Nodes {
 			switch nc.Type {
 			case "publish":
 				opts, err := decodeOptions[PublishOptions](nc)
@@ -218,16 +220,35 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 						fmt.Sprintf("payload: object is not supported for destination type %q", dest.Type),
 						"use an s3 or redis_kv destination, or omit payload (envelope)"))
 				}
+				if opts.Payload == "object" && replayCaptured {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".payload",
+						"payload: object cannot be used while replay capture is enabled for this flow",
+						"disable replay for the process, skip capture for this no_auth flow, or use payload: envelope"))
+				}
 			}
 		}
 	}
 	return issues
 }
 
-// objectPayloadDestType mirrors queue.SupportsObjectPayload without importing
-// the queue package (WASM validator).
+// Keep this check in flowconfig rather than importing queue: the same validator
+// is compiled to WebAssembly and the queue package pulls in backend SDKs.
 func objectPayloadDestType(destType string) bool {
 	return destType == "s3" || destType == "redis_kv"
+}
+
+func replayCapturesFlow(replay config.ReplayConfig, flow graph.FlowConfig) bool {
+	if !replay.Enabled {
+		return false
+	}
+	if replay.SkipUnauthenticated {
+		for _, node := range flow.Nodes {
+			if node.Type == "no_auth" {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // RoutingIssues is shared by validation and serving so an ambiguous path

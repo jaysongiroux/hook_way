@@ -98,6 +98,17 @@ func TestPublishRecordsFailure(t *testing.T) {
 	}
 }
 
+func TestPublishPreservesTypedPublisherStatus(t *testing.T) {
+	fake := &fakePublisher{err: graph.NodeError{Status: 400, Err: errors.New("invalid payload")}}
+	node := mustPublishNode(t, "destination: primary\ntarget: github-webhooks\n",
+		staticResolver{pub: fake})
+	_, err := node.Run(context.Background(), graph.Envelope{})
+	var nodeErr graph.NodeError
+	if !errors.As(err, &nodeErr) || nodeErr.Status != 400 || nodeErr.NodeID != "node" {
+		t.Fatalf("error = %+v, want node node status 400", err)
+	}
+}
+
 func TestPublishSetsObjectPayloadMode(t *testing.T) {
 	fake := &fakePublisher{}
 	node := mustPublishNode(t, "destination: archive\ntarget: uploads\npayload: object\n",
@@ -114,11 +125,10 @@ func TestPublishSetsObjectPayloadMode(t *testing.T) {
 }
 
 func TestPublishRejectsUnknownPayload(t *testing.T) {
-	_, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg, _ := NewRegistryWithOptions(RegistryOptions{})
 	spec, _ := reg.Lookup("publish")
 	_, err = spec.New(nodeConfigFromYAML(t, "publish", "destination: primary\ntarget: t\npayload: blob\n"))
 	if err == nil || !strings.Contains(err.Error(), "payload") {

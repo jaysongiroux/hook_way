@@ -99,6 +99,25 @@ func TestRedisKVPublisher_ObjectPayloadStoresRawBytes(t *testing.T) {
 	}
 }
 
+func TestRedisKVPublisher_ObjectPayloadStoresEmptyBytes(t *testing.T) {
+	fake := &fakeRedisOps{}
+	p, err := NewRedisKVPublisher(context.Background(), fake, RedisKVConfig{
+		DestinationID: "files",
+		Targets:       []RedisKVTarget{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(context.Background(), "files", "uploads", Message{
+		ID: "evt-empty", Endpoint: "upload", PayloadMode: "object", ObjectBytes: []byte{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.setCalls) != 1 || fake.setCalls[0].value != "" {
+		t.Fatalf("setCalls = %#v, want one empty binary-safe value", fake.setCalls)
+	}
+}
+
 // TestRedisKVPublisher_UnknownTarget confirms that Publish returns an error for
 // a target not present in the config.
 func TestRedisKVPublisher_UnknownTarget(t *testing.T) {

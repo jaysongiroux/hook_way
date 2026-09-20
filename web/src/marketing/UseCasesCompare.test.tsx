@@ -40,6 +40,9 @@ test("use-cases page states the S3 attachment pattern and links examples that ex
   const main = screen.getByRole("main");
   expect(main).toHaveTextContent(/store upload attachments in s3/i);
   expect(main).toHaveTextContent(/payload: object/i);
+  expect(main).toHaveTextContent(/route each environment to its own queue/i);
+  expect(main).toHaveTextContent(/filtered headers or the parsed body/i);
+  expect(main).toHaveTextContent(/unknown, unsafe, or unresolved targets fail closed/i);
   for (const uc of USE_CASES) {
     expect(existsSync(resolve(repoRoot, uc.examplePath)), `${uc.examplePath} missing`).toBe(true);
     expect(screen.getByRole("link", { name: uc.exampleLabel })).toHaveAttribute("href", uc.exampleHref);
@@ -72,16 +75,23 @@ test("compare page names Hookdeck and Convoy without pricing language", () => {
 
 test("compare matrix covers every competitor column and cites sources", () => {
   wrap(<Compare />);
-  const table = screen.getByRole("table");
+  expect(screen.getByRole("region", { name: /scrollable comparison table/i })).toHaveAttribute("tabindex", "0");
+  const table = screen.getByRole("table", { name: /feature and integration comparison/i });
   for (const c of COMPETITORS) {
     expect(within(table).getByRole("columnheader", { name: c.name })).toBeInTheDocument();
   }
   expect(COMPARE_ROWS.length).toBeGreaterThanOrEqual(8);
   expect(screen.getAllByRole("link", { name: /Hookdeck Destinations/i }).length).toBeGreaterThan(0);
+  expect(screen.getByRole("link", { name: /Hookdeck Transformations/i })).toBeInTheDocument();
+  expect(screen.getAllByRole("link", { name: /Hookdeck Outpost/i }).length).toBeGreaterThan(0);
   expect(screen.getByRole("link", { name: /Convoy Sources/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Convoy Functions/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Convoy Metrics/i })).toBeInTheDocument();
 });
 
 test("compare page states Hookdeck Event Gateway destinations are HTTP-oriented", () => {
   wrap(<Compare />);
-  expect(screen.getByRole("main")).toHaveTextContent(/HTTP, CLI \(local\), and Mock API only/);
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/HTTP, CLI \(local\), and Mock API only/);
+  expect(main).toHaveTextContent(/Preserves arbitrary request bodies/);
 });

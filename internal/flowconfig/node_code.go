@@ -17,6 +17,7 @@ import (
 const (
 	defaultCodeTimeout    = time.Second
 	defaultCodeStack      = 1000
+	defaultCodeInputSize  = 1 << 20
 	defaultCodeOutputSize = 1 << 20
 )
 
@@ -39,6 +40,10 @@ func newCodeNode(id string, opts CodeOptions) (graph.Node, error) {
 	if opts.MaxCallStack > 0 {
 		stack = opts.MaxCallStack
 	}
+	maxIn := defaultCodeInputSize
+	if opts.MaxInputBytes > 0 {
+		maxIn = int(opts.MaxInputBytes)
+	}
 	maxOut := defaultCodeOutputSize
 	if opts.MaxOutputBytes > 0 {
 		maxOut = int(opts.MaxOutputBytes)
@@ -46,7 +51,7 @@ func newCodeNode(id string, opts CodeOptions) (graph.Node, error) {
 	rt, err := codenode.NewRuntime(opts.Script, codenode.Limits{
 		Timeout:        timeout,
 		MaxCallStack:   stack,
-		MaxInputBytes:  defaultCodeOutputSize,
+		MaxInputBytes:  maxIn,
 		MaxOutputBytes: maxOut,
 	})
 	if err != nil {

@@ -6,6 +6,7 @@ Remaining:
 - Per-publish destination options: Temporal `workflow_type` / `workflow_id`, Kafka `partition_key`, SQS/SNS FIFO `group_id`, Redis `max_len` / `consumer_group` / `ttl` / `key_template`.
 - Config hot reload / `SIGHUP` (secret overlap via `secret_ref` is already in).
 - Shared (Redis) rate-limit and replay-guard stores (pod-local by design, D11).
+- Per-publish replay snapshots for branch-specific transforms and object payloads.
 - Split admin API keys, RBAC, LICENSE / SECURITY.md / CHANGELOG.
 
 Shipped (dropped from this list):
@@ -16,4 +17,4 @@ Shipped (dropped from this list):
 - Query-parameter auth (`source.kind: query`).
 - `secret_ref` file / AWS Secrets Manager with rotation overlap.
 - Multipart bodies (`body_format: multipart` → `{fields, files}`).
-- `publish.payload: object` on `s3` and `redis_kv` (decoded file bytes with vendor filename / Content-Type).
+- `publish.payload: object` on `s3` and `redis_kv` (decoded file bytes; S3 preserves supplied filename / Content-Type metadata).

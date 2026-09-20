@@ -74,6 +74,7 @@ const NODE_FIELD_HELP: Record<string, string> = {
   "transform.rules": "Named XML prune rules to apply.",
   "code.script": "JavaScript. Input is a copy of {body, vars, headers}. Return {body, vars} only.",
   "code.timeout": "How long the script may run, e.g. 50ms.",
+  "code.max_input_bytes": "Hard cap on the serialized input passed to the script.",
   "code.max_output_bytes": "Hard cap on what the script may return.",
   "code.max_call_stack": "Call-stack depth the sandbox will allow.",
   "switch.cases": "Each case is a labelled output port. The first match wins.",

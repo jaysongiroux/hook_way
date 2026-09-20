@@ -12,6 +12,12 @@ export const PAGE_HERO_CLASS = "hookway-page-hero";
 export const USE_CASE_REVEAL_CLASS = "hookway-use-case-reveal";
 export const COMPARE_TABLE_CLASS = "hookway-compare-table";
 export const COMPARE_LEVEL_CLASS = "hookway-compare-level";
+export const SITE_HEADER_INNER_CLASS = "hookway-site-header-inner";
+export const SITE_NAV_CLASS = "hookway-site-nav";
+export const SITE_NAV_SECONDARY_CLASS = "hookway-site-nav-secondary";
+export const EXPLORE_GRID_CLASS = "hookway-explore-grid";
+export const EXPLORE_PRIMARY_CLASS = "hookway-explore-primary";
+export const EXPLORE_SECONDARY_CLASS = "hookway-explore-secondary";
 
 export const MARKETING_CSS = `
 .${BENTO_CLASS} {
@@ -120,6 +126,19 @@ export const MARKETING_CSS = `
 .${COMPARE_LEVEL_CLASS}[data-level="partial"] { color: ${DARK.text}; }
 .${COMPARE_LEVEL_CLASS}[data-level="no"],
 .${COMPARE_LEVEL_CLASS}[data-level="n/a"] { color: ${DARK.muted}; }
+.${EXPLORE_GRID_CLASS} {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  border-top: 1px solid ${DARK.border};
+  border-bottom: 1px solid ${DARK.border};
+}
+.${EXPLORE_PRIMARY_CLASS} {
+  padding: 28px 40px 28px 0;
+}
+.${EXPLORE_SECONDARY_CLASS} {
+  padding: 28px 0 28px 40px;
+  border-left: 1px solid ${DARK.border};
+}
 .hookway-compare-products {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -133,6 +152,28 @@ export const MARKETING_CSS = `
   .hookway-compare-products {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+@media (max-width: 48em) {
+  .${EXPLORE_GRID_CLASS} {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .${EXPLORE_PRIMARY_CLASS} {
+    padding: 24px 0;
+  }
+  .${EXPLORE_SECONDARY_CLASS} {
+    padding: 24px 0;
+    border-top: 1px solid ${DARK.border};
+    border-left: 0;
+  }
+  .${SITE_NAV_SECONDARY_CLASS} { display: none; }
+  .${SITE_HEADER_INNER_CLASS},
+  .${SITE_NAV_CLASS} { gap: 12px; }
+}
+@media (max-width: 30em) {
+  .${SITE_HEADER_INNER_CLASS},
+  .${SITE_NAV_CLASS} { gap: 8px; }
+  .${SITE_HEADER_INNER_CLASS} .hookway-logo-word { display: none; }
+  .${SITE_NAV_CLASS} a { font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .${LIFT_CLASS} { transition: none; }

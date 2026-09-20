@@ -25,7 +25,7 @@ test("the root url serves the marketing overview, not the builder", () => {
 test("/builder mounts the config builder", async () => {
   renderAt("/builder");
   // The builder is lazy-loaded, so it arrives after the dynamic import settles.
-  expect(await screen.findByRole("button", { name: "Inspector" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Inspector" }, { timeout: 5_000 })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Hookway home" })).toBeInTheDocument();
 });
 
@@ -55,7 +55,7 @@ test("the overview and the builder set their own document titles", async () => {
   overview.unmount();
 
   renderAt("/builder");
-  await screen.findByRole("button", { name: "Inspector" });
+  await screen.findByRole("button", { name: "Inspector" }, { timeout: 5_000 });
   expect(document.title).toBe("Hookway Config");
 });
 

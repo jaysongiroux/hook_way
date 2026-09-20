@@ -306,18 +306,66 @@ flows:
 `
 	_, issues := LoadBytes([]byte(src), "test", false)
 	for _, iss := range issues {
-		if iss.Severity != config.SeverityWarning && strings.Contains(iss.Message, "payload") {
-			t.Fatalf("unexpected payload issue: %+v", issues)
-		}
-		if iss.Severity != config.SeverityWarning && iss.Severity != "" {
-			// Allow only warnings (e.g. missing rate_limit).
-			if iss.Severity == config.SeverityError {
-				t.Fatalf("LoadBytes issues = %+v", issues)
-			}
+		if iss.Severity == config.SeverityError {
+			t.Fatalf("LoadBytes issues = %+v", issues)
 		}
 	}
-	for _, iss := range issues {
-		if iss.Severity == config.SeverityError {
+}
+
+func TestObjectPayloadRejectedWhenReplayCapturesFlow(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1048576}
+security: {api_key: replay-secret}
+replay:
+  enabled: true
+  addr: ":9091"
+  postgres: {url: "postgres://localhost/hookway"}
+destinations:
+  archive:
+    type: s3
+    s3: {region: us-east-1, bucket: b}
+flows:
+  upload:
+    nodes:
+      - {id: in, type: http_trigger, path: /upload, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: header_exact, header: X-Token, value: secret}
+      - {id: env, type: envelope, body_format: raw}
+      - {id: out, type: publish, destination: archive, target: uploads, payload: object}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	if !containsMessage(issues, "cannot be used while replay capture is enabled") {
+		t.Fatalf("issues = %+v, want object/replay compatibility error", issues)
+	}
+}
+
+func TestObjectPayloadAllowedWhenReplaySkipsNoAuthFlow(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1048576}
+security: {api_key: replay-secret}
+replay:
+  enabled: true
+  addr: ":9091"
+  skip_unauthenticated: true
+  postgres: {url: "postgres://localhost/hookway"}
+destinations:
+  archive:
+    type: s3
+    s3: {region: us-east-1, bucket: b}
+flows:
+  upload:
+    nodes:
+      - {id: in, type: http_trigger, path: /upload, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: raw}
+      - {id: out, type: publish, destination: archive, target: uploads, payload: object}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	for _, issue := range issues {
+		if issue.Severity == config.SeverityError {
 			t.Fatalf("LoadBytes issues = %+v", issues)
 		}
 	}

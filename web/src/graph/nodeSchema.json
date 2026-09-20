@@ -122,6 +122,10 @@
         "timeout": {
           "type": "string"
         },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
         "max_output_bytes": {
           "type": "integer",
           "minimum": 1

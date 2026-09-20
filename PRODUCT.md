@@ -12,7 +12,7 @@ Primary user: a platform / infrastructure engineer at a mid-size company. They o
 
 ## Product Purpose
 
-Hookway receives third-party webhook POST requests, verifies authentication, and publishes to destinations the company already runs (queues, streams, object storage, databases, Temporal, or another HTTP webhook). Default publishes are JSON envelopes; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`. Success is a verified event arriving at the right backend without glue code, a SaaS account, or a vendor-specific SDK.
+Hookway receives third-party webhook POST requests, verifies authentication, and publishes to destinations the company already runs (queues, streams, object storage, databases, Temporal, or another HTTP webhook). Default publishes are JSON envelopes; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`, and S3 preserves supplied filename / Content-Type metadata. Success is a verified event arriving at the right backend without glue code, a SaaS account, or a vendor-specific SDK.
 
 ## Positioning
 

@@ -25,7 +25,7 @@ export const USE_CASES: UseCase[] = [
     summary:
       "A multipart webhook can fan out so decoded file bytes land in S3 while form fields publish to a queue.",
     detail:
-      "Parse multipart/form-data into fields and files, reshape each branch with a code node, then publish.payload: object to S3 and an envelope to RabbitMQ (or any other destination). The object key keeps the vendor filename and Content-Type.",
+      "Parse multipart/form-data into fields and files, reshape each branch with a code node, then publish.payload: object to S3 and an envelope to RabbitMQ (or any other destination). The S3 key includes a sanitized vendor filename, and PutObject uses the vendor Content-Type.",
     examplePath: "examples/multipart-split.yaml",
     exampleHref: repoBlob("examples/multipart-split.yaml"),
     exampleLabel: "multipart-split.yaml",
@@ -33,12 +33,23 @@ export const USE_CASES: UseCase[] = [
   {
     id: "fanout",
     title: "Fan out one verified event to several backends",
-    summary: "One signature check, then concurrent publishes to the destinations your services already consume.",
+    summary: "One signature check, then publish to each destination your services already consume.",
     detail:
-      "Declare destinations once and reference them from publish nodes. Delivery failure policy chooses stop-on-failure or skip-failed fan-out. Consumers still dedupe on the envelope id.",
+      "Declare destinations once and reference them from publish nodes. stop_on_failure publishes in order; skip_failed runs direct publish branches concurrently. Consumers still dedupe on the envelope id.",
     examplePath: "examples/destinations/rabbitmq.yaml",
     exampleHref: repoBlob("examples/destinations/rabbitmq.yaml"),
     exampleLabel: "rabbitmq.yaml",
+  },
+  {
+    id: "dynamic-routing",
+    title: "Route each environment to its own queue",
+    summary:
+      "Turn request-scoped values into a safe target such as {envName}-events, then deliver to the matching SQS queue.",
+    detail:
+      "Path placeholders populate variables automatically. field_map can copy JSON body values, while a code node can derive variables from filtered headers or the parsed body. The example allowlists environments and requires each queue to exist; unknown, unsafe, or unresolved targets fail closed.",
+    examplePath: "examples/variables.yaml",
+    exampleHref: repoBlob("examples/variables.yaml"),
+    exampleLabel: "variables.yaml",
   },
   {
     id: "xml-proxy",
@@ -61,14 +72,14 @@ export const USE_CASES: UseCase[] = [
     exampleLabel: "filters.yaml",
   },
   {
-    id: "temporal",
-    title: "Start a Temporal workflow from a verified webhook",
-    summary: "Publish the envelope (or body) onto a Temporal task queue without embedding a vendor SDK in the edge.",
+    id: "redis-stream",
+    title: "Hand verified events to Redis Streams",
+    summary: "Append each envelope to a durable Redis or Valkey stream for workers to consume with XREADGROUP.",
     detail:
-      "The publish target is the task queue. Hookway remains the verification and routing layer; Temporal owns durable execution.",
-    examplePath: "examples/destinations/temporal.yaml",
-    exampleHref: repoBlob("examples/destinations/temporal.yaml"),
-    exampleLabel: "temporal.yaml",
+      "Hookway writes with XADD; your consumers own group creation and retention. Choose a list for a simpler work queue or Pub/Sub only when occasional loss is acceptable.",
+    examplePath: "examples/destinations/redis_stream.yaml",
+    exampleHref: repoBlob("examples/destinations/redis_stream.yaml"),
+    exampleLabel: "redis_stream.yaml",
   },
   {
     id: "sync-proxy",

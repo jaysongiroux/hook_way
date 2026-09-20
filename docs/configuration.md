@@ -124,7 +124,7 @@ paths.
 
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, or Temporal task queue). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. blocks (`queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, `sns_options`) are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, or Temporal task queue). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 
@@ -268,7 +268,7 @@ S3 fields live under `destinations.<id>.s3`. By default Hookway writes each webh
 **Object key layout (`payload: object`):** same date partition, but the leaf name uses the sanitized vendor filename (when present) and no `.json` suffix:
 
 ```
-<target>/yyyy/mm/dd/<timestamp>-<id>-<filename>
+<target>/yyyy/mm/dd/<timestamp>-<id>[-<filename>]
 ```
 
 S3 user metadata includes `hookway-event-id` and, when available, `hookway-filename`. `Content-Type` is taken from the file object's `content_type` (or `application/octet-stream`).
@@ -516,7 +516,7 @@ Hookway supports four Redis destination types. All share a common `redis:` conne
 | `redis_stream` | XADD to a Stream — durable; consumers may XREADGROUP | Recommended for at-least-once delivery. YAML has no `max_len` / `consumer_group`, so Hookway does not trim or create groups |
 | `redis_list` | LPUSH to a List — FIFO work queue | Simple competing-consumer queue. YAML has no `max_len`, so lists are unbounded unless consumers trim |
 | `redis_pubsub` | PUBLISH to a channel — live broadcast; lossy, not durable | Fire-and-forget; subscribers offline at delivery time miss the message |
-| `redis_kv` | SET a key per webhook — storage, not a queue | Latest-event overwrite. Default key `{prefix}:{flow}:{id}`. YAML has no `ttl`, so keys do not expire. `publish.payload: object` stores decoded file bytes instead of the JSON Message |
+| `redis_kv` | SET a key per webhook — storage, not a queue | Latest-event overwrite. Default key `{prefix}:{endpoint}:{id}`. YAML has no `ttl`, so keys do not expire. `publish.payload: object` stores decoded file bytes instead of the JSON Message |
 
 `redis_stream` is the recommended type for at-least-once webhook handoff. `redis_pubsub` is intentionally lossy — if no subscriber is connected at publish time, the message is silently dropped; use it only for live broadcast scenarios where occasional loss is acceptable.
 
@@ -1086,7 +1086,7 @@ and filename on the key) instead of a JSON envelope.
 | Value | Destinations | What is stored |
 | --- | --- | --- |
 | `envelope` (default) | all | JSON Message (`application/json`) |
-| `object` | `s3`, `redis_kv` only | Decoded file bytes |
+| `object` | `s3`, `redis_kv` only | Decoded file bytes; S3 also uses supplied filename / Content-Type metadata |
 
 For `payload: object`, the envelope body must be a file object:
 
@@ -1097,14 +1097,20 @@ For `payload: object`, the envelope body must be a file object:
 That is the shape multipart parsing already uses for each entry under `files.*`.
 A `code` node can lift `files.document` onto `body` before publish. When the
 envelope used `body_format: raw` (empty parsed body), object mode falls back to
-the raw request bytes and the inbound `Content-Type` header.
+the raw request bytes and the original inbound `Content-Type` header. That
+header is used only as object metadata; it does not bypass
+`security.forwarded_header_allowlist` in the stored envelope.
 
 `hookway validate` rejects `payload: object` on any other destination type.
+It also rejects object mode on a flow captured by the optional replay store:
+the current replay format persists one JSON envelope per event, not each
+publish branch's decoded bytes. A `no_auth` flow excluded with
+`replay.skip_unauthenticated: true` is not captured and remains valid.
 `examples/multipart-split.yaml` is the reference flow.
 
 ### Variables
 
-Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a body field to `vars.tenant`. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. Unresolved templates fail closed at publish. The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`) until a provider is injected.
+Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a JSON body field to `vars.tenant`; a `code` node can derive variables from its parsed `body`, existing `vars`, or filtered `headers` input. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. This can select a pre-provisioned queue per environment, such as `{envName}-events`. Unresolved templates and unsafe values fail closed at publish. The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`) until a provider is injected.
 
 A placeholder in a webhook `url` **host** must be followed by a literal domain suffix (`{envName}-api.example.com`) so a request cannot choose an arbitrary host. `${ENV_VAR}` references expand at load and are not request variables.
 
@@ -1128,6 +1134,7 @@ Options:
 
 - `script`: required JavaScript. Top-level `return` is allowed (the runtime wraps the script in a function).
 - `timeout`: optional duration, default `1s` (C1). A missing timeout is a lint warning because goja has no memory cap. See [Security § Code node](security.md#code-node).
+- `max_input_bytes`: optional, default `1048576` (C4). Raise it deliberately when a script must inspect a larger parsed body; base64 file content is larger than its decoded bytes.
 - `max_output_bytes`: optional, default `1048576` (C5). Oversize output is refused, not truncated.
 - `max_call_stack`: optional, default `1000` (C2).
 

@@ -87,7 +87,9 @@ type queuePublisherAdapter struct{ pub queue.Publisher }
 func (a queuePublisherAdapter) Publish(ctx context.Context, destinationID, renderedTarget string, env graph.Envelope) error {
 	msg, err := graphEnvelopeToMessage(env, destinationID, renderedTarget)
 	if err != nil {
-		return err
+		// Conversion failures are deterministic payload problems; retrying the
+		// destination cannot fix malformed object metadata or base64 content.
+		return graph.NodeError{Status: http.StatusBadRequest, Err: fmt.Errorf("prepare publish payload: %w", err)}
 	}
 	return a.pub.Publish(ctx, destinationID, renderedTarget, msg)
 }
@@ -155,7 +157,19 @@ func attachObjectPayload(msg queue.Message, env graph.Envelope) (queue.Message, 
 		msg.PayloadMode = "envelope"
 		return msg, nil
 	case "object":
-		data, contentType, filename, err := queue.ObjectFromBody(env.Body, msg.RawBody, msg.RawBodyBase64, msg.Headers)
+		// Use the original request's Content-Type for raw bodies. msg.Headers is
+		// intentionally redacted/allowlisted and may omit Content-Type entirely.
+		var rawBody []byte
+		var rawBodyBase64 *string
+		var rawContentType string
+		if env.BodyFormat == "raw" {
+			rawBody = msg.RawBody
+			rawBodyBase64 = msg.RawBodyBase64
+			rawContentType = env.V.Raw.Head.Header.Get("Content-Type")
+		}
+		data, contentType, filename, err := queue.ObjectFromBody(
+			env.Body, rawBody, rawBodyBase64, rawContentType,
+		)
 		if err != nil {
 			return msg, err
 		}

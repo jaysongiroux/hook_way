@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jasongiroux/hookway/internal/queue"
 )
 
 // multipartSplitYAML fans out a multipart upload: object payload to the
@@ -176,6 +179,90 @@ func TestMultipartSplitFansOutRawFileToS3AndInfoElsewhere(t *testing.T) {
 	gotSize, ok := numericSize(infoDoc["size"])
 	if !ok || gotSize != int64(len(fileBytes)) {
 		t.Fatalf("info size = %#v", infoDoc["size"])
+	}
+}
+
+func TestRawObjectPayloadKeepsContentTypeOutsideForwardedHeaderAllowlist(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1048576}
+security:
+  forwarded_header_allowlist: [X-Request-ID]
+destinations:
+  archive:
+    type: s3
+    s3: {region: us-east-1, bucket: test-bucket}
+flows:
+  upload:
+    nodes:
+      - {id: in, type: http_trigger, path: /upload, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: raw}
+      - {id: out, type: publish, destination: archive, target: uploads, payload: object}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	pub := &fakePublisher{}
+	srv, err := NewFlowServer(loadFlowCfg(t, src), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	body := []byte("raw-pdf-bytes")
+	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/pdf")
+	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 1 {
+		t.Fatalf("published = %d, want 1", len(pub.published))
+	}
+	msg := pub.published[0].msg
+	if msg.Headers.Get("Content-Type") != "" {
+		t.Fatalf("Content-Type leaked through forwarded allowlist: %#v", msg.Headers)
+	}
+	if msg.ObjectContentType != "application/pdf" {
+		t.Fatalf("ObjectContentType = %q, want original request type", msg.ObjectContentType)
+	}
+	if !bytes.Equal(msg.ObjectBytes, body) {
+		t.Fatalf("ObjectBytes = %q, want %q", msg.ObjectBytes, body)
+	}
+}
+
+func TestObjectPayloadRejectsInvalidFileContentTypeAsBadRequest(t *testing.T) {
+	pub := &fakePublisher{}
+	srv, err := NewFlowServer(loadFlowCfg(t, multipartSplitYAML), pub, slog.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	contentType, body := buildMultipartUploadWithType(t, "acct_42", "report.pdf", "not a media type", []byte("x"))
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/upload-split", bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body = %s, want 400", rec.Code, rec.Body.String())
+	}
+	if len(pub.published) != 0 {
+		// stop_on_failure follows edge order: the S3 branch fails before the
+		// metadata branch, so no destination should be attempted.
+		t.Fatalf("published = %d, want 0", len(pub.published))
+	}
+}
+
+func TestObjectPayloadRawFallbackRequiresRawBodyFormat(t *testing.T) {
+	rawBase64 := base64.StdEncoding.EncodeToString([]byte("null"))
+	msg := queue.Message{RawBody: []byte("null"), RawBodyBase64: &rawBase64}
+	env := graph.Envelope{BodyFormat: "json", PayloadMode: "object"}
+	if _, err := attachObjectPayload(msg, env); err == nil {
+		t.Fatal("JSON null was accepted as a raw object payload")
 	}
 }
 

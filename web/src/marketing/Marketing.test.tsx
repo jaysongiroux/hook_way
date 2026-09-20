@@ -22,6 +22,7 @@ test("the hero states what Hookway does and offers both calls to action", () => 
   const heading = screen.getByRole("heading", { level: 1 });
   expect(heading).toHaveTextContent(/receive, verify, and route webhooks/i);
   expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute("href", "/");
+  expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
   const builderCta = screen.getByRole("link", { name: /open the builder/i });
   expect(builderCta).toHaveAttribute("href", "/builder");
@@ -36,6 +37,15 @@ test("new payload and branching capabilities are marketable without duplicating 
   expect(main).toHaveTextContent(/JSON, XML, multipart, and raw/i);
   expect(main).toHaveTextContent(/if\/else for two outcomes/i);
   expect(main).toHaveTextContent(/switch for the first matching labelled route/i);
+});
+
+test("the overview points to dynamic-routing use cases and the sourced comparison", () => {
+  wrap();
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/variables can come from a path, JSON body, or filtered header/i);
+  expect(main).toHaveTextContent(/\{envName\}-events/);
+  expect(screen.getByRole("link", { name: "Explore use cases" })).toHaveAttribute("href", "/use-cases");
+  expect(screen.getByRole("link", { name: "View the comparison" })).toHaveAttribute("href", "/compare");
 });
 
 test("the overview uses concrete product language instead of generic hype", () => {
