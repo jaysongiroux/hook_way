@@ -14,6 +14,7 @@ Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hoo
 | `on_error.yaml` | Error-port reference: `http_request` 5xx to a DLQ (`ack:on_error>dlq`) or an explicit 502 (`up:on_error>fail`); `rate_limit:on_error` to a 429; `auth:on_error` to a 401; `envelope:on_error` to a 400. `http_trigger`, `read_body`, and `no_auth` have no error port. Also shows `http_request` `retry` combined with an `on_error` path. See `docs/configuration.md` § Flows. |
 | `xml.yaml` | XML reference: `body_format: xml`, a filter on an element path, a `code` node reading the DOM, `xml_prune`, and `body: transformed` forwarding. See `docs/configuration.md` § XML bodies. |
 | `multipart.yaml` | Multipart reference: `body_format: multipart` with limits, a filter on `files.document.content_type`, and a `code` node reading upload metadata. See `docs/configuration.md` § Multipart bodies. |
+| `multipart-split.yaml` | Multipart fan-out: one upload splits so `files` publish to S3 and form fields (+ file metadata, no bytes) publish to RabbitMQ. Per-branch `code` nodes reshape the body because `transform` `field_map` rejects multipart. S3 still stores a JSON envelope with base64 content. |
 
 ## Destination reference configs
 

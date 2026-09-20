@@ -1,0 +1,94 @@
+# Multipart split: one upload fans out so the file lands in S3 and the
+# form fields land in another destination (RabbitMQ here; any publish
+# destination works the same way).
+#
+# Requires UPLOAD_SOURCE_SECRET, ARCHIVE_BUCKET, and RABBITMQ_URL.
+#
+# How it works:
+#   1. envelope body_format: multipart parses the request into {fields, files}.
+#   2. Fan-out from `env` clones the envelope onto two branches.
+#   3. Each branch runs a code node that reshapes body before publish
+#      (transform field_map rejects multipart bodies at validate time).
+#   4. The S3 branch publishes only files.*; the info branch publishes
+#      fields plus file metadata without the base64 bytes.
+#
+# S3 semantics: Hookway writes each event as one JSON envelope object
+# (Content-Type: application/json, key …/<id>.json). The file bytes are
+# base64 inside body.files.<field>.content — not a raw binary PutObject
+# with the vendor's filename/content-type. Consumers that need the original
+# bytes decode that field.
+server:
+  addr: ":8080"
+  max_body_bytes: 8388608
+
+destinations:
+  archive:
+    type: s3
+    s3:
+      region: "us-east-1"
+      bucket: "${ARCHIVE_BUCKET}"
+      create: true
+  events:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.uploads"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+flows:
+  upload_split:
+    nodes:
+      - {id: in, type: http_trigger, description: "Vendor posts multipart/form-data (fields + file).", path: /webhooks/upload-split, methods: [POST]}
+      - {id: body, type: read_body, description: "Buffers the whole request so HMAC can cover file bytes.", max_bytes: 8388608}
+      - {id: auth, type: auth, description: "Verifies HMAC over the raw multipart bytes before parsing.", scheme: hmac_sha256_hex, secret: "${UPLOAD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
+      - id: env
+        type: envelope
+        description: "Parses parts into {fields, files}. include_content keeps file bytes for the S3 branch."
+        body_format: multipart
+        multipart:
+          max_parts: 4
+          max_part_bytes: 2097152
+          include_content: true
+      - id: for_s3
+        type: code
+        description: "S3 branch body: only files (base64 content included)."
+        timeout: 50ms
+        script: |
+          return {
+            body: {files: (input.body && input.body.files) || {}},
+            vars: input.vars || {}
+          };
+      - id: for_info
+        type: code
+        description: "Info branch body: form fields + file metadata, no base64 payload."
+        timeout: 50ms
+        script: |
+          const files = (input.body && input.body.files) || {};
+          const meta = {};
+          for (const [name, file] of Object.entries(files)) {
+            meta[name] = {
+              filename: file.filename || '',
+              content_type: file.content_type || '',
+              size: file.size || 0
+            };
+          }
+          return {
+            body: {
+              fields: (input.body && input.body.fields) || {},
+              files: meta
+            },
+            vars: input.vars || {}
+          };
+      - {id: out_s3, type: publish, description: "Stores the file-bearing envelope under uploads/… in S3.", destination: archive, target: uploads}
+      - {id: out_info, type: publish, description: "Publishes fields + file metadata to the events queue.", destination: events, target: uploads-meta, create: true}
+    edges:
+      - in>body
+      - body>auth
+      - auth>env
+      - env>for_s3
+      - env>for_info
+      - for_s3>out_s3
+      - for_info>out_info

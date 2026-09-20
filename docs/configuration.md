@@ -1065,6 +1065,12 @@ Hookway does not have.
 
 `examples/multipart.yaml` is a complete flow.
 
+To send the file to one destination and the form fields to another, fan out
+after `envelope` and reshape each branch with a `code` node (see
+`examples/multipart-split.yaml`). S3 still receives a JSON envelope whose
+`body.files.*.content` is base64 — not a raw binary object under the vendor
+filename.
+
 ### Variables
 
 Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a body field to `vars.tenant`. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. Unresolved templates fail closed at publish. The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`) until a provider is injected.
