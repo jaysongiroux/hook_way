@@ -61,6 +61,13 @@ type Message struct {
 	// MessageAttributes are SNS/SQS attributes. They ride on the AWS API,
 	// not inside the JSON envelope body.
 	MessageAttributes map[string]MessageAttribute `json:"-"`
+	// PayloadMode selects how object-capable destinations (s3, redis_kv) store
+	// the event. Empty or "envelope" writes the JSON Message; "object" writes
+	// ObjectBytes with ObjectContentType / ObjectFilename. In-memory only.
+	PayloadMode       string `json:"-"`
+	ObjectBytes       []byte `json:"-"`
+	ObjectContentType string `json:"-"`
+	ObjectFilename    string `json:"-"`
 }
 
 // MessageAttribute is one SNS/SQS message attribute. DataType is String,

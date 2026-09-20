@@ -488,6 +488,13 @@
         },
         "message_attributes": {
           "type": "object"
+        },
+        "payload": {
+          "type": "string",
+          "enum": [
+            "envelope",
+            "object"
+          ]
         }
       },
       "additionalProperties": false,

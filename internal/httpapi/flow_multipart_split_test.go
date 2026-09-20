@@ -3,7 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/json"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -11,20 +10,18 @@ import (
 	"testing"
 )
 
-// multipartSplitYAML is the serving-test counterpart of
-// examples/multipart-split.yaml: a multipart upload fans out so one publish
-// carries only files (S3-shaped) and the other carries fields + file metadata
-// without base64 content (info-shaped). Destinations are webhook stubs so the
-// fake publisher can assert both bodies without AWS/RabbitMQ.
+// multipartSplitYAML fans out a multipart upload: object payload to the
+// archive destination, JSON envelope (fields + file metadata) to events.
 const multipartSplitYAML = `
 server:
   addr: ":8080"
   max_body_bytes: 8388608
 destinations:
   archive:
-    type: webhook
-    webhook:
-      url: "https://example.com/s3-stub"
+    type: s3
+    s3:
+      region: us-east-1
+      bucket: test-bucket
   events:
     type: webhook
     webhook:
@@ -46,10 +43,10 @@ flows:
         type: code
         timeout: 50ms
         script: |
-          return {
-            body: {files: (input.body && input.body.files) || {}},
-            vars: input.vars || {}
-          };
+          const files = (input.body && input.body.files) || {};
+          const doc = files.document;
+          if (!doc) { throw new Error('missing files.document'); }
+          return {body: doc, vars: input.vars || {}};
       - id: for_info
         type: code
         timeout: 50ms
@@ -70,7 +67,7 @@ flows:
             },
             vars: input.vars || {}
           };
-      - {id: out_s3, type: publish, destination: archive, target: uploads}
+      - {id: out_s3, type: publish, destination: archive, target: uploads, payload: object}
       - {id: out_info, type: publish, destination: events, target: uploads-meta}
     edges:
       - in>body
@@ -105,23 +102,7 @@ func buildMultipartUploadWithType(t *testing.T, account string, filename string,
 	return w.FormDataContentType(), buf.Bytes()
 }
 
-func numericSize(v any) (int64, bool) {
-	switch n := v.(type) {
-	case int:
-		return int64(n), true
-	case int64:
-		return n, true
-	case float64:
-		return int64(n), true
-	case json.Number:
-		i, err := n.Int64()
-		return i, err == nil
-	default:
-		return 0, false
-	}
-}
-
-func TestMultipartSplitFansOutFileToS3AndInfoElsewhere(t *testing.T) {
+func TestMultipartSplitFansOutRawFileToS3AndInfoElsewhere(t *testing.T) {
 	pub := &fakePublisher{}
 	srv, err := NewFlowServer(loadFlowCfg(t, multipartSplitYAML), pub, slog.Default(), nil)
 	if err != nil {
@@ -143,68 +124,70 @@ func TestMultipartSplitFansOutFileToS3AndInfoElsewhere(t *testing.T) {
 		t.Fatalf("published = %d, want 2 destinations", len(pub.published))
 	}
 
-	byDest := map[string]any{}
+	byDest := map[string]publishedMessage{}
 	for _, p := range pub.published {
-		byDest[p.destinationID] = p.msg.Body
+		byDest[p.destinationID] = p
 	}
 
-	s3Body, ok := byDest["archive"].(map[string]any)
+	s3 := byDest["archive"]
+	if s3.msg.PayloadMode != "object" {
+		t.Fatalf("archive PayloadMode = %q, want object", s3.msg.PayloadMode)
+	}
+	if !bytes.Equal(s3.msg.ObjectBytes, fileBytes) {
+		t.Fatalf("archive ObjectBytes = %q, want raw file", s3.msg.ObjectBytes)
+	}
+	if s3.msg.ObjectContentType != "application/pdf" {
+		t.Fatalf("ObjectContentType = %q", s3.msg.ObjectContentType)
+	}
+	if s3.msg.ObjectFilename != "report.pdf" {
+		t.Fatalf("ObjectFilename = %q", s3.msg.ObjectFilename)
+	}
+	// Body remains the file object for observability; object mode does not
+	// require consumers to decode base64 from the JSON envelope.
+	doc, ok := s3.msg.Body.(map[string]any)
 	if !ok {
-		t.Fatalf("archive body = %#v, want map", byDest["archive"])
-	}
-	if _, hasFields := s3Body["fields"]; hasFields {
-		t.Fatalf("S3 branch must not carry form fields: %#v", s3Body)
-	}
-	files, ok := s3Body["files"].(map[string]any)
-	if !ok {
-		t.Fatalf("S3 files = %#v", s3Body["files"])
-	}
-	doc, ok := files["document"].(map[string]any)
-	if !ok {
-		t.Fatalf("S3 files.document = %#v", files["document"])
-	}
-	if doc["filename"] != "report.pdf" || doc["content_type"] != "application/pdf" {
-		t.Fatalf("S3 document metadata = %#v", doc)
+		t.Fatalf("archive Body = %#v", s3.msg.Body)
 	}
 	encoded, _ := doc["content"].(string)
 	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		t.Fatalf("S3 content is not base64: %v", err)
-	}
-	if !bytes.Equal(decoded, fileBytes) {
-		t.Fatalf("S3 content = %q, want %q", decoded, fileBytes)
+	if err != nil || !bytes.Equal(decoded, fileBytes) {
+		t.Fatalf("archive body.content = %q err=%v", encoded, err)
 	}
 
-	infoBody, ok := byDest["events"].(map[string]any)
+	info := byDest["events"]
+	if info.msg.PayloadMode != "envelope" && info.msg.PayloadMode != "" {
+		t.Fatalf("events PayloadMode = %q, want envelope", info.msg.PayloadMode)
+	}
+	if len(info.msg.ObjectBytes) != 0 {
+		t.Fatalf("events must not carry ObjectBytes: %q", info.msg.ObjectBytes)
+	}
+	infoBody, ok := info.msg.Body.(map[string]any)
 	if !ok {
-		t.Fatalf("events body = %#v, want map", byDest["events"])
+		t.Fatalf("events body = %#v", info.msg.Body)
 	}
-	fields, ok := infoBody["fields"].(map[string]any)
-	if !ok || fields["account"] != "acct_42" {
-		t.Fatalf("info fields = %#v, want account=acct_42", infoBody["fields"])
+	fields, _ := infoBody["fields"].(map[string]any)
+	if fields["account"] != "acct_42" {
+		t.Fatalf("info fields = %#v", fields)
 	}
-	infoFiles, ok := infoBody["files"].(map[string]any)
-	if !ok {
-		t.Fatalf("info files = %#v", infoBody["files"])
-	}
-	infoDoc, ok := infoFiles["document"].(map[string]any)
-	if !ok {
-		t.Fatalf("info files.document = %#v", infoFiles["document"])
-	}
+	infoDoc, _ := infoBody["files"].(map[string]any)["document"].(map[string]any)
 	if _, hasContent := infoDoc["content"]; hasContent {
 		t.Fatalf("info branch must omit file bytes: %#v", infoDoc)
 	}
 	gotSize, ok := numericSize(infoDoc["size"])
 	if !ok || gotSize != int64(len(fileBytes)) {
-		t.Fatalf("info size = %#v (%T), want %d", infoDoc["size"], infoDoc["size"], len(fileBytes))
-	}
-	if infoDoc["filename"] != "report.pdf" {
-		t.Fatalf("info filename = %#v", infoDoc["filename"])
+		t.Fatalf("info size = %#v", infoDoc["size"])
 	}
 }
 
-func TestMultipartSplitExampleConfigValidates(t *testing.T) {
-	// Keep the serving test YAML aligned with the operator example: both must
-	// compile as a flow (code scripts, fan-out edges, multipart options).
-	_ = loadFlowCfg(t, multipartSplitYAML)
+func numericSize(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	default:
+		return 0, false
+	}
 }

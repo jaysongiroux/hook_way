@@ -205,17 +205,29 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 				if err != nil || opts.Destination == "" {
 					continue
 				}
-				if _, ok := cfg.Destinations[opts.Destination]; ok {
+				dest, ok := cfg.Destinations[opts.Destination]
+				if !ok {
+					issues = append(issues, cfgIssue("flows."+name,
+						fmt.Sprintf("publish destination %q is not in destinations (known: %s)",
+							opts.Destination, strings.Join(sortedKeys(cfg.Destinations), ", ")),
+						"reference an existing destinations.* id"))
 					continue
 				}
-				issues = append(issues, cfgIssue("flows."+name,
-					fmt.Sprintf("publish destination %q is not in destinations (known: %s)",
-						opts.Destination, strings.Join(sortedKeys(cfg.Destinations), ", ")),
-					"reference an existing destinations.* id"))
+				if opts.Payload == "object" && !objectPayloadDestType(dest.Type) {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".payload",
+						fmt.Sprintf("payload: object is not supported for destination type %q", dest.Type),
+						"use an s3 or redis_kv destination, or omit payload (envelope)"))
+				}
 			}
 		}
 	}
 	return issues
+}
+
+// objectPayloadDestType mirrors queue.SupportsObjectPayload without importing
+// the queue package (WASM validator).
+func objectPayloadDestType(destType string) bool {
+	return destType == "s3" || destType == "redis_kv"
 }
 
 // RoutingIssues is shared by validation and serving so an ambiguous path

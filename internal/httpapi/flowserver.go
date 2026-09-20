@@ -96,6 +96,9 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queu
 	// Identity and redacted metadata come from capture; payload and variables
 	// come from the current branch after transforms/code.
 	defer func() {
+		if err != nil {
+			return
+		}
 		msg.Body = env.Body
 		msg.Variables = env.Vars
 		var doc *transform.Document
@@ -116,6 +119,7 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queu
 		} else if env.Body != nil {
 			msg.RawBodyBase64 = nil
 		}
+		msg, err = attachObjectPayload(msg, env)
 	}()
 	if cap, ok := env.Extra.(flowconfig.CapturedEvent); ok {
 		msg := envelopeToMessage(cap.Event)
@@ -143,6 +147,26 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queu
 		Query: query, Body: env.Body, RawBodyBase64: rawB64, SourceIP: head.SourceIP,
 		Variables: env.Vars, RawBody: env.V.Raw.Body, OrigHeaders: head.Header, Hops: head.Hops,
 	}, env), nil
+}
+
+func attachObjectPayload(msg queue.Message, env graph.Envelope) (queue.Message, error) {
+	switch env.PayloadMode {
+	case "", "envelope":
+		msg.PayloadMode = "envelope"
+		return msg, nil
+	case "object":
+		data, contentType, filename, err := queue.ObjectFromBody(env.Body, msg.RawBody, msg.RawBodyBase64, msg.Headers)
+		if err != nil {
+			return msg, err
+		}
+		msg.PayloadMode = "object"
+		msg.ObjectBytes = data
+		msg.ObjectContentType = contentType
+		msg.ObjectFilename = filename
+		return msg, nil
+	default:
+		return msg, fmt.Errorf("unknown publish payload mode %q", env.PayloadMode)
+	}
 }
 
 func attachMessageAttributes(msg queue.Message, env graph.Envelope) queue.Message {

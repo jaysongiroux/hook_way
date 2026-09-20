@@ -1,8 +1,8 @@
 # examples/destinations/s3.yaml
 #
-# Reference config for an AWS S3 destination. Hookway writes each webhook
-# event as a single JSON object to S3. The object key is derived from the
-# event's ReceivedAt timestamp (UTC) and its id:
+# Reference config for an AWS S3 destination. By default Hookway writes each
+# webhook event as a single JSON object to S3. The object key is derived from
+# the event's ReceivedAt timestamp (UTC) and its id:
 #
 #   <base_folder>/yyyy/mm/dd/<timestamp>-<id>.json
 #
@@ -11,6 +11,8 @@
 #
 # The publish `target` is the base folder (key prefix). All objects for
 # that flow are stored under that prefix with the date/time partition above.
+# Set publish.payload: object to store decoded file bytes instead
+# (…/<id>-<filename>, vendor Content-Type); see examples/multipart-split.yaml.
 #
 # Credentials: omit access_key_id / secret_access_key to use the default
 # AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to

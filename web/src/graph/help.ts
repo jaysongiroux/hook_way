@@ -96,6 +96,7 @@ const NODE_FIELD_HELP: Record<string, string> = {
   "publish.target": "Queue, topic, routing key, or webhook path on that destination.",
   "publish.create": "Declare the queue/topic at startup when the backend supports it.",
   "publish.message_attributes": "SNS/SQS message attributes (string, number, or String.Array).",
+  "publish.payload": "envelope (default JSON Message) or object (raw file bytes; s3 and redis_kv only).",
   "respond.status": "HTTP status to return. Omit if passthrough is on.",
   "respond.headers": "Response headers to add.",
   "respond.body": "Response body. Ignored when passthrough is on.",

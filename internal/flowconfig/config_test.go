@@ -256,3 +256,69 @@ func TestReviewServingConfigPreservesDynamicTargetMatcher(t *testing.T) {
 		}
 	}
 }
+
+func TestObjectPayloadRejectedOnNonObjectDestination(t *testing.T) {
+	const src = `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.test"
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: t, payload: object}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	if !containsIssue(issues, "payload: object") && !containsMessage(issues, "object") {
+		t.Fatalf("issues = %+v, want rejection of payload: object on webhook", issues)
+	}
+}
+
+func TestObjectPayloadAllowedOnS3(t *testing.T) {
+	const src = `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+destinations:
+  archive:
+    type: s3
+    s3:
+      region: us-east-1
+      bucket: b
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: archive, target: uploads, payload: object}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	for _, iss := range issues {
+		if iss.Severity != config.SeverityWarning && strings.Contains(iss.Message, "payload") {
+			t.Fatalf("unexpected payload issue: %+v", issues)
+		}
+		if iss.Severity != config.SeverityWarning && iss.Severity != "" {
+			// Allow only warnings (e.g. missing rate_limit).
+			if iss.Severity == config.SeverityError {
+				t.Fatalf("LoadBytes issues = %+v", issues)
+			}
+		}
+	}
+	for _, iss := range issues {
+		if iss.Severity == config.SeverityError {
+			t.Fatalf("LoadBytes issues = %+v", issues)
+		}
+	}
+}

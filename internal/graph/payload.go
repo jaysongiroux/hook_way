@@ -69,6 +69,9 @@ type Envelope struct {
 	// They travel on the envelope so the serving adapter can attach them
 	// without flowconfig importing internal/queue.
 	MessageAttributes map[string]MessageAttribute
+	// PayloadMode is set by a publish node (envelope|object) so the serving
+	// adapter can populate Message object fields for s3 / redis_kv.
+	PayloadMode string
 }
 
 // MessageAttribute is one SNS/SQS message attribute. DataType is String,

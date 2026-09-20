@@ -59,6 +59,12 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 		}
 		env.MessageAttributes = attrs
 	}
+	switch n.opts.Payload {
+	case "", "envelope":
+		env.PayloadMode = "envelope"
+	case "object":
+		env.PayloadMode = "object"
+	}
 	if n.resolver == nil {
 		err := fmt.Errorf("publish %q: no publisher resolver", n.id)
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}

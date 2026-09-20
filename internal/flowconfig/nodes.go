@@ -206,6 +206,11 @@ type PublishOptions struct {
 	Target            string         `yaml:"target" json:"target" jsonschema:"required"`
 	Create            bool           `yaml:"create,omitempty" json:"create,omitempty"`
 	MessageAttributes map[string]any `yaml:"message_attributes,omitempty" json:"message_attributes,omitempty"`
+	// Payload selects how object-capable destinations store the event.
+	// Empty or "envelope" (default) writes the JSON Message. "object" writes
+	// decoded file bytes (body must be a {content, filename?, content_type?}
+	// map, or a raw empty body). Only s3 and redis_kv accept "object".
+	Payload string `yaml:"payload,omitempty" json:"payload,omitempty" jsonschema:"enum=envelope,enum=object"`
 }
 type RespondOptions struct {
 	Status      int               `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"minimum=100,maximum=599"`
@@ -671,7 +676,15 @@ func validatePublish(o PublishOptions) error {
 	if err := require("destination", o.Destination); err != nil {
 		return err
 	}
-	return require("target", o.Target)
+	if err := require("target", o.Target); err != nil {
+		return err
+	}
+	switch o.Payload {
+	case "", "envelope", "object":
+		return nil
+	default:
+		return fmt.Errorf("payload %q is not supported (use envelope or object)", o.Payload)
+	}
 }
 func validateRespond(o RespondOptions) error {
 	if o.Passthrough == (o.Status != 0) {
