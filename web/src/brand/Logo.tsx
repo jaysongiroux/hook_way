@@ -23,7 +23,13 @@ export function Logo({ to }: { to?: string }) {
   const inner = (
     <Group gap={10} wrap="nowrap">
       <LogoMark />
-      <Text fw={700} c={DARK.text} size="md" style={{ letterSpacing: -0.3, lineHeight: 1 }}>
+      <Text
+        className="hookway-logo-word"
+        fw={700}
+        c={DARK.text}
+        size="md"
+        style={{ letterSpacing: -0.3, lineHeight: 1 }}
+      >
         Hookway
       </Text>
     </Group>

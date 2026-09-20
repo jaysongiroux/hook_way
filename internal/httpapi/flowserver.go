@@ -87,7 +87,9 @@ type queuePublisherAdapter struct{ pub queue.Publisher }
 func (a queuePublisherAdapter) Publish(ctx context.Context, destinationID, renderedTarget string, env graph.Envelope) error {
 	msg, err := graphEnvelopeToMessage(env, destinationID, renderedTarget)
 	if err != nil {
-		return err
+		// Conversion failures are deterministic payload problems; retrying the
+		// destination cannot fix malformed object metadata or base64 content.
+		return graph.NodeError{Status: http.StatusBadRequest, Err: fmt.Errorf("prepare publish payload: %w", err)}
 	}
 	return a.pub.Publish(ctx, destinationID, renderedTarget, msg)
 }
@@ -96,6 +98,9 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queu
 	// Identity and redacted metadata come from capture; payload and variables
 	// come from the current branch after transforms/code.
 	defer func() {
+		if err != nil {
+			return
+		}
 		msg.Body = env.Body
 		msg.Variables = env.Vars
 		var doc *transform.Document
@@ -116,6 +121,7 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queu
 		} else if env.Body != nil {
 			msg.RawBodyBase64 = nil
 		}
+		msg, err = attachObjectPayload(msg, env)
 	}()
 	if cap, ok := env.Extra.(flowconfig.CapturedEvent); ok {
 		msg := envelopeToMessage(cap.Event)
@@ -143,6 +149,38 @@ func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queu
 		Query: query, Body: env.Body, RawBodyBase64: rawB64, SourceIP: head.SourceIP,
 		Variables: env.Vars, RawBody: env.V.Raw.Body, OrigHeaders: head.Header, Hops: head.Hops,
 	}, env), nil
+}
+
+func attachObjectPayload(msg queue.Message, env graph.Envelope) (queue.Message, error) {
+	switch env.PayloadMode {
+	case "", "envelope":
+		msg.PayloadMode = "envelope"
+		return msg, nil
+	case "object":
+		// Use the original request's Content-Type for raw bodies. msg.Headers is
+		// intentionally redacted/allowlisted and may omit Content-Type entirely.
+		var rawBody []byte
+		var rawBodyBase64 *string
+		var rawContentType string
+		if env.BodyFormat == "raw" {
+			rawBody = msg.RawBody
+			rawBodyBase64 = msg.RawBodyBase64
+			rawContentType = env.V.Raw.Head.Header.Get("Content-Type")
+		}
+		data, contentType, filename, err := queue.ObjectFromBody(
+			env.Body, rawBody, rawBodyBase64, rawContentType,
+		)
+		if err != nil {
+			return msg, err
+		}
+		msg.PayloadMode = "object"
+		msg.ObjectBytes = data
+		msg.ObjectContentType = contentType
+		msg.ObjectFilename = filename
+		return msg, nil
+	default:
+		return msg, fmt.Errorf("unknown publish payload mode %q", env.PayloadMode)
+	}
 }
 
 func attachMessageAttributes(msg queue.Message, env graph.Envelope) queue.Message {

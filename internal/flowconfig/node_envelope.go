@@ -99,9 +99,10 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 	}
 
 	out := graph.Envelope{
-		V:     verified,
-		Vars:  map[string]string{},
-		Extra: CapturedEvent{Event: event},
+		V:          verified,
+		BodyFormat: n.format,
+		Vars:       map[string]string{},
+		Extra:      CapturedEvent{Event: event},
 	}
 	for k, v := range head.PathVars {
 		out.Vars[k] = v

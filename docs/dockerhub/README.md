@@ -2,16 +2,18 @@
 
 Hookway is a small webhook intake service for forwarding verified third-party webhook events to a message destination (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or Webhook).
 
-It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes, and hand work off to consumers through a queue or topic. Configuration is YAML: `flows` of typed nodes wired by `edges`.
+It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes (JSON, XML, multipart, or raw), and hand work off to consumers through a queue, topic, object store, or HTTP webhook. Configuration is YAML: `flows` of typed nodes wired by `edges`.
 
 ## Features
 
 - Webhook verification: HMAC (SHA-256/SHA-1, multiple header layouts), static header match, and JWT Bearer tokens
+- Body formats: JSON, XML element trees, multipart/form-data (`{fields, files}`), and raw bytes
 - Destinations: RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, and Webhook — with fan-out to multiple destinations per flow
+  - AWS S3: one object per event (JSON Message by default). `publish.payload: object` stores decoded file bytes with vendor filename / Content-Type
   - Redis Streams (redis_stream): durable XADD; consumers may use their own groups. YAML does not set MAXLEN or create a consumer group
   - Redis Lists (redis_list): LPUSH work-queue (unbounded unless you trim from the consumer side)
   - Redis Pub/Sub (redis_pubsub): fire-and-forget channel broadcast via PUBLISH (lossy; not durable)
-  - Redis Key-Value (redis_kv): SET at `{prefix}:{flow}:{id}` by default; YAML does not set a TTL
+  - Redis Key-Value (redis_kv): SET at `{prefix}:{endpoint}:{id}` by default; YAML does not set a TTL. `publish.payload: object` stores decoded file bytes instead of the JSON Message
   - Postgres: one row per event into a shared table (fixed envelope columns + jsonb), id-deduplicated via ON CONFLICT DO NOTHING
   - MongoDB: one BSON document per event into a collection per target (full event envelope, _id-deduplicated)
   - Kafka: one message per event to a topic, with optional SASL/TLS and topic creation. YAML does not set a partition key

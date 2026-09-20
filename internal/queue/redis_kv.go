@@ -129,11 +129,12 @@ func NewRedisKVPublisher(_ context.Context, ops redisOps, cfg RedisKVConfig) (*R
 	return p, nil
 }
 
-// Publish marshals msg to JSON and stores it at the rendered key via SET.
+// Publish stores msg at the rendered key via SET.
 //
 // target is the UNPREFIXED target Name. The key is rendered by renderKVKey
-// using the target's configured KeyTemplate. The envelope is stored as a JSON
-// string. When TTL <= 0 the key has no expiry (ops.Set already handles this).
+// using the target's configured KeyTemplate. Envelope mode stores the JSON
+// Message; object mode stores ObjectBytes as a Redis string (binary-safe).
+// When TTL <= 0 the key has no expiry (ops.Set already handles this).
 func (p *RedisKVPublisher) Publish(ctx context.Context, _, target string, msg Message) error {
 	// targets is written only in NewRedisKVPublisher (single goroutine);
 	// this read is safe to perform concurrently across the server's publish
@@ -143,13 +144,19 @@ func (p *RedisKVPublisher) Publish(ctx context.Context, _, target string, msg Me
 		return fmt.Errorf("redis_kv %q: target %q is not configured", p.destID, target)
 	}
 
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("redis_kv %q: marshal message: %w", p.destID, err)
+	var value string
+	if msg.PayloadMode == "object" {
+		value = string(msg.ObjectBytes)
+	} else {
+		payload, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("redis_kv %q: marshal message: %w", p.destID, err)
+		}
+		value = string(payload)
 	}
 
 	key := renderKVKey(rt.keyTemplate, rt.keyPrefix, msg, target)
-	return p.ops.Set(ctx, key, string(payload), rt.ttl)
+	return p.ops.Set(ctx, key, value, rt.ttl)
 }
 
 // Ready pings the Redis server to confirm the connection is live.

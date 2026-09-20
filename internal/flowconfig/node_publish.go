@@ -2,6 +2,7 @@ package flowconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -59,6 +60,12 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 		}
 		env.MessageAttributes = attrs
 	}
+	switch n.opts.Payload {
+	case "", "envelope":
+		env.PayloadMode = "envelope"
+	case "object":
+		env.PayloadMode = "object"
+	}
 	if n.resolver == nil {
 		err := fmt.Errorf("publish %q: no publisher resolver", n.id)
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
@@ -71,6 +78,11 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 	}
 	if err := pub.Publish(ctx, n.opts.Destination, rendered, env); err != nil {
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
+		var nodeErr graph.NodeError
+		if errors.As(err, &nodeErr) {
+			nodeErr.NodeID = n.id
+			return term, nodeErr
+		}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: err}
 	}
 	return graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered}}}, nil

@@ -3,6 +3,7 @@ package flowconfig
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jasongiroux/hookway/internal/graph"
@@ -94,5 +95,43 @@ func TestPublishRecordsFailure(t *testing.T) {
 	term := out.(graph.Terminal)
 	if term.Deliveries[0].Err == nil {
 		t.Fatal("delivery error not recorded")
+	}
+}
+
+func TestPublishPreservesTypedPublisherStatus(t *testing.T) {
+	fake := &fakePublisher{err: graph.NodeError{Status: 400, Err: errors.New("invalid payload")}}
+	node := mustPublishNode(t, "destination: primary\ntarget: github-webhooks\n",
+		staticResolver{pub: fake})
+	_, err := node.Run(context.Background(), graph.Envelope{})
+	var nodeErr graph.NodeError
+	if !errors.As(err, &nodeErr) || nodeErr.Status != 400 || nodeErr.NodeID != "node" {
+		t.Fatalf("error = %+v, want node node status 400", err)
+	}
+}
+
+func TestPublishSetsObjectPayloadMode(t *testing.T) {
+	fake := &fakePublisher{}
+	node := mustPublishNode(t, "destination: archive\ntarget: uploads\npayload: object\n",
+		staticResolver{pub: fake})
+	_, err := node.Run(context.Background(), graph.Envelope{
+		Body: map[string]any{"content": "YQ==", "filename": "a.bin"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.lastEnv.PayloadMode != "object" {
+		t.Fatalf("PayloadMode = %q, want object", fake.lastEnv.PayloadMode)
+	}
+}
+
+func TestPublishRejectsUnknownPayload(t *testing.T) {
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("publish")
+	_, err = spec.New(nodeConfigFromYAML(t, "publish", "destination: primary\ntarget: t\npayload: blob\n"))
+	if err == nil || !strings.Contains(err.Error(), "payload") {
+		t.Fatalf("err = %v, want payload rejection", err)
 	}
 }

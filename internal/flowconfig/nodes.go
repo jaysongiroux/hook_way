@@ -144,9 +144,11 @@ type TransformOptions struct {
 type CodeOptions struct {
 	Script         string `yaml:"script" json:"script" jsonschema:"required"`
 	Timeout        string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	MaxInputBytes  int64  `yaml:"max_input_bytes,omitempty" json:"max_input_bytes,omitempty" jsonschema:"minimum=1"`
 	MaxOutputBytes int64  `yaml:"max_output_bytes,omitempty" json:"max_output_bytes,omitempty" jsonschema:"minimum=1"`
 	MaxCallStack   int    `yaml:"max_call_stack,omitempty" json:"max_call_stack,omitempty" jsonschema:"minimum=1"`
 }
+
 // SwitchCaseOptions takes either the original single `when` condition or a
 // `conditions` list with a `match` combinator, never both. When is a pointer so
 // an absent block is distinguishable from an empty one.
@@ -179,6 +181,7 @@ type IfElseOptions struct {
 func (o IfElseOptions) set() ConditionSetOptions {
 	return ConditionSetOptions{Match: o.Match, Conditions: o.Conditions}
 }
+
 type HTTPRequestOptions struct {
 	URL            string            `yaml:"url" json:"url" jsonschema:"required"`
 	ForwardMethod  bool              `yaml:"forward_method,omitempty" json:"forward_method,omitempty"`
@@ -206,6 +209,12 @@ type PublishOptions struct {
 	Target            string         `yaml:"target" json:"target" jsonschema:"required"`
 	Create            bool           `yaml:"create,omitempty" json:"create,omitempty"`
 	MessageAttributes map[string]any `yaml:"message_attributes,omitempty" json:"message_attributes,omitempty"`
+	// Payload selects how object-capable destinations store the event.
+	// Empty or "envelope" (default) writes the JSON Message. "object" writes
+	// decoded file bytes (body must be a {content, filename?, content_type?}
+	// map, or an empty parsed body backed by raw request bytes). Only s3 and
+	// redis_kv accept "object".
+	Payload string `yaml:"payload,omitempty" json:"payload,omitempty" jsonschema:"enum=envelope,enum=object"`
 }
 type RespondOptions struct {
 	Status      int               `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"minimum=100,maximum=599"`
@@ -567,6 +576,9 @@ func validateCode(o CodeOptions) error {
 	if err := require("script", o.Script); err != nil {
 		return err
 	}
+	if o.MaxInputBytes < 0 {
+		return errors.New("max_input_bytes must be positive")
+	}
 	if o.MaxOutputBytes < 0 {
 		return errors.New("max_output_bytes must be positive")
 	}
@@ -671,7 +683,15 @@ func validatePublish(o PublishOptions) error {
 	if err := require("destination", o.Destination); err != nil {
 		return err
 	}
-	return require("target", o.Target)
+	if err := require("target", o.Target); err != nil {
+		return err
+	}
+	switch o.Payload {
+	case "", "envelope", "object":
+		return nil
+	default:
+		return fmt.Errorf("payload %q is not supported (use envelope or object)", o.Payload)
+	}
 }
 func validateRespond(o RespondOptions) error {
 	if o.Passthrough == (o.Status != 0) {

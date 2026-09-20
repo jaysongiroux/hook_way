@@ -1,27 +1,33 @@
 # examples/variables.yaml
 #
-# Reference config for routing VARIABLES: per-request values that fill {name}
-# placeholders in publish targets and in a webhook destination url.
+# Reference config for routing VARIABLES: per-request values derived from the
+# request path, a filtered header, and the JSON body fill {name} placeholders
+# in publish targets and in a webhook destination url.
 #
 # The scenario: one Hookway instance in front of several environments
 # (qa-gm3, staging-portal, portal, ...). DigiFi is given one webhook URL per
 # environment, e.g. https://hooks.example.com/webhooks/qa-gm3/digifi, and each
-# event lands in that environment's queue and Hub.
+# event lands in that environment's pre-provisioned SQS queue and Hub.
 #
 # Path placeholders on http_trigger (e.g. {envName}) are copied onto
 # envelope.Vars automatically. Body fields can be copied with a transform
-# field_map node. Unresolved templates fail closed at publish.
+# field_map node. A code node can derive variables from filtered headers.
+# Unresolved templates and unsafe variable values fail closed at publish.
 
 server:
   addr: ":8080"
   max_body_bytes: 1048576
 
+security:
+  # The code node below can inspect this routing header, but not the inbound
+  # authentication token or any other unlisted header.
+  forwarded_header_allowlist: [Content-Type, X-Hookway-Environment]
+
 destinations:
-  archive:
-    type: s3
-    s3:
+  environment_queues:
+    type: sqs
+    sqs:
       region: "us-east-1"
-      bucket: "${ARCHIVE_BUCKET}"
   hub:
     type: webhook
     webhook:
@@ -47,17 +53,27 @@ flows:
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: exact, secret: "${DIGIFI_WEBHOOK_TOKEN}", signature_header: X-DigiFi-Token}
       - {id: env, type: envelope, body_format: json}
+      - id: route
+        type: code
+        timeout: 50ms
+        description: "Use a filtered header when present; otherwise keep the environment from the URL path."
+        script: |
+          const allowed = ['qa-gm3', 'staging-portal', 'portal'];
+          const requested = input.headers['X-Hookway-Environment'] || input.vars.envName;
+          if (allowed.indexOf(requested) === -1) throw new Error('unknown environment');
+          return { body: input.body, vars: { envName: requested } };
       - id: map
         type: transform
         kind: field_map
         mappings:
           - from: body.data.object.organizationId
             to: vars.tenant
-      # envName is a path var; tenant is filled by field_map. Unresolved
-      # templates fail closed at publish. There is no archive/unrouted fallback.
+      # envName comes from the allowlisted header or path; tenant is filled by
+      # field_map. The queue must already exist, so an unknown environment does
+      # not create infrastructure. Unresolved templates fail closed at publish.
       # DynamoDB lookup variable envByApp is omitted until the lookup node grows
       # those fields (index, filter, value_attribute, region).
-      - {id: out_archive, type: publish, destination: archive, target: "{envName}-events"}
+      - {id: out_queue, type: publish, destination: environment_queues, target: "{envName}-events"}
       - {id: out_hub, type: publish, destination: hub, target: event}
       - {id: out_audit, type: publish, destination: audit, target: "{envName}-{tenant}"}
-    edges: [in>body, body>auth, auth>env, env>map, map>out_archive, map>out_hub, map>out_audit]
+    edges: [in>body, body>auth, auth>env, env>route, route>map, map>out_queue, map>out_hub, map>out_audit]

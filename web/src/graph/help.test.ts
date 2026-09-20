@@ -49,3 +49,7 @@ test("multipart copy resolves for the block and its nested keys", () => {
 test("body_format copy lists multipart", () => {
   expect(nodeFieldHelp("envelope", "body_format")).toMatch(/multipart/i);
 });
+
+test("code input limit copy explains what is measured", () => {
+  expect(nodeFieldHelp("code", "max_input_bytes")).toMatch(/serialized input/i);
+});

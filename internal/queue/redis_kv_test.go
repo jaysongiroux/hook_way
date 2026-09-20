@@ -39,7 +39,6 @@ func TestRedisKVPublisher_Publish(t *testing.T) {
 	if err := p.Publish(ctx, "events", "webhooks.kv", msg); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-
 	if len(fake.setCalls) != 1 {
 		t.Fatalf("expected 1 Set call, got %d", len(fake.setCalls))
 	}
@@ -69,6 +68,53 @@ func TestRedisKVPublisher_Publish(t *testing.T) {
 	}
 	if decoded.Endpoint != msg.Endpoint {
 		t.Errorf("decoded Endpoint: got %q, want %q", decoded.Endpoint, msg.Endpoint)
+	}
+}
+
+func TestRedisKVPublisher_ObjectPayloadStoresRawBytes(t *testing.T) {
+	fake := &fakeRedisOps{}
+	cfg := RedisKVConfig{
+		KeyPrefix:     "hw",
+		DestinationID: "files",
+		Targets:       []RedisKVTarget{{Name: "uploads", TTL: time.Hour}},
+	}
+	p, err := NewRedisKVPublisher(context.Background(), fake, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := Message{
+		ID:          "evt-bin",
+		Endpoint:    "upload",
+		PayloadMode: "object",
+		ObjectBytes: []byte{0x00, 0xff, 0x10},
+	}
+	if err := p.Publish(context.Background(), "files", "uploads", msg); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.setCalls) != 1 {
+		t.Fatalf("setCalls = %d", len(fake.setCalls))
+	}
+	if fake.setCalls[0].value != string([]byte{0x00, 0xff, 0x10}) {
+		t.Fatalf("stored value = %q, want raw object bytes", fake.setCalls[0].value)
+	}
+}
+
+func TestRedisKVPublisher_ObjectPayloadStoresEmptyBytes(t *testing.T) {
+	fake := &fakeRedisOps{}
+	p, err := NewRedisKVPublisher(context.Background(), fake, RedisKVConfig{
+		DestinationID: "files",
+		Targets:       []RedisKVTarget{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(context.Background(), "files", "uploads", Message{
+		ID: "evt-empty", Endpoint: "upload", PayloadMode: "object", ObjectBytes: []byte{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.setCalls) != 1 || fake.setCalls[0].value != "" {
+		t.Fatalf("setCalls = %#v, want one empty binary-safe value", fake.setCalls)
 	}
 }
 

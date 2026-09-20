@@ -55,10 +55,13 @@ func (Verified) PortType() PortType { return PortVerified }
 // and resolved variables. Upstream is populated by an http_request node and
 // consumed by a respond node, which is how synchronous proxying works.
 type Envelope struct {
-	V        Verified
-	Body     any
-	Vars     map[string]string
-	Upstream *UpstreamResponse
+	V    Verified
+	Body any
+	// BodyFormat is the envelope node's normalized parser mode. It lets
+	// adapters distinguish an intentionally raw body from parsed JSON null.
+	BodyFormat string
+	Vars       map[string]string
+	Upstream   *UpstreamResponse
 	// Extra holds node-private data such as the captured webhook event.
 	// Clone requires BodyCloner (or a JSON-cloneable body type).
 	Extra any
@@ -69,6 +72,9 @@ type Envelope struct {
 	// They travel on the envelope so the serving adapter can attach them
 	// without flowconfig importing internal/queue.
 	MessageAttributes map[string]MessageAttribute
+	// PayloadMode is set by a publish node (envelope|object) so the serving
+	// adapter can populate Message object fields for s3 / redis_kv.
+	PayloadMode string
 }
 
 // MessageAttribute is one SNS/SQS message attribute. DataType is String,

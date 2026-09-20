@@ -46,6 +46,29 @@ func TestCodeNodeNonObjectReturnIsError(t *testing.T) {
 	}
 }
 
+func TestCodeNodeConfigurableInputLimit(t *testing.T) {
+	largeBody := map[string]any{"content": strings.Repeat("x", defaultCodeInputSize)}
+	defaultNode, err := newCodeNode("code", CodeOptions{
+		Script: `return {body: {ok: true}}`, Timeout: "1s",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := defaultNode.Run(context.Background(), graph.Envelope{Body: largeBody}); err == nil || !strings.Contains(err.Error(), "input exceeds") {
+		t.Fatalf("default input limit error = %v", err)
+	}
+
+	expandedNode, err := newCodeNode("code", CodeOptions{
+		Script: `return {body: {ok: true}}`, Timeout: "1s", MaxInputBytes: 2 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := expandedNode.Run(context.Background(), graph.Envelope{Body: largeBody}); err != nil {
+		t.Fatalf("expanded input limit rejected body: %v", err)
+	}
+}
+
 func TestCodeNodeSyntaxErrorFailsAtLoad(t *testing.T) {
 	_, err := newCodeNode("code", CodeOptions{Script: "function (", Timeout: "1s"})
 	if err == nil {
