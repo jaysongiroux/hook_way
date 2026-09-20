@@ -25,11 +25,11 @@ Each file showcases one destination type with all available options documented v
 | `destinations/rabbitmq.yaml` | Full RabbitMQ option surface: exchange, dead-letter exchange/queue, queue_defaults, TLS, publisher_channels, and a flow that fans out to two publish nodes. |
 | `destinations/sqs.yaml` | AWS SQS destination: two standard queues. `fifo` / `sqs_options` are not publish-node fields. |
 | `destinations/sns.yaml` | AWS SNS destination: single topic auto-created at startup. |
-| `destinations/s3.yaml` | AWS S3 destination: one object per event under a date-partitioned key prefix, with SSE options and auto-bucket creation. |
+| `destinations/s3.yaml` | AWS S3 destination: one JSON Message per event under a date-partitioned key prefix, with SSE options and auto-bucket creation. `publish.payload: object` stores decoded file bytes instead (see `multipart-split.yaml`). |
 | `destinations/redis_stream.yaml` | Redis / Valkey stream destination: single-node mode; annotated comments for cluster, sentinel, and TLS topology. |
 | `destinations/redis_list.yaml` | Redis / Valkey list destination: LPUSH work-queue. `redis_options.max_len` (LTRIM) is not a publish-node field. |
 | `destinations/redis_pubsub.yaml` | Redis / Valkey Pub/Sub destination: fire-and-forget channel broadcast; no `redis_options` block (all fields invalid for pubsub). Lossy — subscribers offline at publish time miss the message. |
-| `destinations/redis_kv.yaml` | Redis / Valkey key-value destination: SET at the default `{prefix}:{flow}:{id}` key; YAML does not set TTL. |
+| `destinations/redis_kv.yaml` | Redis / Valkey key-value destination: SET at the default `{prefix}:{flow}:{id}` key; YAML does not set TTL. `publish.payload: object` stores decoded file bytes instead of the JSON Message. |
 | `destinations/postgres.yaml` | Postgres destination: one row per event into a shared table with fixed envelope columns + jsonb (headers/query/body/auth); `target` stored as a column; CREATE TABLE IF NOT EXISTS at startup; id dedup via ON CONFLICT DO NOTHING. |
 | `destinations/mongodb.yaml` | MongoDB destination: one BSON document per event into a collection named by the publish `target`; full event envelope with `_id` = event id; nested body/headers/query/auth; id dedup via duplicate-key no-op; no DDL (collections auto-create). |
 | `destinations/kafka.yaml` | Kafka destination: SASL/TLS, topic `create: true`, two publish nodes. `kafka_options.partition_key` is not a publish-node field. |

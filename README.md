@@ -1,6 +1,6 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes event envelopes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal workflows, or another HTTP webhook).
+Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal workflows, or another HTTP webhook). Bodies may be JSON, XML, multipart, or raw; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`.
 
 Config is named `flows` of typed nodes (`http_trigger`, gates, `auth` / `no_auth`, `envelope`, `publish` / `respond`) wired by `edges`. There is no config version field: `hookway validate` rejects any unknown top-level key. See [Configuration](docs/configuration.md).
 
@@ -68,7 +68,7 @@ Flows can set `delivery_failure_policy`. `stop_on_failure` is the default and pu
 
 ## Consuming Messages
 
-Hookway publishes JSON envelopes from each flow `publish` node. Every publish names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
+Hookway publishes from each flow `publish` node. The default `payload: envelope` writes a JSON Message. On `s3` and `redis_kv`, `payload: object` stores decoded file bytes instead (vendor filename and Content-Type when present) — see `examples/multipart-split.yaml` and [Configuration § Publish payload modes](docs/configuration.md#publish-payload-modes). Every publish names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
 
 Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for reference configs for each type.
 

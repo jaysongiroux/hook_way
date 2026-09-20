@@ -2,13 +2,17 @@
 #
 # Reference config for a Redis / Valkey key-value destination (redis_kv).
 #
-# redis_kv stores each webhook payload as a JSON-encoded string under a
-# computed Redis key via SET. This is a key-value store, NOT a queue:
+# redis_kv stores each webhook under a computed Redis key via SET. Default
+# publish.payload (envelope) writes a JSON-encoded Message. Set
+# publish.payload: object to SET decoded file bytes instead (same body
+# contract as S3 object mode; see examples/multipart-split.yaml).
+# This is a key-value store, NOT a queue:
 #   - Each write overwrites the previous value at that key.
 #   - There is no consumer group, ordering guarantee, or replay capability.
 #
-# Best for: latest-event caches and ephemeral state where only the most recent
-# payload matters. For durable, ordered delivery use redis_stream or redis_list.
+# Best for: latest-event caches, ephemeral state, or small binary blobs where
+# only the most recent value matters. For durable, ordered delivery use
+# redis_stream or redis_list.
 #
 # Key template / TTL:
 #   redis_options.key_template and redis_options.ttl are not publish-node
