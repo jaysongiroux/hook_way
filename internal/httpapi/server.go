@@ -276,7 +276,3 @@ func writeJSONLogged(logger *slog.Logger, w http.ResponseWriter, status int, bod
 		logger.Error("response write failed", "error", err, "request_id", requestID, "trace_id", traceID)
 	}
 }
-
-func Shutdown(ctx context.Context, srv *http.Server) error {
-	return srv.Shutdown(ctx)
-}
