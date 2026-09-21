@@ -197,7 +197,7 @@ func TestRedisStreamPublisherDynamicTargetCreatesGroup(t *testing.T) {
 	if len(groups) != 1 || groups[0] != "hw:qa-gm3-events/workers" {
 		t.Fatalf("group should be created once on the rendered stream: %v", groups)
 	}
-	xadds := fake.fakeRedisOps.xaddCalls
+	xadds := fake.xaddCalls
 	if len(xadds) != 2 || xadds[0].stream != "hw:qa-gm3-events" || xadds[0].approxMaxLen != 100 {
 		t.Fatalf("xadd to rendered stream with template maxlen: %#v", xadds)
 	}

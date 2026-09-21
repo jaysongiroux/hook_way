@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -171,9 +172,5 @@ func TestCompileAggregatesProblems(t *testing.T) {
 }
 
 func asCompileError(err error, target **CompileError) bool {
-	ce, ok := err.(*CompileError)
-	if ok {
-		*target = ce
-	}
-	return ok
+	return errors.As(err, target)
 }

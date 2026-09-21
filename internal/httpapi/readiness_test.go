@@ -40,7 +40,7 @@ func TestReadyServedFromCacheNotPerRequest(t *testing.T) {
 		t.Fatalf("Ready calls after one probe = %d, want 1", got)
 	}
 	for i := 0; i < 50; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -58,7 +58,7 @@ func TestReadyPublicErrorIsGeneric(t *testing.T) {
 	srv := newReadyFlowServer(t, pub, slog.New(slog.NewJSONHandler(&logs, nil)), nil)
 	srv.readiness.probeOnce(context.Background())
 	for _, path := range []string{"/ready", "/readyz"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -72,7 +72,7 @@ func TestReadyPublicErrorIsGeneric(t *testing.T) {
 		t.Fatalf("internal readiness reason not logged: %s", logs.String())
 	}
 	for _, path := range []string{"/health", "/healthz"} {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -83,7 +83,7 @@ func TestReadyPublicErrorIsGeneric(t *testing.T) {
 
 func TestReadinessNotReadyUntilFirstProbe(t *testing.T) {
 	srv := newReadyFlowServer(t, &fakePublisher{}, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -94,7 +94,7 @@ func TestReadinessNotReadyUntilFirstProbe(t *testing.T) {
 func TestStaleCachedResultCountsAsNotReady(t *testing.T) {
 	srv := newReadyFlowServer(t, &fakePublisher{}, nil, nil)
 	srv.readiness.result.Store(&readinessResult{checkedAt: time.Now().Add(-time.Hour)})
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -105,7 +105,7 @@ func TestStaleCachedResultCountsAsNotReady(t *testing.T) {
 		dest: map[string]error{"*": nil}, checkedAt: time.Now(),
 	})
 	rec = httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	srv.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/readyz with fresh cache = %d, want 200", rec.Code)
 	}
@@ -155,7 +155,7 @@ hookway_destination_ready{destination_queue_id="up_dest"} 1
 		t.Fatalf("destination readiness gauge mismatch: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -183,7 +183,7 @@ func TestReadinessProbeConvergesImmediatelyOnStart(t *testing.T) {
 	deadline := time.Now().Add(500 * time.Millisecond)
 	var lastCode int
 	for time.Now().Before(deadline) {
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		lastCode = rec.Code
@@ -210,7 +210,7 @@ func TestStaleReadinessLogsWarningDistinctFromProbeFailure(t *testing.T) {
 	srv := newReadyFlowServer(t, &fakePublisher{}, logger, nil)
 	srv.readiness.result.Store(&readinessResult{checkedAt: time.Now().Add(-time.Hour)})
 
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -248,7 +248,7 @@ func TestStaleReadinessLogsOncePerEpisode(t *testing.T) {
 	srv.readiness.result.Store(&readinessResult{checkedAt: time.Now().Add(-time.Hour)})
 
 	for i := 0; i < 5; i++ {
-		req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusServiceUnavailable {
@@ -278,7 +278,7 @@ func TestReadinessFailsWhenReplayStoreIsDown(t *testing.T) {
 	srv.SetReplayCapturer(&pingCapturer{err: errors.New("replay postgres down")})
 	srv.readiness.probeOnce(context.Background())
 
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -301,7 +301,7 @@ func TestReadinessPassesWhenReplayStoreIsUp(t *testing.T) {
 	srv.SetReplayCapturer(&pingCapturer{})
 	srv.readiness.probeOnce(context.Background())
 
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

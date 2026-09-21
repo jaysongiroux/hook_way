@@ -16,8 +16,12 @@
 # Code coverage profiles and other test artifacts
 *.out
 coverage.*
+!coverage.floor
 *.coverprofile
 profile.cov
+
+# Downloaded CI/tooling binaries (promtool, etc.)
+.tools/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/

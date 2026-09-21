@@ -17,6 +17,10 @@ import (
 
 const defaultRefresh = 15 * time.Minute
 
+// initialResolveTimeout bounds AWS configuration and the first secret fetch
+// so a wedged Secrets Manager call cannot stall process startup.
+var initialResolveTimeout = 10 * time.Second
+
 // Resolver returns the currently-valid secrets for a reference. The slice
 // exists so rotation can overlap: during the window both the new and previous
 // secret must verify, or rotation is a flag day.
@@ -27,7 +31,7 @@ type Resolver interface {
 
 // Ref is the authored secret_ref object.
 type Ref struct {
-	Provider string        // env | file | aws_secrets_manager
+	Provider string // env | file | aws_secrets_manager
 	Name     string
 	Refresh  time.Duration // default 15m
 	Overlap  time.Duration // how long the previous secret stays valid
@@ -54,7 +58,7 @@ type cached struct {
 	previous      []byte
 	previousUntil time.Time
 
-	stop   context.CancelFunc
+	stop    context.CancelFunc
 	stopped chan struct{}
 }
 
@@ -74,28 +78,30 @@ func New(ref Ref, logger *slog.Logger, onFail func()) (Resolver, error) {
 	if ref.Refresh == 0 {
 		ref.Refresh = defaultRefresh
 	}
-	f, err := newFetcher(ref)
+	ctx, cancel := context.WithTimeout(context.Background(), initialResolveTimeout)
+	defer cancel()
+	f, err := newFetcher(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	return newCached(ref, f, logger, onFail, time.Now)
+	return newCached(ctx, ref, f, logger, onFail, time.Now)
 }
 
-func newFetcher(ref Ref) (fetcher, error) {
+func newFetcher(ctx context.Context, ref Ref) (fetcher, error) {
 	switch ref.Provider {
 	case "env":
 		return envFetcher{name: ref.Name}, nil
 	case "file":
 		return fileFetcher{path: ref.Name}, nil
 	case "aws_secrets_manager":
-		return newAWSFetcher(ref.Name)
+		return newAWSFetcher(ctx, ref.Name)
 	default:
 		return nil, fmt.Errorf("secret_ref.provider %q is not supported", ref.Provider)
 	}
 }
 
-func newCached(ref Ref, f fetcher, logger *slog.Logger, onFail func(), now func() time.Time) (*cached, error) {
-	value, err := f.Fetch(context.Background())
+func newCached(ctx context.Context, ref Ref, f fetcher, logger *slog.Logger, onFail func(), now func() time.Time) (*cached, error) {
+	value, err := f.Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("secret_ref %s %q: %w", ref.Provider, ref.Name, err)
 	}

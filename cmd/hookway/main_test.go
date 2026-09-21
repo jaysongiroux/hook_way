@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -156,7 +157,7 @@ func assertCommittedSchema(t *testing.T, rel string, args []string) {
 		t.Fatal("runtime.Caller")
 	}
 	path := filepath.Join(filepath.Dir(thisFile), "../..", rel)
-	committed, err := os.ReadFile(path)
+	committed, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("read %s: %v (run make node-schema)", rel, err)
 	}
@@ -324,7 +325,7 @@ flows:
 `
 
 func TestRun_ValidateJSONMissingEnvVarIsWarningAndExitsZero(t *testing.T) {
-	os.Unsetenv("HOOKWAY_TEST_DEFINITELY_UNSET_VAR")
+	_ = os.Unsetenv("HOOKWAY_TEST_DEFINITELY_UNSET_VAR")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
 	if err := os.WriteFile(path, []byte(configMissingEnvVarYAML), 0o600); err != nil {
@@ -350,7 +351,7 @@ func TestRun_ValidateJSONMissingEnvVarIsWarningAndExitsZero(t *testing.T) {
 }
 
 func TestRun_ValidatePlainMissingEnvVarHardFailsExitOne(t *testing.T) {
-	os.Unsetenv("HOOKWAY_TEST_DEFINITELY_UNSET_VAR")
+	_ = os.Unsetenv("HOOKWAY_TEST_DEFINITELY_UNSET_VAR")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
 	if err := os.WriteFile(path, []byte(configMissingEnvVarYAML), 0o600); err != nil {
@@ -367,7 +368,7 @@ func TestRun_ValidatePlainMissingEnvVarHardFailsExitOne(t *testing.T) {
 }
 
 func TestRun_ValidateNoEnvSkipsExpansionOnBothPaths(t *testing.T) {
-	os.Unsetenv("HOOKWAY_TEST_DEFINITELY_UNSET_VAR")
+	_ = os.Unsetenv("HOOKWAY_TEST_DEFINITELY_UNSET_VAR")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
 	if err := os.WriteFile(path, []byte(configMissingEnvVarYAML), 0o600); err != nil {
@@ -447,20 +448,19 @@ func TestRun_VersionSubcommandPrintsVersionAndCommit(t *testing.T) {
 // only needs the main HTTP port to be free and the metrics port to be
 // occupied.
 func TestRunServe_MetricsBindFailureIsFatal(t *testing.T) {
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	occupied, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer occupied.Close()
+	defer func() { _ = occupied.Close() }()
 	metricsAddr := occupied.Addr().String()
 
-	free, err := net.Listen("tcp", "127.0.0.1:0")
+	free, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverAddr := free.Addr().String()
-	free.Close()
-
+	_ = free.Close()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
 	body := fmt.Sprintf(`server:
@@ -515,13 +515,12 @@ flows:
 // short of standing up a real Postgres (left to the Task 7 CI integration
 // path per the brief -- a Docker-dependent unit test here would be flaky).
 func TestRunServe_ReplayEnabledWithoutAPIKeyFailsFast(t *testing.T) {
-	free, err := net.Listen("tcp", "127.0.0.1:0")
+	free, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	serverAddr := free.Addr().String()
-	free.Close()
-
+	_ = free.Close()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
 	body := fmt.Sprintf(`server:

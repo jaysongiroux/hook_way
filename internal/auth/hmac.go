@@ -2,7 +2,7 @@ package auth
 
 import (
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- HMAC-SHA1 is a configured inbound webhook scheme
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -205,7 +205,7 @@ func hmacSHA256Base64Scheme() hmacScheme {
 	}
 }
 
-func sha1New() hash.Hash { return sha1.New() }
+func sha1New() hash.Hash { return sha1.New() } // #nosec G401 -- HMAC-SHA1 scheme
 
 func hmacSHA1HexScheme() hmacScheme {
 	return hmacScheme{

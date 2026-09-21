@@ -30,7 +30,7 @@ func TestFlowCaptureInsertBeforePublishContext(t *testing.T) {
 	srv.SetReplayCapturer(fake)
 
 	body := []byte(`{"ok":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
@@ -74,7 +74,7 @@ func TestFlowCaptureIsBestEffort(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	srv.SetReplayCapturer(&fakeReplayCapturer{captureErr: errors.New("insert failed")})
 	body := []byte(`{"ok":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -87,7 +87,7 @@ func TestFlowCaptureIsBestEffort(t *testing.T) {
 
 	srv.SetReplayCapturer(&fakeReplayCapturer{capturePanic: true})
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
@@ -119,7 +119,7 @@ flows:
 	t.Cleanup(func() { _ = srv.Close() })
 	fake := &fakeReplayCapturer{}
 	srv.SetReplayCapturer(fake)
-	req := httptest.NewRequest(http.MethodPost, "/open", bytes.NewReader([]byte(`{}`)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/open", bytes.NewReader([]byte(`{}`)))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
@@ -142,7 +142,7 @@ func TestRedeliveryPublishesCapturedEnvelope(t *testing.T) {
 	fake := &fakeReplayCapturer{}
 	srv.SetReplayCapturer(fake)
 	body := []byte(`{"ok":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -161,7 +161,7 @@ func TestRedeliveryPublishesCapturedEnvelope(t *testing.T) {
 	store := &memoryReplayStore{event: captured[0], deliveries: outcomes[0].deliveries}
 	pub := &fakePublisher{}
 	handler := replayapi.Handler("k", store, pub, nil, nil, slog.Default())
-	replayReq := httptest.NewRequest(http.MethodPost, "/replay/events/"+captured[0].ID+"/replay", bytes.NewReader([]byte(`{}`)))
+	replayReq := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/replay/events/"+captured[0].ID+"/replay", bytes.NewReader([]byte(`{}`)))
 	replayReq.Header.Set("Authorization", "Bearer k")
 	replayRec := httptest.NewRecorder()
 	handler.ServeHTTP(replayRec, replayReq)

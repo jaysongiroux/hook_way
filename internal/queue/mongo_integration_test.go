@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/testenv"
+
 	tcmongo "github.com/testcontainers/testcontainers-go/modules/mongodb"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -16,11 +18,10 @@ import (
 // self-skips when Docker is unavailable, mirroring startPostgres.
 func startMongo(t *testing.T) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := tcmongo.Run(ctx, "mongo:7")
-	if err != nil {
-		t.Skipf("mongo container unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "mongo")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	uri, err := container.ConnectionString(ctx)
 	if err != nil {
@@ -44,7 +45,7 @@ func TestMongoPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newMongoClient: %v", err)
 	}
-	defer ops.Close()
+	defer func() { _ = ops.Close() }()
 
 	pub, err := NewMongoPublisher(ctx, ops, MongoConfig{
 		DestinationID: "archive",

@@ -267,7 +267,7 @@ func TestValidate_NeverExpandsEnv(t *testing.T) {
 //     response, for either a config referencing a SET var or one referencing
 //     an UNSET var.
 func TestValidate_ExfilBoundary_SetEnvVarValueNeverLeaks(t *testing.T) {
-	const secretValue = "sk_live_should_never_leave_the_server_abc123"
+	const secretValue = "test-secret-must-never-appear-in-validate-json"
 	t.Setenv("HOOKWAY_TEST_EXFIL_HOME_STYLE_VAR", secretValue)
 
 	cases := map[string]string{

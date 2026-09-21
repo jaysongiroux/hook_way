@@ -1,4 +1,4 @@
-.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down
+.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down unit race fmt-check diff-check coverage observability-check golangci-lint govulncheck
 
 GO ?= go
 CONFIG ?= examples/config.yaml
@@ -76,11 +76,59 @@ ui-check:
 		echo "error: config UI not staged — run 'make ui' before building a release"; exit 1; \
 	fi
 
-test:
-	$(GO) test ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore|TemporalIntegration'
+UNIT_FLAGS := -short -run '^(Test|Example)'
 
-test-race:
-	$(GO) test -race ./... -run '^(Test|Example)' -skip 'RabbitMQ|AWS|Redis|Postgres|Mongo|Kafka|ReplayStore|TemporalIntegration'
+unit:
+	$(GO) test $(UNIT_FLAGS) ./...
+
+race:
+	$(GO) test -race $(UNIT_FLAGS) ./...
+
+# test/test-race are aliases for unit/race so existing docs keep working.
+test: unit
+test-race: race
+
+fmt-check:
+	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
+
+diff-check:
+	git diff --check
+	git diff --cached --check
+
+COVERAGE_PROFILE ?= coverage.out
+COVERAGE_FLOOR_FILE ?= coverage.floor
+COVER_PKGS := $(shell $(GO) list ./... | grep -v '/scripts/')
+
+coverage:
+	$(GO) test $(UNIT_FLAGS) -covermode=atomic -coverprofile=$(COVERAGE_PROFILE) $(COVER_PKGS)
+	@$(GO) tool cover -func=$(COVERAGE_PROFILE) | tee coverage.txt
+	@total="$$($(GO) tool cover -func=$(COVERAGE_PROFILE) | awk '/^total:/ { print substr($$3, 1, length($$3)-1) }')"; \
+	floor="$$(cat $(COVERAGE_FLOOR_FILE))"; \
+	awk -v t="$$total" -v f="$$floor" 'BEGIN { if ((t+0) < (f+0)) { printf "coverage %s%% is below floor %s%%\n", t, f; exit 1 } printf "coverage %s%% (floor %s%%)\n", t, f }'
+
+PROM_VERSION ?= 3.14.0
+PROM_OS := $(shell $(GO) env GOOS)
+PROM_ARCH := $(shell $(GO) env GOARCH)
+PROM_TARBALL := prometheus-$(PROM_VERSION).$(PROM_OS)-$(PROM_ARCH).tar.gz
+PROM_URL := https://github.com/prometheus/prometheus/releases/download/v$(PROM_VERSION)/$(PROM_TARBALL)
+PROM_DIR := .tools/prometheus-$(PROM_VERSION)
+PROMTOOL := $(PROM_DIR)/promtool
+
+$(PROMTOOL):
+	mkdir -p $(PROM_DIR)
+	curl -fsSL $(PROM_URL) | tar -xz --strip-components=1 -C $(PROM_DIR)
+
+observability-check: $(PROMTOOL)
+	$(GO) test ./grafana/dashboards ./deploy
+	$(GO) run ./scripts/promrule2groups deploy/alerts.yaml | $(PROMTOOL) check rules /dev/stdin
+
+GOLANGCI_LINT_VERSION ?= v2.13.2
+golangci-lint:
+	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
+
+GOVULNCHECK_VERSION ?= v1.8.0
+govulncheck:
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 conformance:
 	$(GO) test ./internal/conformance/ -v

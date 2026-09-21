@@ -46,7 +46,8 @@ func TestMapWorkflowIDReusePolicy(t *testing.T) {
 		"allow_duplicate":             enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE,
 		"allow_duplicate_failed_only": enumspb.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY,
 		"reject_duplicate":            enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
-		"terminate_if_running":        enumspb.WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING,
+		//nolint:staticcheck // SA1019: config still accepts terminate_if_running
+		"terminate_if_running": enumspb.WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING,
 	}
 	for in, want := range cases {
 		got, err := mapWorkflowIDReusePolicy(in)
@@ -65,7 +66,7 @@ func TestMapTemporalStartError(t *testing.T) {
 		t.Fatalf("expected errTemporalAlreadyStarted, got %v", got)
 	}
 	other := errors.New("boom")
-	if got := mapTemporalStartError(other); got != other {
+	if got := mapTemporalStartError(other); !errors.Is(got, other) {
 		t.Fatalf("expected passthrough, got %v", got)
 	}
 	if got := mapTemporalStartError(nil); got != nil {

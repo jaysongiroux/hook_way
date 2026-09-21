@@ -51,10 +51,10 @@ type httpRequestNode struct {
 	explicitAuth bool
 }
 
-func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist []string) graph.Node {
+func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist []string) (graph.Node, error) {
 	tpl, err := vars.Parse(opts.URL)
 	if err != nil {
-		tpl, _ = vars.Parse("")
+		return nil, err
 	}
 	timeout := defaultHTTPRequestTimeout
 	if opts.Timeout != "" {
@@ -96,7 +96,7 @@ func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist 
 	return httpRequestNode{
 		id: id, opts: opts, template: tpl, timeout: timeout, retry: policy,
 		forward: forward, allowlist: allow, denylist: deny, explicitAuth: explicitAuth,
-	}
+	}, nil
 }
 
 func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
@@ -109,6 +109,9 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	}
 	target, err := n.template.Render(env.Vars)
 	if err != nil {
+		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+	}
+	if err := validateHTTPURL(target); err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
 	target = cleanOutboundPath(collapseDoubleSlashInPath(target))
@@ -206,7 +209,7 @@ func (n httpRequestNode) send(ctx context.Context, method, target string, body [
 		// have been unreachable for a moment.
 		return attemptResult{retryable: true, err: &graph.NodeError{NodeID: n.id, Status: status, Err: err}}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	limited := io.LimitReader(resp.Body, maxUpstreamBodyBytes+1)
 	respBody, err := io.ReadAll(limited)
 	if err != nil {

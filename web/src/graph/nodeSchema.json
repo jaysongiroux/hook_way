@@ -612,7 +612,7 @@
         "status": {
           "type": "integer",
           "maximum": 599,
-          "minimum": 100
+          "minimum": 200
         },
         "headers": {
           "additionalProperties": {

@@ -58,8 +58,8 @@ type StoreReader interface {
 }
 
 type server struct {
-	store  StoreReader
-	pub    queue.Publisher
+	store StoreReader
+	pub   queue.Publisher
 	// unsupported maps a destination id to a human-readable reason it must
 	// never be published to on replay (today: proxy-mode webhook
 	// destinations, whose RawBody/OrigHeaders are not persisted -- see

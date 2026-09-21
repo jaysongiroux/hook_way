@@ -11,7 +11,7 @@ destinations:
   billing:
     type: "rabbitmq"
     rabbitmq:
-      url: "amqp://guest:guest@localhost:5672/"
+      url: "amqp://localhost:5672/"
       exchange: "webhooks"
       exchange_type: "direct"
       durable: true

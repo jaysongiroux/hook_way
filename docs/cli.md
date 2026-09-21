@@ -20,7 +20,7 @@ The process loads and validates config before connecting to its destinations. `S
 
 The dedicated `metrics.addr` listener (when configured) is treated the same as the main listener: if it fails to bind (e.g. the port is already in use), the whole process exits nonzero instead of silently running with no metrics.
 
-Set `logging.level` (`debug`, `info`, `warn`, or `error`; default `info`) in config to control log verbosity.
+Set `logging.level` (`debug`, `info`, `warn`, or `error`; default `info`) in config to control log verbosity. `HOOKWAY_LOG_LEVEL` overrides the config value at process start.
 
 ## Version
 

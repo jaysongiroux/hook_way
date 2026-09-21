@@ -35,9 +35,9 @@ func TestApplyConflictPolicyImmutableAlwaysErrors(t *testing.T) {
 		setCalled := false
 		err := applyConflictPolicy(context.Background(), reconcileParams{
 			policy: policy, destID: "d", target: "t.fifo",
-			want:    map[string]string{"FifoQueue": "true"},
-			got:     map[string]string{"FifoQueue": ""}, // existing is standard
-			mutable: map[string]bool{"FifoQueue": false},
+			want:     map[string]string{"FifoQueue": "true"},
+			got:      map[string]string{"FifoQueue": ""}, // existing is standard
+			mutable:  map[string]bool{"FifoQueue": false},
 			setAttrs: func(context.Context, map[string]string) error { setCalled = true; return nil },
 		})
 		if err == nil {
@@ -53,9 +53,9 @@ func TestApplyConflictPolicyMutable(t *testing.T) {
 	base := func(policy ConflictPolicy, set *map[string]string) reconcileParams {
 		return reconcileParams{
 			policy: policy, destID: "d", target: "t",
-			want:    map[string]string{"VisibilityTimeout": "30"},
-			got:     map[string]string{"VisibilityTimeout": "60"},
-			mutable: map[string]bool{"VisibilityTimeout": true},
+			want:     map[string]string{"VisibilityTimeout": "30"},
+			got:      map[string]string{"VisibilityTimeout": "60"},
+			mutable:  map[string]bool{"VisibilityTimeout": true},
 			setAttrs: func(_ context.Context, m map[string]string) error { *set = m; return nil },
 		}
 	}
@@ -92,9 +92,9 @@ func TestApplyConflictPolicyNoDiffIsNoop(t *testing.T) {
 	setCalled := false
 	err := applyConflictPolicy(context.Background(), reconcileParams{
 		policy: ConflictReconcile, destID: "d", target: "t",
-		want:    map[string]string{"VisibilityTimeout": "30"},
-		got:     map[string]string{"VisibilityTimeout": "30"},
-		mutable: map[string]bool{"VisibilityTimeout": true},
+		want:     map[string]string{"VisibilityTimeout": "30"},
+		got:      map[string]string{"VisibilityTimeout": "30"},
+		mutable:  map[string]bool{"VisibilityTimeout": true},
 		setAttrs: func(context.Context, map[string]string) error { setCalled = true; return nil },
 	})
 	if err != nil || setCalled {

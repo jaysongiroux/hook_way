@@ -67,7 +67,7 @@ func TestWebhookMetricsIncludeDestinationQueueID(t *testing.T) {
 # HELP hookway_http_requests_total HTTP requests handled by Hookway.
 # TYPE hookway_http_requests_total counter
 hookway_http_requests_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events",status="202"} 1
-# HELP hookway_publish_total RabbitMQ publish attempts.
+# HELP hookway_publish_total Publish attempts to a configured destination.
 # TYPE hookway_publish_total counter
 hookway_publish_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events",status="success"} 1
 # HELP hookway_rate_limited_total Rate limited webhook requests.
@@ -188,7 +188,7 @@ hookway_endpoint_info{destination_queue_id="billing",endpoint="paddle_billing",p
 # HELP hookway_forbidden_total Webhook requests rejected by the endpoint IP allowlist.
 # TYPE hookway_forbidden_total counter
 hookway_forbidden_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
-# HELP hookway_messages_published_total Webhook messages successfully published to RabbitMQ.
+# HELP hookway_messages_published_total Webhook messages successfully published to a destination.
 # TYPE hookway_messages_published_total counter
 hookway_messages_published_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
 # HELP hookway_replay_rejected_total Webhook requests rejected as signature replays.

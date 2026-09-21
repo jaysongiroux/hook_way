@@ -29,12 +29,12 @@ type publishNode struct {
 	resolver PublisherResolver
 }
 
-func newPublishNode(id string, opts PublishOptions, resolver PublisherResolver) graph.Node {
+func newPublishNode(id string, opts PublishOptions, resolver PublisherResolver) (graph.Node, error) {
 	tpl, err := vars.Parse(opts.Target)
 	if err != nil {
-		tpl, _ = vars.Parse("")
+		return nil, err
 	}
-	return publishNode{id: id, opts: opts, template: tpl, resolver: resolver}
+	return publishNode{id: id, opts: opts, template: tpl, resolver: resolver}, nil
 }
 
 func (n publishNode) DeliveryTarget() string { return n.opts.Target }

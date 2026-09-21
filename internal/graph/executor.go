@@ -181,6 +181,11 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	started := time.Now()
 	out, runErr := invoke(nctx, b.node, in)
 	cancel()
+	var pe PanicError
+	if errors.As(runErr, &pe) {
+		pe.NodeID = id
+		runErr = pe
+	}
 	err = runErr
 	terminal, isTerminal := out.(Terminal)
 	if err == nil {
@@ -262,7 +267,7 @@ func concretePort(p Payload) (PortType, error) {
 func invoke(ctx context.Context, n Node, in Payload) (out Payload, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("panicked: %v", r)
+			err = PanicError{Value: r}
 		}
 	}()
 	return n.Run(ctx, in)

@@ -43,7 +43,7 @@ var validNodeYAML = map[string]string{
 	"read_body":    "max_bytes: 1024\n",
 	"auth":         "scheme: hmac_sha256_hex\nsecret_ref: {provider: env, name: TEST_SECRET, refresh: 15m, overlap: 5m}\nsource: {kind: header, key: X-Signature}\ntimestamp_tolerance: 5m\n",
 	"no_auth":      "",
-	"replay_guard": "ttl: 5m\nmax_entries: 10000\nkey: '{header.X-Idempotency-Key}'\n",
+	"replay_guard": "ttl: 5m\nmax_entries: 10000\nkey: '{id}'\n",
 	"envelope":     "body_format: json\n",
 	"filter":       "conditions: [{source: body, path: event, operator: eq, value: created}]\non_no_match: drop\n",
 	"lookup":       "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n",

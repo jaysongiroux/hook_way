@@ -133,6 +133,11 @@ func validationIssues(c Config, requireEndpoints bool) []ValidationIssue {
 			issues = append(issues, validationError(fmt.Sprintf("security.forwarded_header_allowlist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"X-Request-ID\" or \"Content-Type\""))
 		}
 	}
+	for i, header := range c.Logging.HeaderAllowlist {
+		if !safeHeaderName.MatchString(header) {
+			issues = append(issues, validationError(fmt.Sprintf("logging.header_allowlist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"X-Request-ID\" or \"Content-Type\""))
+		}
+	}
 	for i, entry := range c.Security.TrustedProxies {
 		if net.ParseIP(entry) == nil {
 			if _, _, err := net.ParseCIDR(entry); err != nil {

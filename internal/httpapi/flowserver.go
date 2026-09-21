@@ -79,7 +79,7 @@ type mountedFlow struct {
 type queueResolver struct{ pub queue.Publisher }
 
 func (r queueResolver) Resolve(string) (flowconfig.Publisher, error) {
-	return queuePublisherAdapter{pub: r.pub}, nil
+	return queuePublisherAdapter(r), nil
 }
 
 type queuePublisherAdapter struct{ pub queue.Publisher }
@@ -407,11 +407,12 @@ func (s *FlowServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *FlowServer) HTTPServer() *http.Server {
 	return &http.Server{
-		Addr:         s.cfg.Server.Addr,
-		Handler:      s,
-		ReadTimeout:  s.cfg.Server.ReadTimeout,
-		WriteTimeout: s.cfg.Server.WriteTimeout,
-		IdleTimeout:  s.cfg.Server.IdleTimeout,
+		Addr:              s.cfg.Server.Addr,
+		Handler:           s,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       s.cfg.Server.ReadTimeout,
+		WriteTimeout:      s.cfg.Server.WriteTimeout,
+		IdleTimeout:       s.cfg.Server.IdleTimeout,
 	}
 }
 
@@ -469,14 +470,14 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			Status: status, Duration: time.Since(start), RequestID: requestIDFromContext(r.Context()),
 			TraceID: traceIDFromContext(r.Context()), Headers: r.Header,
 			HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
-			HeaderAllowlist: s.cfg.Security.ForwardedHeaderAllowlist,
+			HeaderAllowlist: s.cfg.Logging.HeaderAllowlist,
 		})
 	}()
 
 	mf, pathVars, ok := s.matchFlow(r.URL.Path)
 	if !ok {
 		status = http.StatusNotFound
-		writeJSON(w, status, map[string]string{"error": "not found"})
+		s.writeJSON(w, r, status, map[string]string{"error": "not found"})
 		return
 	}
 	flowLabel = mf.name
@@ -484,13 +485,13 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		if _, allowed := mf.methods[r.Method]; !allowed {
 			status = http.StatusMethodNotAllowed
 			w.Header().Set("Allow", mf.allow)
-			writeJSON(w, status, map[string]string{"error": "method not allowed"})
+			s.writeJSON(w, r, status, map[string]string{"error": "method not allowed"})
 			return
 		}
 	}
 	if mf.broken || mf.flow == nil {
 		status = http.StatusInternalServerError
-		writeJSON(w, status, map[string]string{"error": "internal error"})
+		s.writeJSON(w, r, status, map[string]string{"error": "internal error"})
 		return
 	}
 	// URL.Path arrives percent-decoded, so "%2e%2e%2f" becomes "../" only
@@ -501,7 +502,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("rejected request: path variable contains a traversal segment",
 			"flow", mf.name, "variable", name,
 			"request_id", requestIDFromContext(r.Context()))
-		writeJSON(w, status, map[string]string{"error": "bad request"})
+		s.writeJSON(w, r, status, map[string]string{"error": "bad request"})
 		return
 	}
 	if s.inflight != nil {
@@ -512,7 +513,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusServiceUnavailable
 			w.Header().Set("Retry-After", "1")
 			s.metrics.Saturated(mf.name, "", "")
-			writeJSON(w, status, map[string]string{"error": "server busy"})
+			s.writeJSON(w, r, status, map[string]string{"error": "server busy"})
 			return
 		}
 	}
@@ -530,7 +531,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := flowconfig.WithBodyReader(r.Context(), r.Body)
-	captureEnabled := s.replay != nil && !(s.cfg.Replay.SkipUnauthenticated && mf.hasNoAuth)
+	captureEnabled := s.replay != nil && (!s.cfg.Replay.SkipUnauthenticated || !mf.hasNoAuth)
 	captured := false
 	capturedID := head.EventID
 	term, runErr := mf.flow.Run(ctx, head, graph.RunOptions{
@@ -560,6 +561,11 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			outcome := "ok"
 			if ev.Err != nil {
 				outcome = "error"
+				var panicErr graph.PanicError
+				if errors.As(ev.Err, &panicErr) {
+					outcome = "panic"
+					s.metrics.Panic("node")
+				}
 			}
 			s.metrics.Node(mf.name, ev.NodeID, ev.NodeType, outcome, ev.Duration)
 			if ev.NodeType == "publish" {
@@ -592,7 +598,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			if ev.Err != nil {
 				span.RecordError(ev.Err)
 				span.SetStatus(codes.Error, ev.Err.Error())
-				s.logger.Info("node failed", append(attrs, "error", ev.Err.Error())...)
+				s.logger.Error("node failed", append(attrs, "error", ev.Err.Error())...)
 			} else {
 				s.logger.Debug("node", attrs...)
 			}
@@ -616,9 +622,9 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	if runErr != nil {
 		status = statusFromNodeError(runErr)
 		if status == http.StatusServiceUnavailable {
-			writeJSON(w, status, map[string]any{"error": "service unavailable", "destinations": published, "failed_destinations": failed, "event_id": head.EventID, "request_id": head.RequestID})
+			s.writeJSON(w, r, status, map[string]any{"error": "service unavailable", "destinations": published, "failed_destinations": failed, "event_id": head.EventID, "request_id": head.RequestID})
 		} else {
-			s.writeFlowError(w, mf, status, runErr)
+			s.writeFlowError(w, r, mf, status, runErr)
 		}
 		return
 	}
@@ -630,7 +636,13 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(status)
-		_, _ = w.Write(term.Response.Body)
+		if status != http.StatusNoContent && status != http.StatusNotModified && len(term.Response.Body) > 0 {
+			if _, err := w.Write(term.Response.Body); err != nil {
+				s.logger.Error("response write failed", "error", err,
+					"request_id", requestIDFromContext(r.Context()),
+					"trace_id", traceIDFromContext(r.Context()))
+			}
+		}
 		return
 	}
 	status = http.StatusAccepted
@@ -641,43 +653,47 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	if len(failed) > 0 {
 		body["failed_destinations"] = failed
 	}
-	writeJSON(w, status, body)
+	s.writeJSON(w, r, status, body)
 }
 
-func (s *FlowServer) writeFlowError(w http.ResponseWriter, mf mountedFlow, status int, err error) {
+func (s *FlowServer) writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
+	writeJSONLogged(s.logger, w, status, body, requestIDFromContext(r.Context()), traceIDFromContext(r.Context()))
+}
+
+func (s *FlowServer) writeFlowError(w http.ResponseWriter, r *http.Request, mf mountedFlow, status int, err error) {
 	switch status {
 	case http.StatusUnauthorized:
 		s.metrics.AuthFailure(mf.name, "invalid_signature")
-		writeJSON(w, status, map[string]string{"error": "unauthorized"})
+		s.writeJSON(w, r, status, map[string]string{"error": "unauthorized"})
 	case http.StatusForbidden:
 		s.metrics.Forbidden(mf.name, "", "")
-		writeJSON(w, status, map[string]string{"error": "forbidden"})
+		s.writeJSON(w, r, status, map[string]string{"error": "forbidden"})
 	case http.StatusConflict:
 		s.metrics.ReplayRejected(mf.name, "", "")
-		writeJSON(w, status, map[string]string{"error": "replay detected"})
+		s.writeJSON(w, r, status, map[string]string{"error": "replay detected"})
 	case http.StatusRequestEntityTooLarge:
-		writeJSON(w, status, map[string]string{"error": "payload too large"})
+		s.writeJSON(w, r, status, map[string]string{"error": "payload too large"})
 	case http.StatusUnprocessableEntity:
 		s.metrics.Filtered(mf.name, "", "", "endpoint")
-		writeJSON(w, status, map[string]string{"error": "filtered"})
+		s.writeJSON(w, r, status, map[string]string{"error": "filtered"})
 	case http.StatusTooManyRequests:
 		s.metrics.RateLimited(mf.name, "", "")
-		writeJSON(w, status, map[string]string{"error": "rate limited"})
+		s.writeJSON(w, r, status, map[string]string{"error": "rate limited"})
 	case http.StatusServiceUnavailable:
-		writeJSON(w, status, map[string]string{"error": "service unavailable"})
+		s.writeJSON(w, r, status, map[string]string{"error": "service unavailable"})
 	case http.StatusGatewayTimeout:
-		writeJSON(w, status, map[string]string{"error": "upstream timeout"})
+		s.writeJSON(w, r, status, map[string]string{"error": "upstream timeout"})
 	case http.StatusBadGateway:
-		writeJSON(w, status, map[string]string{"error": "upstream error"})
+		s.writeJSON(w, r, status, map[string]string{"error": "upstream error"})
 	case http.StatusBadRequest:
 		if strings.Contains(err.Error(), "loop detected") {
 			s.metrics.LoopRejected(mf.name, "", "")
-			writeJSON(w, status, map[string]string{"error": "loop detected"})
+			s.writeJSON(w, r, status, map[string]string{"error": "loop detected"})
 			return
 		}
-		writeJSON(w, status, map[string]string{"error": "invalid body"})
+		s.writeJSON(w, r, status, map[string]string{"error": "invalid body"})
 	default:
-		writeJSON(w, status, map[string]string{"error": "internal error"})
+		s.writeJSON(w, r, status, map[string]string{"error": "internal error"})
 	}
 }
 
@@ -756,7 +772,7 @@ type flowReadyState struct {
 func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	dest, replayErr, fresh, _ := s.readiness.destinationSnapshot(time.Now())
 	if !fresh {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{
 			"error": "not ready", "status": "not_ready",
 		})
 		return
@@ -791,7 +807,7 @@ func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	allReady := readyCount == len(flows)
 	httpOK := allReady || (!s.cfg.Server.ReadinessRequireAll && readyCount > 0)
 	if !httpOK {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+		s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{
 			"error": "not ready", "status": "not_ready", "flows": flows,
 		})
 		return
@@ -800,7 +816,7 @@ func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
 	if !allReady {
 		status = "degraded"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": status, "flows": flows})
+	s.writeJSON(w, r, http.StatusOK, map[string]any{"status": status, "flows": flows})
 }
 
 func destError(dest map[string]error, id string) error {

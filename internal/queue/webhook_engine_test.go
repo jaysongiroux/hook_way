@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -195,7 +196,7 @@ func TestWebhookEngineQueueFull(t *testing.T) {
 	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "2", ReceivedAt: time.Now()}})
 	var full bool
 	for i := 0; i < 50; i++ { // account for scheduling; eventually queue is full
-		if err := e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "x", ReceivedAt: time.Now()}}); err == errWebhookQueueFull {
+		if err := e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "x", ReceivedAt: time.Now()}}); errors.Is(err, errWebhookQueueFull) {
 			full = true
 			break
 		}
@@ -416,7 +417,7 @@ func TestWebhookEngineQueueDepthMetricOnEnqueue(t *testing.T) {
 	if err := e.Enqueue(webhookJob{}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	if got := atomic.LoadInt32(&m.lastDepth); got != 1 {
+	if got := atomic.LoadInt64(&m.lastDepth); got != 1 {
 		t.Fatalf("WebhookQueueDepth reported %d, want 1", got)
 	}
 }

@@ -31,7 +31,7 @@ import (
 func TestI1_LoopHopCheckRunsBeforeBodyRead(t *testing.T) {
 	srv := newServer(t, gatedYAML(), nil)
 	body := &failIfRead{t: t}
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", nil)
 	req.Body = body
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(nil))
 	req.Header.Set(config.LoopHopsHeader, "3")
@@ -67,7 +67,7 @@ func TestI2_InflightAcquiredBeforeBodyRead(t *testing.T) {
 		t.Fatal("first request never entered publish")
 	}
 	unread := &failIfRead{t: t}
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", nil)
 	req.Body = unread
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(nil))
 	rec := post(srv, req)
@@ -86,7 +86,7 @@ func TestI3_IPAllowlistRunsBeforeBodyRead(t *testing.T) {
 	src := strings.Replace(gatedYAML(), `cidrs: ["0.0.0.0/0", "::/0"]`, `cidrs: ["10.0.0.0/8"]`, 1)
 	srv := newServer(t, src, nil)
 	unread := &failIfRead{t: t}
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", nil)
 	req.Body = unread
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(nil))
 	rec := post(srv, req)
@@ -107,7 +107,7 @@ func TestI4_RateLimitRunsBeforeBodyRead(t *testing.T) {
 		t.Fatalf("first request = %d, want 202: %s", rec.Code, rec.Body.String())
 	}
 	unread := &failIfRead{t: t}
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", nil)
 	req.Body = unread
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(nil))
 	rec := post(srv, req)
@@ -335,7 +335,7 @@ flows:
 		t.Fatalf("broken flow must still construct a server: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	rec := post(srv, httptest.NewRequest(http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`)))
+	rec := post(srv, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`)))
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("I13: broken flow answered 404; a config error must not look unconfigured")
 	}
@@ -443,7 +443,7 @@ func TestI18_AuthUsesConstantTimeComparison(t *testing.T) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(filepath.Join(authDir, entry.Name()))
+		src, err := os.ReadFile(filepath.Clean(filepath.Join(authDir, entry.Name())))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -7,6 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/testenv"
+
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -14,6 +16,7 @@ import (
 // self-skips when Docker is unavailable, mirroring startRedis.
 func startPostgres(t *testing.T) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("hookway"),
@@ -21,9 +24,7 @@ func startPostgres(t *testing.T) string {
 		tcpostgres.WithPassword("hookway"),
 		tcpostgres.BasicWaitStrategies(),
 	)
-	if err != nil {
-		t.Skipf("postgres container unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "postgres")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	url, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -48,7 +49,7 @@ func TestPostgresPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPostgresClient: %v", err)
 	}
-	defer ops.Close()
+	defer func() { _ = ops.Close() }()
 
 	pub, err := NewPostgresPublisher(ctx, ops, PostgresConfig{
 		Schema: "public", Table: "webhook_events", DestinationID: "warehouse",
@@ -80,7 +81,7 @@ func TestPostgresPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 
 	var count int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.webhook_events WHERE id = $1`, "evt_1").Scan(&count); err != nil {

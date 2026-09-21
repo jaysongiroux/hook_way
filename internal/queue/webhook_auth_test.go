@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestApplyWebhookAuthAPIKey(t *testing.T) {
-	req := httptest.NewRequest("POST", "http://x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "http://x", nil)
 	applyWebhookAuth(req, webhookAuth{Type: "api_key", Header: "X-API-Key", Value: "secret123"}, nil, "evt", time.Now())
 	if req.Header.Get("X-API-Key") != "secret123" {
 		t.Fatalf("api key header = %q", req.Header.Get("X-API-Key"))
@@ -23,7 +24,7 @@ func TestApplyWebhookAuthHMACVerifiable(t *testing.T) {
 	body := []byte(`{"hello":"world"}`)
 	secret := "s3cr3t"
 	now := time.Unix(1700000000, 0)
-	req := httptest.NewRequest("POST", "http://x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "http://x", nil)
 	applyWebhookAuth(req, webhookAuth{Type: "hmac", Secret: secret, Header: "X-Hookway-Signature", Scheme: "hmac_sha256_ts_dot", EventIDHeader: "X-Hookway-Event-Id"}, body, "evt_1", now)
 
 	sig := req.Header.Get("X-Hookway-Signature") // t=<ts>,v1=<hex>
@@ -36,7 +37,7 @@ func TestApplyWebhookAuthHMACVerifiable(t *testing.T) {
 	// recompute HMAC over "<ts>.<body>" and compare
 	got := strings.TrimPrefix(sig, "t=1700000000,v1=")
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d.%s", now.Unix(), body)))
+	_, _ = fmt.Fprintf(mac, "%d.%s", now.Unix(), body)
 	want := hex.EncodeToString(mac.Sum(nil))
 	if got != want {
 		t.Fatalf("hmac mismatch: got %s want %s", got, want)
@@ -59,7 +60,7 @@ func TestSignWebhookHMACTsColon(t *testing.T) {
 
 	// Recompute: signing string is ascii_bytes(ts) + b":" + body_bytes
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d:%s", ts, body)))
+	_, _ = fmt.Fprintf(mac, "%d:%s", ts, body)
 	want := hex.EncodeToString(mac.Sum(nil))
 
 	if hexPart != want {
@@ -92,7 +93,7 @@ func TestSignWebhookHMACHex(t *testing.T) {
 
 func TestApplyWebhookAuthNoneAndProxyAreNoops(t *testing.T) {
 	for _, typ := range []string{"none", "proxy", ""} {
-		req := httptest.NewRequest("POST", "http://x", nil)
+		req := httptest.NewRequestWithContext(context.Background(), "POST", "http://x", nil)
 		before := len(req.Header)
 		applyWebhookAuth(req, webhookAuth{Type: typ}, []byte("b"), "evt", time.Now())
 		if len(req.Header) != before {

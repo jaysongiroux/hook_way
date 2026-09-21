@@ -40,7 +40,7 @@ jobs:
           cache: true
 
       - name: Run govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   image:
     name: Image scan

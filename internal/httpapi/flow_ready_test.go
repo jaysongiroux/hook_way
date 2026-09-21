@@ -53,7 +53,7 @@ func TestFlowReadyKeepsHealthyFlowWhenPeerDestinationIsDown(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 
-	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestFlowReadyKeepsHealthyFlowWhenPeerDestinationIsDown(t *testing.T) {
 	}
 
 	health := httptest.NewRecorder()
-	srv.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	srv.ServeHTTP(health, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
 	if health.Code != http.StatusOK {
 		t.Fatalf("/healthz = %d, want 200 (liveness never reflects destinations)", health.Code)
 	}
@@ -109,7 +109,7 @@ func TestReadyProbeCountEqualsUniqueDestinations(t *testing.T) {
 	}
 	for i := 0; i < 20; i++ {
 		rec := httptest.NewRecorder()
-		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+		srv.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("/ready = %d", rec.Code)
 		}
@@ -133,7 +133,7 @@ func TestReadyRequireAllReturns503WhenAnyFlowIsUnready(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	srv.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("/ready require_all = %d, want 503", rec.Code)
 	}
@@ -149,7 +149,7 @@ func TestHealthzIgnoresDestinationState(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	srv.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/healthz = %d, want 200", rec.Code)
 	}

@@ -447,4 +447,3 @@ func TestBeforeDetachedRunsOnceBeforePublishTimeoutContext(t *testing.T) {
 		t.Fatalf("publish context remaining %s; BeforeDetached must not consume PublishTimeout", remaining)
 	}
 }
-

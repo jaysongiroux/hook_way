@@ -50,7 +50,10 @@ func TestLookupBodyKeyAndFallback(t *testing.T) {
 	resolve := func(_ context.Context, key string) (string, bool, error) {
 		return "", false, nil
 	}
-	node := newLookupNode("l", LookupOptions{Key: "{body.id}", Name: "route", Fallback: "shared"}, resolve)
+	node, err := newLookupNode("l", LookupOptions{Key: "{body.id}", Name: "route", Fallback: "shared"}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := node.Run(context.Background(), graph.Envelope{Body: map[string]any{"id": "x"}})
 	if err != nil {
 		t.Fatal(err)
@@ -58,8 +61,11 @@ func TestLookupBodyKeyAndFallback(t *testing.T) {
 	if out.(graph.Envelope).Vars["route"] != "shared" {
 		t.Fatalf("fallback = %#v", out)
 	}
-	_, err = newLookupNode("l", LookupOptions{Key: "{body.id}", Name: "route"}, resolve).
-		Run(context.Background(), graph.Envelope{Body: map[string]any{"id": "x"}})
+	miss, err := newLookupNode("l", LookupOptions{Key: "{body.id}", Name: "route"}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = miss.Run(context.Background(), graph.Envelope{Body: map[string]any{"id": "x"}})
 	if err == nil {
 		t.Fatal("miss without fallback should error")
 	}
@@ -79,7 +85,10 @@ func TestLookupCacheBehaviourViaCountingProvider(t *testing.T) {
 		cached[key] = "v"
 		return "v", true, nil
 	}
-	node := newLookupNode("l", LookupOptions{Key: "{id}", Name: "route"}, resolve)
+	node, err := newLookupNode("l", LookupOptions{Key: "{id}", Name: "route"}, resolve)
+	if err != nil {
+		t.Fatal(err)
+	}
 	in := graph.Envelope{Vars: map[string]string{"id": "k"}}
 	if _, err := node.Run(context.Background(), in); err != nil {
 		t.Fatal(err)

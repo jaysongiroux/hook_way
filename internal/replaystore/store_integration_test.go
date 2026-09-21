@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jasongiroux/hookway/internal/config"
 	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jasongiroux/hookway/internal/testenv"
+
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -19,6 +21,7 @@ import (
 // internal/queue/postgres_integration_test.go's startPostgres.
 func startPostgres(t *testing.T) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
 		tcpostgres.WithDatabase("hookway"),
@@ -26,9 +29,7 @@ func startPostgres(t *testing.T) string {
 		tcpostgres.WithPassword("hookway"),
 		tcpostgres.BasicWaitStrategies(),
 	)
-	if err != nil {
-		t.Skipf("postgres container unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "postgres")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	url, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
@@ -89,8 +90,7 @@ func TestReplayStoreCaptureAndGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	var count int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.replay_events WHERE id = $1`, event.ID).Scan(&count); err != nil {
 		t.Fatalf("count query: %v", err)
@@ -169,8 +169,7 @@ func TestReplayStoreCaptureIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	var count int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.replay_events WHERE id = $1`, event.ID).Scan(&count); err != nil {
 		t.Fatalf("count query: %v", err)
@@ -204,8 +203,7 @@ func TestReplayStoreRecordOutcomeRollsUpStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	readStatus := func(t *testing.T, id string) string {
 		t.Helper()
 		var status string
@@ -345,8 +343,7 @@ func TestReplayStoreRecordOutcomeInvalidOutcomeWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	var deliveryCount int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.replay_deliveries WHERE event_id = $1`, id).Scan(&deliveryCount); err != nil {
 		t.Fatalf("delivery count query: %v", err)
@@ -387,8 +384,7 @@ func TestReplayStoreRecordOutcomeUnknownEventErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	var deliveryCount int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.replay_deliveries WHERE event_id = $1`, unknownID).Scan(&deliveryCount); err != nil {
 		t.Fatalf("delivery count query: %v", err)
@@ -423,8 +419,7 @@ func TestReplayStoreRecordOutcomeEmptyDeliveries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	var status string
 	if err := conn.QueryRow(ctx, `SELECT status FROM public.replay_events WHERE id = $1`, id).Scan(&status); err != nil {
 		t.Fatalf("status query: %v", err)
@@ -456,8 +451,7 @@ func TestReplayStoreEnsuresSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
-
+	defer func() { _ = conn.Close(ctx) }()
 	for _, table := range []string{"replay_events", "replay_deliveries"} {
 		var exists bool
 		if err := conn.QueryRow(ctx,
@@ -838,7 +832,7 @@ func TestReplayStorePurgeExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pgx.Connect: %v", err)
 	}
-	defer conn.Close(ctx)
+	defer func() { _ = conn.Close(ctx) }()
 	var deliveryCount int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM public.replay_deliveries WHERE event_id = $1`, oldID).Scan(&deliveryCount); err != nil {
 		t.Fatalf("delivery count query: %v", err)

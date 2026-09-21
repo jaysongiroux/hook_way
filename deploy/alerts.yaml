@@ -1,0 +1,73 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: hookway
+  labels:
+    app.kubernetes.io/name: hookway
+spec:
+  groups:
+    - name: hookway.runtime
+      rules:
+        - alert: HookwayPanics
+          expr: increase(hookway_panics_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: Hookway recovered a panic
+            description: A panic was recovered (hookway_panics_total). Investigate location=handler|node|fanout|webhook_worker.
+        - alert: HookwayCompensationFailures
+          expr: increase(hookway_compensation_failed_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: Replay compensation failed
+            description: A replay reservation could not be released. Legitimate retries may be rejected until TTL expiry.
+        - alert: HookwaySecretRefreshFailures
+          expr: increase(hookway_secret_refresh_failures_total[10m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: Secret refresh failed
+            description: A secret_ref background refresh failed. The process is serving the last known-good value.
+        - alert: HookwayWebhookDrops
+          expr: increase(hookway_webhook_dropped_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: Webhook deliveries were dropped
+            description: hookway_webhook_dropped_total increased (queue_full or engine_closing).
+        - alert: HookwayWebhookDeadLetterFailures
+          expr: increase(hookway_webhook_dead_letter_failures_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: Webhook dead-letter redirect failed
+            description: A terminally failed webhook could not be written to the dead-letter destination.
+        - alert: HookwayDestinationNotReady
+          expr: hookway_destination_ready == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Destination not ready
+            description: hookway_destination_ready has been 0 for 5m.
+        - alert: HookwayPublishErrorRatio
+          expr: |
+            (
+              sum(rate(hookway_publish_total{status="error"}[10m]))
+              /
+              clamp_min(sum(rate(hookway_publish_total[10m])), 1e-9)
+            ) > 0.05
+            and
+            sum(increase(hookway_publish_total[10m])) >= 20
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Publish error ratio above 5%
+            description: At least 20 publish attempts in 10m with more than 5% errors, sustained for 10m.

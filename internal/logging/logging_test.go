@@ -129,6 +129,35 @@ func TestLevelVarGatesDebugOutput(t *testing.T) {
 	}
 }
 
+func TestLogHeadersEmptyAllowlistLogsNoHeaders(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("X-Request-ID", "req_123")
+	headers.Set("Content-Type", "application/json")
+	if got := LogHeaders(headers, nil, nil); len(got) != 0 {
+		t.Fatalf("empty logging allowlist = %#v, want no headers", got)
+	}
+	forwarded := FilterHeaders(headers, nil, nil)
+	reqID, contentType := "x-request-id", "content-type"
+	if len(forwarded[reqID]) != 1 || forwarded[reqID][0] != "req_123" ||
+		len(forwarded[contentType]) != 1 || forwarded[contentType][0] != "application/json" {
+		t.Fatalf("empty forwarding allowlist dropped headers: %#v", forwarded)
+	}
+}
+
+func TestLogHeadersAllowlistStillRedactsSensitive(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer secret")
+	headers.Set("X-Request-ID", "req_123")
+	got := LogHeaders(headers, []string{"Authorization", "X-Request-ID"}, nil)
+	auth, reqID := "authorization", "x-request-id"
+	if len(got[auth]) != 1 || got[auth][0] != "redacted" {
+		t.Fatalf("allowlisted sensitive header = %#v", got)
+	}
+	if len(got[reqID]) != 1 || got[reqID][0] != "req_123" {
+		t.Fatalf("allowlisted header missing: %#v", got)
+	}
+}
+
 func TestRequestLogLevelFollowsHTTPStatus(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

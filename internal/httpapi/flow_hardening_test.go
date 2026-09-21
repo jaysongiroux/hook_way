@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ import (
 )
 
 func githubPOST(body []byte) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	return req
@@ -178,7 +179,7 @@ func TestMetricsServedOnSeparatePortWhenAddrSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -188,7 +189,7 @@ func TestMetricsServedOnSeparatePortWhenAddrSet(t *testing.T) {
 	if ms == nil {
 		t.Fatal("expected a dedicated metrics server")
 	}
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec = httptest.NewRecorder()
 	ms.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -206,20 +207,20 @@ func TestMetricsRequiresAPIKeyWhenConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("/metrics without key = %d, want 401", rec.Code)
 	}
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer s3cret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/metrics with key = %d, want 200", rec.Code)
 	}
-	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -242,13 +243,13 @@ func TestMetricsAPIKeyOnDedicatedPort(t *testing.T) {
 	if ms == nil {
 		t.Fatal("expected a dedicated metrics server")
 	}
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	ms.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("dedicated /metrics without key = %d, want 401", rec.Code)
 	}
-	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/metrics", nil)
 	req.Header.Set("Authorization", "Bearer s3cret")
 	rec = httptest.NewRecorder()
 	ms.Handler.ServeHTTP(rec, req)
@@ -318,7 +319,7 @@ func sourceIPHelper(trustedProxyHeaders bool, trusted []string) *Server {
 func TestSourceIPWalksForwardedForRightToLeftSkippingTrustedProxies(t *testing.T) {
 	srv := sourceIPHelper(true, []string{"10.0.0.0/8"})
 	newReq := func(remoteAddr, xff string) *http.Request {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 		req.RemoteAddr = remoteAddr
 		if xff != "" {
 			req.Header.Set("X-Forwarded-For", xff)
@@ -359,7 +360,7 @@ func TestSourceIPWalksForwardedForRightToLeftSkippingTrustedProxies(t *testing.T
 
 func TestSourceIPUsesRightmostEntryWhenTrustedProxiesNotConfigured(t *testing.T) {
 	srv := sourceIPHelper(true, nil)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req.RemoteAddr = "203.0.113.200:1234"
 	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.77")
 	if got := srv.sourceIP(req); got != "198.51.100.77" {
@@ -387,10 +388,11 @@ func TestForwardedHeaderAllowlistDropsUnlistedHeaders(t *testing.T) {
 	if len(pub.published) != 1 {
 		t.Fatalf("published = %#v, want 1", pub.published)
 	}
-	if _, ok := pub.published[0].msg.Headers["x-secret-internal"]; ok {
+	secretInternal, contentType := "x-secret-internal", "content-type"
+	if _, ok := pub.published[0].msg.Headers[secretInternal]; ok {
 		t.Fatalf("non-allowlisted header forwarded: %#v", pub.published[0].msg.Headers)
 	}
-	if _, ok := pub.published[0].msg.Headers["content-type"]; !ok {
+	if _, ok := pub.published[0].msg.Headers[contentType]; !ok {
 		t.Fatalf("allowlisted header missing: %#v", pub.published[0].msg.Headers)
 	}
 }
@@ -403,7 +405,7 @@ func TestHeaderExactAuthAcceptsMatchingAuthorization(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"id":"evt_1","type":"INITIAL_PURCHASE"}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/revenuecat", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer rc-token")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -418,7 +420,7 @@ func TestHeaderExactAuthRejectsWrongToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/revenuecat", bytes.NewReader([]byte(`{"id":"evt_1"}`)))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/revenuecat", bytes.NewReader([]byte(`{"id":"evt_1"}`)))
 	req.Header.Set("Authorization", "Bearer wrong")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

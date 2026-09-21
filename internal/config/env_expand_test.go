@@ -82,7 +82,7 @@ func TestLoadStillExpandsNormalEnvironmentReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if cfg.Destinations["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" {
+	if cfg.Destinations["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" { // #nosec G101 -- expanded test fixture
 		t.Fatalf("RabbitMQ URL not expanded: %q", cfg.Destinations["billing"].RabbitMQ.URL)
 	}
 	if cfg.Endpoints["paddle_billing"].Auth.Secret != "pdl_secret" {

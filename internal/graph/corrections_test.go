@@ -182,6 +182,12 @@ func TestRuntimeRejectsBadOutputsAndPanic(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatal(err)
 			}
+			if tc.name == "panic" {
+				var pe PanicError
+				if !errors.As(err, &pe) {
+					t.Fatalf("panic = %v (%T), want PanicError", err, err)
+				}
+			}
 			if len(events) != 3 || events[2].Err == nil {
 				t.Fatalf("events: %+v", events)
 			}
@@ -217,7 +223,7 @@ func TestStopOnFailureIsSequential(t *testing.T) {
 	if !errors.Is(err, sentinel) || strings.Join(calls, ",") != "a,b" {
 		t.Fatalf("calls %v err %v", calls, err)
 	}
-	if len(term.Deliveries) != 3 || term.Deliveries[0].Unattempted || term.Deliveries[1].Err != sentinel || !term.Deliveries[2].Unattempted {
+	if len(term.Deliveries) != 3 || term.Deliveries[0].Unattempted || !errors.Is(term.Deliveries[1].Err, sentinel) || !term.Deliveries[2].Unattempted {
 		t.Fatalf("%+v", term.Deliveries)
 	}
 }
@@ -340,7 +346,7 @@ func TestDetachedDeliveryErrorIsRecorded(t *testing.T) {
 		return Terminal{Deliveries: []Delivery{{NodeID: "out", Target: "configured"}}}, sentinel
 	})
 	term, err := mustCompile(t, linearFlow(), r).Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second})
-	if !errors.Is(err, sentinel) || len(term.Deliveries) != 1 || term.Deliveries[0].Err != sentinel {
+	if !errors.Is(err, sentinel) || len(term.Deliveries) != 1 || !errors.Is(term.Deliveries[0].Err, sentinel) {
 		t.Fatalf("%+v %v", term, err)
 	}
 }

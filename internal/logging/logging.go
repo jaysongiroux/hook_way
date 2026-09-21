@@ -68,7 +68,7 @@ func Request(logger *slog.Logger, attrs RequestAttrs) {
 		"duration", attrs.Duration.String(),
 		"request_id", attrs.RequestID,
 		"trace_id", attrs.TraceID,
-		"headers", FilterHeaders(attrs.Headers, attrs.HeaderAllowlist, attrs.HeaderDenylist),
+		"headers", LogHeaders(attrs.Headers, attrs.HeaderAllowlist, attrs.HeaderDenylist),
 	)
 }
 
@@ -76,6 +76,18 @@ func Request(logger *slog.Logger, attrs RequestAttrs) {
 // everything else through. It is a denylist (fail-open) filter.
 func RedactHeaders(headers http.Header, denylist []string) http.Header {
 	return FilterHeaders(headers, nil, denylist)
+}
+
+// LogHeaders copies headers for structured request logs. An empty allowlist
+// logs no request headers (fail-closed). Explicitly allowed names are still
+// filtered by the built-in sensitive-header heuristics and the configured
+// denylist. Use FilterHeaders for proxy forwarding, which stays fail-open
+// when its allowlist is empty.
+func LogHeaders(headers http.Header, allowlist, denylist []string) http.Header {
+	if len(allowlist) == 0 {
+		return http.Header{}
+	}
+	return FilterHeaders(headers, allowlist, denylist)
 }
 
 // FilterHeaders returns a safe copy of headers for logging and forwarding.

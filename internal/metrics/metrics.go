@@ -108,15 +108,15 @@ func New() *Metrics {
 	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.publishTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_publish_total",
-		Help: "RabbitMQ publish attempts.",
+		Help: "Publish attempts to a configured destination.",
 	}, []string{"endpoint", "destination_queue_id", "queue", "status"})
 	m.publishDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "hookway_publish_duration_seconds",
-		Help: "RabbitMQ publish duration.",
+		Help: "Publish duration to a configured destination.",
 	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.messagesPublished = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_messages_published_total",
-		Help: "Webhook messages successfully published to RabbitMQ.",
+		Help: "Webhook messages successfully published to a destination.",
 	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.requestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "hookway_request_duration_seconds",
@@ -420,8 +420,8 @@ func (m *Metrics) DestinationReady(destinationQueueID string, ready bool) {
 }
 
 // Panic records a recovered panic. location identifies where it was recovered:
-// "handler" (ServeHTTP), "fanout" (skip_failed fan-out publish worker), or
-// "webhook_worker" (async webhook delivery engine worker).
+// "handler" (ServeHTTP), "node" (graph executor), "fanout" (skip_failed
+// fan-out publish worker), or "webhook_worker" (async webhook delivery engine worker).
 func (m *Metrics) Panic(location string) {
 	m.panics.WithLabelValues(location).Inc()
 }
@@ -475,7 +475,7 @@ func (m *Metrics) ReplayPurged(n int) {
 	m.replayPurged.Add(float64(n))
 }
 
-// Node records one graph node execution. outcome is "ok" or "error".
+// Node records one graph node execution. outcome is "ok", "error", or "panic".
 // Labels must stay config-bounded: never pass a rendered lookup target or
 // request-derived value.
 func (m *Metrics) Node(flow, nodeID, nodeType, outcome string, duration time.Duration) {

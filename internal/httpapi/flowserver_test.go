@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -69,7 +70,7 @@ func TestFlowServerValidSignatureReturns202(t *testing.T) {
 	pub := &fakePublisher{}
 	srv := newTestFlowServer(t, pub)
 	body := []byte(`{"action":"opened","number":1}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
@@ -96,7 +97,7 @@ func TestFlowServerValidSignatureReturns202(t *testing.T) {
 func TestFlowServerBadSignatureReturns401(t *testing.T) {
 	srv := newTestFlowServer(t, &fakePublisher{})
 	body := []byte(`{"action":"opened"}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", "sha256=deadbeef")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -108,7 +109,7 @@ func TestFlowServerBadSignatureReturns401(t *testing.T) {
 func TestPublishFailureReturns503(t *testing.T) {
 	srv := newTestFlowServer(t, &fakePublisher{err: errors.New("broker down")})
 	body := []byte(`{"action":"opened"}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -125,7 +126,7 @@ func TestFlowServerOversizeBodyReturns413(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 	body := []byte(`{"action":"opened"}`)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -136,7 +137,7 @@ func TestFlowServerOversizeBodyReturns413(t *testing.T) {
 
 func TestFlowServerUnknownPathReturns404(t *testing.T) {
 	srv := newTestFlowServer(t, &fakePublisher{})
-	req := httptest.NewRequest(http.MethodPost, "/nope", strings.NewReader("{}"))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/nope", strings.NewReader("{}"))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -146,7 +147,7 @@ func TestFlowServerUnknownPathReturns404(t *testing.T) {
 
 func TestFlowServerWrongMethodReturns405(t *testing.T) {
 	srv := newTestFlowServer(t, &fakePublisher{})
-	req := httptest.NewRequest(http.MethodGet, "/webhooks/github", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/webhooks/github", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -164,7 +165,7 @@ func (panicReadCloser) Close() error             { return nil }
 
 func TestPanickingNodeReturns500(t *testing.T) {
 	srv := newTestFlowServer(t, &fakePublisher{})
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", strings.NewReader(`{"ok":true}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", strings.NewReader(`{"ok":true}`))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC([]byte(`{"ok":true}`)))
 	req.Body = io.NopCloser(panicReadCloser{})
 	rec := httptest.NewRecorder()
@@ -220,7 +221,7 @@ flows:
 `
 
 func postSignedFlow(srv *FlowServer, body []byte) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
@@ -423,7 +424,7 @@ flows:
 		t.Fatalf("broken flow must still construct a server: %v", err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/broken", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code == http.StatusNotFound {

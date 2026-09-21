@@ -1,6 +1,7 @@
 package apikey
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +16,7 @@ func okHandler() http.Handler {
 
 func do(t *testing.T, h http.Handler, authHeader string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	if authHeader != "" {
 		req.Header.Set("Authorization", authHeader)
 	}

@@ -8,7 +8,10 @@ import (
 func TestLimiterAllowsBurstThenRejects(t *testing.T) {
 	limiter := New(true, 60, 2)
 	now := time.Unix(0, 0)
-	if !limiter.Allow("a", now) || !limiter.Allow("a", now) {
+	if !limiter.Allow("a", now) {
+		t.Fatal("expected burst to pass")
+	}
+	if !limiter.Allow("a", now) {
 		t.Fatal("expected burst to pass")
 	}
 	if limiter.Allow("a", now) {

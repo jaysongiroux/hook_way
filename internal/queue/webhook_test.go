@@ -91,7 +91,7 @@ func TestWebhookPublisherDefaultRetryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ctor: %v", err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 
 	d, ok := pub.delivery.lookup("orders")
 	if !ok || d == nil {
@@ -224,12 +224,10 @@ type fakeWebhookMetrics struct {
 	deadLetter          int32
 	deadLetterFail      int32
 	lastDroppedReceived string
-	lastDepth           int32
-	lastCapacity        int32
+	lastDepth           int64
+	lastCapacity        int64
 	panics              int32
 	lastPanicLocation   string
-	// deliveries[outcome]++
-	deliveries map[string]int32
 }
 
 func (f *fakeWebhookMetrics) WebhookDropped(_, _, reason string) {
@@ -245,10 +243,10 @@ func (f *fakeWebhookMetrics) WebhookDeadLetterFailure(_, _ string) {
 	atomic.AddInt32(&f.deadLetterFail, 1)
 }
 func (f *fakeWebhookMetrics) WebhookQueueDepth(_ string, depth int) {
-	atomic.StoreInt32(&f.lastDepth, int32(depth))
+	atomic.StoreInt64(&f.lastDepth, int64(depth))
 }
 func (f *fakeWebhookMetrics) WebhookQueueCapacity(_ string, capacity int) {
-	atomic.StoreInt32(&f.lastCapacity, int32(capacity))
+	atomic.StoreInt64(&f.lastCapacity, int64(capacity))
 }
 func (f *fakeWebhookMetrics) Panic(location string) {
 	atomic.AddInt32(&f.panics, 1)

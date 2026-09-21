@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestBuildEnvelopeParsesJSONAndRedactsHeaders(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodPost, "/webhooks/paddle/billing?x=1", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/paddle/billing?x=1", nil)
 	req.RemoteAddr = "203.0.113.42:1234"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Paddle-Signature", "secret")
@@ -26,7 +27,10 @@ func TestBuildEnvelopeParsesJSONAndRedactsHeaders(t *testing.T) {
 	if env.ID == "" || env.RawBodyBase64 != nil {
 		t.Fatalf("bad envelope: %#v", env)
 	}
-	if env.Headers["paddle-signature"][0] != "redacted" || env.Headers["x-api-token"][0] != "redacted" || env.Headers["x-api-key"][0] != "redacted" {
+	paddle := "paddle-signature"
+	token := "x-api-token"
+	apiKey := "x-api-key"
+	if env.Headers[paddle][0] != "redacted" || env.Headers[token][0] != "redacted" || env.Headers[apiKey][0] != "redacted" {
 		t.Fatalf("headers not redacted: %#v", env.Headers)
 	}
 	if env.Body == nil {
@@ -35,7 +39,7 @@ func TestBuildEnvelopeParsesJSONAndRedactsHeaders(t *testing.T) {
 }
 
 func TestBuildEnvelopeIncludesPublishedContractFields(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodPost, "/webhooks/paddle/billing?x=1", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/paddle/billing?x=1", nil)
 	req.Header.Set("X-Request-ID", "req_123")
 	req.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")
 	req.Header.Set("X-Partner-Secret", "secret")
@@ -76,7 +80,7 @@ func TestBuildEnvelopeIncludesPublishedContractFields(t *testing.T) {
 // serialized under the additive "traceparent" field, omitted when empty so
 // schema_version stays 1.0 for callers that never set it.
 func TestBuildEnvelopeCarriesTraceparent(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodPost, "/webhooks/paddle/billing", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/paddle/billing", nil)
 	want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
 	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{
@@ -113,7 +117,7 @@ func TestBuildEnvelopeCarriesTraceparent(t *testing.T) {
 }
 
 func TestBuildEnvelopeEncodesNonJSONBody(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodPost, "/webhooks/paddle/billing", nil)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/paddle/billing", nil)
 	raw := []byte("not-json")
 	env, err := BuildEnvelope(req, "paddle_billing", "billing-events", raw, time.Unix(0, 0), "127.0.0.1")
 	if err != nil {
@@ -129,7 +133,7 @@ func TestBuildEnvelopeEncodesNonJSONBody(t *testing.T) {
 
 func TestEnvelopeCarriesRawBodyAndOrigHeadersInMemoryOnly(t *testing.T) {
 	body := []byte(`{"a":1}`)
-	req := httptest.NewRequest("POST", "/x", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/x", bytes.NewReader(body))
 	req.Header.Set("X-Vendor-Signature", "sig123")
 	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{Endpoint: "e", Queue: "orders", RawBody: body, ReceivedAt: time.Now()})
 	if err != nil {

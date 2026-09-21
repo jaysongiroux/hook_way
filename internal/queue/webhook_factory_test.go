@@ -192,7 +192,7 @@ func TestFactoryPerDestinationMaxQueueSizing(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	rp := pub.(*RoutingPublisher)
-	defer rp.Close()
+	defer func() { _ = rp.Close() }()
 	small := rp.publishers["small"].(*WebhookPublisher)
 	big := rp.publishers["big"].(*WebhookPublisher)
 	if small.engine.capacity() != 5 {

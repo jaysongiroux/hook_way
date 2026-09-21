@@ -317,7 +317,7 @@ func nilNode(node Node) bool {
 	}
 	v := reflect.ValueOf(node)
 	switch v.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func, reflect.Interface, reflect.Chan:
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Interface, reflect.Chan:
 		return v.IsNil()
 	default:
 		return false

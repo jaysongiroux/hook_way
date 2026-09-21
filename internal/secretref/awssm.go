@@ -26,7 +26,7 @@ type awsFetcher struct {
 	name   string
 }
 
-func newAWSFetcher(name string) (*awsFetcher, error) {
+func newAWSFetcher(ctx context.Context, name string) (*awsFetcher, error) {
 	region := os.Getenv("AWS_REGION")
 	if region == "" {
 		region = os.Getenv("AWS_DEFAULT_REGION")
@@ -38,7 +38,7 @@ func newAWSFetcher(name string) (*awsFetcher, error) {
 	if endpoint == "" {
 		endpoint = os.Getenv("AWS_ENDPOINT")
 	}
-	cfg, err := awsconf.Load(context.Background(), region, endpoint, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY"))
+	cfg, err := awsconf.Load(ctx, region, endpoint, os.Getenv("AWS_ACCESS_KEY_ID"), os.Getenv("AWS_SECRET_ACCESS_KEY"))
 	if err != nil {
 		return nil, err
 	}

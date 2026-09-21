@@ -14,6 +14,7 @@ import (
 	"github.com/jasongiroux/hookway/internal/auth"
 	"github.com/jasongiroux/hookway/internal/graph"
 	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jasongiroux/hookway/internal/vars"
 	"gopkg.in/yaml.v3"
 )
 
@@ -179,7 +180,7 @@ type IfElseOptions struct {
 }
 
 func (o IfElseOptions) set() ConditionSetOptions {
-	return ConditionSetOptions{Match: o.Match, Conditions: o.Conditions}
+	return ConditionSetOptions(o)
 }
 
 type HTTPRequestOptions struct {
@@ -217,7 +218,7 @@ type PublishOptions struct {
 	Payload string `yaml:"payload,omitempty" json:"payload,omitempty" jsonschema:"enum=envelope,enum=object"`
 }
 type RespondOptions struct {
-	Status      int               `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"minimum=100,maximum=599"`
+	Status      int               `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"minimum=200,maximum=599"`
 	Headers     map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 	Body        string            `yaml:"body,omitempty" json:"body,omitempty"`
 	Passthrough bool              `yaml:"passthrough,omitempty" json:"passthrough,omitempty"`
@@ -315,14 +316,14 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		define[NoAuthOptions]("no_auth", graph.PortRawRequest, graph.PortVerified, false, nil, func(id string, _ NoAuthOptions) graph.Node {
 			return newNoAuthNode(id, opts.Logger)
 		}),
-		define("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, newReplayGuard),
+		defineErr("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, newReplayGuard),
 		define("envelope", graph.PortVerified, graph.PortEnvelope, false, validateEnvelope, func(id string, o EnvelopeOptions) graph.Node {
 			n := newEnvelopeNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist).(envelopeNode)
 			n.queryDenylist = opts.QueryDenylist
 			return n
 		}),
 		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode),
-		define("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, func(id string, o LookupOptions) graph.Node {
+		defineErr("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, func(id string, o LookupOptions) (graph.Node, error) {
 			var fn LookupFunc
 			if opts.Lookups != nil {
 				fn = opts.Lookups(o)
@@ -343,13 +344,13 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		}),
 		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
 		define("if_else", graph.PortEnvelope, graph.PortEnvelope, false, validateIfElse, newIfElseNode),
-		define("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) graph.Node {
+		defineErr("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) (graph.Node, error) {
 			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
 		}),
-		define("publish", graph.PortEnvelope, graph.PortTerminal, true, validatePublish, func(id string, o PublishOptions) graph.Node {
+		defineErr("publish", graph.PortEnvelope, graph.PortTerminal, true, validatePublish, func(id string, o PublishOptions) (graph.Node, error) {
 			return newPublishNode(id, o, opts.Publishers)
 		}),
-		define("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode),
+		defineErr("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode),
 	}
 }
 
@@ -486,7 +487,10 @@ func validateReplayGuard(o ReplayGuardOptions) error {
 	if o.MaxEntries < 0 {
 		return errors.New("max_entries must be >= 1")
 	}
-	return validateDuration("ttl", o.TTL, false)
+	if err := validateDuration("ttl", o.TTL, false); err != nil {
+		return err
+	}
+	return validateTemplate("key", o.Key)
 }
 func validateEnvelope(o EnvelopeOptions) error {
 	switch o.BodyFormat {
@@ -536,6 +540,9 @@ func validateLookup(o LookupOptions) error {
 		return err
 	}
 	if err := require("key", o.Key); err != nil {
+		return err
+	}
+	if err := validateTemplate("key", o.Key); err != nil && !isBodyPathKey(o.Key) {
 		return err
 	}
 	if o.Cache != nil {
@@ -633,6 +640,14 @@ func validateHTTPRequest(o HTTPRequestOptions) error {
 	if err := require("url", o.URL); err != nil {
 		return err
 	}
+	if err := validateTemplate("url", o.URL); err != nil {
+		return err
+	}
+	if tpl, err := vars.Parse(o.URL); err == nil && !tpl.HasPlaceholders() {
+		if err := validateHTTPURL(o.URL); err != nil {
+			return fmt.Errorf("url: %w", err)
+		}
+	}
 	switch strings.ToLower(strings.TrimSpace(o.Body)) {
 	case "", "raw", "transformed":
 	default:
@@ -686,6 +701,9 @@ func validatePublish(o PublishOptions) error {
 	if err := require("target", o.Target); err != nil {
 		return err
 	}
+	if err := validateTemplate("target", o.Target); err != nil {
+		return err
+	}
 	switch o.Payload {
 	case "", "envelope", "object":
 		return nil
@@ -697,8 +715,14 @@ func validateRespond(o RespondOptions) error {
 	if o.Passthrough == (o.Status != 0) {
 		return errors.New("exactly one of status or passthrough is required")
 	}
-	if o.Status != 0 && (o.Status < 100 || o.Status > 599) {
-		return errors.New("status must be between 100 and 599")
+	if o.Status != 0 && (o.Status < 200 || o.Status > 599) {
+		return errors.New("status must be between 200 and 599")
+	}
+	if o.Body != "" && (o.Status == 204 || o.Status == 304) {
+		return errors.New("status 204 and 304 must not include a body")
+	}
+	if err := validateTemplate("body", o.Body); err != nil {
+		return err
 	}
 	return nil
 }

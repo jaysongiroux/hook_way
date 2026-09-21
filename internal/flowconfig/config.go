@@ -2,8 +2,10 @@ package flowconfig
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -26,7 +28,7 @@ type Config struct {
 
 // Load reads path and expands environment variables strictly.
 func Load(path string) (Config, []config.ValidationIssue) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Config{}, []config.ValidationIssue{cfgIssue("config", fmt.Sprintf("read %s: %v", path, err), "")}
 	}
@@ -183,8 +185,8 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 		if err == nil {
 			continue
 		}
-		ce, ok := err.(*graph.CompileError)
-		if !ok {
+		var ce *graph.CompileError
+		if !errors.As(err, &ce) {
 			issues = append(issues, cfgIssue("flows."+name, err.Error(), ""))
 			continue
 		}

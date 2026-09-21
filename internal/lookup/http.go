@@ -91,7 +91,7 @@ func (p *httpProvider) Lookup(ctx context.Context, key string) (string, bool, er
 	if err != nil {
 		return "", false, fmt.Errorf("http: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", false, nil
 	}

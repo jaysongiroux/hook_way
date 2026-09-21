@@ -361,9 +361,7 @@ func convertFilters(raw []rawFilterConditionConfig) []FilterConditionConfig {
 	}
 	filters := make([]FilterConditionConfig, 0, len(raw))
 	for _, f := range raw {
-		filters = append(filters, FilterConditionConfig{
-			Source: f.Source, Path: f.Path, Operator: f.Operator, Value: f.Value,
-		})
+		filters = append(filters, FilterConditionConfig(f))
 	}
 	return filters
 }

@@ -3,10 +3,12 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"github.com/jasongiroux/hookway/internal/awsconf"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jasongiroux/hookway/internal/awsconf"
+	"github.com/jasongiroux/hookway/internal/testenv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	snsservice "github.com/aws/aws-sdk-go-v2/service/sns"
@@ -20,13 +22,12 @@ import (
 // endpoint. Skips the test when Docker is unavailable.
 func startLocalStack(t *testing.T) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := localstack.Run(ctx, "localstack/localstack:3.4",
 		testcontainers.WithEnv(map[string]string{"SERVICES": "sqs,sns"}),
 	)
-	if err != nil {
-		t.Skipf("localstack unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "localstack")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	host, err := container.Host(ctx)
 	if err != nil {

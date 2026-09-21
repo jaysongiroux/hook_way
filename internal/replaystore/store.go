@@ -530,7 +530,7 @@ func buildListQuery(f Filter, schema string) (string, []any) {
 	b.WriteString(" ORDER BY e.received_at DESC, e.id DESC")
 
 	args = append(args, clampLimit(f.Limit))
-	b.WriteString(fmt.Sprintf(" LIMIT $%d", len(args)))
+	_, _ = fmt.Fprintf(&b, " LIMIT $%d", len(args))
 
 	return b.String(), args
 }

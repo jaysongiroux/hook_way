@@ -74,7 +74,9 @@ Published envelopes and request logs redact:
 
 Redacted values are published as `"redacted"`.
 
-By default this is a denylist (fail-open): headers not matched above are forwarded. For a fail-safe posture, set `security.forwarded_header_allowlist`; only allowlisted headers are then logged or forwarded to consumers, and everything else is dropped. The denylist/sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through.
+By default this is a denylist (fail-open): headers not matched above are **forwarded**. For a fail-safe forwarding posture, set `security.forwarded_header_allowlist`; only allowlisted headers are then forwarded to consumers, and everything else is dropped. The denylist/sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through.
+
+Request logs are separate and fail-closed: set `logging.header_allowlist` to name headers that may appear in structured logs. An empty list (the default) logs no request headers.
 
 ## Idempotency
 
@@ -176,5 +178,6 @@ A `code` node with no explicit `timeout` is a config warning; the 1s default sti
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
 - If `replay` is enabled, keep `replay.addr` off the internet-facing network path (private port/network, same as `metrics.addr`) and always set `security.api_key` — config validation already requires it, but treat the key with the same care as any credential capable of re-injecting webhook traffic. A replay-store outage reports the pod not-ready so traffic is shed until the store is reachable again.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
-- Set `security.forwarded_header_allowlist` so only intended headers reach consumers and logs.
+- Set `security.forwarded_header_allowlist` so only intended headers reach consumers.
+- Set `logging.header_allowlist` so only intended headers appear in request logs (empty logs none).
 - Rotate webhook secrets per flow and keep old/new overlap short during provider-side rotations. `auth.secret_ref.overlap` is the in-process overlap window; `${ENV}` expansion still happens at load.

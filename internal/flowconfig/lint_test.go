@@ -241,7 +241,7 @@ flows:
       - {id: auth, type: no_auth}
       - {id: env, type: envelope, body_format: raw}` + nodes + `
       - {id: ack, type: respond, status: 202, body: ok}
-      - {id: nak, type: respond, status: 204, body: no}
+      - {id: nak, type: respond, status: 204}
     edges: [in>body, body>auth, auth>env, ` + edges + `]
 `
 	}

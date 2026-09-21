@@ -90,7 +90,7 @@ func TestExampleSmoke(t *testing.T) {
 			t.Cleanup(func() { _ = srv.Close() })
 
 			health := httptest.NewRecorder()
-			srv.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			srv.ServeHTTP(health, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
 			if health.Code != http.StatusOK {
 				t.Fatalf("GET /healthz = %d body %s", health.Code, health.Body.String())
 			}
@@ -180,7 +180,7 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 	// break that quoted scalar; `\n` escapes survive expansion and decode.
 	t.Setenv("JWT_PUBLIC_KEY", strings.ReplaceAll(strings.TrimSpace(jwtPEM), "\n", `\n`))
 	vals := map[string]string{
-		"RABBITMQ_URL":            "amqp://guest:guest@localhost:5672/",
+		"RABBITMQ_URL":            "amqp://guest:guest@localhost:5672/", // #nosec G101 -- example smoke fixture
 		"PADDLE_WEBHOOK_SECRET":   "paddle-secret",
 		"GITHUB_WEBHOOK_SECRET":   "github-secret",
 		"STRIPE_WEBHOOK_SECRET":   "stripe-secret",
@@ -252,7 +252,7 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) 
 		// filters on files.document.content_type, so the part must claim PDF.
 		body, contentType = multipartBody(t)
 	}
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-GitHub-Event", "push")
 	// showcase/production.yaml's trusted flow allowlists RFC1918 ranges.
@@ -413,14 +413,14 @@ func githubHMAC(secret string, body []byte) string {
 func paddleHMAC(secret string, body []byte, now time.Time) string {
 	ts := now.Unix()
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d:%s", ts, body)))
+	_, _ = fmt.Fprintf(mac, "%d:%s", ts, body)
 	return fmt.Sprintf("ts=%d;h1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
 }
 
 func stripeHMAC(secret string, body []byte, now time.Time) string {
 	ts := now.Unix()
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d.%s", ts, body)))
+	_, _ = fmt.Fprintf(mac, "%d.%s", ts, body)
 	return fmt.Sprintf("t=%d,v1=%s", ts, hex.EncodeToString(mac.Sum(nil)))
 }
 

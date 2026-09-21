@@ -91,7 +91,7 @@ func TestRedisNewClient_URLParsing(t *testing.T) {
 	// rediss:// (note double 's') instructs redis.ParseURL to enable TLS.
 	cfg := config.RedisConfig{
 		Mode: "single",
-		URL:  "rediss://user:secret@redis.example.com:6380/1",
+		URL:  "rediss://user:secret@redis.example.com:6380/1", // #nosec G101 -- parse fixture
 	}
 	ops, err := newRedisClient(cfg)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestRedisNewClient_URLParsing(t *testing.T) {
 func TestRedisNewClient_CredentialOverride(t *testing.T) {
 	cfg := config.RedisConfig{
 		Mode:     "single",
-		URL:      "redis://urluser:urlpass@127.0.0.1:6379",
+		URL:      "redis://urluser:urlpass@127.0.0.1:6379", // #nosec G101 -- parse fixture
 		Username: "overrideuser",
 		Password: "overridepass",
 	}
@@ -149,12 +149,11 @@ func TestRedisNewClient_TLSDisabled(t *testing.T) {
 // --- fake redisOps for unit testing publishers ---
 
 type fakeRedisOps struct {
-	xaddCalls              []xaddCall
-	xgroupCreateMkStreamOK bool
-	xgroupErr              error
-	lpushTrimCalls         []lpushTrimCall
-	publishCalls           []publishCall
-	publishErr             error
+	xaddCalls      []xaddCall
+	xgroupErr      error
+	lpushTrimCalls []lpushTrimCall
+	publishCalls   []publishCall
+	publishErr     error
 	// publishReceivers controls how many subscribers Publish reports. Defaults to
 	// 1 (normal delivery) when constructed via newFakeRedisOps. Set to 0 in tests
 	// that simulate no-subscriber drops.

@@ -570,6 +570,9 @@ rate spike, sustained `hookway_saturated_total`, publish failure ratio,
 `hookway_destination_ready == 0`, `hookway_webhook_queue_depth` near capacity,
 `hookway_webhook_dropped_total > 0`, `hookway_panics_total > 0`,
 `hookway_replay_store_up == 0`, and `hookway_config_load_failures_total > 0`.
+Fatal pre-listener config failures are primarily visible via structured logs and a
+supervisor restart — the process often exits before Prometheus can scrape
+`hookway_config_load_failures_total`.
 
 ### P2-10. No OpenTelemetry export
 

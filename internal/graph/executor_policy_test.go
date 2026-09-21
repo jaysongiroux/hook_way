@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -177,54 +179,9 @@ func TestCompileRejectsUnknownDeliveryFailurePolicy(t *testing.T) {
 // Serialising them makes request latency the SUM of destination latencies,
 // which is what docs/configuration.md promises it is not.
 func TestSkipFailedRunsDestinationsConcurrently(t *testing.T) {
-	const (
-		dests = 4
-		delay = 100 * time.Millisecond
-	)
-	r := registryWithRecorder(t, &recorder{})
-	s := r.specs["dest"]
-	s.New = func(NodeConfig) (Node, error) {
-		return &fnNode{out: Terminal{}, fn: func(context.Context) { time.Sleep(delay) }}, nil
-	}
-	r.specs["dest"] = s
-
-	nodes := [][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}}
-	edges := []string{"in>body", "body>auth", "auth>env"}
-	for i := range dests {
-		id := fmt.Sprintf("d%d", i)
-		nodes = append(nodes, [2]string{id, "dest"})
-		edges = append(edges, "env>"+id)
-	}
-	fc := flowConfig(nodes, edges...)
-	fc.DeliveryFailurePolicy = "skip_failed"
-	f := mustCompile(t, fc, r)
-
-	start := time.Now()
-	term, err := f.Run(context.Background(), RequestHead{}, RunOptions{
-		PublishTimeout: 5 * time.Second, FanoutConcurrency: dests,
-	})
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatalf("Run() = %v", err)
-	}
-	if len(term.Deliveries) != dests {
-		t.Fatalf("Deliveries = %d, want %d", len(term.Deliveries), dests)
-	}
-	// Generous bound: serial execution would be ~400ms.
-	if elapsed > delay*5/2 {
-		t.Fatalf("%d concurrent destinations took %v; serial execution suspected "+
-			"(want well under %v)", dests, elapsed, delay*5/2)
-	}
-}
-
-// TestSkipFailedHonorsConcurrencyLimit asserts the bound is real: with a limit
-// of 1, four 50ms publishes must serialise. An unbounded pool would let a
-// fan-out to many destinations open an unbounded number of broker connections.
-func TestSkipFailedHonorsConcurrencyLimit(t *testing.T) {
-	const (
-		dests = 4
-		delay = 50 * time.Millisecond
-	)
+	const dests = 4
+	started := make(chan struct{}, dests)
+	release := make(chan struct{})
 	var mu sync.Mutex
 	inFlight, peak := 0, 0
 	r := registryWithRecorder(t, &recorder{})
@@ -237,7 +194,8 @@ func TestSkipFailedHonorsConcurrencyLimit(t *testing.T) {
 				peak = inFlight
 			}
 			mu.Unlock()
-			time.Sleep(delay)
+			started <- struct{}{}
+			<-release
 			mu.Lock()
 			inFlight--
 			mu.Unlock()
@@ -256,15 +214,95 @@ func TestSkipFailedHonorsConcurrencyLimit(t *testing.T) {
 	fc.DeliveryFailurePolicy = "skip_failed"
 	f := mustCompile(t, fc, r)
 
-	if _, err := f.Run(context.Background(), RequestHead{}, RunOptions{
-		PublishTimeout: 5 * time.Second, FanoutConcurrency: 1,
-	}); err != nil {
-		t.Fatalf("Run() = %v", err)
+	var term Terminal
+	var runErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		term, runErr = f.Run(context.Background(), RequestHead{}, RunOptions{
+			PublishTimeout: 5 * time.Second, FanoutConcurrency: dests,
+		})
+	}()
+	for i := 0; i < dests; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("destination %d did not start; serial execution suspected", i+1)
+		}
 	}
 	mu.Lock()
-	defer mu.Unlock()
-	if peak != 1 {
-		t.Fatalf("peak concurrency = %d with FanoutConcurrency: 1, want 1", peak)
+	gotPeak := peak
+	mu.Unlock()
+	close(release)
+	<-done
+	if runErr != nil {
+		t.Fatalf("Run() = %v", runErr)
+	}
+	if len(term.Deliveries) != dests {
+		t.Fatalf("Deliveries = %d, want %d", len(term.Deliveries), dests)
+	}
+	if gotPeak != dests {
+		t.Fatalf("peak concurrency = %d, want %d concurrent destinations", gotPeak, dests)
+	}
+}
+
+// TestSkipFailedHonorsConcurrencyLimit asserts the bound is real: with a limit
+// of 1, four 50ms publishes must serialise. An unbounded pool would let a
+// fan-out to many destinations open an unbounded number of broker connections.
+func TestSkipFailedHonorsConcurrencyLimit(t *testing.T) {
+	const dests = 4
+	first := make(chan struct{})
+	extra := make(chan struct{}, dests)
+	release := make(chan struct{})
+	var entered atomic.Int32
+	r := registryWithRecorder(t, &recorder{})
+	s := r.specs["dest"]
+	s.New = func(NodeConfig) (Node, error) {
+		return &fnNode{out: Terminal{}, fn: func(context.Context) {
+			if entered.Add(1) == 1 {
+				close(first)
+			} else {
+				extra <- struct{}{}
+			}
+			<-release
+		}}, nil
+	}
+	r.specs["dest"] = s
+
+	nodes := [][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}}
+	edges := []string{"in>body", "body>auth", "auth>env"}
+	for i := range dests {
+		id := fmt.Sprintf("d%d", i)
+		nodes = append(nodes, [2]string{id, "dest"})
+		edges = append(edges, "env>"+id)
+	}
+	fc := flowConfig(nodes, edges...)
+	fc.DeliveryFailurePolicy = "skip_failed"
+	f := mustCompile(t, fc, r)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Run(context.Background(), RequestHead{}, RunOptions{
+			PublishTimeout: 5 * time.Second, FanoutConcurrency: 1,
+		})
+		done <- err
+	}()
+	select {
+	case <-first:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first destination did not start")
+	}
+	for i := 0; i < 1000; i++ {
+		select {
+		case <-extra:
+			t.Fatal("peak concurrency exceeded 1 with FanoutConcurrency: 1")
+		default:
+			runtime.Gosched()
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Run() = %v", err)
 	}
 }
 

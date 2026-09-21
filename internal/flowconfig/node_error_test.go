@@ -426,7 +426,7 @@ func mustCompileDemo(t *testing.T, src string, opts RegistryOptions) *graph.Flow
 
 func runDemo(t *testing.T, flow *graph.Flow, body []byte, srcIP, hops string) (graph.Terminal, error) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/w", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/w", bytes.NewReader(body))
 	if hops != "" {
 		req.Header.Set(config.LoopHopsHeader, hops)
 	}

@@ -146,6 +146,7 @@ func mapWorkflowIDReusePolicy(s string) (enumspb.WorkflowIdReusePolicy, error) {
 	case "reject_duplicate":
 		return enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, nil
 	case "terminate_if_running":
+		//nolint:staticcheck // SA1019: config still accepts terminate_if_running
 		return enumspb.WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING, nil
 	default:
 		return enumspb.WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED, fmt.Errorf("unsupported temporal id_reuse_policy %q", s)

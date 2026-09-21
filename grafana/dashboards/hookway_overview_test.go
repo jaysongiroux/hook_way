@@ -130,3 +130,107 @@ func TestNodeDurationPanelUsesBoundedNodeMetric(t *testing.T) {
 	}
 }
 
+func TestDashboardHasRequiredPanelsAndVariables(t *testing.T) {
+	d := loadDashboard(t)
+	wantPanels := []string{
+		"In-flight Requests",
+		"Goroutines",
+		"Heap Alloc",
+		"RabbitMQ Reconnects",
+		"HTTP Requests",
+		"Auth Failures",
+		"Messages Published",
+		"Request Duration",
+		"Pre-publish Rejections",
+		"Filtered Deliveries",
+		"Flows",
+		"Destinations",
+		"Publishing",
+		"Publish Duration",
+		"Publish Attempts",
+		"Webhook Deliveries by Outcome",
+		"Webhook Retries",
+		"Webhook Dropped",
+		"CPU Usage",
+		"Memory",
+		"Webhook Dead-Letters",
+		"Webhook Dead-Letter Failures (event lost)",
+		"Webhook Queue Depth vs Capacity",
+		"RabbitMQ Unroutable (lost)",
+		"RabbitMQ DLX Publishes",
+		"Redis Pub/Sub Dropped (no subscriber)",
+		"Panics by Location",
+		"Destination Readiness",
+		"Replay Store Up",
+		"Build Info",
+		"Events Captured",
+		"Capture Failures",
+		"Replays Triggered",
+		"Events Purged",
+		"Node Duration",
+		"Node Errors",
+		"Node Error Ratio",
+		"Lookup Outcomes",
+		"Lookup Latency",
+		"Compensation Failures",
+		"Secret Refresh Failures",
+	}
+	have := map[string]bool{}
+	for _, panel := range d.Panels {
+		have[panel.Title] = true
+	}
+	for _, title := range wantPanels {
+		if !have[title] {
+			t.Errorf("missing panel %q", title)
+		}
+	}
+	if have["RabbitMQ Publishing"] {
+		t.Error("row title still says RabbitMQ Publishing; use generic Publishing")
+	}
+
+	wantVars := []string{"datasource", "job", "instance", "endpoint", "destination", "queue"}
+	haveVar := map[string]bool{}
+	for _, v := range d.Templating.List {
+		haveVar[v.Name] = true
+	}
+	for _, name := range wantVars {
+		if !haveVar[name] {
+			t.Errorf("missing template variable %q", name)
+		}
+	}
+}
+
+func TestNewReliabilityPanelsUseBoundedMetrics(t *testing.T) {
+	d := loadDashboard(t)
+	wantExpr := map[string]string{
+		"Node Errors":             "hookway_node_total",
+		"Node Error Ratio":        "hookway_node_total",
+		"Lookup Outcomes":         `node_type="lookup"`,
+		"Lookup Latency":          "hookway_node_duration_seconds",
+		"Compensation Failures":   "hookway_compensation_failed_total",
+		"Secret Refresh Failures": "hookway_secret_refresh_failures_total",
+	}
+	found := map[string]bool{}
+	for _, panel := range d.Panels {
+		needle, ok := wantExpr[panel.Title]
+		if !ok {
+			continue
+		}
+		found[panel.Title] = true
+		joined := ""
+		for _, target := range panel.Targets {
+			joined += target.Expr
+			if strings.Contains(target.Expr, "queue=") || strings.Contains(target.Expr, "target=") {
+				t.Errorf("panel %q must not label by data-dependent queue/target: %s", panel.Title, target.Expr)
+			}
+		}
+		if !strings.Contains(joined, needle) {
+			t.Errorf("panel %q missing %q in expr %s", panel.Title, needle, joined)
+		}
+	}
+	for title := range wantExpr {
+		if !found[title] {
+			t.Errorf("missing panel %q", title)
+		}
+	}
+}

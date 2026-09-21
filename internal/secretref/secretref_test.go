@@ -60,7 +60,7 @@ func (c *clock) advance(d time.Duration) {
 
 func mustCached(t *testing.T, fetch fetcher, refresh, overlap time.Duration, now func() time.Time) *cached {
 	t.Helper()
-	c, err := newCached(Ref{Provider: "env", Name: "TEST", Refresh: refresh, Overlap: overlap}, fetch, slog.New(slog.DiscardHandler), nil, now)
+	c, err := newCached(context.Background(), Ref{Provider: "env", Name: "TEST", Refresh: refresh, Overlap: overlap}, fetch, slog.New(slog.DiscardHandler), nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestRotationHasNoFlagDay(t *testing.T) {
 func TestRefreshFailureKeepsLastGoodValue(t *testing.T) {
 	var fails atomic.Int32
 	fetch := &fakeFetcher{v: []byte("good")}
-	c, err := newCached(Ref{Provider: "env", Name: "X", Refresh: time.Hour, Overlap: time.Minute}, fetch, slog.New(slog.DiscardHandler), func() { fails.Add(1) }, time.Now)
+	c, err := newCached(context.Background(), Ref{Provider: "env", Name: "X", Refresh: time.Hour, Overlap: time.Minute}, fetch, slog.New(slog.DiscardHandler), func() { fails.Add(1) }, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,6 +174,61 @@ func TestRefreshFailureKeepsLastGoodValue(t *testing.T) {
 	}
 	if fails.Load() != 1 {
 		t.Fatalf("onFail calls = %d, want 1", fails.Load())
+	}
+}
+
+type hangingFetcher struct{}
+
+func (hangingFetcher) Fetch(ctx context.Context) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestInitialFetchHonorsDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := newCached(ctx, Ref{Provider: "env", Name: "X", Refresh: time.Hour}, hangingFetcher{}, slog.New(slog.DiscardHandler), nil, time.Now)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want deadline exceeded", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("waited %s; startup deadline must not sleep the full 10s", time.Since(start))
+	}
+}
+
+type deadlineRecorder struct {
+	deadline time.Time
+	ok       bool
+}
+
+func (d *deadlineRecorder) Fetch(ctx context.Context) ([]byte, error) {
+	d.deadline, d.ok = ctx.Deadline()
+	return []byte("secret"), nil
+}
+
+func TestNewThreadsStartupDeadlineToFirstFetch(t *testing.T) {
+	old := initialResolveTimeout
+	initialResolveTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { initialResolveTimeout = old })
+
+	rec := &deadlineRecorder{}
+	start := time.Now()
+	c, err := newCached(func() context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), initialResolveTimeout)
+		t.Cleanup(cancel)
+		return ctx
+	}(), Ref{Provider: "env", Name: "X", Refresh: time.Hour}, rec, slog.New(slog.DiscardHandler), nil, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if !rec.ok {
+		t.Fatal("first fetch context had no deadline")
+	}
+	remaining := time.Until(rec.deadline)
+	if remaining > initialResolveTimeout || remaining < 0 {
+		t.Fatalf("deadline remaining %s, want within %s from %s", remaining, initialResolveTimeout, start)
 	}
 }
 
@@ -245,7 +300,6 @@ type fakeSecretsAPI struct {
 	list      []listedSecret
 	values    map[string][]byte
 	listCalls int
-	pages     [][]listedSecret // optional pagination
 }
 
 func (f *fakeSecretsAPI) ListSecrets(context.Context, *secretsmanager.ListSecretsInput, ...func(*secretsmanager.Options)) (*secretsmanager.ListSecretsOutput, error) {

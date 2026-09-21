@@ -4,8 +4,8 @@ import "testing"
 
 func TestUnsafePathVarDetectsTraversal(t *testing.T) {
 	cases := []struct {
-		name  string
-		vars  map[string]string
+		name   string
+		vars   map[string]string
 		unsafe bool
 	}{
 		{"plain segment", map[string]string{"rest": "api/v1/thing"}, false},

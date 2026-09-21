@@ -13,6 +13,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/jasongiroux/hookway/internal/awsconf"
+	"github.com/jasongiroux/hookway/internal/testenv"
 )
 
 // TestAWSDynamoDBLookupAgainstRoutingTableSchema creates the ephemeral routing
@@ -27,9 +28,7 @@ func TestAWSDynamoDBLookupAgainstRoutingTableSchema(t *testing.T) {
 	}
 	ctx := context.Background()
 	container, err := localstack.Run(ctx, "localstack/localstack:3.4", testcontainers.WithEnv(map[string]string{"SERVICES": "dynamodb"}))
-	if err != nil {
-		t.Skipf("localstack unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "localstack")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	host, _ := container.Host(ctx)
 	port, err := container.MappedPort(ctx, "4566/tcp")
@@ -113,7 +112,7 @@ func TestPostgresLookupAgainstContainer(t *testing.T) {
 		tcpostgres.BasicWaitStrategies(),
 	)
 	if err != nil {
-		t.Skipf("postgres unavailable: %v", err)
+		testenv.RequireContainer(t, err, "postgres")
 	}
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	url, err := container.ConnectionString(ctx, "sslmode=disable")

@@ -210,7 +210,10 @@ func TestHTTPRequestAllowlistGovernsForwardedHeaders(t *testing.T) {
 }
 
 func TestRespondPassthroughCopiesUpstreamAndStripsHopByHop(t *testing.T) {
-	node := newRespondNode("resp", RespondOptions{Passthrough: true})
+	node, err := newRespondNode("resp", RespondOptions{Passthrough: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := node.Run(context.Background(), graph.Envelope{Upstream: &graph.UpstreamResponse{
 		Status: http.StatusCreated,
 		Header: http.Header{
@@ -238,7 +241,10 @@ func TestRespondPassthroughCopiesUpstreamAndStripsHopByHop(t *testing.T) {
 }
 
 func TestRespondExplicitStatusAndBody(t *testing.T) {
-	node := newRespondNode("resp", RespondOptions{Status: 201, Body: "created-{id}", Headers: map[string]string{"X-Ok": "1"}})
+	node, err := newRespondNode("resp", RespondOptions{Status: 201, Body: "created-{id}", Headers: map[string]string{"X-Ok": "1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := node.Run(context.Background(), graph.Envelope{Vars: map[string]string{"id": "9"}})
 	if err != nil {
 		t.Fatal(err)
@@ -250,8 +256,11 @@ func TestRespondExplicitStatusAndBody(t *testing.T) {
 }
 
 func TestRespondPassthroughWithoutUpstreamIs502(t *testing.T) {
-	node := newRespondNode("resp", RespondOptions{Passthrough: true})
-	_, err := node.Run(context.Background(), graph.Envelope{})
+	node, err := newRespondNode("resp", RespondOptions{Passthrough: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = node.Run(context.Background(), graph.Envelope{})
 	var ne graph.NodeError
 	if err == nil || !asNodeError(err, &ne) || ne.Status != http.StatusBadGateway {
 		t.Fatalf("err = %v, want 502", err)
@@ -319,9 +328,12 @@ func TestHeaderExactSchemeAlias(t *testing.T) {
 
 func TestReviewConnectionNominatedHeadersAreRemoved(t *testing.T) {
 	src := http.Header{"Connection": {"X-Internal, X-Other"}, "X-Internal": {"private"}, "X-Other": {"private"}, "X-Public": {"visible"}}
-	n := newHTTPRequestNode("up", HTTPRequestOptions{URL: "https://example.test"}, nil, nil).(httpRequestNode)
-	req, _ := http.NewRequest(http.MethodPost, "https://example.test", nil)
-	n.copyForwardedHeaders(req, src)
+	n, err := newHTTPRequestNode("up", HTTPRequestOptions{URL: "https://example.test"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://example.test", nil)
+	n.(httpRequestNode).copyForwardedHeaders(req, src)
 	for _, h := range []http.Header{req.Header, filterPassthroughHeaders(src)} {
 		if h.Get("X-Internal") != "" || h.Get("X-Other") != "" || h.Get("X-Public") != "visible" {
 			t.Fatalf("hop-by-hop leak: %v", h)

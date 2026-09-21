@@ -63,14 +63,26 @@ func requestIDFrom(r *http.Request) string {
 func traceIDFrom(r *http.Request) string {
 	if traceparent := r.Header.Get("Traceparent"); traceparent != "" {
 		parts := strings.Split(traceparent, "-")
-		if len(parts) >= 2 && len(parts[1]) == 32 && isHex(parts[1]) {
+		if len(parts) >= 2 && isValidTraceID(parts[1]) {
 			return parts[1]
 		}
 	}
-	if id := strings.TrimSpace(r.Header.Get("X-Trace-ID")); id != "" {
+	if id := strings.TrimSpace(r.Header.Get("X-Trace-ID")); isValidTraceID(id) {
 		return id
 	}
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
+func isValidTraceID(id string) bool {
+	if len(id) != 32 || !isHex(id) {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] != '0' {
+			return true
+		}
+	}
+	return false
 }
 
 func parseHopCount(v string) int {
@@ -85,8 +97,11 @@ func parseHopCount(v string) int {
 }
 
 func isHex(s string) bool {
-	for _, r := range s {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
 			return false
 		}
 	}

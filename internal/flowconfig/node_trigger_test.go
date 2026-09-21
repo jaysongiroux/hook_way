@@ -1,6 +1,7 @@
 package flowconfig
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestHeadFromRequestCapturesPreBodyFields(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/webhooks/github?authID=abc", strings.NewReader("ignored"))
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github?authID=abc", strings.NewReader("ignored"))
 	r.Header.Set("X-Hub-Signature-256", "sha256=x")
 	r.Header.Set(config.LoopHopsHeader, "2")
 
@@ -39,7 +40,7 @@ func TestHeadFromRequestCapturesPreBodyFields(t *testing.T) {
 
 func TestHeadFromRequestDoesNotReadBody(t *testing.T) {
 	body := "sentinel-body-content"
-	r := httptest.NewRequest(http.MethodPost, "/w", strings.NewReader(body))
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/w", strings.NewReader(body))
 	_ = HeadFromRequest(r, nil, "1.2.3.4")
 
 	got, err := io.ReadAll(r.Body)
@@ -52,7 +53,7 @@ func TestHeadFromRequestDoesNotReadBody(t *testing.T) {
 }
 
 func TestHeadFromRequestCapturesGreedyRest(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/proxy/v1/orders/123", nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/proxy/v1/orders/123", nil)
 	head := HeadFromRequest(r, map[string]string{"rest": "v1/orders/123"}, "127.0.0.1")
 	if head.PathVars["rest"] != "v1/orders/123" {
 		t.Errorf("PathVars[rest] = %q", head.PathVars["rest"])

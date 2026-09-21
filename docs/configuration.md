@@ -50,7 +50,7 @@ A refresh failure keeps serving the last known-good value, emits `hookway_secret
 - `security.trusted_proxies`: optional list of IP addresses or CIDR ranges. When `trusted_proxy_headers` is true *and* this list is non-empty, forwarding headers are only honored when the immediate TCP peer falls inside one of these ranges; otherwise the peer IP is used. This prevents clients from spoofing `X-Forwarded-For` to bypass the IP allowlist and per-IP rate limiting. Leaving it empty with the flag on is the legacy permissive behavior and should only be used when clients cannot reach Hookway directly.
 - `security.request_id_header`: optional request ID header name.
 - `security.redacted_header_denylist`: optional list of exact HTTP header names that are redacted in logs and in the published envelope. This augments automatic redaction of obvious secrets; it does not replace it.
-- `security.forwarded_header_allowlist`: optional list of HTTP header names. When non-empty, only these headers are logged and forwarded to the queue (fail-safe); every other header is dropped entirely. The denylist and built-in sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through. When empty, behavior is the legacy denylist filter (everything except denylisted/sensitive headers is forwarded).
+- `security.forwarded_header_allowlist`: optional list of HTTP header names. When non-empty, only these headers are **forwarded** to destinations (fail-safe); every other header is dropped entirely. The denylist and built-in sensitive rules still apply on top, so an allowlisted-but-sensitive header is redacted rather than passed through. When empty, behavior is the legacy denylist filter (everything except denylisted/sensitive headers is forwarded). Request **logs** use `logging.header_allowlist` instead; this list does not control what is logged.
 - `security.loop_protection`: leftover YAML. It is still parsed and validated, but **inbound hop rejection is not applied from this block**. Put a `loop_guard` node on each flow that should reject `X-Hookway-Hops`. Outbound webhook deliveries still stamp `X-Hookway-Hops` regardless. See [Loop protection](#loop-protection).
 
 ```yaml
@@ -65,7 +65,7 @@ security:
     - "Cookie"
     - "Paddle-Signature"
     - "X-Hub-Signature-256"
-  # Optional fail-safe: forward only these headers to consumers/logs.
+  # Optional fail-safe: forward only these headers to consumers.
   forwarded_header_allowlist:
     - "Content-Type"
     - "X-Request-ID"
@@ -1194,7 +1194,10 @@ Proxy-mode webhook destinations are replayable: capture persists the original ra
 
 Hookway emits structured `slog` JSON logs. Each log record carries a consistent set of field keys so log queries and alerts are stable across destinations.
 
-- `logging.level`: optional, one of `debug`, `info`, `warn`, `error`; default `info`. Controls the minimum severity written to stdout — e.g. set `debug` to see the startup verify/exists checks and retry-attempt lines called out below, which are otherwise suppressed at the default `info` level.
+- `logging.level`: optional, one of `debug`, `info`, `warn`, `error`; default `info`. Controls the minimum severity written to stdout — e.g. set `debug` to see the startup verify/exists checks and retry-attempt lines called out below, which are otherwise suppressed at the default `info` level. `HOOKWAY_LOG_LEVEL` overrides this at process start (env > `logging.level` > info). An invalid env or config value fails startup.
+- `logging.header_allowlist`: optional list of HTTP header names that may appear in structured request logs. **Empty (the default) logs no request headers** (fail-closed). Allowed names are still redacted by the built-in sensitive-header heuristics and `security.redacted_header_denylist`. Proxy forwarding uses `security.forwarded_header_allowlist` and is independent of this list.
+
+`hookway_config_load_failures_total` still increments on a failed load, but **fatal pre-listener failures are primarily visible via structured logs and a supervisor restart**. The process usually exits before Prometheus can scrape that counter.
 
 ### Canonical log fields
 

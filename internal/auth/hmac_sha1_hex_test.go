@@ -2,7 +2,7 @@ package auth
 
 import (
 	"crypto/hmac"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- HMAC-SHA1 fixture matching configured scheme
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"

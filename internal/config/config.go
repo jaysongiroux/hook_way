@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -140,10 +141,16 @@ func (m MetricsConfig) RuntimeMetricsEnabled() bool {
 // LoggingConfig configures the process-wide structured logger.
 type LoggingConfig struct {
 	// Level is the minimum severity logged: "debug", "info", "warn", or
-	// "error". Empty defaults to "info". See internal/logging.ParseLevel for
-	// the values accepted at runtime; ValidationIssues enforces the same enum
-	// at config-load time.
+	// "error". Empty defaults to "info". HOOKWAY_LOG_LEVEL overrides this at
+	// process start. See internal/logging.ParseLevel for the values accepted
+	// at runtime; ValidationIssues enforces the same enum at config-load time.
 	Level string `yaml:"level"`
+	// HeaderAllowlist is the request headers that may appear in structured
+	// request logs. Empty (the default) logs no request headers. Allowed
+	// names are still redacted by the built-in sensitive-header heuristics
+	// and security.redacted_header_denylist. Proxy forwarding uses
+	// security.forwarded_header_allowlist instead.
+	HeaderAllowlist []string `yaml:"header_allowlist"`
 }
 
 // ReplayConfig configures the optional webhook-replay store: a Postgres-backed
@@ -236,7 +243,7 @@ func (s Service) Load(path string) (Config, error) {
 			Field: "config", Message: "path is required", Suggestion: "set --config ./config.yaml or HOOKWAY_CONFIG",
 		}}}
 	}
-	rawBytes, err := os.ReadFile(path)
+	rawBytes, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Config{}, err
 	}

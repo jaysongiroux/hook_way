@@ -3,6 +3,7 @@ package secretref
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,30 +13,27 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
 
 	"github.com/jasongiroux/hookway/internal/awsconf"
+	"github.com/jasongiroux/hookway/internal/testenv"
 )
 
 // TestAWSSecretsManagerResolveAndRefresh exercises D7 against LocalStack:
 // resolve a secret, rotate it, and pick up the new value on refresh without
 // restarting. Named TestAWS* so it runs under make aws-integration-test.
 func TestAWSSecretsManagerResolveAndRefresh(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in -short mode")
-	}
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	var container testcontainers.Container
 	func() {
 		defer func() {
 			if rec := recover(); rec != nil {
-				t.Skipf("localstack unavailable: %v", rec)
+				testenv.RequireContainer(t, fmt.Errorf("%v", rec), "localstack")
 			}
 		}()
 		var err error
 		container, err = localstack.Run(ctx, "localstack/localstack:3.4",
 			testcontainers.WithEnv(map[string]string{"SERVICES": "secretsmanager"}),
 		)
-		if err != nil {
-			t.Skipf("localstack unavailable: %v", err)
-		}
+		testenv.RequireContainer(t, err, "localstack")
 	}()
 	if t.Skipped() {
 		return

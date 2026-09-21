@@ -9,8 +9,8 @@ import (
 const SchemeExact = "exact"
 
 type exactVerifier struct {
-	secret        string
-	removeBearer  bool
+	secret       string
+	removeBearer bool
 }
 
 func newExactVerifier(secret string, removeBearer bool) exactVerifier {

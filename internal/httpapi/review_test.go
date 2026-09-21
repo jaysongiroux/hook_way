@@ -25,7 +25,7 @@ func TestReviewCodeBodyReachesPublisher(t *testing.T) {
 	capture := &fakeReplayCapturer{}
 	srv.SetReplayCapturer(capture)
 	body := `{"original":true}`
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", strings.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC([]byte(body)))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -54,7 +54,7 @@ func TestReviewBrokenFlowIsNotReady(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	srv.readiness.probeOnce(context.Background())
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	srv.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil))
 	if rec.Code != 503 || !strings.Contains(rec.Body.String(), "flow_compile") {
 		t.Fatalf("broken flow ready: %d %s", rec.Code, rec.Body.String())
 	}
@@ -87,7 +87,7 @@ func TestReviewCustomAuthCredentialsStayOutOfCodeAndCapture(t *testing.T) {
 			if source == "query" {
 				path += "?X-Partner=credential"
 			}
-			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"ok":true}`))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{"ok":true}`))
 			if source == "header" {
 				req.Header.Set("X-Partner", "credential")
 			}
@@ -119,16 +119,16 @@ func TestReviewDynamicTargetWorksThroughRealFactory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 	srv, err := NewFlowServer(cfg, pub, slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	capture := &fakeReplayCapturer{}
 	srv.SetReplayCapturer(capture)
 	body := `{"ok":true}`
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/tenant", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/tenant", strings.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC([]byte(body)))
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

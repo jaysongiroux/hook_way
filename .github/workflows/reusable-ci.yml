@@ -36,7 +36,7 @@ jobs:
           cache: true
 
       - name: Unit tests
-        run: make test
+        run: make unit
 
       - name: Invariant conformance
         run: make conformance
@@ -84,7 +84,7 @@ jobs:
           cache: true
 
       - name: Race tests
-        run: make test-race
+        run: make race
 
   web:
     name: Web
@@ -201,6 +201,8 @@ jobs:
           cache: true
 
       - name: ${{ matrix.name }} integration tests
+        env:
+          HOOKWAY_REQUIRE_INTEGRATION: "1"
         run: make ${{ matrix.target }}
 
   image:
@@ -251,6 +253,107 @@ jobs:
           path: trivy-results.sarif
           if-no-files-found: error
 
+  golangci:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.13.2
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Vulnerability check
+        run: make govulncheck
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Coverage floor
+        run: make coverage
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+          if-no-files-found: error
+
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt and whitespace
+        run: make fmt-check diff-check
+
+  observability:
+    name: Observability
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Dashboard tests and alert rules
+        run: make observability-check
+
   # Single required check for branch protection. Adding jobs above does not
   # require updating the protected-branch settings if this name stays stable.
   success:
@@ -264,6 +367,11 @@ jobs:
       - web-e2e
       - integration
       - image
+      - golangci
+      - govulncheck
+      - coverage
+      - formatting
+      - observability
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed

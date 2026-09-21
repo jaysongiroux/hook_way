@@ -54,7 +54,7 @@ replay:
 	if r.CleanupInterval != time.Hour {
 		t.Fatalf("CleanupInterval = %v, want %v", r.CleanupInterval, time.Hour)
 	}
-	if r.Postgres.URL != "postgres://u:p@localhost:5432/hookway_replay?sslmode=disable" {
+	if r.Postgres.URL != "postgres://u:p@localhost:5432/hookway_replay?sslmode=disable" { // #nosec G101 -- test fixture
 		t.Fatalf("Postgres.URL = %q", r.Postgres.URL)
 	}
 }

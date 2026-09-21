@@ -27,8 +27,14 @@ func mustReplayGuard(t *testing.T, body string) *replayGuardNode {
 func TestReplayGuardKeyIsStableAcrossRunAndCompensate(t *testing.T) {
 	n := mustReplayGuard(t, "ttl: 1m\nmax_entries: 100\n")
 	v := graph.Verified{Raw: graph.RawRequest{Body: []byte(`{"id":1}`)}}
-	runKey := n.reservationKey(v)
-	compKey := n.reservationKey(v)
+	runKey, err := n.reservationKey(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compKey, err := n.reservationKey(v)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if runKey == "" || runKey != compKey {
 		t.Fatalf("keys differ: run=%q compensate=%q", runKey, compKey)
 	}

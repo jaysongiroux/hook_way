@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -65,7 +68,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runEditor(args[1:], stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "version" {
-		fmt.Fprintf(stdout, "hookway %s (%s)\n", version, commit)
+		writef(stdout, "hookway %s (%s)\n", version, commit)
 		return 0
 	}
 	return runServe(args, stdout, stderr)
@@ -95,13 +98,13 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 	}
 	path, err := config.ResolvePath(*configFlag)
 	if err != nil {
-		fmt.Fprintf(stderr, "config path required: %v\n", err)
+		writef(stderr, "config path required: %v\n", err)
 		return 1
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
-		fmt.Fprintf(stderr, "read config: %v\n", err)
+		writef(stderr, "read config: %v\n", err)
 		return 1
 	}
 	if *jsonOut {
@@ -109,7 +112,7 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(resp); err != nil {
-			fmt.Fprintf(stderr, "encode json: %v\n", err)
+			writef(stderr, "encode json: %v\n", err)
 			return 1
 		}
 		for _, iss := range resp.Issues {
@@ -145,14 +148,14 @@ func printValidateResult(issues []config.ValidationIssue, strict bool, path stri
 	}
 	if blocking {
 		if len(issues) > 0 {
-			fmt.Fprintln(stderr, config.ConfigValidationError{Issues: issues})
+			writeln(stderr, config.ConfigValidationError{Issues: issues})
 		}
 		return 1
 	}
 	for _, issue := range issues {
-		fmt.Fprintf(stderr, "warning: %s: %s\n", issue.Field, issue.Message)
+		writef(stderr, "warning: %s: %s\n", issue.Field, issue.Message)
 	}
-	fmt.Fprintf(stdout, "config valid: %s\n", path)
+	writef(stdout, "config valid: %s\n", path)
 	return 0
 }
 
@@ -182,27 +185,27 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 	if *nodes {
 		data, err := json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
 		if err != nil {
-			fmt.Fprintf(stderr, "generate node schema: %v\n", err)
+			writef(stderr, "generate node schema: %v\n", err)
 			return 1
 		}
-		fmt.Fprintln(stdout, string(data))
+		writeln(stdout, string(data))
 		return 0
 	}
 	if *destinations {
 		data, err := json.MarshalIndent(config.DestinationTypeSchemas(), "", "  ")
 		if err != nil {
-			fmt.Fprintf(stderr, "generate destination schema: %v\n", err)
+			writef(stderr, "generate destination schema: %v\n", err)
 			return 1
 		}
-		fmt.Fprintln(stdout, string(data))
+		writeln(stdout, string(data))
 		return 0
 	}
 	data, err := configapi.Schema()
 	if err != nil {
-		fmt.Fprintf(stderr, "generate schema: %v\n", err)
+		writef(stderr, "generate schema: %v\n", err)
 		return 1
 	}
-	fmt.Fprintln(stdout, string(data))
+	writeln(stdout, string(data))
 	return 0
 }
 
@@ -210,9 +213,12 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 // available (neither --config nor HOOKWAY_CONFIG), it returns "" so the editor
 // runs unauthenticated. A provided-but-unloadable config is a hard error.
 func editorAPIKey(configFlag string) (string, error) {
+	if strings.TrimSpace(configFlag) == "" && os.Getenv("HOOKWAY_CONFIG") == "" {
+		return "", nil
+	}
 	path, err := config.ResolvePath(configFlag)
 	if err != nil {
-		return "", nil // no config ⇒ unauthenticated (standalone editor)
+		return "", err
 	}
 	cfg, issues := flowconfig.Load(path)
 	if blocking := blockingValidationIssues(issues); len(blocking) > 0 {
@@ -232,7 +238,7 @@ func runEditor(args []string, stdout, stderr io.Writer) int {
 	}
 	apiKey, err := editorAPIKey(*configFlag)
 	if err != nil {
-		fmt.Fprintf(stderr, "load config for editor auth: %v\n", err)
+		writef(stderr, "load config for editor auth: %v\n", err)
 		return 1
 	}
 	authState := "disabled"
@@ -240,12 +246,12 @@ func runEditor(args []string, stdout, stderr io.Writer) int {
 		authState = "enabled"
 	}
 	srv := editor.NewServer(*addr, apiKey)
-	fmt.Fprintf(stdout, "hookway config API listening on %s (GET /schema, POST /validate); authentication: %s\n", *addr, authState)
+	writef(stdout, "hookway config API listening on %s (GET /schema, POST /validate); authentication: %s\n", *addr, authState)
 	// The bundle serves the project overview at / and the config builder at
 	// /builder, so point at the builder rather than leaving it to be found.
-	fmt.Fprintf(stdout, "overview: http://localhost%s/  builder: http://localhost%s/builder\n", hostPort(*addr), hostPort(*addr))
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintf(stderr, "editor server stopped: %v\n", err)
+	writef(stdout, "overview: http://localhost%s/  builder: http://localhost%s/builder\n", hostPort(*addr), hostPort(*addr))
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		writef(stderr, "editor server stopped: %v\n", err)
 		return 1
 	}
 	return 0
@@ -270,18 +276,24 @@ func runHealthcheck(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	client := http.Client{Timeout: *timeout}
-	resp, err := client.Get(*url)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, *url, nil)
 	if err != nil {
-		fmt.Fprintf(stderr, "healthcheck failed: %v\n", err)
+		writef(stderr, "healthcheck failed: %v\n", err)
 		return 1
 	}
-	defer resp.Body.Close()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writef(stderr, "healthcheck failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fmt.Fprintf(stderr, "healthcheck failed: status %d\n", resp.StatusCode)
+		writef(stderr, "healthcheck failed: status %d\n", resp.StatusCode)
 		return 1
 	}
-	fmt.Fprintln(stdout, "healthy")
+	writeln(stdout, "healthy")
 	return 0
 }
 
@@ -295,7 +307,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *versionFlag {
-		fmt.Fprintf(stdout, "hookway %s (%s)\n", version, commit)
+		writef(stdout, "hookway %s (%s)\n", version, commit)
 		return 0
 	}
 
@@ -328,13 +340,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		logger.Warn("config lint", "field", issue.Field, "message", issue.Message)
 	}
 	cfg := flowCfg.ServingConfig()
-	level, err := hooklogging.ParseLevel(cfg.Logging.Level)
+	level, err := resolveLogLevel(cfg.Logging.Level)
 	if err != nil {
-		// Unreachable in practice: cfg.ValidationIssues() already rejected an
-		// unsupported logging.level before Load returned successfully. Kept as
-		// a defensive check so a future validation/parsing mismatch fails
-		// loudly instead of silently running at the wrong level.
-		logger.Error("invalid logging.level", "error", err)
+		logger.Error("invalid log level", "error", err)
 		return 1
 	}
 	levelVar.Set(level)
@@ -351,147 +359,105 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		logger.Error("message queue connection failed", "error", err)
 		return 1
 	}
-	defer publisher.Close()
 
 	flowApp, err := httpapi.NewFlowServer(flowCfg, publisher, logger, appMetrics)
 	if err != nil {
 		logger.Error("flow server failed", "error", err)
+		_ = publisher.Close()
 		return 1
 	}
 	app := flowApp
-	defer app.Close()
 
-	// The replay store's connection is opened -- and its defer registered --
-	// before every other background goroutine below (the readiness prober,
-	// the main/metrics listeners, the replay listener, and the cleanup loop).
-	// defer runs LIFO, so registering replayStore.Close() first means it
-	// fires LAST on any return path: every one of the store's users (the
-	// replay listener and the cleanup loop, registered further down) has
-	// already stopped -- or hit its own bounded wait -- before the pool
-	// closes underneath them.
 	var replayStore *replaystore.Store
 	if cfg.Replay.Enabled {
 		replayStore, err = replaystore.New(context.Background(), cfg.Replay, logger)
 		if err != nil {
 			logger.Error("replay store connection failed", "error", err)
+			_ = app.Close()
+			_ = publisher.Close()
 			return 1
 		}
-		defer replayStore.Close()
 		app.SetReplayCapturer(replayStore)
 		logger.Info("replay capture enabled")
 	}
 
-	// Start the background readiness prober before serving traffic. It caches
-	// destination readiness so /ready and /readyz never trigger a live broker
-	// fan-out per request; cancelling probeCtx on shutdown stops the goroutine.
-	//
-	// The stop-and-wait defer below is registered after publisher.Close()'s
-	// defer, so on every return path (graceful shutdown or an early error
-	// return) it runs first: the prober goroutine has exited -- or the
-	// bounded wait has elapsed -- before publisher.Close() runs underneath
-	// it, so a well-behaved in-flight probe never races Close().
 	probeCtx, cancelProbe := context.WithCancel(context.Background())
 	proberDone := app.StartReadinessProbe(probeCtx)
-	defer func() {
+	stopProbe := func() {
 		cancelProbe()
-		// A well-behaved probe always returns within readiness_timeout (its
-		// per-probe context deadline); the small margin gives the goroutine
-		// time to observe ctx.Done() and exit. The wait stays bounded -- not
-		// unbounded -- so a destination client that ignores context
-		// cancellation forever cannot hang shutdown.
 		wait := cfg.Server.ReadinessTimeout + 2*time.Second
 		select {
 		case <-proberDone:
 		case <-time.After(wait):
 			logger.Warn("readiness prober did not stop within timeout")
 		}
-	}()
+	}
 
 	srv := app.HTTPServer()
-	// Buffered for 3: the main listener, the (optional) dedicated metrics
-	// listener, and the (optional) replay API listener each get their own
-	// slot, so no goroutine can block forever writing an error nobody will
-	// read after the process is already on its way out via one of the
-	// others.
 	errs := make(chan error, 3)
 	go func() {
 		logger.Info("hookway listening", "addr", cfg.Server.Addr)
-		errs <- srv.ListenAndServe()
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("server stopped", "error", err)
+			errs <- err
+		}
 	}()
 
 	metricsSrv := app.MetricsServer()
 	if metricsSrv != nil {
 		go func() {
 			logger.Info("hookway metrics listening", "addr", metricsSrv.Addr, "path", cfg.Metrics.Path)
-			// http.ErrServerClosed only comes back from a deliberate
-			// Shutdown/Close (the deferred httpapi.Shutdown(ctx, metricsSrv)
-			// below, which only runs once runServe is already on its way out).
-			// That is a clean stop, not a failure, so it must NOT be pushed
-			// onto errs -- doing so would race a spurious "fatal" error right
-			// after the real shutdown signal was already handled. Any
-			// other error (most commonly: the metrics address is already in
-			// use) is a genuine startup/runtime failure and is routed onto the
-			// same errs channel the main listener uses, so it drives the same
-			// shutdown-and-exit path as a failed main listener.
-			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Error("metrics server stopped", "error", err)
 				errs <- err
 			}
 		}()
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			_ = httpapi.Shutdown(ctx, metricsSrv)
-		}()
 	}
 
-	// The replay listener and cleanup loop are the replay store's only
-	// users, and their stop-defers are registered here -- AFTER the metrics
-	// server's defer above and (critically) AFTER replayStore.Close()'s
-	// defer registered earlier, right after app was constructed. defer runs
-	// LIFO, so on any return path these two defers run FIRST: the cleanup
-	// goroutine is cancelled and awaited, and the replay listener is shut
-	// down, before replayStore.Close() (registered earlier, so it runs
-	// later) closes the pool out from under them. The main webhook srv is
-	// already Shutdown in the mainline below before any deferred function
-	// runs at all, so in-flight captures triggered by webhook handling drain
-	// first.
+	var replaySrv *http.Server
+	var stopCleanup func()
 	if replayStore != nil {
 		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
 		cleanupDone := replayStore.StartCleanup(cleanupCtx, cfg.Replay.TTL, cfg.Replay.MaxEvents, cfg.Replay.CleanupInterval, appMetrics)
-		defer func() {
+		stopCleanup = func() {
 			cancelCleanup()
 			select {
 			case <-cleanupDone:
 			case <-time.After(replayCleanupShutdownWait):
-				// Bounded: a wedged sweep can't hang shutdown.
 				logger.Warn("replay cleanup did not stop within timeout")
 			}
-		}()
+		}
 
-		replaySrv := replayapi.NewServer(cfg.Replay.Addr, cfg.Security.APIKey, replayStore, publisher, nil, appMetrics, logger)
+		replaySrv = replayapi.NewServer(cfg.Replay.Addr, cfg.Security.APIKey, replayStore, publisher, nil, appMetrics, logger)
 		go func() {
 			logger.Info("hookway replay API listening", "addr", cfg.Replay.Addr)
-			if err := replaySrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := replaySrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Error("replay API server stopped", "error", err)
 				errs <- err
 			}
-		}()
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			_ = httpapi.Shutdown(ctx, replaySrv)
 		}()
 	}
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	closers := []io.Closer{app, publisher}
+	if replayStore != nil {
+		closers = []io.Closer{replayStore, app, publisher}
+	}
+	res := servingResources{
+		logger:  logger,
+		signals: signals,
+		servers: []*http.Server{srv, metricsSrv, replaySrv},
+		after:   []func(){stopCleanup, stopProbe},
+		closers: closers,
+	}
+
+	var waitErr error
 	select {
 	case sig := <-signals:
 		logger.Info("shutdown signal received", "signal", sig.String())
-	case err := <-errs:
-		logger.Error("server stopped", "error", err)
-		return 1
+	case waitErr = <-errs:
+		logger.Error("server stopped", "error", waitErr)
 	}
 	timeout := cfg.Server.ShutdownTimeout
 	if timeout <= 0 {
@@ -499,9 +465,24 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	if err := httpapi.Shutdown(ctx, srv); err != nil {
+	if err := errors.Join(waitErr, res.drain(ctx)); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 		return 1
 	}
 	return 0
+}
+
+func resolveLogLevel(cfgLevel string) (slog.Level, error) {
+	if env := strings.TrimSpace(os.Getenv("HOOKWAY_LOG_LEVEL")); env != "" {
+		return hooklogging.ParseLevel(env)
+	}
+	return hooklogging.ParseLevel(cfgLevel)
+}
+
+func writef(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
+}
+
+func writeln(w io.Writer, args ...any) {
+	_, _ = fmt.Fprintln(w, args...)
 }

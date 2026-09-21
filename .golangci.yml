@@ -1,0 +1,19 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - errorlint
+    - nilerr
+    - bodyclose
+    - noctx
+    - ineffassign
+    - unused
+    - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

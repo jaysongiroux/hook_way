@@ -22,9 +22,16 @@ type lookupNode struct {
 	key     vars.Template
 }
 
-func newLookupNode(id string, opts LookupOptions, resolve LookupFunc) graph.Node {
-	tpl, _ := vars.Parse(opts.Key)
-	return &lookupNode{id: id, opts: opts, resolve: resolve, key: tpl}
+func newLookupNode(id string, opts LookupOptions, resolve LookupFunc) (graph.Node, error) {
+	var tpl vars.Template
+	if !isBodyPathKey(opts.Key) {
+		parsed, err := vars.Parse(opts.Key)
+		if err != nil {
+			return nil, err
+		}
+		tpl = parsed
+	}
+	return &lookupNode{id: id, opts: opts, resolve: resolve, key: tpl}, nil
 }
 
 func (n *lookupNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
@@ -71,20 +78,22 @@ func (n *lookupNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 }
 
 func (n *lookupNode) lookupKey(env graph.Envelope) (string, error) {
+	if isBodyPathKey(n.opts.Key) {
+		path := strings.TrimSuffix(strings.TrimPrefix(n.opts.Key, "{body."), "}")
+		if v, ok := dotted(env.Body, path); ok {
+			return fmt.Sprint(v), nil
+		}
+		return "", fmt.Errorf("lookup key %q is unbound", n.opts.Key)
+	}
 	values := map[string]string{}
 	for k, v := range env.Vars {
 		values[k] = v
 	}
 	if rendered, err := n.key.Render(values); err == nil {
 		return rendered, nil
+	} else {
+		return "", err
 	}
-	if strings.HasPrefix(n.opts.Key, "{body.") && strings.HasSuffix(n.opts.Key, "}") {
-		path := strings.TrimSuffix(strings.TrimPrefix(n.opts.Key, "{body."), "}")
-		if v, ok := dotted(env.Body, path); ok {
-			return fmt.Sprint(v), nil
-		}
-	}
-	return "", fmt.Errorf("lookup key %q is unbound", n.opts.Key)
 }
 
 func dotted(body any, path string) (any, bool) {

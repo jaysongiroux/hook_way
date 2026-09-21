@@ -327,7 +327,7 @@ func (d *webhookDelivery) attempt(ctx context.Context, msg Message) (outcome str
 	if err != nil {
 		return "timeout", true, 0 // network error / timeout -> retry
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return "2xx", false, 0

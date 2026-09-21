@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"log/slog"
 	"mime/multipart"
@@ -115,7 +116,7 @@ func TestMultipartSplitFansOutRawFileToS3AndInfoElsewhere(t *testing.T) {
 
 	fileBytes := []byte("%PDF-1.4 fake-bytes")
 	ct, body := buildMultipartUploadWithType(t, "acct_42", "report.pdf", "application/pdf", fileBytes)
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/upload-split", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/upload-split", bytes.NewReader(body))
 	req.Header.Set("Content-Type", ct)
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
@@ -209,7 +210,7 @@ flows:
 	t.Cleanup(func() { _ = srv.Close() })
 
 	body := []byte("raw-pdf-bytes")
-	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/upload", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/pdf")
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()
@@ -241,7 +242,7 @@ func TestObjectPayloadRejectsInvalidFileContentTypeAsBadRequest(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 
 	contentType, body := buildMultipartUploadWithType(t, "acct_42", "report.pdf", "not a media type", []byte("x"))
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/upload-split", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/upload-split", bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	rec := httptest.NewRecorder()

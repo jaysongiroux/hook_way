@@ -20,7 +20,7 @@ type replayGuardNode struct {
 	key   vars.Template
 }
 
-func newReplayGuard(id string, opts ReplayGuardOptions) graph.Node {
+func newReplayGuard(id string, opts ReplayGuardOptions) (graph.Node, error) {
 	ttl := 5 * time.Minute
 	if opts.TTL != "" {
 		if d, err := time.ParseDuration(opts.TTL); err == nil && d > 0 {
@@ -28,20 +28,25 @@ func newReplayGuard(id string, opts ReplayGuardOptions) graph.Node {
 		}
 	}
 	maxEntries := opts.MaxEntries
-	tpl, _ := vars.Parse(opts.Key)
+	tpl, err := vars.Parse(opts.Key)
+	if err != nil {
+		return nil, err
+	}
 	return &replayGuardNode{
 		id: id, opts: opts, cache: replay.NewCache(ttl, maxEntries), key: tpl,
-	}
+	}, nil
 }
 
-func (n *replayGuardNode) reservationKey(v graph.Verified) string {
-	if n.opts.Key != "" {
-		if rendered, err := n.key.Render(headerVars(v.Raw.Head)); err == nil {
-			return rendered
-		}
+func (n *replayGuardNode) reservationKey(v graph.Verified) (string, error) {
+	if n.opts.Key == "" {
+		sum := sha256.Sum256(v.Raw.Body)
+		return hex.EncodeToString(sum[:]), nil
 	}
-	sum := sha256.Sum256(v.Raw.Body)
-	return hex.EncodeToString(sum[:])
+	rendered, err := n.key.Render(headerVars(v.Raw.Head))
+	if err != nil {
+		return "", err
+	}
+	return rendered, nil
 }
 
 func headerVars(head graph.RequestHead) map[string]string {
@@ -66,7 +71,10 @@ func (n *replayGuardNode) Run(_ context.Context, in graph.Payload) (graph.Payloa
 			Err: fmt.Errorf("replay_guard %q: expected Verified, got %T", n.id, in),
 		}
 	}
-	key := n.reservationKey(v)
+	key, err := n.reservationKey(v)
+	if err != nil {
+		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+	}
 	if !n.cache.Accept(n.id, key, time.Now()) {
 		return nil, graph.NodeError{
 			NodeID: n.id, Status: http.StatusConflict,
@@ -81,6 +89,10 @@ func (n *replayGuardNode) Compensate(_ context.Context, in graph.Payload, _ erro
 	if !ok {
 		return fmt.Errorf("replay_guard: compensate got %T, want graph.Verified", in)
 	}
-	n.cache.Release(n.id, n.reservationKey(v))
+	key, err := n.reservationKey(v)
+	if err != nil {
+		return err
+	}
+	n.cache.Release(n.id, key)
 	return nil
 }

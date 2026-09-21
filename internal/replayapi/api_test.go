@@ -205,9 +205,9 @@ func doReq(t *testing.T, h http.Handler, method, path, key string, body any) *ht
 	var r *http.Request
 	if body != nil {
 		b, _ := json.Marshal(body)
-		r = httptest.NewRequest(method, path, bytes.NewReader(b))
+		r = httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(b))
 	} else {
-		r = httptest.NewRequest(method, path, nil)
+		r = httptest.NewRequestWithContext(context.Background(), method, path, nil)
 	}
 	if key != "" {
 		r.Header.Set("Authorization", "Bearer "+key)

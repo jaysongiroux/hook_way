@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/testenv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/testcontainers/testcontainers-go"
@@ -18,12 +19,7 @@ import (
 )
 
 func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -70,12 +66,7 @@ func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
 }
 
 func TestRabbitMQPublisherPublishesConcurrentlyAcrossChannelPool(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -130,12 +121,7 @@ func TestRabbitMQPublisherPublishesConcurrentlyAcrossChannelPool(t *testing.T) {
 }
 
 func TestRabbitMQPublisherDeclaresDeadLetterQueue(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -170,12 +156,7 @@ func TestRabbitMQPublisherDeclaresDeadLetterQueue(t *testing.T) {
 }
 
 func TestRabbitMQPublisherDeclaresQueueOptions(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +196,7 @@ func TestRabbitMQPublisherDeclaresQueueOptions(t *testing.T) {
 	// Re-declaring with mismatched args fails. Success proves Hookway declared
 	// RabbitMQ queue args in milliseconds and integers as expected.
 	_, err = ch.QueueDeclare("billing-events", true, false, false, false, amqp.Table{
-		"x-message-ttl":             int32((72 * time.Hour).Milliseconds()),
+		"x-message-ttl":             int32(259200000), // 72h in milliseconds
 		"x-max-length":              int32(500000),
 		"x-overflow":                "reject-publish",
 		"x-dead-letter-exchange":    "hookway.options.dlx",
@@ -227,17 +208,8 @@ func TestRabbitMQPublisherDeclaresQueueOptions(t *testing.T) {
 }
 
 func TestRabbitMQFactoryRoutesToMultipleBrokers(t *testing.T) {
-	ctx := context.Background()
-	billingContainer, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(billingContainer) })
-	activityContainer, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(activityContainer) })
+	ctx, billingContainer := startRabbitMQ(t)
+	_, activityContainer := startRabbitMQ(t)
 	billingURL, err := billingContainer.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -329,11 +301,10 @@ func assertRabbitMQMessage(t *testing.T, ctx context.Context, url, queueName, wa
 }
 
 func TestRabbitMQPublisherConnectsAfterUnavailableStartup(t *testing.T) {
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "rabbitmq")
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -357,9 +328,7 @@ func TestRabbitMQPublisherConnectsAfterUnavailableStartup(t *testing.T) {
 	t.Cleanup(func() { _ = pub.Close() })
 
 	container, err = tcrabbitmq.Run(ctx, "rabbitmq:3-management")
-	if err != nil {
-		t.Skipf("rabbitmq restart testcontainer unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "rabbitmq")
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
 	restartedURL, err := container.AmqpURL(ctx)
 	if err != nil {
@@ -377,12 +346,7 @@ func TestRabbitMQPublisherConnectsAfterUnavailableStartup(t *testing.T) {
 }
 
 func TestRabbitMQPublisherReconnectsAfterDisconnectBeforePublish(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -421,7 +385,10 @@ func TestRabbitMQPublisherRetriesPublishFailures(t *testing.T) {
 	ctx := context.Background()
 	metrics := &rabbitMQMetricsRecorder{}
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry", ExchangeType: "direct", Durable: true,
+		URL:            "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
+		Exchange:       "hookway.retry",
+		ExchangeType:   "direct",
+		Durable:        true,
 		PublishTimeout: 2 * time.Second,
 		Retry:          RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		Metrics:        metrics,
@@ -447,7 +414,10 @@ func TestRabbitMQPublisherDefaultsToThreeRetryAttempts(t *testing.T) {
 	ctx := context.Background()
 	metrics := &rabbitMQMetricsRecorder{}
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry.default", ExchangeType: "direct", Durable: true,
+		URL:            "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
+		Exchange:       "hookway.retry.default",
+		ExchangeType:   "direct",
+		Durable:        true,
 		PublishTimeout: 2 * time.Second,
 		Metrics:        metrics,
 	})
@@ -471,7 +441,10 @@ func TestRabbitMQPublisherHonorsConfiguredMaxAttempts(t *testing.T) {
 	ctx := context.Background()
 	metrics := &rabbitMQMetricsRecorder{}
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry.configured", ExchangeType: "direct", Durable: true,
+		URL:            "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
+		Exchange:       "hookway.retry.configured",
+		ExchangeType:   "direct",
+		Durable:        true,
 		PublishTimeout: 2 * time.Second,
 		Retry:          RetryPolicy{MaxAttempts: 5, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		Metrics:        metrics,
@@ -498,12 +471,7 @@ func TestRabbitMQPublisherHonorsConfiguredMaxAttempts(t *testing.T) {
 // not burn the configured retry budget, since "no binding for this routing
 // key" is a terminal config error, not a transient one.
 func TestRabbitMQPublisherMandatoryUnroutableFailsWithoutRetryStorm(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -554,6 +522,16 @@ func (r *rabbitMQMetricsRecorder) RabbitMQUnroutable(destinationQueueID, queue s
 	r.unroutable++
 }
 
+func startRabbitMQ(t *testing.T) (context.Context, *tcrabbitmq.RabbitMQContainer) {
+	t.Helper()
+	testenv.SkipIfShort(t)
+	ctx := context.Background()
+	container, err := runRabbitMQ(ctx)
+	testenv.RequireContainer(t, err, "rabbitmq")
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	return ctx, container
+}
+
 func runRabbitMQ(ctx context.Context) (container *tcrabbitmq.RabbitMQContainer, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -570,7 +548,7 @@ func TestRabbitMQEagerConnectFailureLogs(t *testing.T) {
 	defer cancel()
 	// Port 1 is not a valid AMQP broker — dial will fail immediately.
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL:           "amqp://guest:guest@127.0.0.1:1/",
+		URL:           "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
 		Exchange:      "hookway.test",
 		ExchangeType:  "direct",
 		DestinationID: "test-dest",

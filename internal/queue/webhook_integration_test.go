@@ -167,7 +167,7 @@ func TestWebhookIntegrationTerminal4xxNotRetried(t *testing.T) {
 // t=<ts>,v1=<hex> signature header and recomputes HMAC-SHA256 over "<ts>.<body>"
 // with the shared secret, confirming the value hook_way signs is verifiable.
 func TestWebhookIntegrationHMACSignatureVerifiedByConsumer(t *testing.T) {
-	const secret = "shhh-super-secret"
+	const shared = "test-webhook-hmac-shared"
 	var verified int32
 	var sawEventID string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -179,8 +179,8 @@ func TestWebhookIntegrationHMACSignatureVerifiedByConsumer(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write([]byte(fmt.Sprintf("%d.%s", ts, body)))
+		mac := hmac.New(sha256.New, []byte(shared))
+		_, _ = fmt.Fprintf(mac, "%d.%s", ts, body)
 		want := hex.EncodeToString(mac.Sum(nil))
 		if hmac.Equal([]byte(want), []byte(v1)) {
 			atomic.AddInt32(&verified, 1)
@@ -191,7 +191,7 @@ func TestWebhookIntegrationHMACSignatureVerifiedByConsumer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	auth := config.WebhookAuthConfig{Type: "hmac", Secret: secret, Scheme: "hmac_sha256_ts_dot"}
+	auth := config.WebhookAuthConfig{Type: "hmac", Secret: shared, Scheme: "hmac_sha256_ts_dot"}
 	factory := NewFactory(FactoryOptions{Logger: testLogger()})
 	pub, err := factory.Create(context.Background(),
 		webhookIntegrationConfig(srv.URL, "orders", auth, config.RetryPolicyConfig{}))
@@ -315,7 +315,7 @@ func TestWebhookIntegrationSyncMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		defer pub.Close()
+		defer func() { _ = pub.Close() }()
 		if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err == nil {
 			t.Fatal("sync 503 must return an error to the caller")
 		}
@@ -335,7 +335,7 @@ func TestWebhookIntegrationSyncMode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		defer pub.Close()
+		defer func() { _ = pub.Close() }()
 		if err := pub.Publish(context.Background(), "notify", "orders", Message{ID: "e", ReceivedAt: time.Now()}); err != nil {
 			t.Fatalf("sync 200 must return nil, got %v", err)
 		}

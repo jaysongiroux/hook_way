@@ -144,7 +144,7 @@ func newServer(t *testing.T, src string, pub queue.Publisher) *httpapi.FlowServe
 }
 
 func signedRequest(method, path string, body []byte) *http.Request {
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", githubHMAC(body))
 	return req

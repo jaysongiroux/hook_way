@@ -58,7 +58,7 @@ func (n readBodyNode) Run(ctx context.Context, in graph.Payload) (graph.Payload,
 	if len(body) == 0 {
 		return nil, graph.NodeError{
 			NodeID: n.id, Status: http.StatusBadRequest,
-			Err:    fmt.Errorf("empty body"),
+			Err: fmt.Errorf("empty body"),
 		}
 	}
 	return graph.RawRequest{Head: head, Body: body}, nil

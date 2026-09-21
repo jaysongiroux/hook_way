@@ -55,7 +55,7 @@ func NextBackoff(delay, maxDelay time.Duration) time.Duration {
 
 // jitter multiplies d by a uniformly random factor in [0.8, 1.2) (+/-20%).
 func jitter(d time.Duration) time.Duration {
-	factor := 0.8 + rand.Float64()*0.4
+	factor := 0.8 + rand.Float64()*0.4 // #nosec G404 -- retry jitter, not a credential
 	return time.Duration(float64(d) * factor)
 }
 

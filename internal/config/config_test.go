@@ -21,7 +21,7 @@ func TestLoadExpandsEnvironmentAndValidates(t *testing.T) {
 	if cfg.Destinations["billing"].Type != "rabbitmq" {
 		t.Fatalf("message queue type = %q", cfg.Destinations["billing"].Type)
 	}
-	if cfg.Destinations["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" {
+	if cfg.Destinations["billing"].RabbitMQ.URL != "amqp://guest:guest@localhost:5672/" { // #nosec G101 -- expanded test fixture
 		t.Fatalf("RabbitMQ URL not expanded: %q", cfg.Destinations["billing"].RabbitMQ.URL)
 	}
 	destinations := cfg.Endpoints["paddle_billing"].Destinations
@@ -2173,9 +2173,29 @@ func TestValidationAcceptsEmptyOrValidLoggingLevel(t *testing.T) {
 	}
 }
 
+func TestValidationRejectsInvalidLoggingHeaderAllowlist(t *testing.T) {
+	cfg := Config{Logging: LoggingConfig{HeaderAllowlist: []string{"ok", ""}}}
+	if !hasIssue(cfg.ValidationIssues(), "logging.header_allowlist[1]") {
+		t.Fatalf("empty logging.header_allowlist entry not rejected: %#v", cfg.ValidationIssues())
+	}
+}
+
+func TestLoadParsesLoggingHeaderAllowlist(t *testing.T) {
+	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	t.Setenv("PADDLE_SECRET", "pdl_secret")
+	body := validYAML() + "logging:\n  header_allowlist:\n    - Content-Type\n    - X-Request-ID\n"
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Logging.HeaderAllowlist) != 2 || cfg.Logging.HeaderAllowlist[0] != "Content-Type" {
+		t.Fatalf("HeaderAllowlist = %#v", cfg.Logging.HeaderAllowlist)
+	}
+}
+
 func TestExpandEnvLenientExpandsKnownAndReportsMissing(t *testing.T) {
 	t.Setenv("KNOWN_VAR", "known-value")
-	os.Unsetenv("DEFINITELY_UNSET_VAR")
+	_ = os.Unsetenv("DEFINITELY_UNSET_VAR")
 
 	expanded, missing := ExpandEnvLenient("known=${KNOWN_VAR} missing=${DEFINITELY_UNSET_VAR}")
 

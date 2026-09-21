@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -29,6 +30,8 @@ type Server struct {
 	replay         ReplayCapturer
 }
 
+const readHeaderTimeout = 5 * time.Second
+
 func (s *Server) metricsHandler() http.Handler {
 	h := promhttp.HandlerFor(s.metrics.Registry(), promhttp.HandlerOpts{})
 	return apikey.Middleware(s.cfg.Security.APIKey, h)
@@ -43,11 +46,12 @@ func (s *Server) MetricsServer() *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle(s.cfg.Metrics.Path, s.metricsHandler())
 	return &http.Server{
-		Addr:         s.cfg.Metrics.Addr,
-		Handler:      mux,
-		ReadTimeout:  s.cfg.Server.ReadTimeout,
-		WriteTimeout: s.cfg.Server.WriteTimeout,
-		IdleTimeout:  s.cfg.Server.IdleTimeout,
+		Addr:              s.cfg.Metrics.Addr,
+		Handler:           mux,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       s.cfg.Server.ReadTimeout,
+		WriteTimeout:      s.cfg.Server.WriteTimeout,
+		IdleTimeout:       s.cfg.Server.IdleTimeout,
 	}
 }
 
@@ -82,14 +86,13 @@ func (s *Server) recoverHandlerPanic(rw *recoveringResponseWriter, requestID, tr
 	)
 	s.metrics.Panic("handler")
 	if !rw.wroteHeader {
-		writeJSON(rw, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		writeJSONLogged(s.logger, rw, http.StatusInternalServerError, map[string]string{"error": "internal error"}, requestID, traceID)
 	}
 }
 
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSONLogged(s.logger, w, http.StatusOK, map[string]string{"status": "ok"}, requestIDFromContext(r.Context()), traceIDFromContext(r.Context()))
 }
-
 
 func (s *Server) sourceIP(r *http.Request) string {
 	peer := peerHost(r.RemoteAddr)
@@ -167,14 +170,26 @@ func (s *Server) requestID(r *http.Request) string {
 func traceIDFromRequest(r *http.Request) string {
 	if traceparent := r.Header.Get("Traceparent"); traceparent != "" {
 		parts := strings.Split(traceparent, "-")
-		if len(parts) >= 2 && len(parts[1]) == 32 && isHex(parts[1]) {
+		if len(parts) >= 2 && isValidTraceID(parts[1]) {
 			return parts[1]
 		}
 	}
-	if id := strings.TrimSpace(r.Header.Get("X-Trace-ID")); id != "" {
+	if id := strings.TrimSpace(r.Header.Get("X-Trace-ID")); isValidTraceID(id) {
 		return id
 	}
 	return strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
+func isValidTraceID(id string) bool {
+	if len(id) != 32 || !isHex(id) {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] != '0' {
+			return true
+		}
+	}
+	return false
 }
 
 func traceparentFromRequest(r *http.Request, traceID string) string {
@@ -202,8 +217,11 @@ func isValidTraceparent(tp string) bool {
 }
 
 func isHex(s string) bool {
-	for _, r := range s {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
 			return false
 		}
 	}
@@ -251,10 +269,12 @@ func parseCIDRs(entries []string) []*net.IPNet {
 	return nets
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
+func writeJSONLogged(logger *slog.Logger, w http.ResponseWriter, status int, body any, requestID, traceID string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil && logger != nil {
+		logger.Error("response write failed", "error", err, "request_id", requestID, "trace_id", traceID)
+	}
 }
 
 func Shutdown(ctx context.Context, srv *http.Server) error {

@@ -17,12 +17,12 @@ type respondNode struct {
 	body vars.Template
 }
 
-func newRespondNode(id string, opts RespondOptions) graph.Node {
+func newRespondNode(id string, opts RespondOptions) (graph.Node, error) {
 	tpl, err := vars.Parse(opts.Body)
 	if err != nil {
-		tpl, _ = vars.Parse("")
+		return nil, err
 	}
-	return respondNode{id: id, opts: opts, body: tpl}
+	return respondNode{id: id, opts: opts, body: tpl}, nil
 }
 
 func (n respondNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
@@ -43,7 +43,7 @@ func (n respondNode) Run(_ context.Context, in graph.Payload) (graph.Payload, er
 		return graph.Terminal{Response: &graph.Response{
 			Status: env.Upstream.Status,
 			Header: filterPassthroughHeaders(env.Upstream.Header),
-			Body:   slices.Clone(env.Upstream.Body),
+			Body:   bodyForStatus(env.Upstream.Status, slices.Clone(env.Upstream.Body)),
 		}}, nil
 	}
 	body := n.opts.Body
@@ -61,8 +61,15 @@ func (n respondNode) Run(_ context.Context, in graph.Payload) (graph.Payload, er
 	return graph.Terminal{Response: &graph.Response{
 		Status: n.opts.Status,
 		Header: hdr,
-		Body:   []byte(body),
+		Body:   bodyForStatus(n.opts.Status, []byte(body)),
 	}}, nil
+}
+
+func bodyForStatus(status int, body []byte) []byte {
+	if status == http.StatusNoContent || status == http.StatusNotModified {
+		return nil
+	}
+	return body
 }
 
 func filterPassthroughHeaders(src http.Header) http.Header {

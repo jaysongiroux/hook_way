@@ -20,7 +20,7 @@ import (
 // readRepoFile reads a path relative to the repository root.
 func readRepoFile(t *testing.T, rel string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", rel))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", rel)))
 	if err != nil {
 		t.Fatalf("read %s: %v", rel, err)
 	}

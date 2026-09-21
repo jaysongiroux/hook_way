@@ -419,8 +419,6 @@ endpoints:
 	}
 }
 
-const lookupDest = "  sink:\n"
-
 func lookupVar(provider, block string) string {
 	return `    variables:
       env:

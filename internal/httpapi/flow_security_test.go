@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -64,7 +65,7 @@ func TestProxyRejectsEncodedPathTraversal(t *testing.T) {
 	for _, target := range attacks {
 		t.Run(target, func(t *testing.T) {
 			upstreamHits = nil
-			req := httptest.NewRequest(http.MethodGet, target, strings.NewReader("x"))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, strings.NewReader("x"))
 			req.Header.Set("X-Auth", "testtoken")
 			rec := httptest.NewRecorder()
 			srv.ServeHTTP(rec, req)
@@ -108,7 +109,7 @@ func TestProxyForwardsLegitimateNestedPaths(t *testing.T) {
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			gotPath = ""
-			req := httptest.NewRequest(http.MethodGet, tc.target, strings.NewReader("x"))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.target, strings.NewReader("x"))
 			req.Header.Set("X-Auth", "testtoken")
 			rec := httptest.NewRecorder()
 			srv.ServeHTTP(rec, req)
@@ -143,7 +144,7 @@ func TestProxyDoesNotForwardInboundAuthorization(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 
-	req := httptest.NewRequest(http.MethodGet, "/proxy/thing", strings.NewReader("x"))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/proxy/thing", strings.NewReader("x"))
 	req.Header.Set("X-Auth", "testtoken")
 	req.Header.Set("Authorization", "Bearer caller-credential")
 	req.Header.Set("Cookie", "session=caller")

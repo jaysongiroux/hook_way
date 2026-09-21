@@ -48,8 +48,8 @@ For `exact` (`header_exact`) flows, set `remove_bearer: true` on the `auth` node
 ## Tests
 
 ```bash
-make test
-make test-race
+make unit
+make race
 make integration-test
 make docker-build
 ```

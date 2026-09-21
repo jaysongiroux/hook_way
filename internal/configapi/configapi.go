@@ -183,7 +183,6 @@ func preserveSeverity(issues []config.ValidationIssue) ValidateResponse {
 	return out
 }
 
-
 // Schema returns the JSON Schema describing the config YAML.
 func Schema() ([]byte, error) {
 	return config.SchemaJSON()

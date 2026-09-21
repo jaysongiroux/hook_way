@@ -48,7 +48,7 @@ func TestFlowNodeMetricCardinalityDoesNotGrowWithLookupResults(t *testing.T) {
 	t.Cleanup(func() { _ = srv.Close() })
 	for i := 0; i < 100; i++ {
 		body := []byte(fmt.Sprintf(`{"id":"%d"}`, i))
-		req := httptest.NewRequest(http.MethodPost, "/r", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/r", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, req)

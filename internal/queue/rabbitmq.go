@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -348,7 +349,7 @@ func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, e
 		p.cfg.Metrics.RabbitMQReconnect()
 	}
 	p.logger.Info("rabbitmq reconnected", slog.String("destination", p.cfg.DestinationID))
-	go p.watchClose(dialed)
+	go p.watchClose(context.WithoutCancel(ctx), dialed)
 	return dialed, nil
 }
 
@@ -402,7 +403,7 @@ func buildTLSConfig(c RabbitMQTLSConfig) (*tls.Config, error) {
 
 // watchClose proactively re-establishes the connection when the broker drops it,
 // rather than waiting for the next publish to discover the failure.
-func (p *RabbitMQPublisher) watchClose(conn *amqp.Connection) {
+func (p *RabbitMQPublisher) watchClose(ctx context.Context, conn *amqp.Connection) {
 	notify := conn.NotifyClose(make(chan *amqp.Error, 1))
 	select {
 	case <-p.closed:
@@ -420,8 +421,8 @@ func (p *RabbitMQPublisher) watchClose(conn *amqp.Connection) {
 			return
 		default:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), p.dialTimeout())
-		_, err := p.connection(ctx)
+		dialCtx, cancel := context.WithTimeout(ctx, p.dialTimeout())
+		_, err := p.connection(dialCtx)
 		cancel()
 		if err == nil {
 			return
@@ -440,7 +441,7 @@ func (p *RabbitMQPublisher) declareTopology(conn *amqp.Connection) error {
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 	if err := ch.ExchangeDeclare(p.cfg.Exchange, p.cfg.ExchangeType, p.cfg.Durable, false, false, false, nil); err != nil {
 		return err
 	}
@@ -492,10 +493,10 @@ func addQueueOptionArgs(args amqp.Table, opts QueueOptions) {
 }
 
 func amqpInt(value int64) any {
-	if value <= int64(^uint32(0)>>1) {
-		return int32(value)
+	if value < int64(math.MinInt32) || value > int64(math.MaxInt32) {
+		return value
 	}
-	return value
+	return int32(value) // #nosec G115 -- range-checked above
 }
 
 func (p *RabbitMQPublisher) declareDeadLetter(ch *amqp.Channel, dlq *DeadLetterDeclaration) error {

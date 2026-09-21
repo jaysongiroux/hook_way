@@ -14,6 +14,7 @@ import (
 	"go.temporal.io/sdk/converter"
 
 	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jasongiroux/hookway/internal/testenv"
 )
 
 // startTemporal boots the Temporal CLI dev server (single container, SQLite,
@@ -21,6 +22,7 @@ import (
 // self-skips when Docker is unavailable, mirroring startKafka.
 func startTemporal(t *testing.T) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
@@ -32,7 +34,7 @@ func startTemporal(t *testing.T) string {
 		Started: true,
 	})
 	if err != nil {
-		t.Skipf("temporal container unavailable: %v", err)
+		testenv.RequireContainer(t, err, "temporal")
 	}
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	host, err := container.Host(ctx)

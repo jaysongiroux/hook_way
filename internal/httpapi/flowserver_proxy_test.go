@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -43,7 +44,7 @@ flows:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequest(http.MethodPut, "/salesforce/proxy/api/v1/thing?a=1", strings.NewReader(`{"k":"v"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/salesforce/proxy/api/v1/thing?a=1", strings.NewReader(`{"k":"v"}`))
 	req.Header.Set("X-Auth", "testtoken")
 	req.Header.Set("Authorization", "Bearer leaked")
 	rec := httptest.NewRecorder()
@@ -91,7 +92,7 @@ flows:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequest(http.MethodPut, "/salesforce/proxy/x", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/salesforce/proxy/x", strings.NewReader(`{}`))
 	req.Header.Set("X-Auth", "nope")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -131,7 +132,7 @@ flows:
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 	inbound := `<ROOT><EMPTY/><KEEP>ok</KEEP></ROOT>`
-	req := httptest.NewRequest(http.MethodPost, "/digifi/docmagic", strings.NewReader(inbound))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/digifi/docmagic", strings.NewReader(inbound))
 	req.Header.Set("X-Auth", "testtoken")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
