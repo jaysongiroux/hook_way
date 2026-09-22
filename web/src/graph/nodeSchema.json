@@ -291,6 +291,9 @@
           },
           "additionalProperties": false,
           "type": "object"
+        },
+        "allow_private_targets": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

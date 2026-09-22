@@ -26,12 +26,12 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jasongiroux/hookway/internal/auth"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/flowconfig"
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/httpapi"
-	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/httpapi"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 // TestExampleSmoke walks every committed Hookway config under examples/,
@@ -202,11 +202,11 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"TEMPORAL_NAMESPACE":      "default",
 		"TEMPORAL_API_KEY":        "dummy",
 		"ARCHIVE_BUCKET":          "archive",
-		"HUB_API_KEY":             "hub-key",
-		"DIGIFI_WEBHOOK_TOKEN":    "digifi-token",
-		"DIGIFI_BASE":             upstreamURL,
-		"SF_TOKEN":                "sf-token",
-		"ROUTING_TABLE":           "sandbox_ephemeral_routing_data",
+		"DOWNSTREAM_API_KEY":      "downstream-key",
+		"VENDOR_WEBHOOK_TOKEN":    "vendor-token",
+		"UPSTREAM_BASE":           upstreamURL,
+		"PROXY_TOKEN":             "proxy-token",
+		"ROUTING_TABLE":           "routing_data",
 		"ROUTING_DB_URL":          "postgres://localhost:5432/routing",
 		"REPLAY_DB_URL":           "postgres://localhost:5432/db",
 		"REPLAY_API_KEY":          "replay-key",
@@ -242,11 +242,11 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) 
 	path, method := triggerRoute(t, fc)
 	// An xml envelope parses the raw bytes as XML, so the JSON payload every
 	// other flow gets would 400 before reaching the nodes under test. The
-	// document carries LOAN.Amount because examples/xml.yaml filters on it.
+	// document carries ORDER.Amount because examples/xml.yaml filters on it.
 	body, contentType := []byte(`{"summary":"example-smoke","action":"opened","ref":"refs/heads/main","repository":{"private":false,"full_name":"acme/demo"},"data":{"object":{"organizationId":"acme"}},"order":{"total":150,"currency":"USD"},"customer":{"id":"cust_1"}}`), "application/json"
 	switch envelopeBodyFormat(t, fc) {
 	case "xml":
-		body, contentType = []byte(`<MESSAGE><LOAN id="L1"><Amount>150</Amount></LOAN></MESSAGE>`), "application/xml"
+		body, contentType = []byte(`<MESSAGE><ORDER id="O1"><Amount>150</Amount></ORDER></MESSAGE>`), "application/xml"
 	case "multipart":
 		// A multipart envelope needs a real boundary, and examples/multipart.yaml
 		// filters on files.document.content_type, so the part must claim PDF.
@@ -335,9 +335,9 @@ func triggerRoute(t *testing.T, fc graph.FlowConfig) (path, method string) {
 }
 
 func fillPath(path string) string {
-	// examples/variables.yaml's code node allowlists qa-gm3, staging-portal, and
-	// portal. A generic "qa" would 400 as an unknown environment.
-	path = strings.ReplaceAll(path, "{envName}", "qa-gm3")
+	// examples/variables.yaml's code node allowlists qa-1, staging, and prod.
+	// A generic "qa" would 400 as an unknown environment.
+	path = strings.ReplaceAll(path, "{envName}", "qa-1")
 	path = strings.ReplaceAll(path, "{rest...}", "echo")
 	path = strings.ReplaceAll(path, "{rest}", "echo")
 	return path

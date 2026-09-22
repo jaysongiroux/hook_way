@@ -13,8 +13,8 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/testenv"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 )
 
 // startTemporal boots the Temporal CLI dev server (single container, SQLite,

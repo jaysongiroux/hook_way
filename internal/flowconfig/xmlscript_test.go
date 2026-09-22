@@ -3,13 +3,13 @@ package flowconfig
 import (
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 // hardXML exercises every feature a naive element-name-to-key mapping would
 // destroy: an attribute, a namespaced attribute, two siblings with the same
 // name, and mixed content (text alongside child elements).
-const hardXML = `<MESSAGE xmlns:ns="http://example.test/ns"><LOAN id="L1" ns:kind="primary">lead text<Amount>500</Amount><Amount>600</Amount></LOAN></MESSAGE>`
+const hardXML = `<MESSAGE xmlns:ns="http://example.test/ns"><ORDER id="O1" ns:kind="primary">lead text<Amount>500</Amount><Amount>600</Amount></ORDER></MESSAGE>`
 
 func TestXMLScriptRoundTripPreservesDocument(t *testing.T) {
 	original, err := transform.ParseXML([]byte(hardXML))
@@ -50,21 +50,21 @@ func TestXMLToScriptShapeIsPlainJSONValues(t *testing.T) {
 	if !ok || len(children) != 1 {
 		t.Fatalf("root children = %#v, want one element", root["children"])
 	}
-	loan := children[0].(map[string]any)
-	attr, ok := loan["attr"].(map[string]any)
+	order := children[0].(map[string]any)
+	attr, ok := order["attr"].(map[string]any)
 	if !ok {
-		t.Fatalf("attr = %T, want map[string]any", loan["attr"])
+		t.Fatalf("attr = %T, want map[string]any", order["attr"])
 	}
-	if attr["id"] != "L1" || attr["kind"] != "primary" {
-		t.Fatalf("attr = %#v, want id=L1 kind=primary", attr)
+	if attr["id"] != "O1" || attr["kind"] != "primary" {
+		t.Fatalf("attr = %#v, want id=O1 kind=primary", attr)
 	}
-	if loan["text"] != "lead text" {
-		t.Fatalf("text = %v, want \"lead text\"", loan["text"])
+	if order["text"] != "lead text" {
+		t.Fatalf("text = %v, want \"lead text\"", order["text"])
 	}
 	// Two same-named siblings must both survive as separate children.
-	loanKids := loan["children"].([]any)
-	if len(loanKids) != 2 {
-		t.Fatalf("LOAN children = %d, want 2 (repeated siblings must not collapse)", len(loanKids))
+	orderKids := order["children"].([]any)
+	if len(orderKids) != 2 {
+		t.Fatalf("ORDER children = %d, want 2 (repeated siblings must not collapse)", len(orderKids))
 	}
 }
 
@@ -127,10 +127,10 @@ func TestXMLScriptCarriesAttributeNamespaces(t *testing.T) {
 	if got := root["attrns"].(map[string]any)["ns"]; got != "xmlns" {
 		t.Fatalf("root attrns[ns] = %v, want \"xmlns\"", got)
 	}
-	loan := root["children"].([]any)[0].(map[string]any)
-	attrns := loan["attrns"].(map[string]any)
+	order := root["children"].([]any)[0].(map[string]any)
+	attrns := order["attrns"].(map[string]any)
 	if got := attrns["kind"]; got != "http://example.test/ns" {
-		t.Fatalf("LOAN attrns[kind] = %v, want the namespace URI", got)
+		t.Fatalf("ORDER attrns[kind] = %v, want the namespace URI", got)
 	}
 	// An unnamespaced attribute must not gain an entry, or a script that
 	// copied attrns wholesale would namespace a plain attribute.

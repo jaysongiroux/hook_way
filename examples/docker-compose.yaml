@@ -18,7 +18,11 @@ services:
       - "8080:8080"
     environment:
       HOOKWAY_CONFIG: /etc/hookway/config.yaml
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      GITHUB_WEBHOOK_SECRET: change-me
+      # Both fall back to a working dev default, so `make dev-up` needs no
+      # setup. Exporting either variable before `make dev-up` overrides it --
+      # note the RabbitMQ host must be `rabbitmq` (the compose service name),
+      # not `localhost`, because the URL is resolved inside the container.
+      RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-change-me}
     volumes:
       - ./config.yaml:/etc/hookway/config.yaml:ro

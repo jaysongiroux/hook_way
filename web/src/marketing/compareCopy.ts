@@ -5,6 +5,8 @@
 // expanding a cell. Hookdeck Outpost is noted separately: it is an outbound
 // event delivery product, not an inbound webhook gateway.
 
+import { GITHUB_REPO } from "./links";
+
 export type SupportLevel = "yes" | "partial" | "no" | "n/a";
 type CompetitorId = "hookway" | "hookdeck" | "convoy";
 
@@ -33,7 +35,7 @@ export const COMPETITORS: Competitor[] = [
     id: "hookway",
     name: "Hookway",
     role: "Self-hosted inbound gateway: one binary, one YAML config, native publishes into your infrastructure.",
-    sourceHref: "https://github.com/jaysongiroux/hook_way",
+    sourceHref: GITHUB_REPO,
     sourceLabel: "hook_way repository",
   },
   {
@@ -181,5 +183,5 @@ export const COMPARE_SOURCES = [
   { href: "https://www.getconvoy.io/docs/product-manual/sources", label: "Convoy Sources" },
   { href: "https://www.getconvoy.io/docs/product-manual/functions", label: "Convoy Functions" },
   { href: "https://www.getconvoy.io/docs/product-manual/metrics", label: "Convoy Metrics" },
-  { href: "https://github.com/jaysongiroux/hook_way", label: "Hookway repository" },
+  { href: GITHUB_REPO, label: "Hookway repository" },
 ] as const;

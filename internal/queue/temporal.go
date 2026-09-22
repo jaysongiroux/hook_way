@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // WorkflowIDSettings is the queue-package view of a route's workflow_id block.

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/testenv"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 // Lint reports presence rules that typed ports cannot express. Warnings stay

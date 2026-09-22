@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

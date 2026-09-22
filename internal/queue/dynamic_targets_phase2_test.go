@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 )
 
-var fifoEnvMatcher = mustMatcher("{env}-jobs.fifo", map[string]string{"env": "^qa-gm[0-9]+$"})
+var fifoEnvMatcher = mustMatcher("{env}-jobs.fifo", map[string]string{"env": "^tenant-[a-z0-9]+$"})
 
 func TestSQSPublisherDynamicTargetCreatesOnFirstSight(t *testing.T) {
 	fake := newFakeSQS()
@@ -27,22 +27,22 @@ func TestSQSPublisherDynamicTargetCreatesOnFirstSight(t *testing.T) {
 		t.Fatal("template must not be created at startup")
 	}
 	for range 2 {
-		if err := pub.Publish(context.Background(), "queues", "qa-gm3-events", dynamicMsg()); err != nil {
+		if err := pub.Publish(context.Background(), "queues", "tenant-a-events", dynamicMsg()); err != nil {
 			t.Fatalf("dynamic publish: %v", err)
 		}
 	}
-	attrs, created := fake.created["qa-gm3-events"]
+	attrs, created := fake.created["tenant-a-events"]
 	if !created || attrs["VisibilityTimeout"] != "30" {
 		t.Fatalf("rendered queue should be created once with template attrs: %#v", fake.created)
 	}
-	if len(fake.sent) != 2 || aws.ToString(fake.sent[0].QueueUrl) != fake.urls["qa-gm3-events"] {
+	if len(fake.sent) != 2 || aws.ToString(fake.sent[0].QueueUrl) != fake.urls["tenant-a-events"] {
 		t.Fatalf("sends should target the rendered queue url: %#v", fake.sent)
 	}
 	if err := pub.Publish(context.Background(), "queues", "prod-events", dynamicMsg()); err == nil {
 		t.Fatal("non-matching rendered target must be rejected")
 	}
 	// Ready probes only the static queue.
-	fake.attrErrors[fake.urls["qa-gm3-events"]] = errors.New("boom")
+	fake.attrErrors[fake.urls["tenant-a-events"]] = errors.New("boom")
 	if err := pub.Ready(context.Background()); err != nil {
 		t.Fatalf("Ready must ignore dynamic targets: %v", err)
 	}
@@ -54,19 +54,19 @@ func TestSQSPublisherDynamicTargetMissingWithoutCreateFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "queues", "qa-gm3-events", dynamicMsg()); err == nil {
+	if err := pub.Publish(context.Background(), "queues", "tenant-a-events", dynamicMsg()); err == nil {
 		t.Fatal("missing queue with create:false must fail the publish")
 	}
 	// The failure is not cached: once the queue exists the next publish succeeds.
-	fake.seedQueue("qa-gm3-events", nil)
-	if err := pub.Publish(context.Background(), "queues", "qa-gm3-events", dynamicMsg()); err != nil || len(fake.sent) != 1 {
+	fake.seedQueue("tenant-a-events", nil)
+	if err := pub.Publish(context.Background(), "queues", "tenant-a-events", dynamicMsg()); err != nil || len(fake.sent) != 1 {
 		t.Fatalf("publish after queue appears: err=%v sent=%d", err, len(fake.sent))
 	}
 }
 
 func TestSQSPublisherDynamicExistingQueueIsReconciled(t *testing.T) {
 	fake := newFakeSQS()
-	url := fake.seedQueue("qa-gm3-events", map[string]string{"VisibilityTimeout": "10"})
+	url := fake.seedQueue("tenant-a-events", map[string]string{"VisibilityTimeout": "10"})
 	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
 		DestinationID: "queues", Policy: ConflictReconcile,
 		Targets: []SQSTarget{{Name: "{env}-events", Create: true, Template: envMatcher, VisibilityTimeout: 30e9}},
@@ -74,7 +74,7 @@ func TestSQSPublisherDynamicExistingQueueIsReconciled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "queues", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "queues", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.setCalls) != 1 || aws.ToString(fake.setCalls[0].QueueUrl) != url || fake.setCalls[0].Attributes["VisibilityTimeout"] != "30" {
@@ -94,10 +94,10 @@ func TestSQSPublisherDynamicFIFOTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "queues", "qa-gm3-jobs.fifo", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "queues", "tenant-a-jobs.fifo", dynamicMsg()); err != nil {
 		t.Fatal(err)
 	}
-	if fake.created["qa-gm3-jobs.fifo"]["FifoQueue"] != "true" || fake.created["qa-gm3-jobs.fifo"]["ContentBasedDeduplication"] != "true" {
+	if fake.created["tenant-a-jobs.fifo"]["FifoQueue"] != "true" || fake.created["tenant-a-jobs.fifo"]["ContentBasedDeduplication"] != "true" {
 		t.Fatalf("fifo attrs from rendered name: %#v", fake.created)
 	}
 	if aws.ToString(fake.sent[0].MessageGroupId) != "ep" {
@@ -146,7 +146,7 @@ func TestSNSPublisherDynamicMissingWithoutCreateFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "topics", "qa-gm3-events", dynamicMsg()); err == nil {
+	if err := pub.Publish(context.Background(), "topics", "tenant-a-events", dynamicMsg()); err == nil {
 		t.Fatal("missing topic with create:false must fail")
 	}
 }
@@ -155,20 +155,20 @@ func TestKafkaPublisherDynamicTargetEnsuresTopic(t *testing.T) {
 	fake := &fakeKafkaOps{}
 	pub := NewKafkaPublisher(fake, KafkaPublisherConfig{DestinationID: "events", Targets: []KafkaTarget{
 		{Topic: "{env}-events", Create: true, Template: envMatcher, Partitions: 3, PartitionKey: &FIFOSettings{GroupIDSource: "endpoint"}},
-		{Topic: "{env}-audit", Template: mustMatcher("{env}-audit", map[string]string{"env": "^qa-gm[0-9]+$"})},
+		{Topic: "{env}-audit", Template: mustMatcher("{env}-audit", map[string]string{"env": "^tenant-[a-z0-9]+$"})},
 	}})
 	for range 2 {
-		if err := pub.Publish(context.Background(), "events", "qa-gm3-events", dynamicMsg()); err != nil {
+		if err := pub.Publish(context.Background(), "events", "tenant-a-events", dynamicMsg()); err != nil {
 			t.Fatalf("dynamic publish: %v", err)
 		}
 	}
-	if len(fake.ensured) != 1 || fake.ensured[0].Topic != "qa-gm3-events" || fake.ensured[0].Partitions != 3 {
+	if len(fake.ensured) != 1 || fake.ensured[0].Topic != "tenant-a-events" || fake.ensured[0].Partitions != 3 {
 		t.Fatalf("topic should be ensured once with template settings: %#v", fake.ensured)
 	}
-	if len(fake.writes) != 2 || fake.writes[0].topic != "qa-gm3-events" || fake.writes[0].key != "ep" {
+	if len(fake.writes) != 2 || fake.writes[0].topic != "tenant-a-events" || fake.writes[0].key != "ep" {
 		t.Fatalf("writes to rendered topic with template partition key: %#v", fake.writes)
 	}
-	if err := pub.Publish(context.Background(), "events", "qa-gm3-audit", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "events", "tenant-a-audit", dynamicMsg()); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.ensured) != 1 {
@@ -190,15 +190,15 @@ func TestRedisStreamPublisherDynamicTargetCreatesGroup(t *testing.T) {
 		t.Fatalf("template must not create a group at startup: %v", groups)
 	}
 	for range 2 {
-		if err := pub.Publish(context.Background(), "streams", "qa-gm3-events", dynamicMsg()); err != nil {
+		if err := pub.Publish(context.Background(), "streams", "tenant-a-events", dynamicMsg()); err != nil {
 			t.Fatalf("dynamic publish: %v", err)
 		}
 	}
-	if len(groups) != 1 || groups[0] != "hw:qa-gm3-events/workers" {
+	if len(groups) != 1 || groups[0] != "hw:tenant-a-events/workers" {
 		t.Fatalf("group should be created once on the rendered stream: %v", groups)
 	}
 	xadds := fake.xaddCalls
-	if len(xadds) != 2 || xadds[0].stream != "hw:qa-gm3-events" || xadds[0].approxMaxLen != 100 {
+	if len(xadds) != 2 || xadds[0].stream != "hw:tenant-a-events" || xadds[0].approxMaxLen != 100 {
 		t.Fatalf("xadd to rendered stream with template maxlen: %#v", xadds)
 	}
 }

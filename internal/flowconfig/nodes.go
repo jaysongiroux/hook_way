@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/auth"
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/transform"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 	"gopkg.in/yaml.v3"
 )
 
@@ -193,6 +193,12 @@ type HTTPRequestOptions struct {
 	ErrorOnStatus  []string          `yaml:"error_on_status,omitempty" json:"error_on_status,omitempty"`
 	Body           string            `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed"`
 	Retry          HTTPRetryOptions  `yaml:"retry,omitempty" json:"retry,omitempty"`
+	// AllowPrivateTargets opts this node out of the SSRF egress policy that
+	// blocks loopback, link-local, private, and cloud-metadata destinations.
+	// It exists for operators who genuinely proxy to an internal service. It
+	// defaults to false: the policy fails closed, and reaching an internal
+	// address must be a deliberate, reviewable line in the config.
+	AllowPrivateTargets bool `yaml:"allow_private_targets,omitempty" json:"allow_private_targets,omitempty"`
 }
 
 // HTTPRetryOptions is the opt-in retry budget for an http_request node. A zero
@@ -647,6 +653,21 @@ func validateHTTPRequest(o HTTPRequestOptions) error {
 		if err := validateHTTPURL(o.URL); err != nil {
 			return fmt.Errorf("url: %w", err)
 		}
+	}
+	// A templated URL gets no host validation above -- there is no host to
+	// validate until a request renders one. That is exactly the SSRF case, so
+	// the shape of the template is constrained instead: a {variable} in the
+	// authority must be followed by a literal dotted domain, which pins the
+	// destination to a fixed domain no matter what a request supplies.
+	if err := validateURLHostTemplate(o.URL); err != nil {
+		return fmt.Errorf("url: %w", err)
+	}
+	// The egress policy only applies when a request can choose the host, so
+	// opting out of it on a node with a literal host does nothing. Reject it
+	// rather than accept a line that reads like a security decision and is
+	// not one -- the same reasoning as the retry block below.
+	if o.AllowPrivateTargets && !urlAuthorityIsTemplated(o.URL) {
+		return errors.New("allow_private_targets has no effect unless the url host contains a {variable}; a literal host is already the operator's own choice")
 	}
 	switch strings.ToLower(strings.TrimSpace(o.Body)) {
 	case "", "raw", "transformed":

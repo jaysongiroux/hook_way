@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/jasongiroux/hookway/internal/filter"
-	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/filter"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 // ConditionSetOptions is the shared rule shape: a flat condition list plus the

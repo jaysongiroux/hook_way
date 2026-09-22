@@ -3,7 +3,7 @@ package filter
 import (
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 // doc parses XML for a test, failing the test on malformed input rather than
@@ -19,11 +19,11 @@ func doc(t *testing.T, raw string) transform.Document {
 }
 
 const sampleXML = `<MESSAGE xmlns:ns="http://example.test/ns">
-  <LOAN id="L1" ns:kind="primary">
+  <ORDER id="O1" ns:kind="primary">
     <Amount>500.25</Amount>
-    <Borrower><Name>Ada</Name></Borrower>
-  </LOAN>
-  <LOAN id="L2"><Amount>999</Amount></LOAN>
+    <Customer><Name>Ada</Name></Customer>
+  </ORDER>
+  <ORDER id="O2"><Amount>999</Amount></ORDER>
   <Empty></Empty>
 </MESSAGE>`
 
@@ -33,8 +33,8 @@ func TestWalkXMLPathResolvesNestedElementText(t *testing.T) {
 		path string
 		want string
 	}{
-		{"LOAN.Amount", "500.25"},
-		{"LOAN.Borrower.Name", "Ada"},
+		{"ORDER.Amount", "500.25"},
+		{"ORDER.Customer.Name", "Ada"},
 	} {
 		got, ok := walkXMLPath(d, tc.path)
 		if !ok {
@@ -48,29 +48,29 @@ func TestWalkXMLPathResolvesNestedElementText(t *testing.T) {
 
 func TestWalkXMLPathReadsAttributes(t *testing.T) {
 	d := doc(t, sampleXML)
-	got, ok := walkXMLPath(d, "LOAN.@id")
-	if !ok || got != "L1" {
-		t.Fatalf("walkXMLPath(\"LOAN.@id\") = %v, %v; want \"L1\", true", got, ok)
+	got, ok := walkXMLPath(d, "ORDER.@id")
+	if !ok || got != "O1" {
+		t.Fatalf("walkXMLPath(\"ORDER.@id\") = %v, %v; want \"O1\", true", got, ok)
 	}
 	// A namespace-prefixed attribute is addressed by its local name, because a
 	// vendor may change the prefix without changing the document's meaning.
-	got, ok = walkXMLPath(d, "LOAN.@kind")
+	got, ok = walkXMLPath(d, "ORDER.@kind")
 	if !ok || got != "primary" {
-		t.Fatalf("walkXMLPath(\"LOAN.@kind\") = %v, %v; want \"primary\", true", got, ok)
+		t.Fatalf("walkXMLPath(\"ORDER.@kind\") = %v, %v; want \"primary\", true", got, ok)
 	}
 }
 
 func TestWalkXMLPathFirstRepeatedElementWins(t *testing.T) {
 	d := doc(t, sampleXML)
-	got, _ := walkXMLPath(d, "LOAN.Amount")
+	got, _ := walkXMLPath(d, "ORDER.Amount")
 	if got != "500.25" {
-		t.Fatalf("walkXMLPath resolved a later sibling: got %v, want the first LOAN", got)
+		t.Fatalf("walkXMLPath resolved a later sibling: got %v, want the first ORDER", got)
 	}
 }
 
 func TestWalkXMLPathMissingPathIsNotFound(t *testing.T) {
 	d := doc(t, sampleXML)
-	for _, path := range []string{"", "NOPE", "LOAN.NOPE", "LOAN.Amount.Deeper", "LOAN.@nope", "@nope"} {
+	for _, path := range []string{"", "NOPE", "ORDER.NOPE", "ORDER.Amount.Deeper", "ORDER.@nope", "@nope"} {
 		if got, ok := walkXMLPath(d, path); ok {
 			t.Fatalf("walkXMLPath(%q) = %v, true; want not found", path, got)
 		}
@@ -89,7 +89,7 @@ func TestWalkXMLPathEmptyElementResolvesToEmptyString(t *testing.T) {
 }
 
 func TestWalkXMLPathNilRootIsNotFound(t *testing.T) {
-	if got, ok := walkXMLPath(transform.Document{}, "LOAN"); ok {
+	if got, ok := walkXMLPath(transform.Document{}, "ORDER"); ok {
 		t.Fatalf("walkXMLPath on an empty Document = %v, true; want not found", got)
 	}
 }

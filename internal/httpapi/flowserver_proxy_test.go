@@ -29,9 +29,9 @@ func TestProxyFlowReturnsUpstreamResponse(t *testing.T) {
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {}
 flows:
-  salesforce_proxy:
+  upstream_proxy:
     nodes:
-      - {id: in, type: http_trigger, path: "/salesforce/proxy/{rest...}", methods: [ANY]}
+      - {id: in, type: http_trigger, path: "/upstream/proxy/{rest...}", methods: [ANY]}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: exact, secret: testtoken, signature_header: X-Auth}
       - {id: env, type: envelope, body_format: raw}
@@ -44,7 +44,7 @@ flows:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/salesforce/proxy/api/v1/thing?a=1", strings.NewReader(`{"k":"v"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/upstream/proxy/api/v1/thing?a=1", strings.NewReader(`{"k":"v"}`))
 	req.Header.Set("X-Auth", "testtoken")
 	req.Header.Set("Authorization", "Bearer leaked")
 	rec := httptest.NewRecorder()
@@ -77,9 +77,9 @@ func TestProxyFlowWrongTokenIs401(t *testing.T) {
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations: {}
 flows:
-  salesforce_proxy:
+  upstream_proxy:
     nodes:
-      - {id: in, type: http_trigger, path: "/salesforce/proxy/{rest...}", methods: [ANY]}
+      - {id: in, type: http_trigger, path: "/upstream/proxy/{rest...}", methods: [ANY]}
       - {id: body, type: read_body, max_bytes: 1024}
       - {id: auth, type: auth, scheme: exact, secret: testtoken, signature_header: X-Auth}
       - {id: env, type: envelope, body_format: raw}
@@ -92,7 +92,7 @@ flows:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/salesforce/proxy/x", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/upstream/proxy/x", strings.NewReader(`{}`))
 	req.Header.Set("X-Auth", "nope")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -115,9 +115,9 @@ func TestXMLProxyFlowSendsPrunedBody(t *testing.T) {
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {}
 flows:
-  docmagic_xml_proxy:
+  documents_xml_proxy:
     nodes:
-      - {id: in, type: http_trigger, path: /digifi/docmagic, methods: [POST]}
+      - {id: in, type: http_trigger, path: /vendor/documents, methods: [POST]}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: exact, secret: testtoken, signature_header: X-Auth}
       - {id: env, type: envelope, body_format: xml}
@@ -132,7 +132,7 @@ flows:
 	}
 	t.Cleanup(func() { _ = srv.Close() })
 	inbound := `<ROOT><EMPTY/><KEEP>ok</KEEP></ROOT>`
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/digifi/docmagic", strings.NewReader(inbound))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/vendor/documents", strings.NewReader(inbound))
 	req.Header.Set("X-Auth", "testtoken")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

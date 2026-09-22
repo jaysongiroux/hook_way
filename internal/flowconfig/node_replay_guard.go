@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/replay"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/replay"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type replayGuardNode struct {

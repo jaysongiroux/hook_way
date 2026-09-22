@@ -6,9 +6,9 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
-	"github.com/jasongiroux/hookway/internal/webhook"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/webhook"
 )
 
 // replayCaptureTimeout bounds how long a single best-effort replay-store

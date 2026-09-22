@@ -1143,7 +1143,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#7070FF"
+            "fixedColor": "#4A5568"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1334,7 +1334,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#7070FF"
+            "fixedColor": "#4A5568"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1419,7 +1419,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#366CED"
+            "fixedColor": "#0C447C"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1504,7 +1504,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#7070FF"
+            "fixedColor": "#4A5568"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1776,11 +1776,11 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#7070FF",
+                "color": "#4A5568",
                 "value": null
               },
               {
-                "color": "#25BE8A",
+                "color": "#1B5E3B",
                 "value": 1
               }
             ]
@@ -1854,7 +1854,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#366CED",
+                "color": "#0C447C",
                 "value": null
               }
             ]
@@ -1921,7 +1921,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#366CED"
+            "fixedColor": "#0C447C"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2006,7 +2006,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#7070FF"
+            "fixedColor": "#4A5568"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2175,7 +2175,7 @@
         "defaults": {
           "color": {
             "mode": "fixed",
-            "fixedColor": "#366CED"
+            "fixedColor": "#0C447C"
           },
           "custom": {
             "axisBorderShow": false,

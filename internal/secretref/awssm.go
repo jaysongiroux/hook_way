@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
 
-	"github.com/jasongiroux/hookway/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
 )
 
 // secretsAPI is the Secrets Manager surface used by awsFetcher so tests can

@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	hooklogging "github.com/jasongiroux/hookway/internal/logging"
+	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 )
 
 type Envelope struct {
@@ -52,12 +52,6 @@ type AuthInfo struct {
 	Type     string `json:"type"`
 	Scheme   string `json:"scheme,omitempty"`
 	Verified bool   `json:"verified"`
-}
-
-func BuildEnvelope(req *http.Request, endpoint, queue string, rawBody []byte, receivedAt time.Time, sourceIP string) (Envelope, error) {
-	return BuildEnvelopeWithOptions(req, EnvelopeOptions{
-		Endpoint: endpoint, Queue: queue, RawBody: rawBody, ReceivedAt: receivedAt, SourceIP: sourceIP,
-	})
 }
 
 type EnvelopeOptions struct {

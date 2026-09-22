@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/retry"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/retry"
 )
 
 var errWebhookQueueFull = errors.New("webhook: delivery queue full")

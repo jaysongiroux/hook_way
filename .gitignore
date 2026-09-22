@@ -13,12 +13,15 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
-!coverage.floor
+# Code coverage profiles and other test artifacts. These are anchored to the
+# repo root on purpose: an unanchored *.out would silently swallow Go golden
+# files under any testdata/ directory.
+/coverage.out
+/coverage.txt
+/*.out
 *.coverprofile
 profile.cov
+!**/testdata/**
 
 # Downloaded CI/tooling binaries (promtool, etc.)
 .tools/
@@ -30,16 +33,42 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# Env files. This project is configured almost entirely through environment
+# variables (see the validate-examples target), so a stray .env.local holding
+# real webhook secrets is the most plausible accidental commit here.
 .env
+.env.*
+!.env.example
+
+# Keys and certificates. JWT verification and file-backed secret refs make
+# locally generated test keypairs a realistic hazard.
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+id_rsa*
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
 docs/superpowers/
 docs/scratch/
 *.log
+!**/testdata/**
 .superpowers/brainstorm/
+
+# Agent tooling: shared settings are committed, per-machine overrides are not.
+.claude/settings.local.json
+
+# Impeccable: live/config.json is shared project config and IS tracked.
+# Everything else under .impeccable/ is per-machine session state.
+.impeccable/*
+!.impeccable/live/
+.impeccable/live/*
+!.impeccable/live/config.json
+**/.impeccable/hook.*.json
 
 # Generated config-UI WASM/build assets (produced by `make wasm` / `make ui`)
 internal/editor/assets/*
@@ -77,4 +106,4 @@ node_modules/
 **/.DS_Store
 
 # scratch build output
-/tmp/
+tmp/

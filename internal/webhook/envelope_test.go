@@ -20,9 +20,13 @@ func TestBuildEnvelopeParsesJSONAndRedactsHeaders(t *testing.T) {
 	req.Header.Set("X-Api-Token", "secret")
 	req.Header.Set("X-Api-Key", "secret")
 
-	env, err := BuildEnvelope(req, "paddle_billing", "billing-events", []byte(`{"event_type":"subscription.created"}`), time.Unix(0, 0), "203.0.113.42")
+	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{
+		Endpoint: "paddle_billing", Queue: "billing-events",
+		RawBody:    []byte(`{"event_type":"subscription.created"}`),
+		ReceivedAt: time.Unix(0, 0), SourceIP: "203.0.113.42",
+	})
 	if err != nil {
-		t.Fatalf("BuildEnvelope returned error: %v", err)
+		t.Fatalf("BuildEnvelopeWithOptions returned error: %v", err)
 	}
 	if env.ID == "" || env.RawBodyBase64 != nil {
 		t.Fatalf("bad envelope: %#v", env)
@@ -119,9 +123,12 @@ func TestBuildEnvelopeCarriesTraceparent(t *testing.T) {
 func TestBuildEnvelopeEncodesNonJSONBody(t *testing.T) {
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/paddle/billing", nil)
 	raw := []byte("not-json")
-	env, err := BuildEnvelope(req, "paddle_billing", "billing-events", raw, time.Unix(0, 0), "127.0.0.1")
+	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{
+		Endpoint: "paddle_billing", Queue: "billing-events", RawBody: raw,
+		ReceivedAt: time.Unix(0, 0), SourceIP: "127.0.0.1",
+	})
 	if err != nil {
-		t.Fatalf("BuildEnvelope returned error: %v", err)
+		t.Fatalf("BuildEnvelopeWithOptions returned error: %v", err)
 	}
 	if env.Body != nil {
 		t.Fatal("expected nil body")

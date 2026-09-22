@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 func TestCodeNodeTransformsBodyAndSetsVar(t *testing.T) {
@@ -137,13 +137,13 @@ func TestCodeNodeCannotSeeIdentityOrSecret(t *testing.T) {
 }
 
 func TestCodeNodeReadsXMLBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN id="L1"><Amount>500</Amount></LOAN></MESSAGE>`))
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER id="O1"><Amount>500</Amount></ORDER></MESSAGE>`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	node, err := newCodeNode("code", CodeOptions{Timeout: "1s", Script: `
-		const loan = input.body.root.children[0];
-		return { body: input.body, vars: { amount: loan.children[0].text, id: loan.attr.id } };
+		const order = input.body.root.children[0];
+		return { body: input.body, vars: { amount: order.children[0].text, id: order.attr.id } };
 	`})
 	if err != nil {
 		t.Fatal(err)
@@ -156,13 +156,13 @@ func TestCodeNodeReadsXMLBody(t *testing.T) {
 	if env.Vars["amount"] != "500" {
 		t.Fatalf("vars.amount = %q, want \"500\"", env.Vars["amount"])
 	}
-	if env.Vars["id"] != "L1" {
-		t.Fatalf("vars.id = %q, want \"L1\"", env.Vars["id"])
+	if env.Vars["id"] != "O1" {
+		t.Fatalf("vars.id = %q, want \"O1\"", env.Vars["id"])
 	}
 }
 
 func TestCodeNodeRewritesXMLBodyAndKeepsItXML(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN><Amount>500</Amount></LOAN></MESSAGE>`))
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestCodeNodeRewritesXMLBodyAndKeepsItXML(t *testing.T) {
 }
 
 func TestCodeNodeRejectsMalformedXMLReturn(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN/></MESSAGE>`))
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER/></MESSAGE>`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestCodeNodeJSONBodyUnaffected(t *testing.T) {
 // An XML script must not be able to reach back into the caller's Document, the
 // way cloneJSONValue stops a JSON script from mutating its input.
 func TestCodeNodeDoesNotMutateOriginalXMLBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><LOAN><Amount>500</Amount></LOAN></MESSAGE>`))
+	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`))
 	if err != nil {
 		t.Fatal(err)
 	}

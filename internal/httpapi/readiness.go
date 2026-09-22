@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 // Default readiness prober cadence, applied when the configured interval or

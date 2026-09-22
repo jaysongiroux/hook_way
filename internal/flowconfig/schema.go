@@ -2,8 +2,8 @@ package flowconfig
 
 import (
 	"github.com/invopop/jsonschema"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 type NodeSchema struct {

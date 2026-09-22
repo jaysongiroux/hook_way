@@ -15,7 +15,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/jasongiroux/hookway/internal/retry"
+	"github.com/jaysongiroux/hook_way/internal/retry"
 )
 
 const defaultPublisherChannels = 8

@@ -6,19 +6,18 @@ import (
 	"time"
 )
 
-// replayYAML returns a valid full config (validYAML) with the given replay
-// block appended, so each test only has to spell out the replay-specific
+// replayYAML returns a valid shared config (validSharedYAML) with the given
+// replay block appended, so each test only has to spell out the replay-specific
 // fields it cares about. It also injects security.api_key into the existing
 // security: block -- replay.enabled requires a non-empty api_key (see
-// TestReplayEnabledRequiresAPIKey), and validYAML() otherwise leaves it unset.
+// TestReplayEnabledRequiresAPIKey), which validSharedYAML leaves unset.
 func replayYAML(replayBlock string) string {
-	base := strings.Replace(validYAML(), "security:\n", "security:\n  api_key: \"replay-test-key\"\n", 1)
+	base := strings.Replace(validSharedYAML(), "security:\n", "security:\n  api_key: \"replay-test-key\"\n", 1)
 	return base + "\n" + replayBlock
 }
 
 func TestReplayConfigParses(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	t.Setenv("REPLAY_DB_URL", "postgres://u:p@localhost:5432/hookway_replay?sslmode=disable")
 	body := replayYAML(`
 replay:
@@ -31,9 +30,9 @@ replay:
   postgres:
     url: "${REPLAY_DB_URL}"
 `)
-	cfg, err := Load(writeConfig(t, body))
+	cfg, err := loadSharedYAML(t, body)
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("load returned error: %v", err)
 	}
 	r := cfg.Replay
 	if !r.Enabled {
@@ -61,7 +60,6 @@ replay:
 
 func TestReplayConfigDefaults(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	t.Setenv("REPLAY_DB_URL", "postgres://localhost/hookway_replay")
 	body := replayYAML(`
 replay:
@@ -70,9 +68,9 @@ replay:
   postgres:
     url: "${REPLAY_DB_URL}"
 `)
-	cfg, err := Load(writeConfig(t, body))
+	cfg, err := loadSharedYAML(t, body)
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("load returned error: %v", err)
 	}
 	r := cfg.Replay
 	if r.TTL != 0 {
@@ -88,14 +86,13 @@ replay:
 
 func TestReplayDisabledSkipsValidation(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	body := replayYAML(`
 replay:
   enabled: false
 `)
-	cfg, err := Load(writeConfig(t, body))
+	cfg, err := loadSharedYAML(t, body)
 	if err != nil {
-		t.Fatalf("Load returned error for disabled replay with no postgres block: %v", err)
+		t.Fatalf("load returned error for disabled replay with no postgres block: %v", err)
 	}
 	if cfg.Replay.Enabled {
 		t.Fatal("expected Replay.Enabled = false")
@@ -109,7 +106,7 @@ func TestReplayEnabledRequiresPostgresURL(t *testing.T) {
 			Addr:    ":9091",
 		},
 	}
-	issues := c.ValidationIssues()
+	issues := validationIssues(c)
 	if !hasIssue(issues, "replay.postgres.url") {
 		t.Fatalf("expected issue on replay.postgres.url; got %#v", issues)
 	}
@@ -128,7 +125,7 @@ func TestReplayEnabledRequiresAPIKey(t *testing.T) {
 			Postgres: PostgresConfig{URL: "postgres://localhost/hookway_replay"},
 		},
 	}
-	issues := c.ValidationIssues()
+	issues := validationIssues(c)
 	if !hasIssue(issues, "replay.enabled") {
 		t.Fatalf("expected issue on replay.enabled when security.api_key is empty; got %#v", issues)
 	}
@@ -145,7 +142,7 @@ func TestReplayEnabledWithAPIKeyPasses(t *testing.T) {
 			Postgres: PostgresConfig{URL: "postgres://localhost/hookway_replay"},
 		},
 	}
-	issues := c.ValidationIssues()
+	issues := validationIssues(c)
 	if hasIssue(issues, "replay.enabled") {
 		t.Fatalf("did not expect issue on replay.enabled when security.api_key is set; got %#v", issues)
 	}
@@ -153,7 +150,6 @@ func TestReplayEnabledWithAPIKeyPasses(t *testing.T) {
 
 func TestReplayRejectsNegativeTTLAndMaxEvents(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	t.Setenv("REPLAY_DB_URL", "postgres://localhost/hookway_replay")
 	body := replayYAML(`
 replay:
@@ -164,7 +160,7 @@ replay:
   postgres:
     url: "${REPLAY_DB_URL}"
 `)
-	_, err := Load(writeConfig(t, body))
+	_, err := loadSharedYAML(t, body)
 	if err == nil {
 		t.Fatal("expected validation error for negative ttl and max_events")
 	}
@@ -178,7 +174,6 @@ replay:
 
 func TestReplayRejectsBadAddr(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
 	t.Setenv("REPLAY_DB_URL", "postgres://localhost/hookway_replay")
 	body := replayYAML(`
 replay:
@@ -186,7 +181,7 @@ replay:
   postgres:
     url: "${REPLAY_DB_URL}"
 `)
-	_, err := Load(writeConfig(t, body))
+	_, err := loadSharedYAML(t, body)
 	if err == nil {
 		t.Fatal("expected validation error for empty replay.addr")
 	}
@@ -204,7 +199,7 @@ func TestReplayRejectsNegativeCleanupInterval(t *testing.T) {
 			Postgres:        PostgresConfig{URL: "postgres://localhost/db"},
 		},
 	}
-	issues := c.ValidationIssues()
+	issues := validationIssues(c)
 	if !hasIssue(issues, "replay.cleanup_interval") {
 		t.Fatalf("expected issue on replay.cleanup_interval; got %#v", issues)
 	}
@@ -229,13 +224,8 @@ func TestPostgresDestinationValidationUnaffectedByReplayRefactor(t *testing.T) {
 				TLS:   PostgresTLSConfig{ClientCert: "client.crt"}, // ClientKey missing
 			}},
 		},
-		Endpoints: map[string]EndpointConfig{
-			"e": {Enabled: true, Path: "/e", Destinations: []EndpointDestinationConfig{
-				{Destination: "warehouse", Target: "orders"},
-			}},
-		},
 	}
-	issues := c.ValidationIssues()
+	issues := validationIssues(c)
 	if !hasIssue(issues, "destinations.warehouse.postgres.tls.client_cert") {
 		t.Fatalf("expected mutual-TLS issue on destinations.warehouse.postgres.tls.client_cert; got %#v", issues)
 	}

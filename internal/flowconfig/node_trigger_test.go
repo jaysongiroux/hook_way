@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 func TestHeadFromRequestCapturesPreBodyFields(t *testing.T) {
@@ -22,7 +22,7 @@ func TestHeadFromRequestCapturesPreBodyFields(t *testing.T) {
 		t.Errorf("Method = %q, want POST", head.Method)
 	}
 	if head.Query.Get("authID") != "abc" {
-		t.Errorf("Query[authID] = %q, want abc (gap A5 needs query-param auth)", head.Query.Get("authID"))
+		t.Errorf("Query[authID] = %q, want abc (query-param auth needs the query on the pre-body head)", head.Query.Get("authID"))
 	}
 	if head.Hops != 2 {
 		t.Errorf("Hops = %d, want 2", head.Hops)

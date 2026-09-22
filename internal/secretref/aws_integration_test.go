@@ -12,8 +12,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
 
-	"github.com/jasongiroux/hookway/internal/awsconf"
-	"github.com/jasongiroux/hookway/internal/testenv"
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 )
 
 // TestAWSSecretsManagerResolveAndRefresh exercises D7 against LocalStack:

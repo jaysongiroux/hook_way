@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 func TestLint(t *testing.T) {
@@ -196,7 +196,7 @@ func TestBodyFormatGuardAllowsWorkingCombinations(t *testing.T) {
 			name: "body filter after an xml envelope",
 			flow: `
       - {id: env, type: envelope, body_format: xml}
-      - {id: filt, type: filter, conditions: [{source: body, path: LOAN.Amount, operator: exists}]}`,
+      - {id: filt, type: filter, conditions: [{source: body, path: ORDER.Amount, operator: exists}]}`,
 		},
 		{
 			name: "header filter after a raw envelope",

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // HTTPOptions configures an HTTP lookup. URL contains exactly one {key}

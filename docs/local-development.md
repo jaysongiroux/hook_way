@@ -3,10 +3,18 @@
 ## Start RabbitMQ and Hookway
 
 ```bash
-export RABBITMQ_URL='amqp://guest:guest@rabbitmq:5672/'
-export GITHUB_WEBHOOK_SECRET='change-me'
 make dev-up
 ```
+
+`examples/docker-compose.yaml` hardcodes the container's environment —
+`RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/` and
+`GITHUB_WEBHOOK_SECRET: change-me` — with no `${VAR}` passthrough, so
+exporting either variable in your shell first has no effect. The dev signing
+secret is `change-me`; sign test requests with it or you get a bare `401`.
+To change it, edit the compose file.
+
+Note `rabbitmq` (the compose service name) as the broker host, not
+`localhost` — `localhost` is only correct for the host-run case below.
 
 RabbitMQ management UI:
 

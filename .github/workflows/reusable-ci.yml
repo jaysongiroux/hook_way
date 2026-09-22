@@ -44,6 +44,9 @@ jobs:
       - name: Vet
         run: make lint
 
+      - name: Module tidiness
+        run: go mod tidy -diff
+
       - name: Dead code
         run: make deadcode
 

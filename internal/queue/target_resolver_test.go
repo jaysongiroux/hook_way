@@ -13,7 +13,7 @@ type resolvedState struct{ name string }
 func newTestResolver(max int) *targetResolver[resolvedState] {
 	r := newTargetResolver[resolvedState](max, nil)
 	r.addStatic("orders", resolvedState{name: "orders"})
-	r.addTemplate(mustMatcher("{env}-orders", map[string]string{"env": "^qa-gm[0-9]+$"}), resolvedState{name: "tmpl"})
+	r.addTemplate(mustMatcher("{env}-orders", map[string]string{"env": "^tenant-[a-z0-9]+$"}), resolvedState{name: "tmpl"})
 	return r
 }
 
@@ -52,7 +52,7 @@ func TestTargetResolverProvisionsOnceUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			s, err := r.resolve(context.Background(), "qa-gm3-orders", cloneProvision(&calls))
+			s, err := r.resolve(context.Background(), "tenant-a-orders", cloneProvision(&calls))
 			if err != nil {
 				t.Errorf("resolve: %v", err)
 			}
@@ -64,12 +64,12 @@ func TestTargetResolverProvisionsOnceUnderConcurrency(t *testing.T) {
 		t.Fatalf("expected exactly one provision call, got %d", calls)
 	}
 	for _, s := range results {
-		if s.name != "tmpl:qa-gm3-orders" {
+		if s.name != "tmpl:tenant-a-orders" {
 			t.Fatalf("bad state %v", s)
 		}
 	}
 	// Cached: a later resolve does not provision again.
-	if _, err := r.resolve(context.Background(), "qa-gm3-orders", cloneProvision(&calls)); err != nil || calls != 1 {
+	if _, err := r.resolve(context.Background(), "tenant-a-orders", cloneProvision(&calls)); err != nil || calls != 1 {
 		t.Fatalf("cached hit re-provisioned: err=%v calls=%d", err, calls)
 	}
 }
@@ -80,11 +80,11 @@ func TestTargetResolverProvisionErrorNotCached(t *testing.T) {
 	failing := func(context.Context, resolvedState, string) (resolvedState, error) {
 		return resolvedState{}, boom
 	}
-	if _, err := r.resolve(context.Background(), "qa-gm1-orders", failing); !errors.Is(err, boom) {
+	if _, err := r.resolve(context.Background(), "tenant-b-orders", failing); !errors.Is(err, boom) {
 		t.Fatalf("expected boom, got %v", err)
 	}
 	var calls int32
-	if s, err := r.resolve(context.Background(), "qa-gm1-orders", cloneProvision(&calls)); err != nil || s.name != "tmpl:qa-gm1-orders" || calls != 1 {
+	if s, err := r.resolve(context.Background(), "tenant-b-orders", cloneProvision(&calls)); err != nil || s.name != "tmpl:tenant-b-orders" || calls != 1 {
 		t.Fatalf("retry after error should provision: %v %v calls=%d", s, err, calls)
 	}
 }
@@ -92,7 +92,7 @@ func TestTargetResolverProvisionErrorNotCached(t *testing.T) {
 func TestTargetResolverEvictsOldest(t *testing.T) {
 	var calls int32
 	r := newTestResolver(2)
-	for _, tgt := range []string{"qa-gm1-orders", "qa-gm2-orders", "qa-gm3-orders"} {
+	for _, tgt := range []string{"tenant-b-orders", "tenant-c-orders", "tenant-a-orders"} {
 		if _, err := r.resolve(context.Background(), tgt, cloneProvision(&calls)); err != nil {
 			t.Fatal(err)
 		}
@@ -100,10 +100,10 @@ func TestTargetResolverEvictsOldest(t *testing.T) {
 	if r.dynamicLen() != 2 {
 		t.Fatalf("expected cache capped at 2, got %d", r.dynamicLen())
 	}
-	if _, ok := r.lookup("qa-gm1-orders"); ok {
+	if _, ok := r.lookup("tenant-b-orders"); ok {
 		t.Fatal("oldest entry should have been evicted")
 	}
-	if _, ok := r.lookup("qa-gm3-orders"); !ok {
+	if _, ok := r.lookup("tenant-a-orders"); !ok {
 		t.Fatal("newest entry should remain")
 	}
 }

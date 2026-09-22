@@ -8,7 +8,7 @@ package bridge
 import (
 	"encoding/json"
 
-	"github.com/jasongiroux/hookway/internal/configapi"
+	"github.com/jaysongiroux/hook_way/internal/configapi"
 )
 
 // Validate validates raw YAML config and returns the JSON encoding of

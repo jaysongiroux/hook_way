@@ -20,17 +20,6 @@ destinations:
       url: "amqp://guest:guest@localhost:5672/"
       exchange: "hookway.dlq"
       exchange_type: "direct"
-endpoints:
-  hook:
-    enabled: true
-    path: "/hook"
-    destinations:
-      - destination: "notify"
-        target: "orders"
-    auth:
-      type: "hmac_sha256"
-      secret: "s"
-      signature_header: "X-Signature"
 `
 }
 
@@ -41,10 +30,9 @@ func TestWebhookParsesDeliveryModeAndDeadLetter(t *testing.T) {
       dead_letter:
         destination: "dlq"
         target: "webhook-dead-letters"`)
-	path := writeConfig(t, body)
-	cfg, err := Load(path)
+	cfg, err := loadSharedYAML(t, body)
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("load: %v", err)
 	}
 	w := cfg.Destinations["notify"].Webhook
 	if w.DeliveryMode != "async" {
@@ -98,7 +86,7 @@ func TestWebhookValidationMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			issues := NewService().ValidateBytes([]byte(webhookDeliveryYAML(tc.webhook)))
+			issues := sharedIssues(webhookDeliveryYAML(tc.webhook))
 			if tc.wantNoIssue {
 				for _, iss := range issues {
 					if iss.Field == "destinations.notify.webhook.delivery_mode" ||
@@ -133,19 +121,8 @@ destinations:
     type: "webhook"
     webhook:
       url: "https://y/h"
-endpoints:
-  hook:
-    enabled: true
-    path: "/hook"
-    destinations:
-      - destination: "notify"
-        target: "orders"
-    auth:
-      type: "hmac_sha256"
-      secret: "s"
-      signature_header: "X-Signature"
 `
-	issues := NewService().ValidateBytes([]byte(body))
+	issues := sharedIssues(body)
 	if !hasIssue(issues, "destinations.notify.webhook.dead_letter.destination") {
 		t.Fatalf("expected webhook-typed DLQ destination to be rejected, got %+v", issues)
 	}

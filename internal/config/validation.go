@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/auth"
-	"github.com/jasongiroux/hookway/internal/filter"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/filter"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // targetLiteral constrains the literal (non-placeholder) text of a templated
@@ -74,28 +74,13 @@ func validationError(field, message, suggestion string) ValidationIssue {
 	return ValidationIssue{Field: field, Message: message, Suggestion: suggestion}
 }
 
-func configValidationError(issues []ValidationIssue) error {
-	if len(issues) == 0 {
-		return nil
-	}
-	return ConfigValidationError{Issues: issues}
-}
-
-func (c Config) Validate() error {
-	return configValidationError(c.ValidationIssues())
-}
-
-func (c Config) ValidationIssues() []ValidationIssue {
-	return validationIssues(c, true)
-}
-
 // ValidationIssues validates only process-scoped configuration. The shared
 // contract allows no destinations because a flow may only respond to its caller.
 func (s SharedConfig) ValidationIssues() []ValidationIssue {
-	return normalizeIssueSeverities(validationIssues(s.asConfig(), false))
+	return normalizeIssueSeverities(validationIssues(s.asConfig()))
 }
 
-func validationIssues(c Config, requireEndpoints bool) []ValidationIssue {
+func validationIssues(c Config) []ValidationIssue {
 	var issues []ValidationIssue
 	if c.Server.Addr == "" {
 		issues = append(issues, validationError("server.addr", "listen address is required", "set server.addr to a host:port such as \":8080\""))
@@ -147,9 +132,6 @@ func validationIssues(c Config, requireEndpoints bool) []ValidationIssue {
 	}
 	if c.Security.LoopProtection.MaxHops < 0 {
 		issues = append(issues, validationError("security.loop_protection.max_hops", "must be zero (use the default) or a positive integer", "set a small ceiling such as 3, or omit to use the default"))
-	}
-	if requireEndpoints && len(c.Destinations) == 0 {
-		issues = append(issues, validationError("destinations", "at least one destination is required", "add destinations.billing with type \"rabbitmq\""))
 	}
 	for id, dest := range c.Destinations {
 		fieldPrefix := "destinations." + id
@@ -371,9 +353,6 @@ func validationIssues(c Config, requireEndpoints bool) []ValidationIssue {
 			}
 		}
 	}
-	if requireEndpoints && len(c.Endpoints) == 0 {
-		issues = append(issues, validationError("endpoints", "at least one endpoint is required", "add an endpoint such as endpoints.billing"))
-	}
 	if c.Metrics.Enabled && (c.Metrics.Path == "" || c.Metrics.Path[0] != '/') {
 		issues = append(issues, validationError("metrics.path", "must start with / when metrics are enabled", "set metrics.path to \"/metrics\""))
 	}
@@ -382,17 +361,6 @@ func validationIssues(c Config, requireEndpoints bool) []ValidationIssue {
 		// ok
 	default:
 		issues = append(issues, validationError("logging.level", fmt.Sprintf("%q is not supported", c.Logging.Level), "use \"debug\", \"info\", \"warn\", or \"error\", or omit for the default of \"info\""))
-	}
-	if requireEndpoints && c.RateLimit.Enabled {
-		if c.RateLimit.RequestsPerMinute <= 0 {
-			issues = append(issues, validationError("rate_limit.requests_per_minute", "must be positive when rate limiting is enabled", "set a value such as 120"))
-		}
-		if c.RateLimit.Burst <= 0 {
-			issues = append(issues, validationError("rate_limit.burst", "must be positive when rate limiting is enabled", "set a value such as 20"))
-		}
-		if c.RateLimit.KeyBy != "ip" {
-			issues = append(issues, validationError("rate_limit.key_by", "only ip is supported for MVP", "set rate_limit.key_by to \"ip\""))
-		}
 	}
 	if c.Replay.Enabled {
 		if c.Replay.Postgres.URL == "" {
@@ -900,7 +868,7 @@ func endpointPathIssues(fieldPrefix string, endpoint EndpointConfig) (vars.PathP
 	}
 	pp, err := vars.ParsePath(endpoint.Path)
 	if err != nil {
-		return vars.PathPattern{}, false, append(issues, validationError(fieldPrefix+".path", "path is malformed: "+err.Error(), "use literal segments or whole-segment placeholders such as \"/webhooks/{envName}/digifi\""))
+		return vars.PathPattern{}, false, append(issues, validationError(fieldPrefix+".path", "path is malformed: "+err.Error(), "use literal segments or whole-segment placeholders such as \"/webhooks/{envName}/events\""))
 	}
 	for _, seg := range pp.Names() {
 		found := false

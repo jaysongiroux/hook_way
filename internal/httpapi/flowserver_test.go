@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 )
 
 const testFlowYAML = `
@@ -114,7 +114,7 @@ func TestPublishFailureReturns503(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503: a publish failure must make the sender retry, never be swallowed as a success (gaps doc C1)", rec.Code)
+		t.Fatalf("status = %d, want 503: a publish failure must make the sender retry, never be swallowed as a success", rec.Code)
 	}
 }
 

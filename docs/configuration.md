@@ -122,6 +122,50 @@ config failures still block serving traffic, so config failure metrics are
 recorded in-process before exit and are most useful for tests or future reload
 paths.
 
+Some of the less obvious series, which are easy to miss when building a
+dashboard or an alert:
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `hookway_build_info` | gauge | `version`, `commit` | Always `1`. The build the process came from, as injected by `-ldflags` (`dev`/`none` for a plain `go build`). Join on it to attribute a regression to a release. |
+| `hookway_request_body_bytes` | histogram | `endpoint`, `destination_queue_id`, `queue` | Inbound webhook body size. Buckets run 128 B → 1 MiB. Use it to size `read_body.max_bytes` from observed traffic rather than guessing. |
+| `hookway_variable_lookup_total` | counter | `endpoint`, `variable`, `provider`, `result` | Lookup-source variable resolutions. `result` is `hit`, `miss`, `cached`, or `error`. |
+| `hookway_variable_lookup_duration_seconds` | histogram | `endpoint`, `variable`, `provider` | Latency of those resolutions, cache hits included. |
+| `hookway_variable_unresolved_total` | counter | `endpoint`, `variable`, `action` | Requests whose routing variables could not be resolved, by what happened next: `rejected` or `fallback`. A rising `rejected` rate means traffic is being dropped on a config gap. |
+| `hookway_compensation_failed_total` | counter | `flow` | Replay-reservation *release* failures. Non-zero is worth an alert: a silent failure leaves the reservation in place until its TTL, so a legitimate sender retry gets a `409` and the event is lost. |
+| `hookway_rabbitmq_confirms_total` | counter | — | Publisher confirms received from RabbitMQ. |
+| `hookway_rabbitmq_retries_total` | counter | — | RabbitMQ publish retries. Both are process-wide, with no destination label. |
+
+### OpenTelemetry spans
+
+`internal/httpapi/flowserver.go` holds a package-level
+`otel.Tracer("hookway")` and starts one span per executed graph node, named
+`hookway.node.<node_type>` (`hookway.node.auth`, `hookway.node.publish`, …).
+Each span is timestamped to the node's real start and end, records the node's
+error and sets an error status when one occurred, and carries five attributes:
+
+| Attribute | Value |
+|---|---|
+| `hookway.flow` | flow name |
+| `hookway.node_id` | node id from the config |
+| `hookway.node_type` | node type |
+| `hookway.request_id` | request id |
+| `hookway.event_id` | envelope event id |
+
+Two facts matter before you plan around this:
+
+- The spans are emitted on the **global** OTel tracer provider. Hookway never
+  sets one. With no provider registered the global default is a no-op, so the
+  spans go nowhere and cost almost nothing.
+- **No exporter ships.** There is no OTLP endpoint config, no
+  `otel.SetTracerProvider` call, no collector wiring. Nothing in Hookway sends
+  a span anywhere.
+
+To get traces out you must register your own tracer provider and exporter in
+your own build. Hookway does not claim OpenTelemetry support; it propagates
+`traceparent` end to end (see the envelope reference below) and emits spans
+into whatever global provider happens to be installed.
+
 ## Destinations
 
 `destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, or Temporal task queue). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
@@ -853,6 +897,103 @@ transient failures:
   flow's steady-state rate exceeds what the upstream permits — for that, publish
   to a queue destination and pace the consumer.
 
+#### `http_request` outbound egress policy
+
+An `http_request` whose destination host can be influenced by request data is
+an SSRF primitive unless it is bounded. Hookway bounds it in three places, and
+the whole policy turns on one distinction:
+
+> **A literal host is the operator's choice; a templated host is not.**
+> `url: "http://10.0.0.5:8080/ingest"` is a deliberate configuration decision —
+> proxying to an internal service is a legitimate thing to do, and Hookway
+> does not second-guess it. `url: "https://{tenant}-api.example.com/ingest"`
+> has a host that depends on `env.Vars`, which is seeded from the trigger's
+> path variables and extended by `lookup` and `transform` nodes. **The egress
+> policy applies only to the second case.**
+>
+> "Templated" means the parsed *authority* has a `{placeholder}`. A `${VAR}`
+> environment reference does not count: it is expanded to literal text at
+> config load, so `url: "${UPSTREAM_BASE}/{rest}"` is a literal host with a
+> templated path, and is not subject to the policy.
+
+**1. Config time: a templated host needs a literal domain suffix.** A
+`{variable}` in the URL authority must be followed by a literal dotted domain
+suffix, so a request can choose at most one label under a fixed domain and
+never the whole host. `hookway validate` rejects anything else with:
+
+```
+a {variable} in the url host must be followed by a literal domain suffix:
+write the host as "{envName}-api.example.com" so requests cannot choose an
+arbitrary host
+```
+
+So `https://{envName}-api.example.com/v1` is accepted and
+`https://{host}/v1` is not.
+
+**2. Render time: the rendered host is vetted before any connection.** With
+the policy on, the target is classified after variable substitution and
+refused if it addresses the gateway's own host or a private network. Denied by
+address: loopback (`127.0.0.0/8`, `::1`), unspecified (`0.0.0.0/8`, `::`),
+link-local (`169.254.0.0/16` — which is where `169.254.169.254` instance
+metadata lives — and `fe80::/10`), RFC1918 private (`10/8`, `172.16/12`,
+`192.168/16`), CGNAT `100.64.0.0/10`, IPv6 ULA `fc00::/7`, multicast
+(`224.0.0.0/4`, `ff00::/8`), reserved/benchmarking ranges, IETF protocol
+assignments `192.0.0.0/24`, and the Alibaba metadata address
+`100.100.100.200`. IPv4-mapped IPv6 spellings collapse to the IPv4 rules, so
+`::ffff:169.254.169.254` is caught too. Denied by name: `localhost`, and the
+`.localhost`, `.local`, `.internal` (which covers
+`metadata.google.internal`), `.localdomain`, and `.home.arpa` suffixes.
+
+**Ambiguous host spellings are rejected rather than interpreted.** Deciding
+whether `2130706433`, `127.1`, `0177.0.0.1`, or `0x7f000001` is "really"
+`127.0.0.1` is a classic parser-differential SSRF bug — Hookway's answer and
+the resolver's answer only have to disagree once. So a host with an all-digit
+final label, a `0x`-prefixed label, an empty label, or any character not valid
+in a DNS name is refused outright. A real TLD is never all digits, so nothing
+legitimate is lost.
+
+**3. Connect time: DNS rebinding is closed.** A name that passes the check
+above can still resolve to `169.254.169.254`, and a second lookup between the
+check and the connect can return a different answer than the first. When the
+guard is on, the dialer resolves the host itself, classifies **every**
+candidate address, and dials a specific vetted IP — so the address that was
+checked is the address that is connected to. Redirects are never followed
+(`http_request` returns the redirect response as-is), so an upstream cannot
+bounce the request somewhere else either.
+
+**`allow_private_targets`**
+
+```yaml
+- id: ack
+  type: http_request
+  url: "https://{envName}-api.internal.example.com/ingest"
+  allow_private_targets: true
+```
+
+| | |
+|---|---|
+| Type | boolean |
+| Default | `false` — fail closed |
+| Effect | Opts this node out of steps 2 and 3 above. Step 1 (the literal-domain-suffix requirement) still applies. |
+| Scope | per node, not global |
+
+Use it when a templated host is *supposed* to reach an internal upstream — a
+per-environment internal API, say. It is the only opt-out, it is explicit, and
+it is scoped to the one node that needs it.
+
+`hookway validate` **rejects** `allow_private_targets: true` on a node whose
+URL host is literal:
+
+```
+allow_private_targets has no effect unless the url host contains a
+{variable}; a literal host is already the operator's own choice
+```
+
+That is deliberate. A literal host was never subject to the policy, so setting
+the flag there does nothing — and a no-op security flag in a config file is
+worse than no flag, because it reads like a decision was made. Failing
+validation forces the config to say what is actually true.
+
 An `initial_backoff` or `max_backoff` without `max_attempts: 2` or more is
 rejected by `hookway validate` rather than silently ignored.
 
@@ -894,7 +1035,7 @@ Each flow builds its verifier once at startup from the `auth` (or `no_auth`) nod
   - Use the separate `no_auth` node for intentional unverified traffic; `auth.scheme: no_auth` is rejected.
   - `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`): Bearer JWT from `signature_header`. `body_hash_claim` is required and binds the token to the raw body. There is no opt-out.
 - `secret` or `secret_ref`: required except for `no_auth`. See [Secret references](#secret-references).
-- `signature_header`: header Hookway reads. Alternative: `source: {kind: header|query, key: ...}`. `kind: query` reads a query parameter (Qualia-style `?authID=`). Query keys used for auth are redacted. If both `source` and `signature_header` are set, `source` wins.
+- `signature_header`: header Hookway reads. Alternative: `source: {kind: header|query, key: ...}`. `kind: query` reads a query parameter (e.g. `?authID=`). Query keys used for auth are redacted. If both `source` and `signature_header` are set, `source` wins.
 - `timestamp_tolerance`: defaults to `5m`; timestamped HMAC uses it as the freshness window, JWT as clock leeway.
 
 HMAC schemes verify the **raw** body bytes. New providers are added by registering a scheme in `internal/auth`.
@@ -904,7 +1045,7 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw|multipart`). `json` decodes to an object; `xml` decodes to an element tree that `filter`, `code`, `transform` `xml_prune`, and `http_request` `body: transformed` all understand; `multipart` decodes a `multipart/form-data` upload to `{fields, files}` (see [Multipart bodies](#multipart-bodies)); `raw` leaves the body empty and publishes the bytes as `raw_body_base64`. Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10), optional `payload` (`envelope` default, or `object` for s3 / redis_kv — see [Publish payload modes](#publish-payload-modes)).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
-- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`, and a request whose path variable contains a `..` segment is rejected with `400`. See [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
+- `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`, `allow_private_targets`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`. A captured path variable containing a `..` segment, a `#`, a `?`, a backslash, or an ASCII control character is rejected with `400`. A `{variable}` in the `url` **host** must be followed by a literal dotted domain suffix, and a templated host is additionally checked against the private-network egress policy unless `allow_private_targets: true` — see [`http_request` outbound egress policy](#http_request-outbound-egress-policy). See also [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
 - `transform`: `changed_fields`, `field_map` (JSON bodies), `xml_prune` (XML bodies). `hookway validate` rejects a kind that does not match the `body_format` on the path reaching it.
 - `lookup`: an embedding-only node requiring an injected provider. The standalone server and CLI validation reject it: the YAML has no complete provider binding. Use path variables or `transform.field_map` for supported routing.
 - `code`: sandboxed JavaScript; see [Code node](#code-node).
@@ -966,7 +1107,7 @@ A `filter` node is a list of AND-combined conditions. Place it after `envelope` 
       value: "push"
 ```
 
-- `source`: `header` reads the unredacted request header named by `path`. `body` walks a dotted path into the decoded body: JSON object keys (`repository.private`), or — after an `envelope` with `body_format: xml` — element local names below the root, with a leading `@` for an attribute (`LOAN.Amount`, `LOAN.@id`). No array indexing, and repeated XML siblings resolve to the first in document order. A body condition after `body_format: raw` is rejected by `hookway validate`, because a raw envelope leaves the body empty.
+- `source`: `header` reads the unredacted request header named by `path`. `body` walks a dotted path into the decoded body: JSON object keys (`repository.private`), or — after an `envelope` with `body_format: xml` — element local names below the root, with a leading `@` for an attribute (`ORDER.Amount`, `ORDER.@id`). No array indexing, and repeated XML siblings resolve to the first in document order. A body condition after `body_format: raw` is rejected by `hookway validate`, because a raw envelope leaves the body empty.
 - `operator`: `eq`/`ne` (type-aware); `gt`/`gte`/`lt`/`lte` (numeric); `contains`/`prefix`/`suffix`; `regex` (RE2, compiled at load); `exists`/`not_exists`.
 - `value`: comparison value. Omit for `exists`/`not_exists`.
 
@@ -1000,7 +1141,7 @@ Limits worth knowing before you design a flow around it:
   is still available to a script as an element's `ns`, and per attribute in
   `attrns`, so a script that returns the body it was given keeps them.
 - **Repeated siblings resolve to the first** in document order. A filter cannot
-  express "any `LOAN` has an amount over 500"; a `code` node can, by walking
+  express "any `ORDER` has an amount over 500"; a `code` node can, by walking
   `children`.
 - **`xml_prune` is five fixed rules**, not a rule language:
   `remove_empty_self_closing_elements`, `remove_empty_parents`,
@@ -1110,11 +1251,68 @@ publish branch's decoded bytes. A `no_auth` flow excluded with
 
 ### Variables
 
-Path placeholders on `http_trigger` (`path: /webhooks/{envName}/digifi`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a JSON body field to `vars.tenant`; a `code` node can derive variables from its parsed `body`, existing `vars`, or filtered `headers` input. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. This can select a pre-provisioned queue per environment, such as `{envName}-events`. Unresolved templates and unsafe values fail closed at publish. The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`) until a provider is injected.
+Path placeholders on `http_trigger` (`path: /webhooks/{envName}/events`) are copied onto `envelope.Vars`. A `transform` `field_map` can copy a JSON body field to `vars.tenant`; a `code` node can derive variables from its parsed `body`, existing `vars`, or filtered `headers` input. `{name}` placeholders in `publish.target` and in a webhook destination `url` are filled per request. This can select a pre-provisioned queue per environment, such as `{envName}-events`. Unresolved templates and unsafe values fail closed at publish. The `lookup` node exists but CLI/serve reject it (`StandaloneIssues`) until a provider is injected.
 
 A placeholder in a webhook `url` **host** must be followed by a literal domain suffix (`{envName}-api.example.com`) so a request cannot choose an arbitrary host. `${ENV_VAR}` references expand at load and are not request variables.
 
 See `examples/variables.yaml`.
+
+## Published envelope reference
+
+Every `publish` node with the default `payload: envelope` writes one JSON
+document, the same shape on every destination type. This is the consumer
+contract; `schema_version` governs its compatibility. The Go source of truth
+is `queue.Message` in `internal/queue/publisher.go`.
+
+| Field | JSON type | Always present | Description |
+|---|---|---|---|
+| `schema_version` | string | yes | Envelope contract version, currently `"1.0"`. Additive changes keep the major; a removal or a change of meaning requires a new version. Gate your parser on this. |
+| `id` | string | yes | UUIDv7 event id, unique per delivery. **This is the dedup key.** Consumers dedupe on `id`. |
+| `idempotency_key` | string | **no — omitted on ingest** | Present in the struct and in replay responses, but ingest never populates it, so it is omitted from every normally-published envelope. Do not build dedup on it. See [Idempotency](security.md#idempotency). |
+| `request_id` | string | when non-empty | The inbound `X-Request-ID` (or `security.request_id_header`) if the sender supplied one, else a generated UUID. Matches the `X-Request-ID` response header and the `request_id` log field. |
+| `trace_id` | string | when non-empty | 32-hex W3C trace id, taken from the inbound `traceparent` or `X-Trace-ID` when either is a valid trace id, else generated. |
+| `traceparent` | string | when non-empty | The outbound W3C `traceparent` value: the inbound header verbatim when syntactically valid, otherwise one synthesized from `trace_id`. The **webhook** destination sets it as a real header on the outbound request (envelope and proxy modes); every other destination carries it inside the JSON and does nothing else with it. |
+| `endpoint` | string | yes | The **request path** the event arrived on (e.g. `/webhooks/github`). Note this differs from the `endpoint` in Hookway's *HTTP response* body and in metric/log labels, which is the flow name. The name is kept for compatibility with pre-graph consumers. |
+| `destination_queue_id` | string | yes | The `destinations:` map key this envelope was published through. |
+| `queue` | string | yes | The publish `target` — queue, topic, routing key, stream, collection, object prefix, or Temporal task queue. Rendered, if the target was a `{var}` template. |
+| `received_at` | string (RFC 3339) | yes | When Hookway received the request. |
+| `method` | string | when non-empty | Inbound HTTP method. |
+| `path` | string | when non-empty | Inbound request path. |
+| `headers` | object | when non-empty | Inbound headers after redaction and allowlisting (`security.redacted_header_denylist`, `security.forwarded_header_allowlist`). Redacted values are the literal string `"redacted"`. |
+| `query` | object | when non-empty | Inbound query parameters. Query keys used for auth are redacted. |
+| `body` | any | yes (may be `null`) | The decoded body. An object for `body_format: json`; the element tree for `xml`; `{fields, files}` for `multipart`; `null` for `raw` and for XML published as bytes. |
+| `raw_body_base64` | string | only when set | Base64 of the original bytes. Set by `body_format: raw`, and by XML publishes (which serialize the tree here and leave `body` null). |
+| `source_ip` | string | when non-empty | Client IP, resolved through `security.trusted_proxies` / `trusted_proxy_headers`. |
+| `auth` | object | yes | `{"type", "scheme", "verified"}` describing how the request was authenticated — the auth node's identity and scheme, with `verified: true`. A `no_auth` flow still emits the object. |
+| `variables` | object (string→string) | when non-empty | The routing variables resolved for this event — path placeholders, `transform` `field_map` outputs, `code`-derived values. Publishers render templated destination settings (e.g. a webhook `url`) from these, and replay re-reads them from the stored envelope. |
+| `dead_letter` | object | only on dead-letters | Present **only** when an async webhook delivery terminally failed and was redirected to a configured `dead_letter` destination. It records why. Additive, so `schema_version` stays `1.0`. Its absence is the normal case. |
+| `replay_of` | string | only on replays | Present **only** on envelopes produced by the replay API: the original captured event id this delivery is a replay of. A replay always gets a fresh `id`, so correlate with `replay_of`. Additive; absent on first-time deliveries. |
+
+Fields on `queue.Message` tagged `json:"-"` are in-memory only and never
+serialized: `RawBody` and `OrigHeaders` (proxy-mode webhook reconstruction),
+`Hops` (loop protection — the webhook destination stamps `Hops+1` as a
+header), `MessageAttributes` (SNS/SQS attributes ride the AWS API, not the
+JSON body), and the `PayloadMode` / `ObjectBytes` / `ObjectContentType` /
+`ObjectFilename` group used by `payload: object` on `s3` and `redis_kv`.
+
+With `payload: object` there is no envelope at all — the decoded file bytes
+are stored directly. See [Publish payload modes](#publish-payload-modes).
+
+## Response headers
+
+Hookway sets a fixed set of headers on **every** response from the webhook
+listener, including error responses, before any flow runs:
+
+| Header | Value | When |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | always |
+| `Cache-Control` | `no-store` | always |
+| `X-Request-ID` | the request id | always — echoed from the inbound `X-Request-ID` (or `security.request_id_header`) when the sender sent one, otherwise a freshly generated UUID. It matches the envelope's `request_id` and the `request_id` log field, so it is the correlation handle to give a sender debugging a delivery. |
+| `Retry-After` | `1` | on the `503` returned when `server.max_inflight_requests` is exhausted (`{"error":"server busy"}`). Not set on other 503s. |
+| `Allow` | the flow's configured methods | on a `405`, when the request method is not in the trigger's `methods` list. A trigger with `methods: [ANY]` never 405s. |
+
+A `respond` node controls status and body and may add its own headers, but the
+three always-on headers above are already written by the time it runs.
 
 ## Code node
 

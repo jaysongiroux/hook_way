@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/testenv"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 
 	segkafka "github.com/segmentio/kafka-go"
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"

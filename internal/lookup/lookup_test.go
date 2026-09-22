@@ -66,13 +66,13 @@ func item(id, idType, env string) map[string]ddbtypes.AttributeValue {
 // ---- cache ----
 
 func TestCachedHitIsReusedUntilTTL(t *testing.T) {
-	inner := &fakeProvider{values: map[string]string{"a": "qa-gm3"}}
+	inner := &fakeProvider{values: map[string]string{"a": "tenant-a"}}
 	c := newCached(inner, CacheOptions{TTL: time.Minute}, slog.Default())
 	now := time.Now()
 	c.now = func() time.Time { return now }
 	for range 3 {
 		v, found, err := c.Lookup(context.Background(), "a")
-		if err != nil || !found || v != "qa-gm3" {
+		if err != nil || !found || v != "tenant-a" {
 			t.Fatalf("lookup: %q %v %v", v, found, err)
 		}
 	}
@@ -175,13 +175,13 @@ func TestCachedEvictsOldest(t *testing.T) {
 
 func TestDynamoLookupNewestFirstWithClientSideFilter(t *testing.T) {
 	fake := &fakeDynamo{pages: []*dynamodb.QueryOutput{{Items: []map[string]ddbtypes.AttributeValue{
-		item("abc", "borrower", "qa-gm9"),    // newest row, wrong type: must be skipped
-		item("abc", "application", "qa-gm3"), // match
-		item("abc", "application", "qa-gm1"), // older
+		item("abc", "customer", "tenant-z"),    // newest row, wrong type: must be skipped
+		item("abc", "application", "tenant-a"), // match
+		item("abc", "application", "tenant-b"), // older
 	}}}}
 	p := newDynamoDBWithClient(fake, DynamoDBOptions{Table: "t", Index: "CreatedAtIndex", FilterAttribute: "id_type", FilterValue: "application", ValueAttribute: "env_name", ConsistentRead: true})
 	v, found, err := p.Lookup(context.Background(), "abc")
-	if err != nil || !found || v != "qa-gm3" {
+	if err != nil || !found || v != "tenant-a" {
 		t.Fatalf("lookup: %q %v %v", v, found, err)
 	}
 	in := fake.inputs[0]
@@ -195,12 +195,12 @@ func TestDynamoLookupNewestFirstWithClientSideFilter(t *testing.T) {
 
 func TestDynamoLookupPagesUntilMatch(t *testing.T) {
 	fake := &fakeDynamo{pages: []*dynamodb.QueryOutput{
-		{Items: []map[string]ddbtypes.AttributeValue{item("abc", "borrower", "x")}, LastEvaluatedKey: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "abc"}}},
-		{Items: []map[string]ddbtypes.AttributeValue{item("abc", "application", "qa-gm2")}},
+		{Items: []map[string]ddbtypes.AttributeValue{item("abc", "customer", "x")}, LastEvaluatedKey: map[string]ddbtypes.AttributeValue{"id": &ddbtypes.AttributeValueMemberS{Value: "abc"}}},
+		{Items: []map[string]ddbtypes.AttributeValue{item("abc", "application", "tenant-c")}},
 	}}
 	p := newDynamoDBWithClient(fake, DynamoDBOptions{Table: "t", FilterAttribute: "id_type", FilterValue: "application", ValueAttribute: "env_name"})
 	v, found, err := p.Lookup(context.Background(), "abc")
-	if err != nil || !found || v != "qa-gm2" || len(fake.inputs) != 2 || fake.inputs[1].ExclusiveStartKey == nil {
+	if err != nil || !found || v != "tenant-c" || len(fake.inputs) != 2 || fake.inputs[1].ExclusiveStartKey == nil {
 		t.Fatalf("paging: %q %v %v inputs=%d", v, found, err, len(fake.inputs))
 	}
 }
@@ -239,7 +239,7 @@ func TestHTTPLookup(t *testing.T) {
 		case r.URL.Query().Get("id") == "junk":
 			_, _ = w.Write([]byte("not json"))
 		default:
-			_, _ = w.Write([]byte(`{"data":{"env_name":"qa-gm3"}}`))
+			_, _ = w.Write([]byte(`{"data":{"env_name":"tenant-a"}}`))
 		}
 	}))
 	defer srv.Close()
@@ -248,7 +248,7 @@ func TestHTTPLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	v, found, err := p.Lookup(context.Background(), "a b/c")
-	if err != nil || !found || v != "qa-gm3" {
+	if err != nil || !found || v != "tenant-a" {
 		t.Fatalf("hit: %q %v %v", v, found, err)
 	}
 	if gotPath != "/env?id=a%20b%2Fc" || gotAuth != "Bearer t" || gotMethod != "GET" {
@@ -312,10 +312,10 @@ func (f *fakeQuerier) QueryRow(_ context.Context, sql string, args ...any) pgx.R
 func (f *fakeQuerier) Close() {}
 
 func TestPostgresLookup(t *testing.T) {
-	q := &fakeQuerier{row: fakeRow{val: "qa-gm3"}}
+	q := &fakeQuerier{row: fakeRow{val: "tenant-a"}}
 	p := &postgresProvider{pool: q, query: "SELECT env FROM routing WHERE id = $1"}
 	v, found, err := p.Lookup(context.Background(), "abc")
-	if err != nil || !found || v != "qa-gm3" || q.args[0] != "abc" {
+	if err != nil || !found || v != "tenant-a" || q.args[0] != "abc" {
 		t.Fatalf("hit: %q %v %v args=%v", v, found, err, q.args)
 	}
 	q.row = fakeRow{err: pgx.ErrNoRows}

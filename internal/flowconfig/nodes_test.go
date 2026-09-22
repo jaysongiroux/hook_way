@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 	"gopkg.in/yaml.v3"
 )
 

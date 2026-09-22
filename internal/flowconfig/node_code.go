@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/codenode"
-	"github.com/jasongiroux/hookway/internal/graph"
-	hooklogging "github.com/jasongiroux/hookway/internal/logging"
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/codenode"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 const (

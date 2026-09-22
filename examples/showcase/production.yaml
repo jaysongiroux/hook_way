@@ -4,7 +4,7 @@
 # lookup is omitted: the standalone server has no lookup provider binding.
 #
 # Requires GITHUB_WEBHOOK_SECRET, ARCHIVE_BUCKET, RABBITMQ_URL, KAFKA_BROKER_*,
-# POSTGRES_URL, DIGIFI_BASE, and SF_TOKEN in the environment.
+# POSTGRES_URL, UPSTREAM_BASE, and PROXY_TOKEN in the environment.
 server:
   addr: ":8080"
   read_timeout: "5s"
@@ -134,12 +134,12 @@ flows:
 
   proxy:
     nodes:
-      - {id: in, type: http_trigger, description: "Accepts any method under the Salesforce proxy prefix.", path: "/salesforce/proxy/{rest...}", methods: [ANY]}
+      - {id: in, type: http_trigger, description: "Accepts any method under the upstream proxy prefix.", path: "/upstream/proxy/{rest...}", methods: [ANY]}
       - {id: rl, type: rate_limit, description: "Caps proxy traffic at 120 requests per minute.", rpm: 120}
       - {id: body, type: read_body, description: "Buffers the body so it can be signed and forwarded.", max_bytes: 10485760}
-      - {id: auth, type: auth, description: "Checks the shared proxy token in X-Auth.", scheme: exact, secret: "${SF_TOKEN}", signature_header: X-Auth}
+      - {id: auth, type: auth, description: "Checks the shared proxy token in X-Auth.", scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
       - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
-      - {id: up, type: http_request, description: "Forwards method, query, and trailing path upstream.", url: "${DIGIFI_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 10s}
+      - {id: up, type: http_request, description: "Forwards method, query, and trailing path upstream.", url: "${UPSTREAM_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 10s}
       - {id: resp, type: respond, description: "Returns the upstream response to the caller unchanged.", passthrough: true}
     edges: [in>rl, rl>body, body>auth, auth>env, env>up, up>resp]
 

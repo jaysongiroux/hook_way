@@ -7,12 +7,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // AWS SNS/SQS message-attribute limits. Oversized values fail the publish
-// instead of being silently dropped (gaps doc A4).
+// instead of being silently dropped.
 const (
 	maxMessageAttributes            = 10
 	maxMessageAttributeNameBytes    = 256

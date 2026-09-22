@@ -19,18 +19,18 @@ flows:
       - {id: env, type: envelope, description: "Parses the document into an XML DOM.", body_format: xml}
       # Filter paths address elements below the root by local name, and an
       # attribute with a leading @. Namespace prefixes are ignored.
-      - {id: only_loans, type: filter, description: "Continues only for documents carrying a LOAN with an amount.", on_no_match: drop, conditions: [{source: body, path: LOAN.Amount, operator: exists}]}
+      - {id: only_orders, type: filter, description: "Continues only for documents carrying an ORDER with an amount.", on_no_match: drop, conditions: [{source: body, path: ORDER.Amount, operator: exists}]}
       # The script sees the DOM as a tagged node tree: {name, ns, attr, attrns,
       # text, children}. It must return the same shape.
       - id: tag
         type: code
-        description: "Reads the loan amount off the DOM into a variable for routing."
+        description: "Reads the order amount off the DOM into a variable for routing."
         timeout: 50ms
         script: |
-          const loan = input.body.root.children.find(function (c) { return c.name === 'LOAN'; });
-          const amount = loan ? (loan.children.find(function (c) { return c.name === 'Amount'; }) || {}).text : '';
+          const order = input.body.root.children.find(function (c) { return c.name === 'ORDER'; });
+          const amount = order ? (order.children.find(function (c) { return c.name === 'Amount'; }) || {}).text : '';
           return { body: input.body, vars: { amount: String(amount || '0') } };
       - {id: prune, type: transform, description: "Drops empty elements the upstream rejects.", kind: xml_prune, rules: [remove_empty_self_closing_elements, remove_empty_parents]}
       - {id: post, type: http_request, description: "Forwards the pruned document; body: transformed re-serializes the DOM as application/xml.", url: "${XML_UPSTREAM_URL}", body: transformed, timeout: 10s, error_on_status: [5xx]}
       - {id: ack, type: respond, description: "Acknowledges the source system.", status: 202, body: "accepted"}
-    edges: [in>body, body>auth, auth>env, env>only_loans, only_loans>tag, tag>prune, prune>post, post>ack]
+    edges: [in>body, body>auth, auth>env, env>only_orders, only_orders>tag, tag>prune, prune>post, post>ack]

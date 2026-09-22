@@ -12,8 +12,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/jasongiroux/hookway/internal/awsconf"
-	"github.com/jasongiroux/hookway/internal/testenv"
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 )
 
 // TestAWSDynamoDBLookupAgainstRoutingTableSchema creates the ephemeral routing
@@ -76,8 +76,8 @@ func TestAWSDynamoDBLookupAgainstRoutingTableSchema(t *testing.T) {
 			t.Fatalf("PutItem: %v", err)
 		}
 	}
-	put("abc", "application", "qa-gm3", 100)
-	put("abc", "borrower", "qa-gm9", 200) // newer, wrong type: the gateway's Limit:1 query would miss
+	put("abc", "application", "tenant-a", 100)
+	put("abc", "customer", "tenant-z", 200) // newer, wrong type: the gateway's Limit:1 query would miss
 
 	p, err := New(ctx, Options{Name: "env", DynamoDB: &DynamoDBOptions{
 		Table: "routing", Index: "CreatedAtIndex", FilterAttribute: "id_type", FilterValue: "application", ValueAttribute: "env_name",
@@ -88,7 +88,7 @@ func TestAWSDynamoDBLookupAgainstRoutingTableSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Close() })
 	v, found, err := p.Lookup(ctx, "abc")
-	if err != nil || !found || v != "qa-gm3" {
+	if err != nil || !found || v != "tenant-a" {
 		t.Fatalf("application lookup: %q %v %v", v, found, err)
 	}
 	if _, found, err := p.Lookup(ctx, "zzz"); found || err != nil {
@@ -124,7 +124,7 @@ func TestPostgresLookupAgainstContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `CREATE TABLE routing (id text PRIMARY KEY, env_name text NOT NULL); INSERT INTO routing VALUES ('abc', 'qa-gm3')`); err != nil {
+	if _, err := pool.Exec(ctx, `CREATE TABLE routing (id text PRIMARY KEY, env_name text NOT NULL); INSERT INTO routing VALUES ('abc', 'tenant-a')`); err != nil {
 		t.Fatal(err)
 	}
 	p, err := New(ctx, Options{Name: "env", Postgres: &PostgresOptions{URL: url, Query: "SELECT env_name FROM routing WHERE id = {key}"}}, nil)
@@ -132,7 +132,7 @@ func TestPostgresLookupAgainstContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = p.Close() })
-	if v, found, err := p.Lookup(ctx, "abc"); err != nil || !found || v != "qa-gm3" {
+	if v, found, err := p.Lookup(ctx, "abc"); err != nil || !found || v != "tenant-a" {
 		t.Fatalf("hit: %q %v %v", v, found, err)
 	}
 	if _, found, err := p.Lookup(ctx, "nope"); found || err != nil {

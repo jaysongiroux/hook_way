@@ -14,9 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/jasongiroux/hookway/internal/apikey"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/apikey"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
 )
 
 // Server holds HTTP helpers shared by FlowServer (metrics, source IP,

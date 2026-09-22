@@ -72,12 +72,6 @@ func Request(logger *slog.Logger, attrs RequestAttrs) {
 	)
 }
 
-// RedactHeaders redacts denylisted and known-sensitive headers, passing
-// everything else through. It is a denylist (fail-open) filter.
-func RedactHeaders(headers http.Header, denylist []string) http.Header {
-	return FilterHeaders(headers, nil, denylist)
-}
-
 // LogHeaders copies headers for structured request logs. An empty allowlist
 // logs no request headers (fail-closed). Explicitly allowed names are still
 // filtered by the built-in sensitive-header heuristics and the configured

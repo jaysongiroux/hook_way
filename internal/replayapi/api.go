@@ -28,10 +28,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jasongiroux/hookway/internal/apikey"
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/apikey"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 // maxBodyBytes caps replay request bodies. These are small JSON control

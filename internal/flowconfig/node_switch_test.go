@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/webhook"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/webhook"
 )
 
 func TestSwitchFirstMatchWinsAndDefault(t *testing.T) {

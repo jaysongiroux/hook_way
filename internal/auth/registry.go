@@ -118,12 +118,6 @@ func NewVerifier(spec Spec) (Verifier, error) {
 	return def.build(spec)
 }
 
-// SchemeRegistered reports whether a scheme is known.
-func SchemeRegistered(scheme string) bool {
-	_, ok := registry[scheme]
-	return ok
-}
-
 // SchemeAllowedForAuthType reports whether scheme is registered for authType.
 func SchemeAllowedForAuthType(authType, scheme string) bool {
 	def, ok := registry[scheme]

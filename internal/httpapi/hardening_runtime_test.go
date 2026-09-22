@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 	dto "github.com/prometheus/client_model/go"
 )
 

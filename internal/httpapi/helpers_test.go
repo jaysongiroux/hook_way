@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 type publishedMessage struct {

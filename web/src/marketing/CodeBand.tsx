@@ -2,12 +2,20 @@ import { Box, Group, Stack, Text } from "@mantine/core";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
 
-// A complete flow with a shared destination connection.
+// A complete flow with a shared destination connection. This is a whole config,
+// not an excerpt: `hookway validate` accepts it verbatim (with
+// GITHUB_WEBHOOK_SECRET exported), which is what the "validated before it
+// ships" label below claims. Removing the server block or the rate_limit node
+// makes it fail validation, so keep them.
 const LINES: { text: string; kind: "key" | "value" | "comment" | "plain" }[] = [
+  { text: "server:", kind: "key" },
+  { text: "  addr: \":8080\"", kind: "value" },
+  { text: "  max_body_bytes: 1048576", kind: "value" },
   { text: "flows:", kind: "key" },
   { text: "  github:", kind: "key" },
   { text: "    nodes:", kind: "key" },
   { text: "      - {id: in, type: http_trigger, path: /webhooks/github}", kind: "value" },
+  { text: "      - {id: rl, type: rate_limit, rpm: 600, burst: 60}", kind: "value" },
   { text: "      - {id: body, type: read_body, max_bytes: 1048576}", kind: "value" },
   { text: "      - id: auth", kind: "value" },
   { text: "        type: auth", kind: "value" },
@@ -16,7 +24,7 @@ const LINES: { text: string; kind: "key" | "value" | "comment" | "plain" }[] = [
   { text: "        secret: ${GITHUB_WEBHOOK_SECRET}", kind: "value" },
   { text: "      - {id: env, type: envelope}", kind: "value" },
   { text: "      - {id: out, type: publish, destination: orders, target: github-events}", kind: "value" },
-  { text: "    edges: [in>body, body>auth, auth>env, env>out]", kind: "value" },
+  { text: "    edges: [in>rl, rl>body, body>auth, auth>env, env>out]", kind: "value" },
   { text: "destinations:", kind: "key" },
   { text: "  orders:", kind: "key" },
   { text: "    type: webhook", kind: "value" },
@@ -37,7 +45,7 @@ export function CodeBand() {
   return (
     <Section
       title="Define the flow in YAML"
-      lead="No SDK to install and no handler to deploy. Declare the flow, the verification, and where events should land."
+      lead="No SDK, no handler to deploy. Declare the flow, the verification, and where events land."
     >
       <Box
         style={{

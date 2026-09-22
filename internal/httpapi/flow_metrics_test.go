@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/flowconfig"
-	"github.com/jasongiroux/hookway/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
 )
 
 const lookupFlowYAML = `

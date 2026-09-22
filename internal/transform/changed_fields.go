@@ -11,7 +11,8 @@ import (
 
 // ChangedFields recursively diffs prev against curr and returns dot-notation
 // paths that changed. A nested change under "status." also promotes "status"
-// itself into the result (gaps A3 / DigiFi getChangedFieldsArray).
+// itself into the result, matching the "changed fields array" convention
+// downstream consumers expect.
 func ChangedFields(prev, curr any) []string {
 	var paths []string
 	diff(prev, curr, "", &paths)

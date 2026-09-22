@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/cmd/hookway-wasm/bridge"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/configapi"
-	"github.com/jasongiroux/hookway/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/cmd/hookway-wasm/bridge"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/configapi"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 )
 
 // Validate must be a byte-identical pass-through of configapi.Validate for any
@@ -63,8 +63,8 @@ func TestSchemaMatchesConfig(t *testing.T) {
 	if got != string(want) {
 		t.Errorf("schema mismatch")
 	}
-	if !strings.Contains(got, "endpoints") {
-		t.Errorf("schema missing expected property 'endpoints'")
+	if !strings.Contains(got, "destinations") {
+		t.Errorf("schema missing expected property 'destinations'")
 	}
 }
 

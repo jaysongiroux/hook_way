@@ -1,10 +1,30 @@
 # Security
 
-Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, SNS, S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or outbound webhook). An `auth` node selects the verifier family (`hmac_sha256`, `header_exact`, `jwt`); **scheme** selects the header layout within that family. Unverified traffic uses a separate `no_auth` node — `auth.scheme: no_auth` is rejected. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The full scheme list lives in [Configuration](configuration.md#auth).
+Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, SNS, S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or outbound webhook).
+
+An `auth` node is configured by **`scheme`**, and only by `scheme`. There is no "family" field: `AuthOptions` carries a scheme and nothing else, and the family names (`hmac_sha256`, `header_exact`, `jwt`) appear below only as a grouping for readers. Writing `scheme: hmac_sha256` or `scheme: jwt` is a configuration error, not a shorthand — those strings are not registered schemes, so `NewVerifier` returns `unknown signature scheme`, the node's verifier becomes `auth.RejectAll{}`, and the flow rejects **100% of traffic** with `401`. Of those three family names only `header_exact` is accepted, as an alias for the `exact` scheme. Always name a concrete scheme from the table below.
+
+Unverified traffic uses a separate `no_auth` node — `auth.scheme: no_auth` is rejected. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The same list, with config detail, is in [Configuration](configuration.md#auth).
 
 ## Auth Schemes
 
 Each `auth` node requires an explicit `scheme`. Inline secrets build a verifier at startup; `secret_ref` uses the cached current/overlap values. An unknown scheme fails closed — the flow rejects every request rather than accepting unverified traffic.
+
+Eleven schemes are registered (`internal/auth/registry.go`). All of them:
+
+| Scheme | Family | Verifies | Notes |
+|---|---|---|---|
+| `hmac_sha256_ts_colon` | `hmac_sha256` | timestamp + raw body | signed timestamp; see below |
+| `hmac_sha256_ts_dot` | `hmac_sha256` | timestamp + raw body | signed timestamp; see below |
+| `hmac_sha256_hex` | `hmac_sha256` | raw body | see below |
+| `hmac_sha256_base64` | `hmac_sha256` | raw body | see below |
+| **`hmac_sha1_hex`** | `hmac_sha256` | raw body | **SHA-1** — see the warning below |
+| `exact` | `header_exact` | a static header value | body not verified |
+| `basic` | `header_exact` | HTTP Basic credentials | body not verified |
+| `jwt_hs256` | `jwt` | Bearer JWT (HMAC) | `body_hash_claim` binds the body |
+| `jwt_rs256` | `jwt` | Bearer JWT (RSA) | `body_hash_claim` binds the body |
+| `jwt_es256` | `jwt` | Bearer JWT (ECDSA) | `body_hash_claim` binds the body |
+| `no_auth` | `no_auth` | nothing | only via the separate `no_auth` node |
 
 ### `hmac_sha256_ts_colon` (timestamped, `hmac_sha256`)
 
@@ -13,6 +33,30 @@ The default HMAC scheme (used by Paddle's `Paddle-Signature`). Hookway reads the
 ### `hmac_sha256_hex` (`hmac_sha256`)
 
 Prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (used by GitHub's `X-Hub-Signature-256: sha256=<hex>`). Hookway computes HMAC-SHA256 over the exact raw body with the endpoint secret and compares using `hmac.Equal`. There is no signed timestamp, so `timestamp_tolerance` is not used. A missing/short/tampered signature or empty secret fails closed.
+
+### `hmac_sha256_ts_dot` (timestamped, `hmac_sha256`)
+
+Timestamped HMAC-SHA256 with a dot separator (used by Stripe's `Stripe-Signature`). Hookway parses a labeled, comma-delimited header — `t=<unix>,v1=<hex>` — using only `t` and the first `v1`, ignoring any other pairs; builds `t + "." + raw_body`; computes HMAC-SHA256 over those exact bytes with the endpoint secret; hex-encodes it; and compares to `v1` with `hmac.Equal`. Requests outside `timestamp_tolerance` are rejected `401`. A missing `t` or `v1`, an empty secret, or a non-positive tolerance fails closed.
+
+### `hmac_sha256_base64` (`hmac_sha256`)
+
+Raw base64 HMAC-SHA256 over the exact raw body, with no prefix and no signed timestamp (used by Shopify's `X-Shopify-Hmac-SHA256`). The header value is the base64 digest by itself — Hookway does not strip a `sha256=`-style prefix for this scheme. Because there is no signed timestamp, `timestamp_tolerance` is unused; pair it with a `replay_guard` keyed on the raw body or a provider delivery id. A missing, malformed, or tampered signature, or an empty secret, fails closed.
+
+### `hmac_sha1_hex` (`hmac_sha256`) — SHA-1
+
+> **This scheme uses SHA-1.** It exists for providers that still only offer a legacy SHA-1 signature — GitHub's pre-2020 `X-Hub-Signature: sha1=<hex>` is the canonical case. The implementation carries a `// #nosec G401` annotation at `internal/auth/hmac.go` precisely because a SAST scanner should, and does, flag it.
+
+Prefixed hex HMAC-SHA1 over the exact raw body, no signed timestamp. Mechanically identical to `hmac_sha256_hex` apart from the digest and the `sha1=` prefix.
+
+HMAC-SHA1 is **not** broken in the way bare SHA-1 is: the known SHA-1 attacks are collision attacks, and HMAC's security does not rest on collision resistance, so HMAC-SHA1 has no practical forgery attack today. It is nonetheless a deprecated construction with a 160-bit digest, it will fail a modern crypto review or a FIPS/PCI control questionnaire, and it is the weakest verifier Hookway ships.
+
+Treat it as a migration path, not a destination: **use `hmac_sha256_hex` whenever the provider offers both** (GitHub sends `X-Hub-Signature-256` alongside the legacy header — verify that one). If you must run `hmac_sha1_hex`, keep it on the one flow that needs it rather than making it a default, and revisit whenever the provider ships SHA-256.
+
+### `basic` (`header_exact`)
+
+HTTP Basic. Hookway reads `signature_header` (normally `Authorization`), requires a case-insensitive `Basic` keyword followed by whitespace, base64-decodes the remainder, and compares the decoded `user:pass` bytes to the configured `secret` with `subtle.ConstantTimeCompare`. The `secret` is the plaintext `user:pass` pair, not base64. The body is not part of verification. An empty secret, a missing or malformed prefix, or undecodable base64 fails closed.
+
+Basic credentials are a static bearer value like `exact`: they are identical on every request, so derive the `replay_guard` key from the raw body or a provider delivery id rather than the auth header. Only use Basic over TLS.
 
 ### `jwt_hs256` / `jwt_rs256` / `jwt_es256` (`jwt`)
 
@@ -31,6 +75,27 @@ Set `remove_bearer: true` when the provider sends a `Bearer` or `bearer` prefix 
 Because the header value is identical on every request, use a `replay_guard` key derived from the raw body (or a provider delivery id) rather than the static auth header.
 
 For HMAC schemes the body is not parsed, trimmed, normalized, or re-serialized before verification, and the endpoint secret is used as a raw string (not base64-decoded).
+
+## Where the credential is read from (`auth.source`)
+
+By default an `auth` node reads its credential from the header named by `signature_header`. `auth.source` overrides that with an explicit `{kind, key}` pair, and `kind` may be **`query`** as well as `header`:
+
+```yaml
+- {id: auth, type: auth, scheme: exact, secret: "${TOKEN}", source: {kind: query, key: authID}}
+```
+
+If both `source` and `signature_header` are set, `source` wins.
+
+**`kind: query` puts a credential in the URL, and URLs leak.** A query-string secret ends up in places a header never does:
+
+- web-server, proxy, load-balancer, and CDN access logs, usually unredacted and usually retained longer than application logs
+- the `Referer` header on any outbound navigation from a page fetched at that URL
+- browser history, bookmarks, and shared links
+- crash and APM traces that record the full request URL
+
+Some providers only offer this (a static token appended as `?authID=…` is a real pattern), which is why Hookway supports it. Prefer `kind: header` whenever the provider allows a choice.
+
+Hookway compensates for the part it controls: when an `auth` node declares `source.kind: query`, that query key is added to the redaction set, so the value is published as `"redacted"` in the envelope's `query` object and never appears in a structured log. Header sources get the same treatment for the header name. This is automatic — you do not list the key in `security.redacted_header_denylist` yourself. It does **not** reach your ingress's own access logs, so configure redaction there too, and rotate a query-string credential more aggressively than a header one.
 
 ## Secrets
 
@@ -132,18 +197,59 @@ The optional replay store and its API (see [Configuration § Replay](configurati
 
 ## Sync proxy (`http_request` / `respond`)
 
-A proxy flow confines callers to whatever path its `url` template builds. Two
-protections keep that boundary real:
+A proxy flow confines callers to whatever URL its `url` template builds — both
+the path *and* the host. Three protections keep that boundary real.
 
-- **Percent-encoded path traversal is rejected.** `net/http` hands handlers an
-  already percent-decoded `URL.Path`, so Go's router redirects a literal
-  `/proxy/../admin` but `/proxy/..%2f..%2fadmin` only becomes `../..` after
-  routing. Hookway rejects any request whose captured path variable contains a
-  `..` segment with `400`, before the value can be rendered into an upstream
-  URL — an upstream that normalized `/safe/../../admin` to `/admin` would
-  otherwise escape the configured prefix. The outbound path is additionally
+- **Path variables that could re-shape the URL are rejected.** `net/http` hands
+  handlers an already percent-decoded `URL.Path`, so Go's router redirects a
+  literal `/proxy/../admin`, but `/proxy/..%2f..%2fadmin` only becomes `../..`
+  after routing. Hookway rejects with `400`, before the value can be rendered
+  into an upstream URL, any request whose captured path variable contains:
+
+  | Rejected | Why |
+  |---|---|
+  | a `..` path segment | an upstream that normalizes `/safe/../../admin` to `/admin` escapes the configured prefix |
+  | `#` | url.Parse reads it as a fragment delimiter and **silently drops the rest of the template**, including a mandatory suffix |
+  | `?` | same, as a query delimiter — and it lets the caller append an arbitrary query string |
+  | `\` | treated as `/` by several HTTP clients and by Windows path handling |
+  | an ASCII control character | request smuggling / header injection |
+
+  The `#` and `?` cases are the reason this list is longer than it used to be.
+  Against a template like `https://up.example.com/tenants/{tenant}/readonly`,
+  the same decode-after-routing step turns `%23` into `#` and `%3F` into `?`:
+
+  ```
+  tenant = "acme"       →  /tenants/acme/readonly       (intended)
+  tenant = "acme#"      →  /tenants/acme                (suffix dropped)
+  tenant = "acme?x=1&"  →  /tenants/acme?x=1&/readonly  (suffix dropped, query injected)
+  ```
+
+  The mandatory `/readonly` suffix — the thing the template existed to enforce
+  — disappears. Earlier versions of Hookway rejected only `..`, so this was a
+  real access-control bypass, and the claim that the proxy "confines callers to
+  whatever path its `url` template builds" was false as written. It is true
+  now. Rejecting at the trigger fails closed and does not depend on how any
+  particular upstream normalizes paths. The outbound path is additionally
   normalized with `path.Clean` as defense in depth. Names that merely contain
   dots (`..hidden`, `a..b`) are unaffected.
+
+- **The upstream host cannot be chosen by the caller.** When an `http_request`
+  `url` has a `{variable}` in its *authority*, the destination is influenced by
+  request data, which is an SSRF primitive. Hookway requires such a host to end
+  in a literal dotted domain suffix (`{envName}-api.example.com`, never
+  `{host}`), vets the rendered target against a private-network block list
+  (loopback, link-local including `169.254.169.254`, RFC1918, CGNAT, ULA,
+  multicast, cloud metadata addresses, plus `localhost` and the `.internal` /
+  `.local` / `.localhost` / `.localdomain` / `.home.arpa` suffixes), refuses
+  ambiguous numeric host spellings rather than trying to interpret them, and
+  re-checks every resolved IP in the dialer so DNS rebinding cannot swap the
+  address between check and connect. Redirects are not followed. A **literal**
+  host is exempt: it is the operator's own explicit choice, and proxying to an
+  internal service is a legitimate configuration. The per-node opt-out for a
+  templated host is `allow_private_targets: true`; it defaults to `false` and
+  is rejected at config time on a node whose host is literal. Full rules:
+  [Configuration § `http_request` outbound egress policy](configuration.md#http_request-outbound-egress-policy).
+
 - **Caller credentials are not forwarded upstream.** `Authorization` and
   `Cookie` authenticate the caller *to Hookway*, so forwarding them would hand
   a credential to a third party. Both are withheld unless explicitly named in

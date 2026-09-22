@@ -3,7 +3,7 @@ package filter
 import (
 	"strings"
 
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 // walkXMLPath resolves a dotted path against an XML document, mirroring
@@ -13,9 +13,9 @@ import (
 //
 // Segments name child elements by local name, starting below the root: the
 // root element is the document's wrapper, the way a JSON body's outermost
-// object is, so "LOAN.Amount" reads <root><LOAN><Amount>. A segment prefixed
+// object is, so "ORDER.Amount" reads <root><ORDER><Amount>. A segment prefixed
 // with "@" reads an attribute of the element addressed so far. Namespace
-// prefixes are ignored on both elements and attributes, because a vendor can
+// prefixes are ignored on both elements and attributes, because a sender can
 // change a prefix without changing what the document means and a filter
 // should not break when they do.
 //

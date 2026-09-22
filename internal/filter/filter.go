@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 // Source values.

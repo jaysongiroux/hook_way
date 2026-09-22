@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"regexp"
 	"regexp/syntax"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -273,9 +272,9 @@ func (s Spec) Accepts(v string) bool {
 	return s.Source == SourceLookup
 }
 
-// Input is what a request offers to Resolve. Headers should be the unredacted
-// request headers; Body the JSON-decoded body (nil when not JSON); Query the
-// parsed query string (first value wins); PathVars the captures from
+// Input is what a request offers a variable resolver. Headers should be the
+// unredacted request headers; Body the JSON-decoded body (nil when not JSON);
+// Query the parsed query string (first value wins); PathVars the captures from
 // PathPattern.Match.
 type Input struct {
 	Headers  http.Header
@@ -284,8 +283,9 @@ type Input struct {
 	PathVars map[string]string
 }
 
-// Result is the outcome of Resolve: every resolved (or defaulted) value, and
-// the sorted names that stayed unresolved even after Default.
+// Result is the outcome of resolving a set of Specs: every resolved (or
+// defaulted) value, and the sorted names that stayed unresolved even after
+// Default.
 type Result struct {
 	Values     map[string]string
 	Unresolved []string
@@ -293,81 +293,6 @@ type Result struct {
 	// variable is also listed in Unresolved unless Default applied; callers
 	// log and count the error separately from a clean miss.
 	Errors map[string]error
-}
-
-// Resolve evaluates every spec against in. A raw value is trimmed, then must
-// be accepted by the spec; otherwise Default applies when set, else the name
-// is reported unresolved. Lookup specs extract their key from the request and
-// call the provider; a provider error or a missing key behaves like a miss.
-func Resolve(ctx context.Context, specs []Spec, in Input) Result {
-	res := Result{Values: make(map[string]string, len(specs))}
-	for _, s := range specs {
-		var raw string
-		if s.Source == SourceLookup {
-			var err error
-			raw, err = resolveLookup(ctx, s, in)
-			if err != nil {
-				if res.Errors == nil {
-					res.Errors = map[string]error{}
-				}
-				res.Errors[s.Name] = err
-			}
-		} else {
-			raw = strings.TrimSpace(readSource(in, s.Source, s.Path))
-		}
-		switch {
-		case s.Accepts(raw):
-			res.Values[s.Name] = raw
-		case s.Default != "":
-			res.Values[s.Name] = s.Default
-		default:
-			res.Unresolved = append(res.Unresolved, s.Name)
-		}
-	}
-	sort.Strings(res.Unresolved)
-	return res
-}
-
-// resolveLookup extracts the key and asks the provider. An empty or over-long
-// key skips the call and reads as a miss.
-func resolveLookup(ctx context.Context, s Spec, in Input) (string, error) {
-	key := strings.TrimSpace(readSource(in, s.KeySource, s.KeyPath))
-	if key == "" || len(key) > MaxLookupKeyLen {
-		return "", nil
-	}
-	if s.Lookup == nil {
-		return "", errors.New("no lookup provider configured")
-	}
-	value, found, err := s.Lookup.Lookup(ctx, key)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "", nil
-	}
-	return strings.TrimSpace(value), nil
-}
-
-// readSource reads a raw value from the request for a non-lookup source.
-func readSource(in Input, source Source, path string) string {
-	switch source {
-	case SourceHeader:
-		if in.Headers == nil {
-			return ""
-		}
-		return in.Headers.Get(path)
-	case SourceBody:
-		v, _ := BodyString(in.Body, path)
-		return v
-	case SourceQuery:
-		if in.Query == nil {
-			return ""
-		}
-		return in.Query.Get(path)
-	case SourcePath:
-		return in.PathVars[path]
-	}
-	return ""
 }
 
 // BodyString walks a dotted path into a JSON-decoded body and returns the leaf

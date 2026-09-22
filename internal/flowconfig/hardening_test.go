@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 const malformedPlaceholder = "{bad-name}"

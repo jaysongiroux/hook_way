@@ -14,9 +14,9 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 func newReadyFlowServer(t *testing.T, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics) *FlowServer {

@@ -43,7 +43,7 @@ func TestRawRequestNestsHeadByField(t *testing.T) {
 }
 
 func TestRequestHeadCarriesQueryForQueryParamAuth(t *testing.T) {
-	// Qualia authenticates from the query string (gaps doc A5), so the
+	// Some providers authenticate from the query string, so the
 	// pre-body phase must carry query values.
 	head := RequestHead{Query: url.Values{"authID": []string{"secret"}}}
 	if got := head.Query.Get("authID"); got != "secret" {

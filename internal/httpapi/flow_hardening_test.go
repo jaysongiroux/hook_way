@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
 )
 
 func githubPOST(body []byte) *http.Request {

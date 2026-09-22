@@ -27,7 +27,7 @@
 # replay_guard is what stops a captured document from being replayed. Do not
 # swap that auth node for no_auth.
 #
-# The `rules` on the prune node are the five fixed MISMO-shaped rules; they
+# The `rules` on the prune node are the five fixed document-shaping rules; they
 # are not a rule language. Drop the ones you do not want rather than trying to
 # express a predicate. See docs/configuration.md § XML bodies.
 server:
@@ -69,7 +69,7 @@ flows:
       # Filter paths address elements below the root by local name, with a
       # leading @ for an attribute. Namespace prefixes are ignored, and
       # repeated siblings resolve to the first in document order.
-      - {id: only_loans, type: filter, description: "Continues only for documents carrying a LOAN with an amount. Edit the path to suit your schema.", on_no_match: drop, conditions: [{source: body, path: LOAN.Amount, operator: exists}]}
+      - {id: only_orders, type: filter, description: "Continues only for documents carrying an ORDER with an amount. Edit the path to suit your schema.", on_no_match: drop, conditions: [{source: body, path: ORDER.Amount, operator: exists}]}
       - id: tag
         type: code
         description: "Reads fields off the element tree into vars for routing. Edit to suit your schema."
@@ -83,12 +83,12 @@ flows:
           function child(el, name) {
             return (el.children || []).find(function (c) { return c.name === name; });
           }
-          const loan = child(input.body.root, 'LOAN');
-          const amount = loan ? (child(loan, 'Amount') || {}).text : '';
+          const order = child(input.body.root, 'ORDER');
+          const amount = order ? (child(order, 'Amount') || {}).text : '';
           return {
             body: input.body,
             vars: {
-              loan_id: loan && loan.attr ? String(loan.attr.id || '') : '',
+              order_id: order && order.attr ? String(order.attr.id || '') : '',
               amount: String(amount || '0'),
             },
           };
@@ -102,4 +102,4 @@ flows:
         error_on_status: [4xx, 5xx]
         retry: {max_attempts: 4, initial_backoff: 1s, max_backoff: 10s}
       - {id: ack, type: respond, description: "Acknowledges the source system once the forward succeeded. Not part of the inserted template.", status: 202, body: "accepted"}
-    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>only_loans, only_loans>tag, tag>prune, prune>post, post>ack]
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>only_orders, only_orders>tag, tag>prune, prune>post, post>ack]

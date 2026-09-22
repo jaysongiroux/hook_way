@@ -13,7 +13,7 @@ import (
 	"go.temporal.io/sdk/client"
 	sdklog "go.temporal.io/sdk/log"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // errTemporalAlreadyStarted is the sentinel sdkTemporalOps.StartWorkflow

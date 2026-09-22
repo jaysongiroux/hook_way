@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type WebhookTarget struct {

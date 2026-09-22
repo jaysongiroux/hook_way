@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/retry"
-	"github.com/jasongiroux/hookway/internal/transform"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/retry"
+	"github.com/jaysongiroux/hook_way/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 const defaultHTTPRequestTimeout = 10 * time.Second
@@ -32,6 +32,7 @@ var proxyHTTPClient = &http.Client{
 		t := http.DefaultTransport.(*http.Transport).Clone()
 		t.MaxIdleConns = 100
 		t.MaxIdleConnsPerHost = 8
+		t.DialContext = egressDialContext
 		return t
 	}(),
 	CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -39,16 +40,76 @@ var proxyHTTPClient = &http.Client{
 	},
 }
 
+// egressGuardKey carries the per-request egress decision to the dialer.
+// http.Transport hands DialContext the request's context, which is the only
+// channel available: the transport is shared, but the policy is per node.
+type egressGuardKey struct{}
+
+func withEgressGuard(ctx context.Context, enforce bool) context.Context {
+	return context.WithValue(ctx, egressGuardKey{}, enforce)
+}
+
+func egressGuarded(ctx context.Context) bool {
+	enforce, _ := ctx.Value(egressGuardKey{}).(bool)
+	return enforce
+}
+
+var egressDialer = &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+
+// egressDialContext closes the DNS-rebinding hole the static host check
+// cannot: a name that passes validation can still resolve to 169.254.169.254,
+// and a second lookup between check and connect can return a different answer
+// than the first. When the guard is on, the address is resolved here, every
+// candidate IP is classified, and the connection is made to a specific
+// vetted IP -- so the address that was checked is the address that is dialed.
+func egressDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if !egressGuarded(ctx) {
+		return egressDialer.DialContext(ctx, network, addr)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	lastErr := fmt.Errorf("no allowed address for %q", host)
+	for _, ip := range ips {
+		if reason := blockedIPReason(ip.IP); reason != "" {
+			lastErr = fmt.Errorf("host %q resolves to %s, which is not an allowed egress target (%s)", host, ip.IP, reason)
+			continue
+		}
+		conn, err := egressDialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
 type httpRequestNode struct {
-	id           string
-	opts         HTTPRequestOptions
-	template     vars.Template
-	timeout      time.Duration
-	retry        retry.Policy
-	forward      map[string]bool
-	allowlist    map[string]bool
-	denylist     map[string]bool
-	explicitAuth bool
+	id       string
+	opts     HTTPRequestOptions
+	template vars.Template
+	// hostTemplated records that the URL authority contains a placeholder,
+	// so the destination host is request-derived rather than operator-chosen.
+	// That is what turns the egress policy on; see validateEgressURL.
+	hostTemplated bool
+	timeout       time.Duration
+	retry         retry.Policy
+	forward       map[string]bool
+	allowlist     map[string]bool
+	denylist      map[string]bool
+	explicitAuth  bool
+}
+
+// enforceEgressPolicy reports whether this node's destination must be checked
+// against the private-network block list. It fails closed: the opt-out is an
+// explicit allow_private_targets on the node.
+func (n httpRequestNode) enforceEgressPolicy() bool {
+	return n.hostTemplated && !n.opts.AllowPrivateTargets
 }
 
 func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist []string) (graph.Node, error) {
@@ -94,7 +155,8 @@ func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist 
 		deny[http.CanonicalHeaderKey(name)] = true
 	}
 	return httpRequestNode{
-		id: id, opts: opts, template: tpl, timeout: timeout, retry: policy,
+		id: id, opts: opts, template: tpl, hostTemplated: urlAuthorityIsTemplated(opts.URL),
+		timeout: timeout, retry: policy,
 		forward: forward, allowlist: allow, denylist: deny, explicitAuth: explicitAuth,
 	}, nil
 }
@@ -111,8 +173,8 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
-	if err := validateHTTPURL(target); err != nil {
-		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+	if err := validateEgressURL(target, n.enforceEgressPolicy()); err != nil {
+		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: fmt.Errorf("http_request %q: %w", n.id, err)}
 	}
 	target = cleanOutboundPath(collapseDoubleSlashInPath(target))
 	method := http.MethodPost
@@ -180,7 +242,7 @@ type attemptResult struct {
 // body is an io.Reader, so reusing a request across attempts would send an
 // empty body on the second one.
 func (n httpRequestNode) send(ctx context.Context, method, target string, body []byte, contentType string, env graph.Envelope) attemptResult {
-	nctx, cancel := context.WithTimeout(ctx, n.timeout)
+	nctx, cancel := context.WithTimeout(withEgressGuard(ctx, n.enforceEgressPolicy()), n.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(nctx, method, target, bytes.NewReader(body))
 	if err != nil {
@@ -314,12 +376,23 @@ func outboundBody(env graph.Envelope, mode string) ([]byte, string, error) {
 // in captured path variables at the trigger, but a hand-written url template
 // could also introduce them, and an upstream must never receive a path whose
 // meaning depends on its own normalization behavior.
+//
+// It deliberately works on the *escaped* path. Cleaning u.Path instead would
+// read an already-decoded path, so a capture containing the literal text
+// "%2e%2e%2f" -- which is not traversal, just a percent sign and some
+// characters -- would be decoded to "../" and then resolved away, turning an
+// inert value into a real traversal on the way out. Percent-encoded dots stay
+// percent-encoded; only literal "." and ".." segments are resolved.
 func cleanOutboundPath(rawURL string) string {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Path == "" {
+	if err != nil {
 		return rawURL
 	}
-	cleaned := path.Clean(u.Path)
+	escaped := u.EscapedPath()
+	if escaped == "" {
+		return rawURL
+	}
+	cleaned := path.Clean(escaped)
 	if cleaned == "." {
 		cleaned = "/"
 	}
@@ -327,10 +400,20 @@ func cleanOutboundPath(rawURL string) string {
 		cleaned = "/" + cleaned
 	}
 	// path.Clean drops a meaningful trailing slash; restore it.
-	if strings.HasSuffix(u.Path, "/") && !strings.HasSuffix(cleaned, "/") {
+	if strings.HasSuffix(escaped, "/") && !strings.HasSuffix(cleaned, "/") {
 		cleaned += "/"
 	}
-	u.Path = cleaned
+	if cleaned == escaped {
+		return rawURL
+	}
+	decoded, err := url.PathUnescape(cleaned)
+	if err != nil {
+		// Unreachable for a path that already parsed, but bail out rather
+		// than emit a URL whose Path and RawPath disagree.
+		return rawURL
+	}
+	u.Path = decoded
+	u.RawPath = cleaned
 	return u.String()
 }
 

@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
-	"github.com/jasongiroux/hookway/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
 )
 
 // DynamoDBOptions configures a Query against a table (or one of its indexes)

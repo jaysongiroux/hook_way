@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 const twoFlowYAML = `

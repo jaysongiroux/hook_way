@@ -3,7 +3,7 @@ package queue
 import (
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 func TestBuildPostgresTLSConfig_ServerNameAndInsecure(t *testing.T) {

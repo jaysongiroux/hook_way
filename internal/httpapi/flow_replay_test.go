@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/replayapi"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/replayapi"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 func TestFlowCaptureInsertBeforePublishContext(t *testing.T) {

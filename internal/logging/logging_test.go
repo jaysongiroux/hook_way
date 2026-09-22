@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-func TestRedactHeadersUsesDenylistAndHeuristic(t *testing.T) {
+func TestFilterHeadersUsesDenylistAndHeuristic(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer secret")
 	headers.Set("X-Custom-Secret", "secret")
 	headers.Set("X-Partner-ID", "partner")
 
-	redacted := RedactHeaders(headers, []string{"x-partner-id"})
+	redacted := FilterHeaders(headers, nil, []string{"x-partner-id"})
 
 	for _, key := range []string{"authorization", "x-custom-secret", "x-partner-id"} {
 		if got := redacted[key]; len(got) != 1 || got[0] != "redacted" {

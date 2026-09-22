@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// DefaultXMLPruneRules is the load-bearing DocMagic order. Later rules assume
-// earlier ones have already run. Universal-gateway pipeline.js is not in this
-// repo; predicates below are the documented contract, tested against
-// synthetic MISMO-shaped fixtures.
+// DefaultXMLPruneRules is the load-bearing default order. Later rules assume
+// earlier ones have already run. The upstream reference implementation is not
+// in this repo; the predicates below are the documented contract, tested
+// against synthetic fixtures.
 var DefaultXMLPruneRules = []string{
 	RuleRemoveEmptySelfClosingElements,
 	RuleRemoveEmptyParents,

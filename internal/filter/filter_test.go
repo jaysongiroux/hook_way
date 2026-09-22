@@ -273,20 +273,20 @@ func TestCompileModeDefaultsToAllAndReportsIssues(t *testing.T) {
 }
 
 func TestMatchResolvesXMLBody(t *testing.T) {
-	body := doc(t, `<MESSAGE><LOAN id="L1"><Amount>500</Amount></LOAN></MESSAGE>`)
+	body := doc(t, `<MESSAGE><ORDER id="O1"><Amount>500</Amount></ORDER></MESSAGE>`)
 	for _, tc := range []struct {
 		name string
 		spec Spec
 		want bool
 	}{
-		{"element equals", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpEq, Value: "500"}, true},
-		{"element numeric compare", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpGt, Value: 100}, true},
-		{"element numeric compare below", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpLt, Value: 100}, false},
-		{"attribute equals", Spec{Source: SourceBody, Path: "LOAN.@id", Operator: OpEq, Value: "L1"}, true},
-		{"element exists", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpExists}, true},
-		{"missing element does not exist", Spec{Source: SourceBody, Path: "LOAN.Nope", Operator: OpNotExists}, true},
-		{"missing element exists is false", Spec{Source: SourceBody, Path: "LOAN.Nope", Operator: OpExists}, false},
-		{"regex on element text", Spec{Source: SourceBody, Path: "LOAN.Amount", Operator: OpRegex, Value: "^5[0-9]+$"}, true},
+		{"element equals", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpEq, Value: "500"}, true},
+		{"element numeric compare", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpGt, Value: 100}, true},
+		{"element numeric compare below", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpLt, Value: 100}, false},
+		{"attribute equals", Spec{Source: SourceBody, Path: "ORDER.@id", Operator: OpEq, Value: "O1"}, true},
+		{"element exists", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpExists}, true},
+		{"missing element does not exist", Spec{Source: SourceBody, Path: "ORDER.Nope", Operator: OpNotExists}, true},
+		{"missing element exists is false", Spec{Source: SourceBody, Path: "ORDER.Nope", Operator: OpExists}, false},
+		{"regex on element text", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpRegex, Value: "^5[0-9]+$"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			chain, issues := Compile([]Spec{tc.spec})
@@ -305,8 +305,8 @@ func TestMatchResolvesXMLBody(t *testing.T) {
 // node_code and node_transform both accept *transform.Document, so a filter
 // placed after one of them can see a pointer.
 func TestMatchXMLBodyByPointer(t *testing.T) {
-	d := doc(t, `<MESSAGE><LOAN><Amount>500</Amount></LOAN></MESSAGE>`)
-	chain, issues := Compile([]Spec{{Source: SourceBody, Path: "LOAN.Amount", Operator: OpEq, Value: "500"}})
+	d := doc(t, `<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`)
+	chain, issues := Compile([]Spec{{Source: SourceBody, Path: "ORDER.Amount", Operator: OpEq, Value: "500"}})
 	if len(issues) > 0 {
 		t.Fatalf("Compile issues: %+v", issues)
 	}

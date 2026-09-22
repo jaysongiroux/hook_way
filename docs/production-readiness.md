@@ -1,6 +1,8 @@
 # Hookway — Enterprise Production Readiness Assessment
 
-> **Historical snapshot.** Reviewed 2026-08-26 at commit `612e372` on `main`, **before** the typed-port graph. Line citations to `handleWebhook` / `internal/httpapi/server.go` refer to deleted code. Keep this file as a backlog, not current operator truth. Live behavior is in [configuration.md](configuration.md) and [security.md](security.md).
+> **Historical snapshot.** Reviewed 2026-08-26 at commit `612e372` on `main`, **before** the typed-port graph. Keep this file as a **backlog**, not current operator truth. Live behavior is in [configuration.md](configuration.md) and [security.md](security.md).
+>
+> **Treat every line-number citation in this file as unreliable.** Citations to `handleWebhook` / `internal/httpapi/server.go` in the three- and four-digit range point past the end of that file — it is 278 lines today, and most of the code described moved to `internal/httpapi/flowserver.go`, `internal/flowconfig/`, or `internal/graph/`. Symbol names are a better guide than line numbers. The status table below and the **CLOSED** / **Corrected** callouts through the body are the current-truth layer; the prose around them is the 2026-08-26 text.
 
 **Date:** 2026-08-26 (endpoint-based config). Status table added 2026-09-16.
 
@@ -13,26 +15,50 @@
 |---|---|
 | **P0-2** pending events unreplayable | **Closed.** Failed and unattempted `publish` routes are recorded so `stop_on_failure` 503s are replayable. |
 | **P0-5** no secret file / overlap | **Partial.** `auth.secret_ref` (`env` / `file` / `aws_secrets_manager`) with refresh + overlap. Still no SIGHUP / hot reload. |
-| **P2-5** `key_by` only `"ip"` / “MVP” | **Partial.** `rate_limit.key_by` is `source_ip` or `header.<name>`. The old validator is unused. |
+| **P2-5** `key_by` only `"ip"` / “MVP” | **Partial.** `rate_limit.key_by` is `source_ip` or `header.<name>`. The old validator guards config keys that are now rejected outright, so its "MVP" message is unreachable. The §5 body text is stale; this row is correct. |
 | **P2-6** readiness AND-aggregation | **Closed** (D9). `/ready` is 200 while at least one flow is ready; `server.readiness_require_all: true` restores 503-if-any. |
-| **P2-10** OpenTelemetry | **Spans only.** `OnNode` starts `hookway.node.*` spans on the global tracer; there is no OTLP exporter. Do not claim OpenTelemetry. |
+| **P2-10** OpenTelemetry | **Spans only.** `OnNode` starts `hookway.node.*` spans on the global tracer; there is no OTLP exporter. Do not claim OpenTelemetry. See [configuration.md § OpenTelemetry spans](configuration.md#opentelemetry-spans). |
 | **P2-2** empty `idempotency_key` | **Still true, broader.** envelopes omit `idempotency_key`; consumers should dedupe on `id`. |
-| **P0-1** no LICENSE | **Still open.** |
+| **P2-1** unvalidated `X-Trace-ID` | **Closed.** `traceIDFromRequest` now gates the `X-Trace-ID` fallback through `isValidTraceID` (length 32, hex, not all-zeros) — stricter than this document's own proposed fix. The §5 repro no longer reproduces. |
+| **P2-9** no Prometheus alert rules | **Closed.** `deploy/alerts.yaml` ships 7 alerts with `deploy/alerts_test.go`, promtool-validated in the required **Observability** CI job. |
+| **P2-7b** no coverage gate | **Closed.** A statement-coverage floor is enforced by `make coverage` in the required **Coverage** job. (The fuzzing half of P2-7 is still open.) |
+| **P0-1** no LICENSE | **Partially closed.** A repo-root `LICENSE` (MIT) now ships. `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, and `CHANGELOG.md` are still absent. Note the original recommendation was Apache-2.0 for its patent grant; MIT has none. |
 | **P0-3** async webhook in-memory queue | **Still open** (documented in configuration.md). |
 | **P0-4** one static API key | **Still open.** |
-| **P1-1** no SIGTERM drain | **Still open.** |
+| **P1-1** no SIGTERM drain | **Still open.** The symbol moved (`cmd/hookway/shutdown.go`), the finding did not. |
 | **P1-2** process-local rate limit / replay guard | **Still open** (D11). |
-| **P1-3** no in-process TLS / `ReadHeaderTimeout` on main listener | **Still open.** |
+| **P1-3a** `ReadHeaderTimeout` on the main listener | **Closed.** All four servers (webhook, metrics, replay, editor) set it from the shared `readHeaderTimeout` const in `internal/httpapi/server.go`. |
+| **P1-3b** no in-process TLS / mTLS | **Still open.** There is no `server.tls.*` block and no `ListenAndServeTLS`; terminate at an ingress. |
 | **P1-4** replay store DDL on startup | **Still open.** |
-| **P1-6** `make lint` is `go vet` | **Still open.** Extra CI jobs exist; lint is still vet. |
+| **P1-6** `make lint` is `go vet` | **Mostly closed.** `make lint` is still `go vet`, but it is no longer the gate: `.golangci.yml` enables 12 linters (incl. `gosec`, `staticcheck`, `errcheck`) in a required job, and `govulncheck` runs in two workflows. ESLint and `npm audit` are genuinely still absent. See the rewritten §4 entry. |
 | **P1-8** no Helm chart | **Still open.** |
+
+---
+
+> ### ⚠️ Config examples below use the removed v1 schema
+>
+> This document predates the typed-port node graph. Its body talks about
+> **`endpoints:`**, and `endpoints` is now a **hard validation error** — the
+> strict decoder reports it as an unknown top-level key, so a config shaped
+> like the ones described below fails at startup, immediately, before serving
+> a single request.
+>
+> Wherever the text below says "endpoint", read "**flow**". Configuration is
+> named `flows` of typed nodes wired by `edges`. Do not copy a config shape
+> out of this file. The current schema is in
+> [configuration.md § Flows](configuration.md#flows); the port lattice that
+> replaced the fixed pipeline is in [invariants.md](invariants.md).
+>
+> The one place `endpoint` survives as a live term is as a *label*: the
+> `endpoint` metric label and the `endpoint` field in the HTTP response body
+> both still carry the flow name, kept for consumer compatibility.
 
 ---
 
 ## 1. Executive summary
 
 Hookway is a genuinely well-engineered codebase. It is materially better than most
-internal services at this stage: 33.5k lines of Go with a high test-to-source ratio,
+internal services at this stage: ~58.7k lines of Go with a high test-to-source ratio,
 93% coverage in the HTTP request path, an unusually disciplined comment culture that
 records *why* decisions were made, fail-closed defaults throughout auth and filtering,
 panic recovery at every goroutine boundary, correct `X-Forwarded-For` handling,
@@ -43,7 +69,7 @@ constant-time secret comparison, bounded shutdown waits with carefully-ordered
 **It is not, however, production-ready for an enterprise environment yet.** The gaps
 are not code-quality gaps — they are *platform* gaps. In rough order of severity:
 
-1. **Legal/governance:** there is no `LICENSE` file. This alone blocks enterprise adoption.
+1. **Legal/governance:** a repo-root `LICENSE` (MIT) now ships, clearing the hard blocker. `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, and `CHANGELOG.md` are still missing.
 2. **Durability:** Hookway can lose events. There is no local spool, and the one
    failure mode where replay would save you (total broker outage) is precisely the
    case the replay store cannot cover.
@@ -52,8 +78,10 @@ are not code-quality gaps — they are *platform* gaps. In rough order of severi
    no audit.
 4. **Operability:** no config hot reload, no zero-downtime secret rotation, no
    readiness drain on `SIGTERM`, no deployment artifacts (Helm/k8s), no migrations.
-5. **Supply chain:** `go vet` is the entire lint gate; no govulncheck, no SBOM, no
-   image signing, no dependency scanning, single-arch images.
+5. **Supply chain:** no SBOM, no image signing, no dependency scanning of `go.mod`,
+   single-arch images. *(The original finding here — "`go vet` is the entire lint
+   gate; no govulncheck" — is **closed**: golangci-lint with 12 linters and
+   `govulncheck` are both required CI jobs. See the rewritten P1-6.)*
 
 **Verdict:** ready for internal/low-stakes production behind a trusted network today.
 Roughly one focused quarter of work away from enterprise-grade. The architecture is
@@ -64,15 +92,15 @@ sound enough that nearly every item below is additive — very little needs rewo
 | Dimension | Grade | Note |
 |---|---|---|
 | Code quality & design | **A** | Clean seams, fail-closed defaults, excellent inline rationale |
-| Test discipline | **B+** | 93% on the hot path; thin on `queue`/`replaystore`; no fuzz, no gate |
+| Test discipline | **B+** | 93% on the hot path; thin on `queue`/`replaystore`; no fuzz (a coverage floor is now gated in CI) |
 | Documentation (user) | **A−** | Exceptional depth; missing runbook/upgrade/DR |
-| Observability | **A−** | Great metrics + dashboard; no alert rules, no OTel export |
+| Observability | **A−** | Great metrics + dashboard; alert rules now ship (P2-9 closed); still no OTel export |
 | Security (data plane) | **A−** | Auth, redaction, loop/replay/rate controls all solid |
 | Security (admin plane) | **D** | One shared static key for read *and* replay-injection |
 | Durability / DR | **D** | No spool; unreplayable total-outage path; async engine loses queue |
 | Operability | **C−** | No reload, no drain, no migrations, no deploy artifacts |
-| Supply chain / release | **C** | Trivy only; no SBOM/signing/govulncheck/multi-arch |
-| Governance / legal | **F** | No LICENSE, SECURITY.md, CODEOWNERS, or CHANGELOG |
+| Supply chain / release | **C** | Trivy + govulncheck + golangci-lint now gate; still no SBOM/signing/multi-arch |
+| Governance / legal | **D** | LICENSE (MIT) now ships; still no SECURITY.md, CODEOWNERS, or CHANGELOG |
 
 ---
 
@@ -82,7 +110,7 @@ Everything below was run against the working tree; results are reported as obser
 
 ```
 go vet ./...                                    → clean
-go test ./... (unit, integration-skipped)       → all 18 packages PASS
+go test ./... (unit, integration-skipped)       → all 18 packages PASS   [now 33 packages]
 go test ... -cover                              → see table below
 ```
 
@@ -107,12 +135,18 @@ there is no combined unit+integration coverage report to prove otherwise.
 
 ## 3. P0 — Blockers
 
-### P0-1. No `LICENSE` file
+### P0-1. No `LICENSE` file — **partially CLOSED**
 
-The repository ships no license, so by default it is "all rights reserved." No
+> **A repo-root `LICENSE` now ships (MIT).** The hard blocker described below —
+> "all rights reserved" by default — is cleared. Note the fix below recommended
+> Apache-2.0 specifically for its patent grant, which MIT does not provide; if a
+> reviewer's checklist asks for one, that is a deliberate open decision now, not
+> an omission. Still absent: `SECURITY.md` (vulnerability disclosure contact and
+> SLA), `CONTRIBUTING.md`, `CODEOWNERS`, `CHANGELOG.md`.
+
+The repository shipped no license, so by default it was "all rights reserved." No
 enterprise legal or OSS-review process will approve deployment of a dependency in
-that state, regardless of technical merit. Also absent: `SECURITY.md` (vulnerability
-disclosure contact and SLA), `CONTRIBUTING.md`, `CODEOWNERS`, `CHANGELOG.md`.
+that state, regardless of technical merit.
 
 **Fix:** pick a license (Apache-2.0 is the safest default for enterprise ingestion —
 the patent grant matters to legal reviewers, and it is more acceptable than MIT to
@@ -121,29 +155,38 @@ and it unblocks everything else.
 
 ### P0-2. No durable ingest buffer — events can be lost
 
-`docs/security.md:86` states it plainly: *"Hookway does not durably spool requests
+[security.md § Availability Model](security.md#availability-model) states it plainly: *"Hookway does not durably spool requests
 locally."* On a broker outage Hookway returns `503` and relies on the sender's retry
 policy. That is a reasonable v1 stance, but it is not an enterprise availability
 model, because sender retry behaviour is wildly inconsistent — some providers retry
 for 72 hours, some retry three times over 15 minutes, some (and most internal
 first-party senders) do not retry at all.
 
-The sharper problem is that the replay store *looks* like the mitigation but is not:
+> **This sub-finding is CLOSED** — the status table says so and the code agrees.
+> `internal/httpapi/flowserver.go` now records routes that were never attempted
+> as `failed` delivery rows alongside the one that actually failed, so a
+> `stop_on_failure` 503 leaves a replayable event. [security.md § Replay](security.md#replay)
+> states the current behaviour: *"Failed and unattempted routes are replayable."*
+> The description below is the **original 2026-08-26 finding**, kept for the
+> reasoning and the remaining fixes (2 and 3), not as current behaviour.
 
-- Capture happens (`internal/httpapi/server.go:560-566`), so the event is stored.
-- On the `stop_on_failure` full-failure path, `publishRoutesStopOnFailure` bails on
-  the first error and returns `nil, nil`, so no delivery outcomes are recorded and
-  the event's status stays `pending` (`server.go:588-597`).
-- `docs/security.md:127` confirms an event with no recorded delivery outcome
-  **cannot be replayed** — `422` on single replay, skipped in bulk.
+The sharper problem *was* that the replay store *looked* like the mitigation but
+was not:
 
-So the single scenario where you most need replay — every destination down — is
-exactly the scenario where replay refuses to run. The DR story has a hole in the
-middle of it.
+- Capture happens, so the event is stored.
+- On the `stop_on_failure` full-failure path, the publisher bailed on the first
+  error and recorded no delivery outcomes, so the event's status stayed
+  `pending`.
+- An event with no recorded delivery outcome **cannot be replayed** — `422` on
+  single replay, skipped in bulk. That rule still holds; what changed is that
+  a failed `stop_on_failure` run no longer produces such an event.
+
+So the single scenario where you most needed replay — every destination down —
+was exactly the scenario where replay refused to run. That hole is now filled.
 
 **Fix, in increasing order of effort:**
-1. *(cheap, high value)* Record the intended destination set at capture time so a
-   `pending` event is replayable. This closes the hole with existing machinery.
+1. ~~*(cheap, high value)* Record the intended destination set at capture time so a
+   `pending` event is replayable.~~ **Done.**
 2. Add an automatic re-drive worker that sweeps `pending`/`failed` events from the
    replay store on a backoff schedule, instead of requiring an operator to notice
    and hit the API. This turns the replay store from a forensic tool into an actual
@@ -188,7 +231,7 @@ configured `security.api_key`. That same key guards:
 Consequences:
 
 - The credential you paste into your Prometheus scrape config
-  (`docs/security.md:108-116`) is the same credential that can replay production
+  ([security.md § Metrics & config-API authentication](security.md#metrics--config-api-authentication)) is the same credential that can replay production
   payments traffic. Prometheus configs are widely readable.
 - No per-caller identity → no audit trail of *who* replayed *what*, which is a
   compliance requirement for anything touching financial or health data.
@@ -220,7 +263,7 @@ This produces three separate operational problems:
 - **Kubernetes Secret rotation does not work.** Mounted-secret updates and Vault
   Agent / Secrets Store CSI injection both work by updating a file on disk. Hookway
   only reads env vars, which are frozen at process start.
-- **Provider secret rotation has a hard cutover.** `docs/security.md:143` advises
+- **Provider secret rotation has a hard cutover.** [security.md § Production Hardening](security.md#production-hardening) advises
   "keep old/new overlap short during provider-side rotations," but with a single
   secret field there is no overlap possible at all — during the switch, signatures
   from one side or the other fail with `401`.
@@ -241,10 +284,14 @@ This produces three separate operational problems:
 
 ### P1-1. No readiness drain on `SIGTERM`
 
-`cmd/hookway/main.go`: on receiving a signal, the process logs and goes
-straight into `httpapi.Shutdown`. Meanwhile `handleReady`
-(`internal/httpapi/flowserver.go`) keeps serving `ready` from the prober cache
-right up until the listener closes.
+**Still valid; the symbol moved.** The `httpapi.Shutdown` wrapper this entry
+originally cited has been deleted; the drain path is now
+`servingResources.drain` in `cmd/hookway/shutdown.go`. The finding is
+unchanged: on receiving a signal the process logs and goes straight into
+`drain`, which calls `srv.Shutdown` on every listener immediately. Meanwhile
+`handleReady` (`internal/httpapi/flowserver.go`) keeps serving `ready` from
+the prober cache right up until the listener closes. There is still no
+draining state and no `server.drain_delay`.
 
 Kubernetes endpoint removal is asynchronous — kube-proxy, the ingress controller, and
 any service mesh each learn about the terminating pod on their own schedule, typically
@@ -259,15 +306,19 @@ or `502`s from the ingress. On a large rolling deploy this is a visible error sp
 ### P1-2. Rate limiting and replay protection are process-local
 
 `internal/ratelimit/limiter.go` and `internal/replay/cache.go:8-13` are both in-process
-maps. `docs/security.md:57,61` documents this honestly, but the implications are worth
+maps. [security.md § Rate Limiting](security.md#rate-limiting) and [§ Replay Protection](security.md#replay-protection) document this honestly, but the implications are worth
 stating in enterprise terms:
 
 - With N replicas, the effective rate limit is **N× the configured value**. A limit
   advertised to a partner as "1000 rpm" is actually 6000 rpm on a 6-pod deployment.
 - **Replay protection is trivially bypassable.** It is a *security control*, and its
   guarantee is "per pod." An attacker replaying a captured signed request just needs
-  the load balancer to pick a different pod — which it will, by design. "Use sticky
-  routing by signature" (`docs/security.md:61`) is not a realistic operational ask.
+  the load balancer to pick a different pod — which it will, by design.
+  (An earlier revision of this entry attributed a "use sticky routing by
+  signature" recommendation to `docs/security.md`. No such text exists there,
+  or anywhere in the repo — the quote was fabricated. What security.md § Replay
+  Protection actually says is that replay protection is process-local, that a
+  replay can pass on another replica, and that **consumers must deduplicate**.)
 - All state is lost on restart, so a deploy resets the replay window entirely.
 
 The Redis client already exists (`internal/queue/redis_client.go`) and go-redis is
@@ -288,20 +339,25 @@ a slow memory-growth vector. Cap the map size and make `idleTTL` configurable.
 
 `Server.HTTPServer()` (`server.go:289-297`) and `MetricsServer()` (`server.go:214-227`)
 only support plaintext `ListenAndServe`. There is no `server.tls.*` config block
-anywhere (verified by grep for `ListenAndServeTLS`). `docs/security.md:132` correctly
+anywhere (verified by grep for `ListenAndServeTLS`). [security.md § Production Hardening](security.md#production-hardening) correctly
 advises terminating at a load balancer, and for many deployments that is sufficient —
 but enterprise environments frequently mandate in-cluster encryption end to end (PCI
 segmentation, zero-trust networking, FedRAMP), and mTLS is the natural authentication
 mechanism for the admin/replay listeners.
 
-Separately: the main webhook server and the metrics server set `ReadTimeout` but not
-`ReadHeaderTimeout` — note that the replay and editor servers *do* set it
-(`internal/replayapi/api.go:100`, `internal/editor/editor.go:49`). `ReadTimeout` does
-bound the whole request so the Slowloris exposure is limited, but the inconsistency is
-what a scanner flags (gosec G112) and what a reviewer will question.
+**The `ReadHeaderTimeout` half is CLOSED (P1-3a).** All four servers — webhook,
+metrics, replay, and editor — now set `ReadHeaderTimeout` from the shared
+`readHeaderTimeout` constant in `internal/httpapi/server.go`. The gosec G112
+inconsistency this entry described is gone.
 
-**Fix:** add `server.tls: {cert_file, key_file, client_ca_file, min_version}` and the
-same for the metrics/replay listeners; set `ReadHeaderTimeout` on all four servers.
+**The TLS/mTLS half is genuinely still open (P1-3b).** There is no
+`server.tls.*` config block and no `ListenAndServeTLS` anywhere. For many
+deployments, terminating at a load balancer is sufficient — but enterprise
+environments frequently mandate in-cluster encryption end to end, and mTLS
+remains the natural authentication mechanism for the admin/replay listeners.
+
+**Fix (remaining):** add `server.tls: {cert_file, key_file, client_ca_file, min_version}`
+and the same for the metrics/replay listeners.
 
 ### P1-4. Replay store has no versioned migrations
 
@@ -327,13 +383,13 @@ clear error if the schema version doesn't match the binary.
 ### P1-5. Webhook payloads are stored in plaintext, with no redaction or erasure path
 
 The `replay_events.envelope jsonb` column (`store.go:159-168`) holds the full webhook
-body, headers, and source IP. Webhook payloads routinely carry PII, and in Hometap's
-domain plausibly carry financial and identity data. Current state:
+body, headers, and source IP. Webhook payloads routinely carry PII, and in
+regulated domains plausibly carry financial and identity data. Current state:
 
 - No encryption at rest beyond whatever the database provides (which is usually
   full-disk — not field-level, and not protecting against a `SELECT`).
 - No configurable payload redaction *before* capture. Header redaction exists and is
-  good (`docs/security.md:63-76`), but the body is stored verbatim.
+  good ([security.md § Header Redaction and Allowlisting](security.md#header-redaction-and-allowlisting)), but the body is stored verbatim.
 - No per-endpoint capture opt-out — only the global `replay.skip_unauthenticated`.
 - `GET /replay/events/{id}` returns the full envelope to any holder of the single API
   key (see P0-4), with no field masking.
@@ -346,34 +402,45 @@ redaction list reusing the existing filter path machinery; add per-endpoint
 a `DELETE /replay/events` filtered-purge endpoint for erasure requests; document the
 data classification and retention rationale.
 
-### P1-6. `make lint` is only `go vet`
+### P1-6. `make lint` is only `go vet` — **mostly CLOSED**
 
-```make
-lint:
-	$(GO) vet ./...
-```
+`make lint` is still literally `go vet ./...`, but the claim that followed —
+"that is the entire static-analysis gate, and it is what CI runs
+(`.github/workflows/release.yml:62-63`)" — is **wrong now**. That release.yml
+step no longer exists, and the gate lives in `.github/workflows/reusable-ci.yml`.
 
-That is the entire static-analysis gate, and it is what CI runs
-(`.github/workflows/release.yml:62-63`). Missing:
+Closed since this was written:
 
-- **`govulncheck`** — notable because the Dockerfile comment (`Dockerfile:1-7`) shows
-  govulncheck *is* being run manually during Go version bumps. It should be a CI gate,
-  not a habit.
-- **golangci-lint** (staticcheck, errcheck, ineffassign, unconvert, revive) —
-  `errcheck` in particular matters here, since the codebase deliberately uses `_ =`
-  for ignored errors in places and a linter would force those to stay intentional.
-- **gosec** — SAST for the Go code.
+- **golangci-lint.** `.golangci.yml` is checked in and enables 12 linters:
+  `govet`, `staticcheck`, `errcheck`, `errorlint`, `nilerr`, `bodyclose`,
+  `noctx`, `ineffassign`, `unused`, and `gosec`. It runs as its own required CI
+  job (`golangci-lint`) and is available locally as `make golangci-lint`.
+  `errcheck` and `gosec` — both called out as missing here — are on.
+- **`govulncheck`** runs in two places: a required `govulncheck` job in
+  reusable-ci, and again in the weekly/on-change `security.yml`. `make govulncheck`
+  runs it locally. It is a gate, not a habit.
+- **Additional gates that did not exist at all:** `make deadcode` (fails on any
+  unreachable function), `go mod tidy -diff`, a **Coverage** floor job, a
+  **Formatting** job (`gofmt -l` + `git diff --check`), an **Observability** job
+  (Grafana dashboard tests + promtool on the shipped alert rules), and `knip`
+  dead-code analysis for `web/`.
+
+Genuinely still missing:
+
+- **`web/` has no ESLint config and no `npm audit` in CI.** It does have vitest,
+  Playwright e2e, knip, and a node-schema drift check — but no linter and no
+  dependency audit, across 23 npm dependencies including a React + Vite tree.
 - **Dependency scanning of `go.mod` itself.** Trivy scans the built image, but the
   image is `FROM scratch` containing a single static binary, so the scan sees only the
   Go stdlib version and module metadata stamped into the binary. There is no OS
-  package surface. This is a much narrower check than it appears.
-- **`web/` has no linting at all** — no ESLint config, no `npm audit` in CI, despite
-  22 npm dependencies including a React + Vite tree.
-- **No Dependabot or Renovate config.** `.github/` contains only `workflows/`.
+  package surface. This is a much narrower check than it appears. (`govulncheck`
+  partly covers this now, reachability-filtered.)
+- **No Dependabot or Renovate config.** `.github/` contains only `workflows/` —
+  no `dependabot.yml`.
 
-**Fix:** add `golangci-lint` with a checked-in `.golangci.yml`, add `govulncheck` and
-`npm audit --audit-level=high` as CI steps, add `.github/dependabot.yml` covering
-`gomod`, `npm`, `docker`, and `github-actions`.
+**Fix (remaining):** add an ESLint config and `npm audit --audit-level=high` to the
+Web job, and add `.github/dependabot.yml` covering `gomod`, `npm`, `docker`, and
+`github-actions`.
 
 ### P1-7. Supply-chain gaps in the release pipeline
 
@@ -385,11 +452,11 @@ Reviewing `.github/workflows/release.yml`:
 | No SBOM | — | Cannot answer "are we affected by CVE-X" without rebuilding. Increasingly a procurement requirement. |
 | No signing / provenance | No cosign, no SLSA, no GitHub attestations | Consumers cannot verify image authenticity. |
 | Single architecture | No `platforms:` on `build-push-action` | Blocks Graviton/arm64 fleets — a real cost and availability constraint. |
-| Base image by tag | `FROM golang:1.25.12-alpine` | Not reproducible; pin by digest. |
+| Base image by tag | `FROM golang:1.25.13-alpine` | Not reproducible; pin by digest. The criticism stands — the pin just tracks a newer patch now. |
 | No released binaries | Docker Hub image only | Blocks VM/bare-metal deployments; no checksums or signatures. |
-| No CodeQL/SAST | — | No security scanning of first-party code. |
-| One monolithic job | 11 sequential test steps in `release-check` | Slow feedback; one flaky container fails everything. Should be a matrix. |
-| No coverage gate | — | Coverage can silently regress. |
+| ~~No CodeQL/SAST~~ | `gosec` runs via golangci-lint | **Partly closed.** First-party Go is scanned; there is still no CodeQL. |
+| ~~One monolithic job~~ | Was "11 sequential test steps in `release-check`" | **Closed.** CI is 13 parallel jobs in `reusable-ci.yml`, including a 9-way integration matrix, behind one required `All checks passed` status. |
+| ~~No coverage gate~~ | — | **Closed.** A statement-coverage floor is enforced by `make coverage` in the required **Coverage** job. |
 
 Note the workflow's `permissions: contents: read` default is correct and good practice —
 that part is already right.
@@ -412,7 +479,7 @@ readiness → `/ready`, `terminationGracePeriodSeconds` aligned to `shutdown_tim
 the preStop drain hook, resource requests/limits, `metrics.addr` on a separate port
 with a `NetworkPolicy` keeping it off the ingress path, `replay.addr` similarly
 isolated, and a PodDisruptionBudget honouring the "at least two replicas" guidance in
-`docs/security.md:135`. Every team will get some of this wrong.
+[security.md § Production Hardening](security.md#production-hardening). Every team will get some of this wrong.
 
 **Fix:** ship a Helm chart with sane, secure defaults encoding all of the above, plus
 a `NetworkPolicy` template, a `ServiceMonitor` for Prometheus Operator, and a
@@ -422,9 +489,19 @@ a `NetworkPolicy` template, a `ServiceMonitor` for Prometheus Operator, and a
 
 ## 5. P2 — Medium priority
 
-### P2-1. Confirmed bug: unvalidated `X-Trace-ID` produces a malformed W3C traceparent
+### P2-1. Confirmed bug: unvalidated `X-Trace-ID` produces a malformed W3C traceparent — **CLOSED**
 
-`internal/httpapi/server.go:939-971`. The inbound `Traceparent` trace-id segment is
+> **Fixed.** `traceIDFromRequest` (`internal/httpapi/server.go`) now routes the
+> `X-Trace-ID` fallback through `isValidTraceID`, which requires `len == 32`,
+> all-hex, and rejects an all-zeros id — *stricter* than the one-line fix this
+> entry proposed, which did not exclude all-zeros. The **Verified:** repro below
+> no longer reproduces: `X-Trace-ID: not-hex-at-all` is now discarded and a
+> generated id is used, so the synthesized traceparent is always well-formed.
+> The same `isValidTraceID` guard is applied to the inbound `Traceparent`
+> segment, so the two paths can no longer diverge. The original finding is
+> retained below for the record.
+
+The inbound `Traceparent` trace-id segment is
 carefully hex-validated at `server.go:949`, and the comment above it explains exactly
 why a length-only check would be insufficient — *"a crafted non-hex segment (e.g. 32
 'g' characters) flow[ing] into that synthesized header"*. But the `X-Trace-ID` fallback
@@ -460,13 +537,23 @@ fall through to the generated id when it fails. One line, plus a test.
 hash of the signature header. For a `no_auth` endpoint with no `idempotency_header`
 configured, there is no signature header, so it returns `""`.
 
-The at-least-once consumer contract documented at `docs/security.md:80` — "consumers
-dedupe by `idempotency_key`" — therefore silently does not apply to `no_auth`
-endpoints, which is where sender-side retry behaviour is *least* predictable.
+> **Corrected.** This entry quoted `docs/security.md` as documenting a
+> consumer contract of *"consumers dedupe by `idempotency_key`"*. security.md
+> has never said that, and today says the **opposite**, explicitly: *"Hookway
+> does not populate `idempotency_key` on the envelope (there is no
+> `idempotency_header` on `auth` / `no_auth`). Dedupe on `id`."* See
+> [security.md § Idempotency](security.md#idempotency). The proposed fix below
+> also named an `idempotency_header` config field on `no_auth` — **no such
+> field exists** on any node.
+>
+> The underlying observation generalized rather than resolved: `idempotency_key`
+> is empty on **every** v2 ingest envelope, not just `no_auth` ones (see the
+> P2-2 status row). The documented and implemented dedup key is the envelope
+> `id` (UUIDv7), which is always populated and always unique per delivery.
 
-**Fix:** fall back to a raw-body SHA-256 for `no_auth` exactly as `header_exact` does,
-or make config validation reject `no_auth` without an `idempotency_header`. The former
-is more forgiving; the latter is more explicit.
+**Fix:** none needed at the envelope level — dedupe on `id`. If a future change
+wants a real idempotency key, it must introduce the config surface first; do not
+document a field that does not exist.
 
 ### P2-3. Wildcard CORS and missing security headers on the config editor
 
@@ -502,16 +589,25 @@ storage behaviour.
 
 ### P2-5. `rate_limit.key_by` supports only `"ip"`, and says "MVP" in the error
 
-`internal/config/validation.go:347-348` and `:539-540` reject anything but `"ip"` with
-the message *"only ip is supported for MVP"*. Two issues: the word "MVP" surfacing in a
-production validation error reads as unfinished, and the limitation itself blocks a
-common enterprise requirement — per-partner or per-tenant quotas keyed on endpoint,
-API key, or a body/header field. The field is already plumbed through config and the
-filter package already knows how to extract values from headers and JSON bodies, so
-the building blocks exist.
+> **Largely CLOSED; the text below is stale.** The live `rate_limit` node
+> supports `key_by: source_ip` (default) and `key_by: header.<name>`, with an
+> unknown value falling back to source IP. The *"only ip is supported for
+> MVP"* validator quoted here guards v1 config keys that the strict decoder
+> now rejects outright, so that message is unreachable — the word "MVP" cannot
+> surface in a production validation error any more. The status table gets
+> this right; this paragraph did not. See
+> [configuration.md § Trigger, gates, and body](configuration.md#trigger-gates-and-body).
 
-**Fix:** support `key_by: ip | endpoint | header:<name> | body:<jsonpath>`; reword the
-error regardless.
+What remains open is the *breadth* of the key: per-partner or per-tenant quotas
+keyed on a body field (JSON path) are still not expressible, only headers and
+source IP. The filter package already knows how to extract values from JSON
+bodies, so the building blocks exist — but note that `rate_limit` consumes
+`RequestHead`, which by design carries **no body**, so body-keyed limiting
+would require rethinking where the limiter sits in the graph rather than just
+widening an enum.
+
+**Fix (remaining):** decide whether body-keyed quotas are wanted at all given the
+port ordering; if so, they belong in a post-`read_body` node, not in `rate_limit`.
 
 ### P2-6. Readiness AND-aggregation couples unrelated flows (mitigated)
 
@@ -536,16 +632,24 @@ The following functions parse attacker-controlled input and have no fuzz coverag
 - the HMAC/JWT signature-header parsers (`internal/auth/hmac.go`, `jwt.go`)
 
 These are exactly the surfaces Go's native fuzzing is designed for, and P2-1 is
-evidence that hand-written table tests missed a case here. There is also no coverage
-threshold in CI, so the numbers in §2 can regress silently.
+evidence that hand-written table tests missed a case here.
 
-**Fix:** add `FuzzXxx` functions for each, run them briefly in CI and longer nightly;
-add a coverage floor per package.
+> **The coverage half is CLOSED.** The original claim — "there is also no coverage
+> threshold in CI, so the numbers in §2 can regress silently" — is no longer true.
+> `make coverage` runs the short suite with `-covermode=atomic`, prints the
+> per-function report, and fails when total statement coverage falls below a
+> configured floor. It runs as the required **Coverage** job in
+> `reusable-ci.yml`, which also uploads `coverage.out` / `coverage.txt` as
+> artifacts. The floor is a single repo-wide number, not per-package.
+
+**Fix (remaining):** add `FuzzXxx` functions for each parser above, run them briefly
+in CI and longer nightly. Optionally tighten the coverage floor from repo-wide to
+per-package.
 
 ### P2-8. No load testing, no published capacity numbers
 
 Nothing in the repository establishes throughput, p99 latency, memory per in-flight
-request, or goroutine behaviour under sustained load. `docs/security.md:86` tells
+request, or goroutine behaviour under sustained load. [security.md § Availability Model](security.md#availability-model) tells
 operators to *"size each destination's `publisher_channels`, per-request
 `server.fanout_concurrency`, and global `max_inflight_requests` for expected burst
 volume"* without giving any basis for computing those numbers.
@@ -558,28 +662,49 @@ a capacity table (RPS vs. p50/p99 vs. memory, per destination type); add a 24-ho
 test proving no goroutine or memory leak; add Go benchmarks for the hot path
 (envelope build, HMAC verify, filter evaluation).
 
-### P2-9. No Prometheus alert rules shipped
+### P2-9. No Prometheus alert rules shipped — **CLOSED**
 
-The metric surface is genuinely excellent — 41 metrics, and a Grafana dashboard with a
-test guarding it (`grafana/dashboards/hookway_overview_test.go`). But
-`docs/security.md:141` lists the conditions operators should alert on in prose, and
-nothing codifies them.
+> **Shipped.** `deploy/alerts.yaml` is a PrometheusRule with **7 alerts**:
+> `HookwayPanics`, `HookwayCompensationFailures`,
+> `HookwaySecretRefreshFailures`, `HookwayWebhookDrops`,
+> `HookwayWebhookDeadLetterFailures`, `HookwayDestinationNotReady`, and
+> `HookwayPublishErrorRatio`. `deploy/alerts_test.go` asserts their shape, and
+> the required **Observability** CI job renders them through
+> `scripts/promrule2groups` and validates them with `promtool check rules`.
+> So the rules cannot silently rot into invalid PromQL.
 
-**Fix:** ship `deploy/alerts.yaml` (PrometheusRule) covering, at minimum: auth failure
-rate spike, sustained `hookway_saturated_total`, publish failure ratio,
-`hookway_destination_ready == 0`, `hookway_webhook_queue_depth` near capacity,
-`hookway_webhook_dropped_total > 0`, `hookway_panics_total > 0`,
-`hookway_replay_store_up == 0`, and `hookway_config_load_failures_total > 0`.
-Fatal pre-listener config failures are primarily visible via structured logs and a
-supervisor restart — the process often exits before Prometheus can scrape
-`hookway_config_load_failures_total`.
+The metric surface is genuinely excellent — **45** metrics, and a Grafana dashboard
+with a test guarding it (`grafana/dashboards/`).
+[security.md § Production Hardening](security.md#production-hardening) lists in prose
+the conditions operators should alert on; `deploy/alerts.yaml` now codifies most
+of them.
+
+**Fix (remaining):** the shipped set does not yet cover an auth-failure rate spike,
+sustained `hookway_saturated_total`, `hookway_webhook_queue_depth` near capacity,
+`hookway_replay_store_up == 0`, or `hookway_config_load_failures_total > 0`. Note
+the last one is of limited value: fatal pre-listener config failures are primarily
+visible via structured logs and a supervisor restart, because the process usually
+exits before Prometheus can scrape that counter.
 
 ### P2-10. No OpenTelemetry export
 
-`traceparent` is propagated end-to-end and correctly — the design work is done. But
-OTel appears in `go.mod:106-110` only as an indirect dependency; there is no tracer, no
-spans, no OTLP exporter. Hookway is a black box in the middle of a distributed trace it
-is otherwise faithfully carrying.
+`traceparent` is propagated end-to-end and correctly — the design work is done.
+
+> **Partially addressed: spans now exist, export still does not.**
+> `internal/httpapi/flowserver.go` holds an `otel.Tracer("hookway")` and starts
+> a `hookway.node.<type>` span per executed graph node, with
+> `hookway.flow` / `hookway.node_id` / `hookway.node_type` /
+> `hookway.request_id` / `hookway.event_id` attributes, real start/end
+> timestamps, and recorded errors. But they are emitted on the **global**
+> tracer provider, which Hookway never sets — so with no provider registered
+> they are no-ops. **No exporter ships**: no OTLP config, no
+> `otel.SetTracerProvider`, no collector wiring. Register your own provider to
+> get anything out. Per `PRODUCT.md`, Hookway must not *claim* OpenTelemetry
+> support, and this does not change that. Documented factually in
+> [configuration.md § OpenTelemetry spans](configuration.md#opentelemetry-spans).
+
+Hookway is therefore still, by default, a black box in the middle of a
+distributed trace it is otherwise faithfully carrying.
 
 **Fix:** add optional OTLP trace export with spans for receive → verify → filter →
 capture → publish-per-route, and optional OTLP metrics export alongside the Prometheus
@@ -602,7 +727,7 @@ endpoint.
 - **No multi-tenancy.** One config equals one deployment. Fine for a dedicated service;
   a constraint if Hookway becomes a shared internal platform serving many teams.
 - **No FIPS build option.** Some regulated environments require a boringcrypto build.
-- **`docs/configuration.md` is 990 lines / 78 KB.** Excellent content, hard to navigate.
+- **`docs/configuration.md` is over 1,400 lines / ~105 KB.** Excellent content, hard to navigate.
   Split by section (server, security, destinations, endpoints, replay) with an index.
 - **No `docs/observability.md`.** The Grafana dashboard exists but has no documented
   provisioning path.
@@ -616,21 +741,25 @@ endpoint.
 
 Sequenced so that each phase leaves the system in a shippable state.
 
+Items struck through are **done**; see the status table and the per-item CLOSED
+markers above.
+
 ### Phase 1 — Unblock adoption *(~1 week)*
-1. `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, `CHANGELOG.md` — P0-1
-2. Fix the `X-Trace-ID` traceparent bug — P2-1
-3. Fix the `no_auth` idempotency key — P2-2
-4. `ReadHeaderTimeout` on all four servers — part of P1-3
-5. Add `govulncheck` + `golangci-lint` + Dependabot to CI — P1-6
+1. ~~`LICENSE`~~ **done (MIT)**; `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, `CHANGELOG.md` — P0-1
+2. ~~Fix the `X-Trace-ID` traceparent bug — P2-1~~ **Done.**
+3. ~~Fix the `no_auth` idempotency key — P2-2~~ **Withdrawn**: the contract is
+   dedup on `id`; no `idempotency_header` field exists to configure.
+4. ~~`ReadHeaderTimeout` on all four servers — part of P1-3~~ **Done** (P1-3a).
+5. ~~Add `govulncheck` + `golangci-lint`~~ **Done**; Dependabot still outstanding — P1-6
 
 ### Phase 2 — Make deploys safe *(~2 weeks)*
 6. Readiness drain on `SIGTERM` — P1-1
 7. Helm chart with correct probes, PDB, NetworkPolicy, ServiceMonitor — P1-8
-8. Prometheus alert rules — P2-9
+8. ~~Prometheus alert rules — P2-9~~ **Done** (7 alerts in `deploy/alerts.yaml`).
 9. Supply chain: SHA-pin actions, SBOM, cosign, multi-arch, digest-pinned bases — P1-7
 
 ### Phase 3 — Close the durability hole *(~3 weeks)*
-10. Record intended destinations at capture so `pending` events are replayable — P0-2.1
+10. ~~Record intended destinations at capture so `pending` events are replayable — P0-2.1~~ **Done.**
 11. Automatic re-drive worker from the replay store — P0-2.2
 12. Durable or explicitly-contracted async webhook queue — P0-3
 13. Versioned migrations + `hookway migrate` subcommand — P1-4
@@ -640,12 +769,12 @@ Sequenced so that each phase leaves the system in a shippable state.
 15. `secret_file:` + multi-secret + `SIGHUP` reload — P0-5
 16. Shared (Redis) rate-limit and replay-protection stores — P1-2
 17. Replay payload redaction, encryption, and filtered purge — P1-5
-18. Optional in-process TLS/mTLS — P1-3
+18. Optional in-process TLS/mTLS — P1-3b
 
 ### Phase 5 — Scale & polish *(ongoing)*
 19. OTel export — P2-10
 20. Load/soak harness and published capacity numbers — P2-8
-21. Fuzzing + coverage gates — P2-7
+21. Fuzzing — P2-7 (the ~~coverage gate~~ half is **done**)
 22. `key_by` expansion, per-destination readiness criticality, editor CORS/CSP —
     P2-5, P2-6, P2-3
 23. Runbook, published envelope JSON Schema, docs split — P3

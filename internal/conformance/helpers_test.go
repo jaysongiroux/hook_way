@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/flowconfig"
-	"github.com/jasongiroux/hookway/internal/httpapi"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/httpapi"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 const testSecret = "testsecret"

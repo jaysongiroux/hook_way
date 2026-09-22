@@ -15,20 +15,8 @@ destinations:
       exchange: "webhooks"
       exchange_type: "direct"
       durable: true
-endpoints:
-  test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
 `
-	issues := NewService().ValidateBytes([]byte(yaml))
+	issues := sharedIssues(yaml)
 	if len(issues) != 0 {
 		t.Fatalf("expected no issues, got %+v", issues)
 	}
@@ -39,21 +27,22 @@ func TestValidateBytes_MissingAddrReturnsFieldIssue(t *testing.T) {
 server:
   max_body_bytes: 1048576
 `
-	issues := NewService().ValidateBytes([]byte(yaml))
-	found := false
-	for _, iss := range issues {
-		if iss.Field == "server.addr" {
-			found = true
-		}
-	}
-	if !found {
+	issues := sharedIssues(yaml)
+	if !hasIssue(issues, "server.addr") {
 		t.Fatalf("expected a server.addr issue, got %+v", issues)
 	}
 }
 
 func TestValidateBytes_MalformedYAMLReturnsSingleIssue(t *testing.T) {
-	issues := NewService().ValidateBytes([]byte("server: : :\n  bad"))
+	_, issues := DecodeSharedYAML([]byte("server: : :\n  bad"), "config")
 	if len(issues) != 1 || issues[0].Field != "config" {
 		t.Fatalf("expected one 'config' issue, got %+v", issues)
+	}
+}
+
+func TestValidateBytes_NonMappingDocumentIsRejected(t *testing.T) {
+	_, issues := DecodeSharedYAML([]byte("- just\n- a list\n"), "config")
+	if len(issues) != 1 || issues[0].Field != "config" {
+		t.Fatalf("expected one 'config' issue for a non-mapping document, got %+v", issues)
 	}
 }

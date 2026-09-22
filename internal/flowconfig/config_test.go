@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // TestLoadBytesRejectsLegacyTopLevelKeys pins the fresh-reset contract: there
@@ -87,8 +87,8 @@ func TestExampleConfigIsValid(t *testing.T) {
 func TestOnErrorExampleIsValid(t *testing.T) {
 	t.Setenv("WEBHOOK_URL", "https://example.test/hooks")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "gh_secret")
-	t.Setenv("SF_TOKEN", "token")
-	t.Setenv("DIGIFI_BASE", "https://example.test")
+	t.Setenv("PROXY_TOKEN", "token")
+	t.Setenv("UPSTREAM_BASE", "https://example.test")
 	cfg, issues := Load(filepath.Join("..", "..", "examples", "on_error.yaml"))
 	for _, iss := range issues {
 		if iss.EffectiveSeverity() == config.SeverityError {

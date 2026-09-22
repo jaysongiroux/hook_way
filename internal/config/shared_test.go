@@ -1,49 +1,10 @@
 package config
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestDecodeSharedYAMLMatchesConfigConversion(t *testing.T) {
-	const src = `
-server:
-  addr: ":8080"
-  max_body_bytes: 1024
-  publish_timeout: 4s
-  shutdown_timeout: 5s
-  write_timeout: 5s
-destinations:
-  outgoing:
-    type: webhook
-    webhook:
-      url: https://example.test/hooks
-      timeout: 3s
-endpoints:
-  incoming:
-    enabled: true
-    path: /incoming
-    destinations: [{destination: outgoing, target: events}]
-    auth: {type: no_auth, scheme: no_auth}
-`
-	loaded, err := NewService().loadBytes([]byte(src), "test", false)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	shared, issues := DecodeSharedYAML([]byte(src), "test", "endpoints")
-	if len(issues) != 0 {
-		t.Fatalf("DecodeSharedYAML issues = %#v", issues)
-	}
-	want := SharedConfig{
-		Server: loaded.Server, Security: loaded.Security, Metrics: loaded.Metrics,
-		Logging: loaded.Logging, Replay: loaded.Replay, Destinations: loaded.Destinations,
-	}
-	if !reflect.DeepEqual(shared, want) {
-		t.Fatalf("shared conversion differs from Config\n got: %#v\nwant: %#v", shared, want)
-	}
-}
 
 func TestDecodeSharedYAMLUsesDiskShapeAndDefaults(t *testing.T) {
 	const src = `
@@ -237,20 +198,6 @@ func TestSharedValidationAllowsNoDestinationsAndValidatesConfiguredOnes(t *testi
 	}
 	if !strings.Contains(sharedIssuesText(shared.ValidationIssues()), "destinations.bad.webhook.url") {
 		t.Fatalf("configured destination was not validated: %#v", shared.ValidationIssues())
-	}
-}
-
-func TestConfigRequiresDestinationsAndEndpoints(t *testing.T) {
-	cfg := Config{Server: ServerConfig{
-		Addr: ":8080", ReadTimeout: time.Second, WriteTimeout: 10 * time.Second,
-		IdleTimeout: time.Minute, ShutdownTimeout: 10 * time.Second,
-		PublishTimeout: 10 * time.Second, MaxBodyBytes: 1024,
-		MaxInflightRequests: 256, ReadinessInterval: 10 * time.Second,
-		ReadinessTimeout: 5 * time.Second,
-	}}
-	joined := sharedIssuesText(cfg.ValidationIssues())
-	if !strings.Contains(joined, "destinations") || !strings.Contains(joined, "endpoints") {
-		t.Fatalf("presence requirements changed: %q", joined)
 	}
 }
 

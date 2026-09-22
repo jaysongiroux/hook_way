@@ -16,7 +16,7 @@ export function Explore() {
   return (
     <Section
       title="See Hookway in context"
-      lead="Start with runnable routing patterns, or compare the operating model with other inbound webhook gateways."
+      lead="Runnable routing patterns, or a sourced comparison with other inbound gateways."
     >
       <Box className={EXPLORE_GRID_CLASS}>
         <Stack className={EXPLORE_PRIMARY_CLASS} gap="sm">
@@ -24,8 +24,8 @@ export function Explore() {
             Use request data to choose the destination
           </Text>
           <Text c={DARK.muted} style={{ lineHeight: 1.6 }}>
-            Follow runnable flows for multipart splitting, XML pruning, fan-out, synchronous proxying, and dynamic
-            routing. Variables can come from a path, JSON body, or filtered header, then select a target such as{" "}
+            Runnable flows for multipart splitting, XML pruning, fan-out, and dynamic routing. Variables can come
+            from a path, JSON body, or filtered header, then select a target such as{" "}
             <Text component="code" inherit c={DARK.text} style={{ fontFamily: MONO }}>
               {"{envName}-events"}
             </Text>{" "}
@@ -41,8 +41,8 @@ export function Explore() {
             Compare the operating model
           </Text>
           <Text size="sm" c={DARK.muted} style={{ lineHeight: 1.6 }}>
-            Review deployment, verification, payload formats, routing, destinations, replay, and observability beside
-            Hookdeck Event Gateway, Convoy, and Outpost. External claims link to their public documentation.
+            Deployment, verification, payload formats, destinations, replay, and observability beside Hookdeck Event
+            Gateway, Convoy, and Outpost.
           </Text>
           <Anchor component={Link} to="/compare" fw={650} c={DARK.accent} underline="always">
             View the comparison

@@ -107,4 +107,15 @@ make validate-examples
 make test-examples
 ```
 
-`make test-examples` is what CI's Examples job runs after `validate-examples`. It uses a fake publisher (no Docker) and a loopback HTTP server for env-driven `http_request` URLs. Adding a new YAML under `examples/` automatically includes it; `invalid-*` files must fail validation.
+`make test-examples` is what CI's Examples job runs after `validate-examples`. It uses a fake publisher (no Docker) and a loopback HTTP server for env-driven `http_request` URLs. `invalid-*` files must fail validation.
+
+**The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically. `make validate-examples` does **not** walk: its loop hand-enumerates the eight top-level files by name —
+
+```
+examples/config.yaml  filters.yaml  replay.yaml  variables.yaml
+on_error.yaml  xml.yaml  multipart.yaml  multipart-split.yaml
+```
+
+— and then globs `destinations/*.yaml`, `auth/*.yaml`, `templates/*.yaml`, and `showcase/*.yaml`.
+
+So a new file in one of those four subdirectories is covered by both targets, but **a new *top-level* example is silently skipped by `validate-examples`** — no error, no warning, it simply is not validated. When you add one, add its filename to that list in the Makefile as well, or place it in a globbed subdirectory instead.

@@ -63,6 +63,12 @@ export function DestinationMarquee() {
               </Box>
             </Box>
           </Box>
+          {/* The count is code-derived, but one of the types is not fully
+              drivable from standalone YAML. /compare carries the long version;
+              this keeps the marquee from overstating on its own. */}
+          <Text size="xs" c={DARK.muted} m={0}>
+            Temporal's workflow options need an embedded host — see the comparison.
+          </Text>
         </Box>
       </Container>
     </Box>

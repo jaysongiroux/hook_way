@@ -20,17 +20,17 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/jasongiroux/hookway/internal/auth"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/flowconfig"
-	"github.com/jasongiroux/hookway/internal/graph"
-	hooklogging "github.com/jasongiroux/hookway/internal/logging"
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
-	"github.com/jasongiroux/hookway/internal/secretref"
-	"github.com/jasongiroux/hookway/internal/transform"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/secretref"
+	"github.com/jaysongiroux/hook_way/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // FlowServer serves configured flows through the graph executor.

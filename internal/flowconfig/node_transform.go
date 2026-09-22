@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/graph"
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 type transformNode struct {

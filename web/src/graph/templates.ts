@@ -49,7 +49,7 @@ export const TEMPLATES: TemplateDef[] = [
     id: "xml-ingest",
     label: "XML webhook",
     help: "Verifies an HMAC over the raw bytes, parses the body into an XML element tree, filters on an element path, reads fields into vars, prunes empty elements, and forwards the document as application/xml. Inserts the whole pipeline because xml_prune only validates behind an xml envelope.",
-    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env", "only_loans", "tag", "prune", "post"],
+    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env", "only_orders", "tag", "prune", "post"],
     yaml: xmlYaml,
   },
   {

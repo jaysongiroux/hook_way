@@ -134,7 +134,7 @@ const COMMON_FIELD_HELP: Record<string, string> = {
     "Carry each file's bytes as base64. Turn off to keep metadata only and copy nothing.",
   "retry.initial_backoff": "Wait before the second attempt, doubled with jitter each time. Defaults to 500ms.",
   "retry.max_backoff": "Ceiling for any single wait, including a 429's Retry-After. Defaults to 30s.",
-  "conditions.path": "Header name, or a dotted body path: JSON keys (repository.private) or XML elements with @ for attributes (LOAN.@id).",
+  "conditions.path": "Header name, or a dotted body path: JSON keys (repository.private) or XML elements with @ for attributes (ORDER.@id).",
 };
 
 export function nodeHelp(type: string): string {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // TestRedisNewClient_Modes exercises newRedisClient option mapping for each

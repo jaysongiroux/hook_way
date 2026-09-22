@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 // ---------------------------------------------------------------------------
@@ -701,9 +701,9 @@ func TestBulkReplayPerEventResults(t *testing.T) {
 }
 
 func TestReconstructPreservesVariables(t *testing.T) {
-	ev := replaystore.Event{ID: "evt-1", Envelope: queue.Message{ID: "evt-1", Variables: map[string]string{"envName": "qa-gm3"}}}
+	ev := replaystore.Event{ID: "evt-1", Envelope: queue.Message{ID: "evt-1", Variables: map[string]string{"envName": "tenant-a"}}}
 	msg := reconstruct(ev, false)
-	if msg.Variables["envName"] != "qa-gm3" {
+	if msg.Variables["envName"] != "tenant-a" {
 		t.Fatalf("variables must survive reconstruction: %#v", msg.Variables)
 	}
 	if msg.ReplayOf != "evt-1" || msg.ID == "evt-1" {

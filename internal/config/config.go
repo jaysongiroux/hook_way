@@ -1,17 +1,13 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
@@ -192,100 +188,11 @@ type rawConfig struct {
 	Logging      LoggingConfig                   `yaml:"logging"`
 	Replay       rawReplayConfig                 `yaml:"replay"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
-	Endpoints    map[string]struct {
-		Enabled               bool                           `yaml:"enabled"`
-		Path                  string                         `yaml:"path"`
-		DeliveryFailurePolicy string                         `yaml:"delivery_failure_policy"`
-		Destinations          []rawEndpointDestinationConfig `yaml:"destinations"`
-		MaxBodyBytes          int64                          `yaml:"max_body_bytes"`
-		RateLimit             EndpointRateLimitConfig        `yaml:"rate_limit"`
-		ReplayProtection      struct {
-			Enabled    bool   `yaml:"enabled"`
-			TTL        string `yaml:"ttl"`
-			MaxEntries int    `yaml:"max_entries"`
-		} `yaml:"replay_protection"`
-		IPAllowlist []string `yaml:"ip_allowlist"`
-		Auth        struct {
-			Type               string `yaml:"type"`
-			Scheme             string `yaml:"scheme"`
-			Secret             string `yaml:"secret"`
-			SignatureHeader    string `yaml:"signature_header"`
-			TimestampTolerance string `yaml:"timestamp_tolerance"`
-			IdempotencyHeader  string `yaml:"idempotency_header"`
-			RemoveBearer       bool   `yaml:"remove_bearer"`
-			ExpectedIssuer     string `yaml:"expected_issuer"`
-			ExpectedAudience   string `yaml:"expected_audience"`
-			BodyHashClaim      string `yaml:"body_hash_claim"`
-			AllowUnboundBody   bool   `yaml:"allow_unbound_body"`
-		} `yaml:"auth"`
-		Filters        []rawFilterConditionConfig `yaml:"filters"`
-		FilterResponse struct {
-			Status int `yaml:"status"`
-		} `yaml:"filter_response"`
-		Variables            map[string]rawVariableConfig `yaml:"variables"`
-		OnUnresolvedVariable *rawFallbackRouteConfig      `yaml:"on_unresolved_variable"`
-	} `yaml:"endpoints"`
-}
-
-func Load(path string) (Config, error) {
-	return NewService().Load(path)
-}
-
-type Service struct{}
-
-func NewService() Service {
-	return Service{}
-}
-
-func (s Service) Load(path string) (Config, error) {
-	if path == "" {
-		return Config{}, ConfigValidationError{Issues: []ValidationIssue{{
-			Field: "config", Message: "path is required", Suggestion: "set --config ./config.yaml or HOOKWAY_CONFIG",
-		}}}
-	}
-	rawBytes, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return Config{}, err
-	}
-	return s.loadBytes(rawBytes, path, true)
-}
-
-// loadBytes parses, converts, and validates config from raw YAML bytes. source
-// names the origin (a file path, or "config" for in-memory bytes) for error
-// text. When expandEnv is true, ${VAR} references are expanded against the
-// process environment before parsing; when false, they are left as opaque
-// literals (see ValidateBytes).
-func (s Service) loadBytes(rawBytes []byte, source string, expandEnv bool) (Config, error) {
-	raw := string(rawBytes)
-	if expandEnv {
-		expanded, missing := expandEnvStrict(raw)
-		if len(missing) > 0 {
-			return Config{}, ConfigValidationError{Issues: MissingEnvIssues(missing)}
-		}
-		raw = expanded
-	}
-	var config rawConfig
-	decoder := yaml.NewDecoder(bytes.NewBufferString(raw))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&config); err != nil {
-		if strings.Contains(err.Error(), "field") && strings.Contains(err.Error(), "not found") {
-			return Config{}, fmt.Errorf("unknown or invalid YAML field in %s: %w", source, err)
-		}
-		return Config{}, fmt.Errorf("invalid YAML syntax in %s: %w", source, err)
-	}
-	cfg, issues := convert(config)
-	if len(issues) > 0 {
-		return Config{}, ConfigValidationError{Issues: issues}
-	}
-	if issues := cfg.ValidationIssues(); len(issues) > 0 {
-		return Config{}, ConfigValidationError{Issues: issues}
-	}
-	return cfg, nil
 }
 
 // MissingEnvIssues builds one ValidationIssue per referenced-but-unset
 // environment variable name (as produced by expandEnvStrict / ExpandEnvLenient
-// missing lists). Shared by Load's hard-failure path and by
+// missing lists). Shared by flowconfig.Load's hard-failure path and by
 // internal/configapi's expand-and-downgrade-to-warning path, so both surfaces
 // report the exact same field/message/suggestion text for the same problem.
 func MissingEnvIssues(missing []string) []ValidationIssue {
@@ -395,31 +302,6 @@ func expandEnvCollect(raw string, zeroMissing bool) (expanded string, missing []
 	return out, names
 }
 
-// ValidateBytes validates raw YAML config bytes and returns structured issues.
-// A nil slice means the config is valid. Unlike Load, this path does NOT
-// expand ${VAR} references against the process environment: the bytes are
-// treated as untrusted candidate config (e.g. from the HTTP /validate
-// endpoint), and ${VAR} is left as an opaque literal so validating it cannot
-// leak process-environment secrets.
-func (s Service) ValidateBytes(data []byte) []ValidationIssue {
-	_, err := s.loadBytes(data, "config", false)
-	return issuesFromError(err)
-}
-
-// issuesFromError converts a load error into structured issues. Structured
-// ConfigValidationError issues pass through; any other error (YAML syntax,
-// unknown field) becomes a single "config" issue carrying the message.
-func issuesFromError(err error) []ValidationIssue {
-	if err == nil {
-		return nil
-	}
-	var cve ConfigValidationError
-	if errors.As(err, &cve) {
-		return cve.Issues
-	}
-	return []ValidationIssue{{Field: "config", Message: err.Error()}}
-}
-
 func ResolvePath(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -451,58 +333,4 @@ func maxInflightRequests(raw int) int {
 		return defaultMaxInflightRequests
 	}
 	return raw
-}
-
-func convert(raw rawConfig) (Config, []ValidationIssue) {
-	shared, issues := convertShared(rawSharedConfig{
-		Server: raw.Server, Security: raw.Security, Metrics: raw.Metrics,
-		Logging: raw.Logging, Replay: raw.Replay, Destinations: raw.Destinations,
-	})
-	cfg := Config{
-		Server: shared.Server, Security: shared.Security,
-		RateLimit: raw.RateLimit,
-		Metrics:   shared.Metrics, Logging: shared.Logging, Replay: shared.Replay,
-		Destinations: shared.Destinations,
-		Endpoints:    map[string]EndpointConfig{},
-	}
-	for name, endpoint := range raw.Endpoints {
-		tolerance, issue := parsePositiveDefaultDuration("endpoints."+name+".auth.timestamp_tolerance", endpoint.Auth.TimestampTolerance, 5*time.Minute)
-		if issue.Field != "" {
-			issues = append(issues, issue)
-		}
-		replayTTL, issue := parseDuration("endpoints."+name+".replay_protection.ttl", endpoint.ReplayProtection.TTL, 0)
-		if issue.Field != "" {
-			issues = append(issues, issue)
-		}
-		destinations, destinationIssues := convertEndpointDestinations("endpoints."+name+".destinations", endpoint.Destinations)
-		issues = append(issues, destinationIssues...)
-		variables, variableIssues := convertVariables("endpoints."+name+".variables", endpoint.Variables)
-		issues = append(issues, variableIssues...)
-		cfg.Endpoints[name] = EndpointConfig{
-			Enabled:               endpoint.Enabled,
-			Path:                  endpoint.Path,
-			DeliveryFailurePolicy: deliveryFailurePolicy(endpoint.DeliveryFailurePolicy),
-			Destinations:          destinations,
-			MaxBodyBytes:          endpoint.MaxBodyBytes,
-			RateLimit:             endpoint.RateLimit,
-			ReplayProtection: ReplayProtectionConfig{
-				Enabled: endpoint.ReplayProtection.Enabled, TTL: replayTTL, MaxEntries: endpoint.ReplayProtection.MaxEntries,
-			},
-			IPAllowlist: endpoint.IPAllowlist,
-			Auth: AuthConfig{Type: endpoint.Auth.Type, Scheme: authScheme(endpoint.Auth.Scheme), Secret: endpoint.Auth.Secret,
-				SignatureHeader:    endpoint.Auth.SignatureHeader,
-				TimestampTolerance: tolerance,
-				IdempotencyHeader:  endpoint.Auth.IdempotencyHeader,
-				RemoveBearer:       endpoint.Auth.RemoveBearer,
-				ExpectedIssuer:     endpoint.Auth.ExpectedIssuer,
-				ExpectedAudience:   endpoint.Auth.ExpectedAudience,
-				BodyHashClaim:      endpoint.Auth.BodyHashClaim,
-				AllowUnboundBody:   endpoint.Auth.AllowUnboundBody},
-			Filters:              convertFilters(endpoint.Filters),
-			FilterResponse:       FilterResponseConfig{Status: endpoint.FilterResponse.Status},
-			Variables:            variables,
-			OnUnresolvedVariable: convertFallback(endpoint.OnUnresolvedVariable),
-		}
-	}
-	return cfg, issues
 }

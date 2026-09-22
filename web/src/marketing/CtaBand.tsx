@@ -19,7 +19,7 @@ export function CtaBand() {
             Run Hookway locally
           </Title>
           <Text size="md" c={DARK.muted} ta="center" maw={560}>
-            Clone the repository and start the example stack. No account or hosted control plane is required.
+            Clone the repo and start the example stack. No account or control plane required.
           </Text>
           <Group mt="xs">
             <Button component={Link} to="/builder" size="md" color="brand">

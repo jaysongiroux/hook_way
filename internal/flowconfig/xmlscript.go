@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/jasongiroux/hookway/internal/transform"
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 // The code node hands scripts an XML body as an explicitly tagged node tree
@@ -19,7 +19,7 @@ import (
 //	  root: {
 //	    name:     "MESSAGE",
 //	    ns:       "",
-//	    attr:     {id: "L1"},
+//	    attr:     {id: "O1"},
 //	    attrns:   {},
 //	    text:     "",
 //	    children: [ /* same shape, recursively */ ]
@@ -30,7 +30,7 @@ import (
 // JSON-cloneable and goja can marshal it without seeing a Go pointer type.
 //
 // attr is keyed by local name, matching the filter's path semantics, so a
-// script reads LOAN.attr.kind whatever prefix the vendor used. That alone is
+// script reads ORDER.attr.kind whatever prefix the sender used. That alone is
 // lossy — it cannot tell ns:kind from kind, and an xmlns:ns declaration is
 // itself an attribute — so attrns carries the namespace URI of any attribute
 // that has one, keyed by the same local name. A script that only reads attr,

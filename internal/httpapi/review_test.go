@@ -3,8 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"

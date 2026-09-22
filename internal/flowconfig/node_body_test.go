@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jasongiroux/hookway/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 func TestReadBodyRejectsOversizeBody(t *testing.T) {

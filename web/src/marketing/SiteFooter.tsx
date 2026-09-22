@@ -1,5 +1,5 @@
 import { Anchor, Box, Container, Group, Text } from "@mantine/core";
-import { GITHUB_REPO } from "./links";
+import { GITHUB_REPO, GITHUB_REPO_SLUG } from "./links";
 import { DARK } from "../tokens";
 
 export function SiteFooter() {
@@ -15,7 +15,7 @@ export function SiteFooter() {
             Self-hosted, and it stores nothing you do not configure.
           </Text>
           <Anchor href={GITHUB_REPO} target="_blank" rel="noopener noreferrer" size="xs" c={DARK.muted}>
-            jaysongiroux/hook_way
+            {GITHUB_REPO_SLUG}
           </Anchor>
         </Group>
       </Container>

@@ -19,7 +19,7 @@ func TestSchemaJSON_IsValidJSONWithTopLevelKeys(t *testing.T) {
 	if !ok {
 		t.Fatalf("schema has no top-level properties object: %v", doc)
 	}
-	for _, key := range []string{"server", "destinations", "endpoints"} {
+	for _, key := range []string{"server", "security", "metrics", "logging", "replay", "destinations"} {
 		if _, ok := props[key]; !ok {
 			t.Errorf("schema properties missing %q (present: %v)", key, keys(props))
 		}

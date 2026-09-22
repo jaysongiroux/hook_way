@@ -29,6 +29,123 @@ flows:
 `
 }
 
+// suffixProxyFlowYAML builds a sync-proxy flow whose upstream template puts a
+// mandatory literal suffix AFTER the captured variable. That suffix is the
+// access-control boundary: "/tenants/{tenant}/readonly" is what confines a
+// caller to the read-only view of one tenant. Anything that truncates the
+// rendered URL before "/readonly" is a privilege escalation.
+func suffixProxyFlowYAML(upstreamURL string) string {
+	return `
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations: {}
+flows:
+  proxy:
+    nodes:
+      - {id: in, type: http_trigger, path: "/proxy/{tenant}", methods: [ANY]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: testtoken, signature_header: X-Auth}
+      - {id: env, type: envelope, body_format: raw}
+      - {id: up, type: http_request, url: "` + upstreamURL + `/tenants/{tenant}/readonly", forward_method: true}
+      - {id: resp, type: respond, passthrough: true}
+    edges: [in>body, body>auth, auth>env, env>up, up>resp]
+`
+}
+
+// TestProxyRejectsEncodedURLDelimitersInPathVars is a security regression test.
+//
+// URL.Path is already percent-decoded when a handler sees it, so "%23" becomes
+// "#" and "%3F" becomes "?" inside the captured {tenant}. Before the fix,
+// url.Parse then re-read those as fragment/query delimiters while building the
+// outbound request:
+//
+//	tenant="acme#"      -> upstream path "/tenants/acme"  (/readonly DROPPED)
+//	tenant="acme?x=1&"  -> upstream path "/tenants/acme", query "x=1&/readonly"
+//
+// Either way the mandatory "/readonly" suffix is gone and the caller reaches a
+// broader upstream resource than the config allows.
+func TestProxyRejectsEncodedURLDelimitersInPathVars(t *testing.T) {
+	type hit struct{ escapedPath, decodedPath, query string }
+	var upstreamHits []hit
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits = append(upstreamHits, hit{
+			escapedPath: r.URL.EscapedPath(),
+			decodedPath: r.URL.Path,
+			query:       r.URL.RawQuery,
+		})
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv, err := NewFlowServer(loadFlowCfg(t, suffixProxyFlowYAML(upstream.URL)), &fakePublisher{}, slog.New(slog.DiscardHandler), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	cases := []struct {
+		target string
+		// wantEscapedPath is the exact upstream path a forwarded request must
+		// carry. Empty means the request must be rejected without ever
+		// reaching the upstream.
+		wantEscapedPath string
+	}{
+		{target: "/proxy/acme%23"},
+		{target: "/proxy/acme%23/readonly"},
+		{target: "/proxy/acme%3Fx=1%26"},
+		{target: "/proxy/acme%3f%23"},
+		{target: "/proxy/acme%00"},
+		{target: "/proxy/acme%5c..%5cadmin"},
+		// Double-encoded: the capture is the literal text "%2e%2e%2fadmin".
+		// It must reach the upstream still encoded -- decoding it a second
+		// time anywhere on the way out would manufacture a real traversal.
+		{target: "/proxy/%252e%252e%252fadmin", wantEscapedPath: "/tenants/%2e%2e%2fadmin/readonly"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.target, func(t *testing.T) {
+			upstreamHits = nil
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, tc.target, strings.NewReader("x"))
+			req.Header.Set("X-Auth", "testtoken")
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, req)
+
+			for _, h := range upstreamHits {
+				if !strings.HasSuffix(h.escapedPath, "/readonly") {
+					t.Fatalf("upstream path = %q (query %q): the mandatory /readonly suffix was dropped -- access control bypassed", h.escapedPath, h.query)
+				}
+				if !strings.HasPrefix(h.escapedPath, "/tenants/") {
+					t.Fatalf("upstream path = %q: escaped the /tenants/ prefix", h.escapedPath)
+				}
+				if h.query != "" {
+					t.Fatalf("upstream query = %q, want empty: forward_query is off, so no query may be injected", h.query)
+				}
+			}
+
+			if tc.wantEscapedPath == "" {
+				if len(upstreamHits) != 0 {
+					t.Fatalf("upstream was reached at %v; the request must not be proxied", upstreamHits)
+				}
+				// 400 is the path-variable rejection. 404 is the earlier
+				// rejection for inputs whose decoded path no longer matches
+				// the single-segment trigger (for example "acme#/readonly").
+				if rec.Code != http.StatusBadRequest && rec.Code != http.StatusNotFound {
+					t.Fatalf("status = %d, want 400 or 404 for a rejected request", rec.Code)
+				}
+				return
+			}
+			if len(upstreamHits) != 1 {
+				t.Fatalf("upstream hits = %v, want exactly one forwarded request", upstreamHits)
+			}
+			if got := upstreamHits[0].escapedPath; got != tc.wantEscapedPath {
+				t.Fatalf("upstream escaped path = %q, want %q (decoded %q)",
+					got, tc.wantEscapedPath, upstreamHits[0].decodedPath)
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+		})
+	}
+}
+
 // TestProxyRejectsEncodedPathTraversal is a security regression test.
 //
 // net/http hands handlers an already percent-decoded URL.Path. Go's ServeMux

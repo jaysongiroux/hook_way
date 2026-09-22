@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/awsconf"
-	"github.com/jasongiroux/hookway/internal/testenv"
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	snsservice "github.com/aws/aws-sdk-go-v2/service/sns"

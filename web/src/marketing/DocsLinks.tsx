@@ -12,7 +12,7 @@ export function DocsLinks() {
   return (
     <Section
       title="Documentation is versioned with the code"
-      lead="Configuration, CLI, security, operations, and examples live in the repository."
+      lead="Configuration, CLI, security, operations, and examples live in the repo."
       background={DARK.recessed}
     >
       <Bento>

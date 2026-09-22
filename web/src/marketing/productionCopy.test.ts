@@ -28,6 +28,37 @@ test("retry claims name the destinations that actually support them", () => {
   expect(text).not.toMatch(/every destination|all destinations/i);
 });
 
+// Retrying is not the same capability as dead-lettering or honouring a 429,
+// and the tile used to run all three together over the same subject list.
+// Kafka has no dead-letter path at all (nothing in internal/queue/kafka*.go),
+// and only webhook and node_http_request parse Retry-After -- Kafka and
+// RabbitMQ speak binary protocols and cannot return an HTTP 429. The same two
+// assertions live in internal/marketingfacts so the Go side fails too.
+test("the retry tile scopes dead-lettering and 429 handling to webhook", () => {
+  const retry = PRODUCTION_CARDS.find((c) => c.id === "retries")!;
+  const sentences = retry.line.split(/(?<=[.;])\s+/);
+
+  const deadLetter = sentences.filter((s) => /dead[- ]letter/i.test(s));
+  expect(deadLetter.length).toBeGreaterThan(0);
+  for (const s of deadLetter) {
+    expect(s, `dead-letter claim must not name Kafka: "${s}"`).not.toMatch(/Kafka/i);
+  }
+
+  const retryAfter = sentences.filter((s) => /429/.test(s));
+  expect(retryAfter.length).toBeGreaterThan(0);
+  for (const s of retryAfter) {
+    expect(s, `429 claim must not name Kafka: "${s}"`).not.toMatch(/Kafka/i);
+    expect(s, `429 claim must not name RabbitMQ: "${s}"`).not.toMatch(/RabbitMQ/i);
+  }
+});
+
+// Dead-lettering is opt-in and async-only; the default on terminal failure is
+// log-and-drop. A bare "then dead-letters" title implied a default.
+test("the retry tile does not present dead-lettering as a default", () => {
+  const retry = PRODUCTION_CARDS.find((c) => c.id === "retries")!;
+  expect(retry.title).toMatch(/optional/i);
+});
+
 test("the copy claims nothing the project does not implement", () => {
   const text = PRODUCTION_CARDS.flatMap((c) => [c.title, c.valueLabel, c.line])
     .join(" ")

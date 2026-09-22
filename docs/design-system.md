@@ -1,4 +1,10 @@
-# Design
+# Design System
+
+The visual system for the `web/` bundle — the marketing overview and the config
+builder, which share one palette and type scale. This is a UI style guide, not
+system architecture; for the typed-port node graph see the README's
+[Architecture](../README.md#architecture-the-typed-port-node-graph) section and
+[Request-pipeline invariants](invariants.md).
 
 Light institutional operations console. Marketing and the config builder share one system.
 

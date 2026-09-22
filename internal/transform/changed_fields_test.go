@@ -10,19 +10,19 @@ func TestChangedFieldsNestedAndStatusPromotion(t *testing.T) {
 	prev := map[string]any{
 		"status": map[string]any{"code": "A", "detail": "old"},
 		"variables": map[string]any{
-			"borrower_first_name": "Ann",
+			"customer_first_name": "Ann",
 			"unchanged":           "x",
 		},
 	}
 	curr := map[string]any{
 		"status": map[string]any{"code": "B", "detail": "old"},
 		"variables": map[string]any{
-			"borrower_first_name": "Bob",
+			"customer_first_name": "Bob",
 			"unchanged":           "x",
 		},
 	}
 	got := ChangedFields(prev, curr)
-	if !contains(got, "status") || !contains(got, "status.code") || !contains(got, "variables.borrower_first_name") {
+	if !contains(got, "status") || !contains(got, "status.code") || !contains(got, "variables.customer_first_name") {
 		t.Fatalf("got %v, want status promotion plus nested paths", got)
 	}
 	if contains(got, "variables.unchanged") {

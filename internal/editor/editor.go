@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/apikey"
-	"github.com/jasongiroux/hookway/internal/configapi"
+	"github.com/jaysongiroux/hook_way/internal/apikey"
+	"github.com/jaysongiroux/hook_way/internal/configapi"
 )
 
 // maxValidateBytes caps the /validate request body. The editor does not load a

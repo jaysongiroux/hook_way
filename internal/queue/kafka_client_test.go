@@ -7,7 +7,7 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 func TestKafkaKeyBalancerHashesOnKey(t *testing.T) {

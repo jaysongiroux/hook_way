@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"syscall/js"
 
-	"github.com/jasongiroux/hookway/cmd/hookway-wasm/bridge"
+	"github.com/jaysongiroux/hook_way/cmd/hookway-wasm/bridge"
 )
 
 // errJSON renders an internal failure in a shape the JS side can detect via a

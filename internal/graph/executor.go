@@ -242,7 +242,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		// inside the publisher, which arrives here as a bare error -- is a
 		// retryable delivery failure. Without this, a panicking publisher
 		// would surface as 500 and lose the 503-so-the-sender-retries
-		// contract (gaps doc C1).
+		// contract.
 		var ne NodeError
 		if b.spec.Detached && !errors.As(err, &ne) {
 			err = NodeError{NodeID: id, Status: 503, Err: err}

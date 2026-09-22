@@ -17,16 +17,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/configapi"
-	"github.com/jasongiroux/hookway/internal/editor"
-	"github.com/jasongiroux/hookway/internal/flowconfig"
-	"github.com/jasongiroux/hookway/internal/httpapi"
-	hooklogging "github.com/jasongiroux/hookway/internal/logging"
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
-	"github.com/jasongiroux/hookway/internal/replayapi"
-	"github.com/jasongiroux/hookway/internal/replaystore"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/configapi"
+	"github.com/jaysongiroux/hook_way/internal/editor"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/httpapi"
+	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/replayapi"
+	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 // version and commit identify the build. They default to "dev"/"none" for a

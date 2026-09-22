@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // dlqFactoryConfig wires a webhook destination "notify" (endpoint-routed) whose

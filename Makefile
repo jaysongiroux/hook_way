@@ -24,6 +24,11 @@ wasm:
 
 wasm-harness: wasm
 	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js cmd/hookway-wasm/harness/
+	@command -v python3 >/dev/null 2>&1 || { \
+		echo "wasm-harness needs python3 to serve the harness over http://."; \
+		echo "Opening index.html as a file:// URL will not work: the WASM fetch is blocked by CORS."; \
+		echo "Install python3, or serve cmd/hookway-wasm/harness with any static file server on port 8091."; \
+		exit 1; }
 	@echo "Serving harness on http://localhost:8091 (Ctrl-C to stop)"
 	cd cmd/hookway-wasm/harness && python3 -m http.server 8091
 
@@ -39,7 +44,10 @@ node-schema-check: node-schema
 web-install:
 	cd web && npm install
 
-web-dev:
+# Depends on wasm because the dev server otherwise 404s hookway.wasm, and
+# validate.ts then silently falls back to a dead /validate fetch -- every
+# in-browser validation assertion passes vacuously instead of failing.
+web-dev: wasm
 	cd web && npm run dev
 
 web-test:
@@ -96,14 +104,17 @@ diff-check:
 	git diff --cached --check
 
 COVERAGE_PROFILE ?= coverage.out
-COVERAGE_FLOOR_FILE ?= coverage.floor
+# Statement coverage floor for `go test -short`, rounded down to one decimal.
+# Raise it when coverage improves; override per-invocation with
+# `make coverage COVERAGE_FLOOR=85`.
+COVERAGE_FLOOR ?= 80.9
 COVER_PKGS := $(shell $(GO) list ./... | grep -v '/scripts/')
 
 coverage:
 	$(GO) test $(UNIT_FLAGS) -covermode=atomic -coverprofile=$(COVERAGE_PROFILE) $(COVER_PKGS)
 	@$(GO) tool cover -func=$(COVERAGE_PROFILE) | tee coverage.txt
 	@total="$$($(GO) tool cover -func=$(COVERAGE_PROFILE) | awk '/^total:/ { print substr($$3, 1, length($$3)-1) }')"; \
-	floor="$$(cat $(COVERAGE_FLOOR_FILE))"; \
+	floor="$(COVERAGE_FLOOR)"; \
 	awk -v t="$$total" -v f="$$floor" 'BEGIN { if ((t+0) < (f+0)) { printf "coverage %s%% is below floor %s%%\n", t, f; exit 1 } printf "coverage %s%% (floor %s%%)\n", t, f }'
 
 PROM_VERSION ?= 3.14.0
@@ -160,9 +171,10 @@ temporal-integration-test:
 replaystore-integration-test:
 	$(GO) test ./internal/replaystore -run 'TestReplayStore' -count=1
 
-# test-all runs every test once: unit + RabbitMQ + AWS + Redis integration suites.
-# Integration tests self-skip when Docker is unavailable. -count=1 disables the
-# test cache so the container-backed suites actually run.
+# test-all runs every test once, with no -short, so all nine container-backed
+# suites run: RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, webhook, Temporal,
+# and the replay store. Integration tests self-skip when Docker is unavailable.
+# -count=1 disables the test cache so the container-backed suites actually run.
 test-all:
 	$(GO) test ./... -count=1
 
@@ -172,9 +184,25 @@ lint:
 # deadcode fails the build on any unreachable function. Every package here is
 # internal/ or a main, so "unreachable" means genuinely dead rather than
 # exported-for-consumers.
+# Two passes, because they catch different things.
+#
+# Pass 1 (-test ./...) treats tests as roots, so it finds helpers nothing calls
+# at all. It CANNOT find code that is dead in production but kept reachable by
+# its own test suite -- which is exactly how a whole v1 config loader survived
+# here undetected.
+#
+# Pass 2 (./cmd/... with no -test) roots only at the real entrypoints, so
+# "unreachable" means genuinely unreachable in a shipped binary. Two known
+# false positives are filtered: cmd/hookway-wasm/bridge is reachable only from
+# the js/wasm-tagged main, which a host-platform analysis excludes, and
+# targetResolver.dynamicLen is documented as test-only.
+DEADCODE_ALLOW := cmd/hookway-wasm/bridge/|internal/queue/target_resolver.go.*dynamicLen
+
 deadcode:
 	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./... 2>/dev/null)"; \
-	if [ -n "$$out" ]; then echo "dead code found:"; echo "$$out"; exit 1; fi
+	if [ -n "$$out" ]; then echo "dead code found (reachable from no test or entrypoint):"; echo "$$out"; exit 1; fi
+	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 ./cmd/... 2>/dev/null | grep -Ev '$(DEADCODE_ALLOW)')"; \
+	if [ -n "$$out" ]; then echo "dead code found (unreachable from any entrypoint; tests keep it alive):"; echo "$$out"; exit 1; fi
 	@echo "no dead code"
 
 validate:
@@ -204,11 +232,11 @@ validate-examples:
 		TEMPORAL_NAMESPACE=default \
 		TEMPORAL_API_KEY=dummy \
 		ARCHIVE_BUCKET=archive \
-		HUB_API_KEY=dummy \
-		DIGIFI_WEBHOOK_TOKEN=dummy \
-		DIGIFI_BASE=https://example.test \
-		SF_TOKEN=testtoken \
-		ROUTING_TABLE=sandbox_ephemeral_routing_data \
+		DOWNSTREAM_API_KEY=dummy \
+		VENDOR_WEBHOOK_TOKEN=dummy \
+		UPSTREAM_BASE=https://example.test \
+		PROXY_TOKEN=testtoken \
+		ROUTING_TABLE=routing_data \
 		ROUTING_DB_URL=postgres://localhost:5432/routing \
 		REPLAY_DB_URL=postgres://localhost:5432/db \
 		REPLAY_API_KEY=dummy \
@@ -220,7 +248,7 @@ validate-examples:
 		XML_SOURCE_SECRET=dummy \
 		XML_UPSTREAM_URL=https://upstream.test/xml \
 		HOOKWAY_API_KEY=dummy; \
-	for f in examples/config.yaml examples/filters.yaml examples/replay.yaml examples/variables.yaml examples/on_error.yaml examples/xml.yaml examples/multipart.yaml examples/multipart-split.yaml examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
+	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done; \
@@ -246,7 +274,9 @@ docker-build: ui
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 
-release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint ui-check docker-build vuln-scan
+# Mirrors the required CI gate (.github/workflows/reusable-ci.yml `all-checks-passed`).
+# Keep these two lists in sync: a green release-check should predict a green CI.
+release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint golangci-lint govulncheck coverage fmt-check deadcode conformance observability-check ui-check docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build

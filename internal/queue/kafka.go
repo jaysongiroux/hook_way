@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // KafkaTarget describes one topic this destination routes to. PartitionKey is

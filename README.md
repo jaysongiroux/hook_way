@@ -1,23 +1,111 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (`hmac_sha256` signatures, `header_exact` static headers, or `jwt` Bearer tokens), and publishes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal workflows, or another HTTP webhook). Bodies may be JSON, XML, multipart, or raw; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`.
+Hookway receives third-party webhook POST requests, verifies authentication (HMAC signatures, static header match, HTTP Basic, or JWT Bearer tokens — 11 schemes, named by wire format rather than by vendor; see [Security § Auth Schemes](docs/security.md#auth-schemes)), and publishes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal workflows, or another HTTP webhook). Bodies may be JSON, XML, multipart, or raw; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`.
 
 Config is named `flows` of typed nodes (`http_trigger`, gates, `auth` / `no_auth`, `envelope`, `publish` / `respond`) wired by `edges`. There is no config version field: `hookway validate` rejects any unknown top-level key. See [Configuration](docs/configuration.md).
+
+## Architecture: the typed-port node graph
+
+A flow is a DAG, not a fixed pipeline. Every node declares the payload type it
+consumes (its **in** port) and the one it produces (its **out** port), and
+`edges` are type-checked when the config loads — so an illegal ordering is a
+startup error, not a runtime surprise.
+
+The port types are the phases of a request, in order, and each one strictly
+contains the last:
+
+| Port | Carries | Produced by |
+|---|---|---|
+| `PortNone` | nothing — the input side of a trigger | — |
+| `PortRequestHead` | method, path, query, headers, source IP, hop count — deliberately **no body** | `http_trigger` |
+| `PortRawRequest` | a `RequestHead` plus the raw, unverified body bytes | `read_body` |
+| `PortVerified` | a `RawRequest` whose signature was checked against those exact bytes | `auth` / `no_auth` |
+| `PortEnvelope` | a `Verified` payload plus the parsed body and resolved variables | `envelope` |
+| `PortTerminal` | a leaf: a response was written or a delivery completed, nothing flows on | `publish`, `respond` |
+
+Two consequences do the real work:
+
+- **Gates run before the body is buffered.** `loop_guard`, `ip_allowlist`, and
+  `rate_limit` consume `RequestHead`, which has no body, so they *cannot* be
+  wired after `read_body`. A flood is rejected without paying the buffering
+  cost, by construction.
+- **Auth bypass is unrepresentable.** The only producer of `Verified` is an
+  `auth` or `no_auth` node, and every body-reading node consumes `Envelope`,
+  which is reachable only through `Verified`. There is no edge that reaches a
+  `publish` without passing an auth node.
+
+`PortType.Accepts` is strict equality, deliberately: widening it to
+assignability looks like a simplification and silently destroys those
+guarantees, because `RawRequest` *contains* a `RequestHead`. Every leaf must
+produce `PortTerminal`, and exactly one trigger (`In == PortNone`) is allowed
+per flow.
+
+The lattice lives in `internal/graph/port.go`; the compiler and executor are
+the rest of `internal/graph`. The guarantees it buys, and the ones tests rather
+than types are holding, are enumerated in
+[Request-pipeline invariants](docs/invariants.md).
+
+## Prerequisites
+
+| Tool | Version | Needed for |
+|---|---|---|
+| Go | 1.25.4 or newer (`go.mod`; CI pins `1.25.x`, the image builds on `golang:1.25.13-alpine`) | building, testing, `go run ./cmd/hookway` |
+| Node.js | 20 (`NODE_VERSION` in `.github/workflows/reusable-ci.yml`) | the config builder under `web/` |
+| Docker | any recent version | `make dev-up`, `make docker-build`, and every integration suite |
+| Python 3 | any | `make wasm-harness` only (it serves the harness with `python3 -m http.server`) |
 
 ## Quick Start
 
 ```bash
-export RABBITMQ_URL='amqp://guest:guest@localhost:5672/'
-export GITHUB_WEBHOOK_SECRET='your_github_endpoint_secret'
-
 make dev-up
 ```
+
+`make dev-up` brings up `examples/docker-compose.yaml`: RabbitMQ plus Hookway
+running `examples/config.yaml`.
+
+**The default signing secret is `change-me`.** The compose file defaults
+`GITHUB_WEBHOOK_SECRET` to `change-me` and `RABBITMQ_URL` to
+`amqp://guest:guest@rabbitmq:5672/`, so `make dev-up` needs no setup. Test
+requests must be signed with whichever secret is in effect, or Hookway
+fail-closes with a bare `401` that says nothing about why.
+
+Sign and send one:
+
+```bash
+BODY='{"zen":"Keep it logically awesome."}'
+SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac 'change-me' -r | cut -d' ' -f1)"
+curl -sS -X POST http://localhost:8080/webhooks/github \
+  -H 'Content-Type: application/json' \
+  -H "X-Hub-Signature-256: $SIG" \
+  --data-binary "$BODY"
+```
+
+To use a different secret, export it before bringing the stack up — compose
+reads it and falls back to the default only when it is unset:
+
+```bash
+export GITHUB_WEBHOOK_SECRET='your-own-secret'
+make dev-up
+```
+
+Note the broker host: inside the compose network it is `rabbitmq`, not
+`localhost`. `localhost:5672` is only correct when you run the binary on the
+host — see [Local Development](docs/local-development.md).
 
 Validate config before starting:
 
 ```bash
 go run ./cmd/hookway validate --config examples/config.yaml
 make validate
+```
+
+Add `--strict` for the CI-grade check: it promotes lint warnings (a flow with
+no `rate_limit`, a `code` node with no explicit `timeout`, and the like) to
+blocking errors, so a warning cannot ride into `main` unnoticed. It works on
+both the text and `--json` output. See [CLI § Validate](docs/cli.md#validate).
+
+```bash
+go run ./cmd/hookway validate --config examples/config.yaml --strict
 ```
 
 Example webhook URL (`examples/config.yaml`):
@@ -99,10 +187,24 @@ for you to validate and deploy; it does not manage a running instance.
 The palette's **Templates** group drops in production-shaped patterns (Stripe and Paddle ingest with signature verification, loop/rate/replay guards, and rotating `secret_ref`; Slack and Discord notifications that POST to an env-held webhook URL) backed by validated configs in `examples/templates/`.
 
 ```bash
+make web-install   # REQUIRED FIRST on a clean clone — installs web/node_modules
+make wasm          # build the Go validator to WebAssembly into web/public/
 make node-schema   # regenerate web/src/graph/{node,destination}Schema.json
 make web-dev       # Vite app on the local web port
 go run ./cmd/hookway editor --addr :8090
 ```
+
+`make web-install` is not a prerequisite of any other target, so on a fresh
+checkout `make web-dev`, `make ui`, and `make docker-build` all fail with
+`vite: not found` until you run it. CI runs it first in every web-touching job.
+
+`make wasm` matters too: the builder's live validation runs the real Go
+validator compiled to WebAssembly and served from `web/public/hookway.wasm`,
+which is generated and gitignored. Without it `make web-dev` serves a 404 for
+that file and in-browser validation is **silently** dead — the page still
+loads and still looks like it validated. (`make ui` and `make web-e2e` both
+depend on `wasm`; `make web-dev` does not.) See
+[CLI § WASM validator](docs/cli.md#wasm-validator).
 
 See [CLI § Editor API](docs/cli.md#editor-api).
 
@@ -112,24 +214,47 @@ See [CLI § Editor API](docs/cli.md#editor-api).
 make test                  # unit tests only (no Docker)
 make test-race             # unit tests with the race detector
 make test-examples         # boot every shipped example and POST a signed request
-make validate-examples     # `hookway validate` every config under examples/
+make validate-examples     # `hookway validate` the enumerated example configs
 make integration-test      # RabbitMQ integration tests (testcontainers)
 make aws-integration-test  # SQS/SNS integration tests (LocalStack)
 make redis-integration-test # Redis/Valkey integration tests (testcontainers)
-make test-all              # everything: unit + RabbitMQ + AWS + Redis integration
+make postgres-integration-test
+make mongodb-integration-test
+make kafka-integration-test
+make webhook-integration-test
+make temporal-integration-test
+make replaystore-integration-test
+make test-all              # go test ./... -count=1 — unit plus ALL NINE container suites
 make lint
-make docker-build
+make web-install && make docker-build   # docker-build depends on `make ui`, which needs node_modules
 make vuln-scan
 ```
 
-`make integration-test`, `make aws-integration-test`, `make redis-integration-test`, and `make test-all` use testcontainers and require Docker.
+`make test-all` is `go test ./... -count=1` with no `-short`, so it is not
+"unit + RabbitMQ + AWS + Redis": it runs every container-backed suite —
+RabbitMQ, AWS (LocalStack), Redis, Postgres, MongoDB, Kafka, Webhook,
+Temporal, and the replay store. Those suites self-skip when Docker is
+unavailable.
+
+`make test-examples` walks `examples/`, so a new file there is picked up
+automatically. `make validate-examples` does **not**: its loop hand-enumerates
+the eight top-level example files (plus the `destinations/`, `auth/`,
+`templates/`, and `showcase/` globs). Add a new *top-level* example and it is
+silently skipped by `validate-examples` — add it to that list in the Makefile
+too, or put it in one of the globbed subdirectories.
+
+Every `*-integration-test` target above and `make test-all` use testcontainers
+and require Docker. `make docker-build` also requires Docker, and depends on
+`make ui` (WASM + Vite build), so run `make web-install` first on a clean
+clone or it fails with `vite: not found`.
 
 ## CI/CD
 
-GitHub Actions is split by purpose. The same full gate runs everywhere tests run; jobs are parallel (Go, race, shipped examples, web, Playwright, each integration target, image + Trivy).
+GitHub Actions is split across **four** workflow files. Three are entrypoints; the fourth holds the actual gate.
 
-- **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. Nothing is published. The **Examples** job validates every config under `examples/` and then boots each one, POSTing a signed request to every flow so the files we document cannot drift from what the server actually runs.
-- **Release** (`.github/workflows/release.yml`) — pushing a `v*` tag (or dispatching the workflow with an existing tag). Re-runs CI, publishes the Docker image, syncs the Docker Hub description, and creates a GitHub Release with generated notes. Pushes to `main` do not publish.
+- **Reusable CI** (`.github/workflows/reusable-ci.yml`) — the gate itself, called by both CI and Release via `workflow_call`. All 13 jobs live here and run in parallel: **Go** (unit, invariant conformance, vet, `go mod tidy -diff`, deadcode), **Go race**, **Examples**, **Web** (npm install, node-schema drift, vitest, knip), **Web e2e** (Playwright), **Image** (docker build + `ui-check` + Trivy), **golangci-lint**, **govulncheck**, **Coverage**, **Formatting** (gofmt + `git diff --check`), **Observability** (Grafana dashboard tests + promtool on `deploy/alerts.yaml`), a 9-way **integration** matrix (RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, Webhook, Temporal, Replay store), and **All checks passed**, the single required status that `needs:` every one of the others. Any of them failing — including `golangci-lint`, `govulncheck`, `Coverage`, `Formatting`, and `Observability` — blocks the PR.
+- **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. A thin caller of Reusable CI; nothing is published. The **Examples** job validates the enumerated configs under `examples/` and then boots each one, POSTing a signed request to every flow so the files we document cannot drift from what the server actually runs.
+- **Release** (`.github/workflows/release.yml`) — pushing a `v*` tag (or dispatching the workflow with an existing tag). Re-runs Reusable CI, publishes the Docker image, syncs the Docker Hub description from `docs/dockerhub/README.md`, and creates a GitHub Release with generated notes. Pushes to `main` do not publish.
 - **Security** (`.github/workflows/security.yml`) — weekly, on demand, and when `go.mod` / Docker / lockfiles change on `main`. Runs `govulncheck` and a Trivy image scan uploaded to GitHub code scanning.
 
 Cut a release from a commit already on `main`:
@@ -153,3 +278,4 @@ See:
 - [Security](docs/security.md)
 - [Request-pipeline invariants](docs/invariants.md)
 - [Local Development](docs/local-development.md)
+- [Design system](docs/design-system.md) — the `web/` palette, type, and chrome rules (moved from the repo-root `DESIGN.md`)

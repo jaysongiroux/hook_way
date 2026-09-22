@@ -99,8 +99,14 @@ test("the page does not restate the documentation it links to", () => {
   // Measured on the content region, since Mantine injects a stylesheet into
   // the render container.
   const copy = screen.getByRole("main").textContent!;
-  // The bento rewrite cut this from ~6,400 to ~4,300 characters, so the bound
-  // comes back down to stay meaningful. It exists to keep the page a signpost:
-  // docs/configuration.md alone is ~95KB, and the site must not duplicate it.
+  // It exists to keep the page a signpost: docs/configuration.md alone is
+  // ~95KB, and the site must not duplicate it.
+  //
+  // The "~4,300 after the bento rewrite" note that used to sit here went stale:
+  // the marquee, the Explore band and the compare links landed afterwards and
+  // took the page to ~5,450, i.e. 50 characters off the bound. Correcting the
+  // retry/metrics/enablement claims made the honest copy longer still, so
+  // redundant prose was trimmed to pay for it rather than raising the bound.
+  // It now sits at ~5,430. If you need more room, cut something.
   expect(copy.length).toBeLessThan(5500);
 });
