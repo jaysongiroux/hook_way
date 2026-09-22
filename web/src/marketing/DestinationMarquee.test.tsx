@@ -32,6 +32,12 @@ test("every current destination has a deliberate icon and label", () => {
   }
 });
 
+test("each AWS destination is told apart by its icon, not just its label", () => {
+  const aws = ["lambda", "s3", "sns", "sqs"];
+  const icons = new Set(aws.map((type) => destinationPresentation(type).icon));
+  expect(icons.size, "AWS destinations share a generic mark").toBe(aws.length);
+});
+
 test("the repeated track is hidden from assistive technology", () => {
   const { container } = wrap();
   const duplicate = container.querySelector('[aria-hidden="true"].hookway-marquee-group');

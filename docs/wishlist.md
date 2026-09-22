@@ -7,3 +7,4 @@ Remaining:
 - Per-publish replay snapshots for branch-specific transforms and object payloads.
 - Split admin API keys
 - Split destinations and credentials
+- allow for multi-file yml support -> split server out to server.yml

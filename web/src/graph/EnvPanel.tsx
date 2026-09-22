@@ -1,4 +1,4 @@
-import { Drawer, Stack, Text, Code, List } from "@mantine/core";
+import { Modal, Stack, Text, Code, List } from "@mantine/core";
 import { useGraphStore } from "./store";
 import { toConfig } from "./toConfig";
 import { toYaml } from "./toYaml";
@@ -32,7 +32,13 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
     vars = [];
   }
   return (
-    <Drawer opened={opened} onClose={onClose} position="right" title="Environment variables">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Environment variables"
+      size="lg"
+      closeButtonProps={{ "aria-label": "Close Environment variables" }}
+    >
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Set these before running Hookway. Referenced via <Code>${"{VAR}"}</Code> or{" "}
@@ -52,6 +58,6 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
           </List>
         )}
       </Stack>
-    </Drawer>
+    </Modal>
   );
 }

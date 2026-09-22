@@ -40,7 +40,7 @@ function parallelGroups(edges: Edge[]): Map<string, { index: number; count: numb
   return out;
 }
 
-function CanvasInner() {
+function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const arrangeSeq = useGraphStore((s) => s.arrangeSeq);
@@ -129,7 +129,13 @@ function CanvasInner() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         isValidConnection={validate}
-        onNodeClick={(_, node: Node) => setSelected(node.id)}
+        onNodeClick={(_, node: Node) => {
+          setSelected(node.id);
+          // Only nodes announce activation. An edge's inspector view is a
+          // single informational line, so popping a modal for every edge
+          // click would be noise -- the header button still reaches it.
+          onNodeActivate?.();
+        }}
         onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
         onPaneClick={() => setSelected(null)}
         fitView
@@ -183,10 +189,10 @@ function CanvasInner() {
   );
 }
 
-export function Canvas() {
+export function Canvas({ onNodeActivate }: { onNodeActivate?: () => void }) {
   return (
     <ReactFlowProvider>
-      <CanvasInner />
+      <CanvasInner onNodeActivate={onNodeActivate} />
     </ReactFlowProvider>
   );
 }

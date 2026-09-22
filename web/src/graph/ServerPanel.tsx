@@ -1,4 +1,4 @@
-import { Drawer, Stack, Text, TextInput, NumberInput } from "@mantine/core";
+import { Modal, Stack, Text, TextInput, NumberInput } from "@mantine/core";
 import { useGraphStore } from "./store";
 import { SERVER_FIELD_HELP } from "./help";
 
@@ -31,7 +31,13 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
   const serverConfig = useGraphStore((s) => s.serverConfig);
   const setServerConfig = useGraphStore((s) => s.setServerConfig);
   return (
-    <Drawer opened={opened} onClose={onClose} position="right" title="Server settings">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Server settings"
+      size="xl"
+      closeButtonProps={{ "aria-label": "Close Server settings" }}
+    >
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Process-wide <Text span ff="monospace">server:</Text> settings written into the exported YAML.{" "}
@@ -64,6 +70,6 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
           );
         })}
       </Stack>
-    </Drawer>
+    </Modal>
   );
 }

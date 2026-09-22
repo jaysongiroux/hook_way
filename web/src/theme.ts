@@ -54,15 +54,6 @@ export const theme = createTheme({
         title: { fontWeight: 600 },
       },
     },
-    Drawer: {
-      defaultProps: {
-        overlayProps: { backgroundOpacity: 0.35, blur: 0 },
-      },
-      styles: {
-        header: { borderBottom: `1px solid ${DARK.border}` },
-        title: { fontWeight: 600 },
-      },
-    },
     Menu: {
       defaultProps: { withinPortal: true, zIndex: 400, radius: "sm" },
     },

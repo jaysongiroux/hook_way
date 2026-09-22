@@ -1,4 +1,5 @@
 import { Box, Button, Group, Menu, Text } from "@mantine/core";
+import { TbChevronDown } from "react-icons/tb";
 import { Logo } from "../brand/Logo";
 import { HEADER_HEIGHT, HEADER_STYLE, TOOLBAR_DIVIDER } from "../brand/chrome";
 import { DARK } from "../tokens";
@@ -6,9 +7,9 @@ import { FlowSwitcher } from "./FlowSwitcher";
 
 export function BuilderHeader({
   paletteOpen,
-  inspectorOpen,
   onTogglePalette,
-  onToggleInspector,
+  onInspector,
+  onFlowSettings,
   onImport,
   onExport,
   onDestinations,
@@ -18,9 +19,9 @@ export function BuilderHeader({
   onClear,
 }: {
   paletteOpen: boolean;
-  inspectorOpen: boolean;
   onTogglePalette: () => void;
-  onToggleInspector: () => void;
+  onInspector: () => void;
+  onFlowSettings: () => void;
   onImport: () => void;
   onExport: () => void;
   onDestinations: () => void;
@@ -50,23 +51,28 @@ export function BuilderHeader({
             >
               Nodes
             </Button>
-            <Button
-              size="xs"
-              variant={inspectorOpen ? "filled" : "default"}
-              aria-pressed={inspectorOpen}
-              onClick={onToggleInspector}
-            >
+            {/* Not a toggle: the inspector is a modal, so it has no
+                persistent pressed state to advertise. */}
+            <Button size="xs" variant="default" onClick={onInspector}>
               Inspector
             </Button>
           </Button.Group>
           <Box aria-hidden visibleFrom="sm" style={TOOLBAR_DIVIDER} />
           <Menu position="bottom-end" shadow="md">
             <Menu.Target>
-              <Button size="xs" variant="default">
+              <Button
+                size="xs"
+                variant="default"
+                rightSection={<TbChevronDown aria-hidden size={14} />}
+                styles={{ section: { marginInlineStart: 6 } }}
+              >
                 Config
               </Button>
             </Menu.Target>
             <Menu.Dropdown>
+              <Menu.Label>Flow</Menu.Label>
+              <Menu.Item onClick={onFlowSettings}>Flow settings</Menu.Item>
+              <Menu.Divider />
               <Menu.Label>YAML</Menu.Label>
               <Menu.Item onClick={onImport}>Import YAML</Menu.Item>
               <Menu.Item onClick={onExport}>Export YAML</Menu.Item>

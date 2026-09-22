@@ -3,7 +3,7 @@ import { useDisclosure, useDocumentTitle, useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
 import { Palette, PaletteTabs, type PaletteTab } from "./graph/Palette";
 import { Canvas } from "./graph/Canvas";
-import { Inspector } from "./graph/Inspector";
+import { InspectorModal } from "./graph/InspectorModal";
 import { ExportModal } from "./graph/ExportModal";
 import { EnvPanel } from "./graph/EnvPanel";
 import { ServerPanel } from "./graph/ServerPanel";
@@ -31,42 +31,19 @@ export default function App() {
   const [serverOpen, { open: openServer, close: closeServer }] = useDisclosure(false);
   const [destOpen, { open: openDest, close: closeDest }] = useDisclosure(false);
   const [clearOpen, { open: openClear, close: closeClear }] = useDisclosure(false);
+  const [inspectorOpen, { open: openInspector, close: closeInspector }] = useDisclosure(false);
   const compact = useMediaQuery("(max-width: 64em)") ?? false;
   const compactRef = useRef(compact);
   const [paletteOpen, setPaletteOpen] = useState(true);
   const [paletteTab, setPaletteTab] = useState<PaletteTab>("nodes");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-  const inspectorScrollKey = useGraphStore(
-    (s) => `${s.activeFlow}:${s.selectedId ?? "flow"}:${s.selectedEdgeId ?? "no-edge"}`,
-  );
-  const { bodyRef, paletteWidth, inspectorWidth, setPalette, setInspector } = usePanelWidths();
+  const { bodyRef, paletteWidth, setPalette } = usePanelWidths();
 
+  // The palette is docked on wide screens and an overlay on narrow ones, where
+  // it would otherwise eat most of the canvas.
   useEffect(() => {
-    if (compact && !compactRef.current) {
-      setPaletteOpen(false);
-      setInspectorOpen(false);
-    }
-    if (!compact && compactRef.current) {
-      setPaletteOpen(true);
-      setInspectorOpen(true);
-    }
+    if (compact !== compactRef.current) setPaletteOpen(!compact);
     compactRef.current = compact;
   }, [compact]);
-
-  const togglePalette = () => {
-    setPaletteOpen((open) => {
-      const next = !open;
-      if (next && compact) setInspectorOpen(false);
-      return next;
-    });
-  };
-  const toggleInspector = () => {
-    setInspectorOpen((open) => {
-      const next = !open;
-      if (next && compact) setPaletteOpen(false);
-      return next;
-    });
-  };
 
   const confirmClear = () => {
     useGraphStore.getState().clear();
@@ -82,9 +59,14 @@ export default function App() {
       <style>{BUILDER_CSS}</style>
       <BuilderHeader
         paletteOpen={paletteOpen}
-        inspectorOpen={inspectorOpen}
-        onTogglePalette={togglePalette}
-        onToggleInspector={toggleInspector}
+        onTogglePalette={() => setPaletteOpen((open) => !open)}
+        onInspector={openInspector}
+        onFlowSettings={() => {
+          // The inspector's flow view is what shows with nothing selected, so
+          // reaching it means dropping the current selection.
+          useGraphStore.getState().setSelected(null);
+          openInspector();
+        }}
         onImport={openImport}
         onExport={openExport}
         onDestinations={openDest}
@@ -95,13 +77,10 @@ export default function App() {
       />
 
       <Box ref={bodyRef} style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
-        {compact && (paletteOpen || inspectorOpen) && (
+        {compact && paletteOpen && (
           <Box
             aria-hidden
-            onClick={() => {
-              setPaletteOpen(false);
-              setInspectorOpen(false);
-            }}
+            onClick={() => setPaletteOpen(false)}
             style={{ position: "absolute", inset: 0, zIndex: 25, background: "rgba(20, 24, 31, 0.28)" }}
           />
         )}
@@ -109,32 +88,20 @@ export default function App() {
           title="Nodes"
           open={paletteOpen}
           overlay={compact}
-          side="left"
           width={paletteWidth}
           scrollKey={paletteTab}
-          onResize={(w) => setPalette(w, inspectorOpen && !compact, inspectorWidth)}
+          onResize={setPalette}
           onClose={() => setPaletteOpen(false)}
           headerContent={<PaletteTabs value={paletteTab} onChange={setPaletteTab} />}
         >
           <Palette tab={paletteTab} />
         </SidePanel>
         <Box style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-          <Canvas />
+          <Canvas onNodeActivate={openInspector} />
         </Box>
-        <SidePanel
-          title="Inspector"
-          open={inspectorOpen}
-          overlay={compact}
-          side="right"
-          width={inspectorWidth}
-          scrollKey={inspectorScrollKey}
-          onResize={(w) => setInspector(w, paletteOpen && !compact, paletteWidth)}
-          onClose={() => setInspectorOpen(false)}
-        >
-          <Inspector />
-        </SidePanel>
       </Box>
 
+      <InspectorModal opened={inspectorOpen} onClose={closeInspector} />
       <ImportModal opened={importOpen} onClose={closeImport} />
       <ExportModal opened={exportOpen} onClose={closeExport} />
       <EnvPanel opened={envOpen} onClose={closeEnv} />

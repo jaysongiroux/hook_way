@@ -1,4 +1,4 @@
-import { Button, Drawer, Group, Select, Stack, Text, TextInput } from "@mantine/core";
+import { Button, Modal, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { DEST_SCHEMAS, DEST_TYPES, destSchema } from "./nodeSchema";
 import { destFieldHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
@@ -28,7 +28,13 @@ export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClos
   };
 
   return (
-    <Drawer opened={opened} onClose={onClose} position="right" title="Destinations" size="md">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title="Destinations"
+      size="xl"
+      closeButtonProps={{ "aria-label": "Close Destinations" }}
+    >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
           Shared targets referenced by <Text span ff="monospace">publish</Text> nodes. This panel generates config; it
@@ -93,6 +99,6 @@ export function DestinationsPanel({ opened, onClose }: { opened: boolean; onClos
           Add destination
         </Button>
       </Stack>
-    </Drawer>
+    </Modal>
   );
 }

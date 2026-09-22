@@ -18,7 +18,6 @@ export function Inspector() {
   const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
   const setDeliveryFailurePolicy = useGraphStore((s) => s.setDeliveryFailurePolicy);
   const setSelected = useGraphStore((s) => s.setSelected);
-  const setSelectedEdge = useGraphStore((s) => s.setSelectedEdge);
 
   if (selectedEdgeId && edge) {
     const from = nodes.find((n) => n.id === edge.source);
@@ -36,9 +35,6 @@ export function Inspector() {
         <Text size="xs" c="dimmed">
           Wiring is typed. Drag a new connection to change it.
         </Text>
-        <Button size="xs" variant="subtle" onClick={() => setSelectedEdge(null)}>
-          Back to flow
-        </Button>
       </Stack>
     );
   }
@@ -160,9 +156,6 @@ export function Inspector() {
           Add a destination in Destinations ({DEST_TYPES.length} types). Publish references it by name.
         </Text>
       )}
-      <Button size="xs" variant="subtle" onClick={() => setSelected(null)}>
-        Back to flow
-      </Button>
     </Stack>
   );
 }

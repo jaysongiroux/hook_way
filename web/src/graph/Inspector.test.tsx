@@ -33,13 +33,27 @@ test("lists nodes in the flow so they can be opened from the inspector", () => {
   expect(useGraphStore.getState().selectedId).toBe(n.id);
 });
 
-test("back to flow clears the selected node", () => {
+// Leaving a node is the Config menu's "Flow settings" item now -- see
+// App.test.tsx. "Back to flow" read like it dismissed the whole inspector, so
+// neither the node nor the edge view offers it.
+test("a selected node offers no way back that looks like dismissing the inspector", () => {
   const n = createNode("publish", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap();
-  fireEvent.click(screen.getByRole("button", { name: "Back to flow" }));
-  expect(useGraphStore.getState().selectedId).toBeNull();
-  expect(screen.getByLabelText("Flow name")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Back to flow" })).not.toBeInTheDocument();
+});
+
+test("a selected edge offers no way back that looks like dismissing the inspector", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 200, y: 0 });
+  useGraphStore.setState({
+    nodes: [a, b],
+    edges: [{ id: "e1", source: a.id, target: b.id }],
+    selectedId: null,
+    selectedEdgeId: "e1",
+  });
+  wrap();
+  expect(screen.queryByRole("button", { name: "Back to flow" })).not.toBeInTheDocument();
 });
 
 test("the flow name field can be emptied while typing and restores on blur if left blank", () => {

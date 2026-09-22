@@ -11,6 +11,15 @@ import { EDGE, NODE_SIZE } from "../src/tokens";
 // render is a tautology: raising the token raises the budget with it and the
 // test keeps passing. This is the design requirement, stated independently.
 const MAX_VISIBLE_GAP = 1;
+// The gap is measured, not read off the render tree: getPointAtLength samples
+// the bezier and getBoundingClientRect reports quantised LayoutUnits, and both
+// errors are divided by the fit zoom. Once the inspector became a modal the
+// canvas got wider, the whole flow fit at ~0.15 zoom, and that division
+// amplified the noise enough to push a gap of exactly EDGE.arrowGap to
+// 1.00005 -- failing an exact `<= 1` the render was in fact meeting. This is
+// slack for that measurement, not budget for a wider gap: it is two orders of
+// magnitude below anything visible, and MAX_VISIBLE_GAP stays the requirement.
+const MEASUREMENT_TOLERANCE = 0.01;
 
 test("every arrowhead stops within the clearance of its target port dot", async ({ page }) => {
   const builder = new BuilderPage(page);
@@ -52,7 +61,7 @@ test("every arrowhead stops within the clearance of its target port dot", async 
 
   expect(gaps.length).toBeGreaterThan(3);
   for (const gap of gaps) {
-    expect(gap).toBeLessThanOrEqual(MAX_VISIBLE_GAP);
+    expect(gap).toBeLessThanOrEqual(MAX_VISIBLE_GAP + MEASUREMENT_TOLERANCE);
     // A gap of zero or less means the arrow is drawn over the dot and vanishes.
     expect(gap).toBeGreaterThan(0);
     // Separately, the rendered gap should be the token 1:1. If this drifts, the

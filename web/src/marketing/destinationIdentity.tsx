@@ -1,5 +1,4 @@
 import type { IconType } from "react-icons";
-import { FaAws } from "react-icons/fa6";
 import {
   SiApachekafka,
   SiMongodb,
@@ -8,7 +7,7 @@ import {
   SiRedis,
   SiTemporal,
 } from "react-icons/si";
-import { TbRoute, TbWebhook } from "react-icons/tb";
+import { TbBucket, TbLambda, TbRoute, TbSpeakerphone, TbStackPush, TbWebhook } from "react-icons/tb";
 import { Box, Text } from "@mantine/core";
 import { humanLabel } from "../graph/nodeSchema";
 import { DESTINATION_ITEM_CLASS } from "./marketingStyles";
@@ -30,10 +29,12 @@ export const DESTINATION_PRESENTATIONS: Record<string, DestinationPresentation> 
   redis_list: { label: "Redis List", icon: SiRedis },
   redis_pubsub: { label: "Redis Pub/Sub", icon: SiRedis },
   redis_stream: { label: "Redis Stream", icon: SiRedis },
-  s3: { label: "Amazon S3", icon: FaAws },
-  sns: { label: "Amazon SNS", icon: FaAws },
-  sqs: { label: "Amazon SQS", icon: FaAws },
-  lambda: { label: "AWS Lambda", icon: FaAws },
+  // simple-icons carries no Amazon service marks, so each AWS backend gets the
+  // Tabler glyph for what it actually does rather than a shared cloud logo.
+  s3: { label: "Amazon S3", icon: TbBucket },
+  sns: { label: "Amazon SNS", icon: TbSpeakerphone },
+  sqs: { label: "Amazon SQS", icon: TbStackPush },
+  lambda: { label: "AWS Lambda", icon: TbLambda },
   temporal: { label: "Temporal", icon: SiTemporal },
   webhook: { label: "Webhook", icon: TbWebhook },
 };

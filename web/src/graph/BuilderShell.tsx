@@ -4,8 +4,6 @@ import { DARK } from "../tokens";
 
 const PALETTE_MIN = 220;
 const PALETTE_MAX = 420;
-const INSPECTOR_MIN = 300;
-const INSPECTOR_MAX = 520;
 const CANVAS_MIN = 280;
 
 function clamp(n: number, min: number, max: number): number {
@@ -30,33 +28,27 @@ function persist(key: string, value: number) {
   }
 }
 
+/**
+ * The palette is the builder's only docked panel -- the inspector and the
+ * workspace forms are modals -- so the width maths only has to leave room for
+ * the canvas.
+ */
 export function usePanelWidths() {
   const [paletteWidth, setPaletteWidth] = useState(() => readWidth("hookway.builder.paletteWidth", 260, PALETTE_MIN, PALETTE_MAX));
-  const [inspectorWidth, setInspectorWidth] = useState(() => readWidth("hookway.builder.inspectorWidth", 340, INSPECTOR_MIN, INSPECTOR_MAX));
   const bodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => persist("hookway.builder.paletteWidth", paletteWidth), [paletteWidth]);
-  useEffect(() => persist("hookway.builder.inspectorWidth", inspectorWidth), [inspectorWidth]);
 
   const fit = useCallback(() => bodyRef.current?.clientWidth ?? 1200, []);
 
   const setPalette = useCallback(
-    (next: number, inspectorOpen: boolean, inspectorW: number) => {
-      const reserved = (inspectorOpen ? inspectorW : 0) + CANVAS_MIN;
-      setPaletteWidth(clamp(next, PALETTE_MIN, Math.min(PALETTE_MAX, Math.max(PALETTE_MIN, fit() - reserved))));
+    (next: number) => {
+      setPaletteWidth(clamp(next, PALETTE_MIN, Math.min(PALETTE_MAX, Math.max(PALETTE_MIN, fit() - CANVAS_MIN))));
     },
     [fit],
   );
 
-  const setInspector = useCallback(
-    (next: number, paletteOpen: boolean, paletteW: number) => {
-      const reserved = (paletteOpen ? paletteW : 0) + CANVAS_MIN;
-      setInspectorWidth(clamp(next, INSPECTOR_MIN, Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, fit() - reserved))));
-    },
-    [fit],
-  );
-
-  return { bodyRef, paletteWidth, inspectorWidth, setPalette, setInspector };
+  return { bodyRef, paletteWidth, setPalette };
 }
 
 export function SidePanel({
@@ -64,7 +56,6 @@ export function SidePanel({
   headerContent,
   open,
   overlay,
-  side,
   width,
   scrollKey,
   onResize,
@@ -80,7 +71,6 @@ export function SidePanel({
   headerContent?: ReactNode;
   open: boolean;
   overlay: boolean;
-  side: "left" | "right";
   width: number;
   /** Reset the panel viewport when its primary context changes. */
   scrollKey?: string;
@@ -96,9 +86,6 @@ export function SidePanel({
   }, [scrollKey]);
 
   if (!open) return null;
-  const grow = side === "left" ? 1 : -1;
-  const minWidth = side === "left" ? PALETTE_MIN : INSPECTOR_MIN;
-  const maxWidth = side === "left" ? PALETTE_MAX : INSPECTOR_MAX;
   return (
     <Box
       style={{
@@ -109,17 +96,11 @@ export function SidePanel({
         position: overlay ? "absolute" : "relative",
         top: overlay ? 0 : undefined,
         bottom: overlay ? 0 : undefined,
-        left: overlay && side === "left" ? 0 : undefined,
-        right: overlay && side === "right" ? 0 : undefined,
+        left: overlay ? 0 : undefined,
         zIndex: overlay ? 30 : 2,
         background: DARK.surface,
-        borderRight: side === "left" ? `1px solid ${DARK.border}` : undefined,
-        borderLeft: side === "right" ? `1px solid ${DARK.border}` : undefined,
-        boxShadow: overlay
-          ? side === "left"
-            ? "4px 0 16px rgba(20, 24, 31, 0.12)"
-            : "-4px 0 16px rgba(20, 24, 31, 0.12)"
-          : undefined,
+        borderRight: `1px solid ${DARK.border}`,
+        boxShadow: overlay ? "4px 0 16px rgba(20, 24, 31, 0.12)" : undefined,
       }}
     >
       <Group
@@ -144,8 +125,8 @@ export function SidePanel({
         tabIndex={0}
         aria-orientation="vertical"
         aria-label={`Resize ${title}`}
-        aria-valuemin={minWidth}
-        aria-valuemax={maxWidth}
+        aria-valuemin={PALETTE_MIN}
+        aria-valuemax={PALETTE_MAX}
         aria-valuenow={width}
         aria-valuetext={`${width} pixels`}
         onPointerDown={(e) => {
@@ -155,20 +136,20 @@ export function SidePanel({
         }}
         onPointerMove={(e) => {
           if (e.buttons !== 1) return;
-          onResize(start.current.w + grow * (e.clientX - start.current.x));
+          onResize(start.current.w + (e.clientX - start.current.x));
         }}
         onKeyDown={(e) => {
           const delta = e.key === "ArrowRight" ? 16 : e.key === "ArrowLeft" ? -16 : 0;
           if (!delta) return;
           e.preventDefault();
-          onResize(width + grow * delta);
+          onResize(width + delta);
         }}
         style={{
           position: "absolute",
           top: 0,
           bottom: 0,
           width: 10,
-          [side === "left" ? "right" : "left"]: -5,
+          right: -5,
           cursor: "col-resize",
           zIndex: 4,
           display: "flex",
