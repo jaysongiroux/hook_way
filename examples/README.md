@@ -15,6 +15,7 @@ Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hoo
 | `xml.yaml` | XML reference: `body_format: xml`, a filter on an element path, a `code` node reading the DOM, `xml_prune`, and `body: transformed` forwarding. See `docs/configuration.md` § XML bodies. |
 | `multipart.yaml` | Multipart reference: `body_format: multipart` with limits, a filter on `files.document.content_type`, and a `code` node reading upload metadata. See `docs/configuration.md` § Multipart bodies. |
 | `multipart-split.yaml` | Multipart fan-out with `publish.payload: object`: decoded file bytes to S3, form fields (+ file metadata) as a JSON envelope to RabbitMQ. |
+| `multipart-s3-lambda.yaml` | Same fan-out pattern with Lambda instead of RabbitMQ: file bytes to S3 (`payload: object`), Event invoke of a worker with fields + file metadata (no base64). |
 
 ## Destination reference configs
 
@@ -25,7 +26,7 @@ Each file showcases one destination type with all available options documented v
 | `destinations/rabbitmq.yaml` | Full RabbitMQ option surface: exchange, dead-letter exchange/queue, queue_defaults, TLS, publisher_channels, and a flow that fans out to two publish nodes. |
 | `destinations/sqs.yaml` | AWS SQS destination: two standard queues. `fifo` / `sqs_options` are not publish-node fields. |
 | `destinations/sns.yaml` | AWS SNS destination: single topic auto-created at startup. |
-| `destinations/lambda.yaml` | AWS Lambda destination: Event (default) or RequestResponse invoke; `target` is the function name / ARN. `create: true` is rejected. |
+| `destinations/lambda.yaml` | AWS Lambda destination: Event (default) or RequestResponse invoke; `target` is the function name / ARN. `create: true` is rejected. For file uploads, see `multipart-s3-lambda.yaml` (S3 object + Lambda notify). |
 | `destinations/s3.yaml` | AWS S3 destination: one JSON Message per event under a date-partitioned key prefix, with SSE options and auto-bucket creation. `publish.payload: object` stores decoded file bytes instead (see `multipart-split.yaml`). |
 | `destinations/redis_stream.yaml` | Redis / Valkey stream destination: single-node mode; annotated comments for cluster, sentinel, and TLS topology. |
 | `destinations/redis_list.yaml` | Redis / Valkey list destination: LPUSH work-queue. `redis_options.max_len` (LTRIM) is not a publish-node field. |

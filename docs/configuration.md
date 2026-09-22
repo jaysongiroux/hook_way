@@ -306,7 +306,7 @@ The publish `target` is the AWS `FunctionName`: a function name, `name:alias` / 
 
 IAM: `lambda:InvokeFunction` on each target; `lambda:GetFunction` for `/ready` probes of static (non-template) targets. Dynamic `{variable}` targets skip the startup probe.
 
-Function return values are not wired into later graph nodes (`publish` stays Terminal). See `examples/destinations/lambda.yaml`.
+Function return values are not wired into later graph nodes (`publish` stays Terminal). See `examples/destinations/lambda.yaml`. For multipart uploads, store bytes with `publish.payload: object` on S3 and Event-invoke Lambda with metadata — see `examples/multipart-s3-lambda.yaml`.
 
 ```yaml
 destinations:
@@ -1277,7 +1277,9 @@ It also rejects object mode on a flow captured by the optional replay store:
 the current replay format persists one JSON envelope per event, not each
 publish branch's decoded bytes. A `no_auth` flow excluded with
 `replay.skip_unauthenticated: true` is not captured and remains valid.
-`examples/multipart-split.yaml` is the reference flow.
+`examples/multipart-split.yaml` is the reference flow (S3 + RabbitMQ).
+`examples/multipart-s3-lambda.yaml` is the same pattern with an Event Lambda
+notify instead of a queue.
 
 ### Variables
 
