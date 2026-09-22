@@ -10,6 +10,7 @@ import {
   schemaType,
   type JSONSchema,
 } from "./nodeSchema";
+import { Sections } from "./InspectorSections";
 
 export function SchemaForm({
   schema,
@@ -18,6 +19,7 @@ export function SchemaForm({
   enums,
   onBlurValidate = true,
   fieldHelp,
+  groupObjects = false,
 }: {
   schema: JSONSchema | undefined;
   value: unknown;
@@ -25,6 +27,15 @@ export function SchemaForm({
   enums?: Record<string, string[]>;
   onBlurValidate?: boolean;
   fieldHelp?: (name: string) => string | undefined;
+  /**
+   * Fold every nested object into its own collapsed section instead of an
+   * always-open Fieldset. The destinations editor turns this on: a rabbitmq
+   * block carries four nested objects (queue_defaults, retry, tls,
+   * dead_letter) that few configs touch, and expanded they bury the handful of
+   * fields that matter. The grouping is structural rather than a per-type
+   * table, so it holds for backends added to destinationSchema.json later.
+   */
+  groupObjects?: boolean;
 }) {
   if (!isSchemaObject(schema)) {
     return (
@@ -42,6 +53,8 @@ export function SchemaForm({
   }
   const required = new Set(schemaRequired(schema));
   const obj = asObject(value);
+  const grouped = groupObjects ? keys.filter((key) => schemaType(properties[key]) === "object") : [];
+  const flat = groupObjects ? keys.filter((key) => !grouped.includes(key)) : keys;
   const oneOfNote = schema.oneOf?.length
     ? `Provide exactly one of: ${schema.oneOf
         .flatMap((alt) => (isSchemaObject(alt) ? (alt.required ?? []) : []))
@@ -55,7 +68,7 @@ export function SchemaForm({
           {oneOfNote}
         </Text>
       )}
-      {keys.map((key) => (
+      {flat.map((key) => (
         <SchemaField
           key={key}
           name={key}
@@ -68,8 +81,50 @@ export function SchemaForm({
           onChange={(v) => onChange({ ...obj, [key]: v })}
         />
       ))}
+      {grouped.length > 0 && (
+        <Sections
+          defaultOpen={[]}
+          sections={grouped.map((key) => {
+            const hint = (isSchemaObject(properties[key]) ? properties[key].description : undefined) || fieldHelp?.(key);
+            return {
+              value: key,
+              label: humanLabel(key),
+              badge: blockSummary(obj[key]),
+              // role="group" keeps the a11y contract the Fieldset had: the
+              // fields inside a folded block are still announced as a named
+              // group rather than as loose siblings of the flat fields above.
+              render: () => (
+                <Stack gap="xs" role="group" aria-label={humanLabel(key)}>
+                  {hint && (
+                    <Text size="xs" c="dimmed">
+                      {hint}
+                    </Text>
+                  )}
+                  <SchemaForm
+                    schema={properties[key]}
+                    value={asObject(obj[key])}
+                    onChange={(v) => onChange({ ...obj, [key]: v })}
+                    onBlurValidate={onBlurValidate}
+                    fieldHelp={(child) => fieldHelp?.(`${key}.${child}`) ?? fieldHelp?.(child)}
+                  />
+                </Stack>
+              ),
+            };
+          })}
+        />
+      )}
     </Stack>
   );
+}
+
+/**
+ * The header summary for a folded block. It counts rather than names the keys
+ * so a collapsed section still answers the only question worth asking from the
+ * outside -- is anything configured in here?
+ */
+function blockSummary(value: unknown): string {
+  const set = Object.values(asObject(value)).filter((v) => !isEmpty(v)).length;
+  return set === 0 ? "not set" : `${set} set`;
 }
 
 function SchemaField({

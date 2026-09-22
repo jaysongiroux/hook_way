@@ -27,7 +27,7 @@ test("Canvas mounts a React Flow surface fed by the store", () => {
   expect(screen.getByRole("button", { name: "Arrange nodes" })).toBeInTheDocument();
 });
 
-test("clicking a node selects it and announces the activation", () => {
+test("a single click selects a node without announcing the activation", () => {
   const onNodeActivate = vi.fn();
   const { container } = render(
     <MantineProvider theme={theme}>
@@ -40,6 +40,22 @@ test("clicking a node selects it and announces the activation", () => {
   fireEvent.click(container.querySelector(".react-flow__node")!);
 
   expect(useGraphStore.getState().selectedId).toBe("http_trigger_1");
+  expect(onNodeActivate, "a single click should only select").not.toHaveBeenCalled();
+});
+
+test("a double click selects a node and announces the activation", () => {
+  const onNodeActivate = vi.fn();
+  const { container } = render(
+    <MantineProvider theme={theme}>
+      <div style={{ width: 800, height: 600 }}>
+        <Canvas onNodeActivate={onNodeActivate} />
+      </div>
+    </MantineProvider>,
+  );
+
+  fireEvent.doubleClick(container.querySelectorAll(".react-flow__node")[1]!);
+
+  expect(useGraphStore.getState().selectedId).toBe("publish_1");
   expect(onNodeActivate).toHaveBeenCalledTimes(1);
 });
 

@@ -129,11 +129,14 @@ function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         isValidConnection={validate}
-        onNodeClick={(_, node: Node) => {
+        onNodeClick={(_, node: Node) => setSelected(node.id)}
+        // A single click only selects, so dragging or wiring a node never
+        // throws the inspector over the canvas. Double click is the deliberate
+        // "open this" gesture. Edges stay click-to-select either way: an edge's
+        // inspector view is a single informational line, so popping a modal for
+        // it would be noise -- the header button still reaches it.
+        onNodeDoubleClick={(_, node: Node) => {
           setSelected(node.id);
-          // Only nodes announce activation. An edge's inspector view is a
-          // single informational line, so popping a modal for every edge
-          // click would be noise -- the header button still reaches it.
           onNodeActivate?.();
         }}
         onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}

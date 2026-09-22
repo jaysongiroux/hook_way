@@ -1,6 +1,8 @@
 import { DARK } from "../tokens";
 
 export const PALETTE_ITEM_CLASS = "hookway-palette-item";
+export const DEST_ROW_CLASS = "hookway-dest-row";
+export const DEST_TILE_CLASS = "hookway-dest-tile";
 
 export const BUILDER_CSS = `
 .hookway-builder-root {
@@ -41,6 +43,35 @@ export const BUILDER_CSS = `
 }
 .${PALETTE_ITEM_CLASS}:active {
   cursor: grabbing;
+}
+.${DEST_ROW_CLASS} {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  /* The selected row is marked by a rule down its inner edge; the transparent
+     border on every other row keeps the text from shifting when it lands. */
+  border-left: 3px solid transparent;
+  background: transparent;
+}
+.${DEST_ROW_CLASS} + .${DEST_ROW_CLASS} {
+  border-top: 1px solid ${DARK.border};
+}
+.${DEST_ROW_CLASS}:hover {
+  background: ${DARK.recessed};
+}
+.${DEST_ROW_CLASS}[data-selected] {
+  background: ${DARK.surface};
+  border-left-color: ${DARK.accent};
+}
+.${DEST_TILE_CLASS} {
+  background: ${DARK.surface};
+  border: 1px solid ${DARK.border};
+  border-radius: 4px;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+.${DEST_TILE_CLASS}:hover {
+  border-color: ${DARK.accent};
+  background-color: ${DARK.recessed};
 }
 .hookway-inspector-node-list {
   overflow: hidden;

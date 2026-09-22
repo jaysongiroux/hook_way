@@ -8,6 +8,7 @@ import {
   flowNodes,
   flowPolicy,
   humanLabel,
+  isRecord,
   SERVER_LABELS,
   serverConfig,
 } from "./examples";
@@ -72,12 +73,23 @@ for (const fixture of exampleFixtures()) {
     const destNames = destinationNames(fixture.config);
     const destDialog = await builder.openConfigItem("Destinations");
     await expect(destDialog.getByRole("heading", { name: "Destinations" })).toBeVisible();
+    // The panel is master-detail: the rail lists every destination, the pane
+    // holds one. Each has to be selected before its fields exist in the DOM.
     for (const name of destNames) {
+      await destDialog.getByRole("button", { name: `Select ${name}`, exact: true }).click();
       const card = destDialog.getByTestId(`destination-${name}`);
       await expect(card).toBeVisible();
       await expect(card.getByLabel("Name", { exact: true })).toHaveValue(name);
       const dest = destEntry(fixture.config, name);
       await expect(card.getByLabel("Type", { exact: true })).toHaveValue(dest.type);
+      // Nested blocks (tls, retry, dead_letter, ...) are folded and mount their
+      // fields only once open, so expand the ones this fixture asserts on. The
+      // control's name carries a "2 set" badge after the label, hence the
+      // prefix match rather than an exact one.
+      for (const [key, value] of Object.entries(dest.block)) {
+        if (!isRecord(value)) continue;
+        await card.getByRole("button", { name: new RegExp(`^${humanLabel(key)}`) }).click();
+      }
       for (const [key, value] of Object.entries(dest.block)) {
         await expectYamlValue(card, key, value);
       }

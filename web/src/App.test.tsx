@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { theme } from "./theme";
@@ -66,7 +66,7 @@ test("the header Inspector button opens the inspector modal", async () => {
   expect(await screen.findByRole("dialog", { name: "Inspector" })).toBeInTheDocument();
 });
 
-test("clicking a node on the canvas opens the inspector on that node", async () => {
+test("double clicking a node on the canvas opens the inspector on that node", async () => {
   resetIdCounters();
   await clearGraph();
   const n = createNode("http_trigger", { x: 0, y: 0 });
@@ -78,6 +78,16 @@ test("clicking a node on the canvas opens the inspector on that node", async () 
   await waitFor(() => expect(container.querySelectorAll(".react-flow__node")).toHaveLength(1));
 
   fireEvent.click(container.querySelector(".react-flow__node")!);
+  // The modal fades in over Mantine's default transition, so this has to
+  // outwait that transition -- checked any sooner, the absence assertion
+  // passes no matter what a single click does.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  });
+  expect(screen.queryByRole("dialog", { name: "Inspector" }), "a single click should not open the inspector").toBeNull();
+  expect(useGraphStore.getState().selectedId, "a single click should still select").toBe("http_trigger_1");
+
+  fireEvent.doubleClick(container.querySelector(".react-flow__node")!);
 
   const dialog = await screen.findByRole("dialog", { name: "Inspector" });
   expect(within(dialog).getByLabelText("Id")).toHaveValue("http_trigger_1");
