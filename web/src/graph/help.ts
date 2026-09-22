@@ -19,7 +19,7 @@ const NODE_HELP: Record<string, string> = {
   if_else:
     "Sends the event out the true port when the conditions hold, and the false port when they do not. Both ports must be wired.",
   http_request: "Calls an upstream HTTP API and can return that response to the sender.",
-  publish: "Delivers the event to a named destination (queue, topic, webhook, …).",
+  publish: "Delivers the event to a named destination. An optional single success edge runs after delivery with the same envelope, sharing server.publish_timeout; respond cannot follow.",
   respond: "Ends the flow with an HTTP response to the original sender.",
 };
 

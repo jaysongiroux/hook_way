@@ -42,6 +42,7 @@ tests are the only thing holding them.
 | ID | Invariant | Why |
 |---|---|---|
 | I10 | Publish runs on a context detached from the inbound request (`context.WithoutCancel` + `publish_timeout`) | A sender disconnect must not cancel work already committed to delivery. `respond` is deliberately **not** detached: it writes to the caller's connection |
+| I10a | A publish success edge runs only after that publish succeeds, on the same detached `publish_timeout` budget | Ordering (S3 then Lambda) is an edge, not YAML edge-list order. A cancelled request does not cancel the chain. `respond` cannot follow the continuation |
 | I11 | An unknown auth scheme fails **closed** | A misconfiguration rejects every request rather than accepting unverified ones |
 | I12 | A filter chain that fails to compile fails **closed** (matches nothing) | Same posture as I11 |
 | I13 | A flow that fails to compile still registers its path and returns 500, not 404 | A config error must not look like an unconfigured endpoint |

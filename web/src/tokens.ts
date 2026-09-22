@@ -66,7 +66,7 @@ export const PORT: Record<string, string> = {
 // its dot must straddle the card border, so nodes.tsx offsets the handle by
 // padding + handle/2 and would silently misalign if the two disagreed.
 // portRow is the height of one labelled port row.
-export const NODE_SIZE = { width: 208, height: 96, handle: 10, padding: 10, portRow: 18 } as const;
+export const NODE_SIZE = { width: 280, height: 96, handle: 10, padding: 10, portRow: 18 } as const;
 
 export const EDGE = {
   /** Resting stroke and arrowhead. */

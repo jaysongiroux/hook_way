@@ -22,7 +22,7 @@ const GROUPS: { title: string; types: string[] }[] = [
   { title: "Raw body", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "RawRequest") },
   { title: "Verified", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "Verified") },
   { title: "Envelope", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "Envelope" && !NODE_SCHEMAS[t].detached && NODE_SCHEMAS[t].output !== "Terminal") },
-  { title: "Terminal", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].output === "Terminal") },
+  { title: "Terminal", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].output === "Terminal" || NODE_SCHEMAS[t].detached) },
 ];
 
 /**

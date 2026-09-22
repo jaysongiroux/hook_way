@@ -35,6 +35,12 @@ test("required options are marked on the schema", () => {
   expect(schemaRequired(NODE_SCHEMAS.read_body.schema)).toContain("max_bytes");
 });
 
+test("publish declares Envelope output so a success continuation can type-check", () => {
+  expect(NODE_SCHEMAS.publish.output).toBe("Envelope");
+  expect(NODE_SCHEMAS.publish.detached).toBe(true);
+  expect(NODE_SCHEMAS.respond.output).toBe("Terminal");
+});
+
 test("destination catalog lists the types the marketing page counts", () => {
   expect(DEST_TYPES).toHaveLength(14);
   expect(DEST_TYPES).toContain("webhook");

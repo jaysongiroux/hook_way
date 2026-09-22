@@ -94,8 +94,15 @@ func testRegistry(t *testing.T) *Registry {
 		passthroughSpec("process", PortEnvelope, PortEnvelope),
 		passthroughSpec("respond", PortEnvelope, PortTerminal),
 	}
-	dest := passthroughSpec("dest", PortEnvelope, PortTerminal)
-	dest.Detached = true
+	dest := NodeSpec{
+		Type: "dest", In: PortEnvelope, Out: PortEnvelope,
+		Detached: true, SuccessContinuation: true,
+		New: func(nc NodeConfig) (Node, error) {
+			// Runtime return stays Terminal (delivery record); declared Out is
+			// Envelope so SuccessContinuation edges type-check.
+			return &staticNode{id: nc.ID, out: Terminal{}}, nil
+		},
+	}
 	specs = append(specs, dest)
 
 	for _, s := range specs {

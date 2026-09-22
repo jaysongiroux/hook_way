@@ -174,3 +174,75 @@ func TestCompileAggregatesProblems(t *testing.T) {
 func asCompileError(err error, target **CompileError) bool {
 	return errors.As(err, target)
 }
+
+func TestCompileSuccessContinuation(t *testing.T) {
+	reg := testRegistry(t)
+	cases := []struct {
+		name    string
+		fc      FlowConfig
+		wantErr string
+	}{
+		{
+			name: "leaf publish",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"out", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>out"),
+		},
+		{
+			name: "publish to publish",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"b", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>b"),
+		},
+		{
+			name: "publish to code",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"mid", "process"}, {"b", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>mid", "mid>b"),
+		},
+		{
+			name: "two success edges",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"b", "dest"}, {"c", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>b", "a>c"),
+			wantErr: "at most one",
+		},
+		{
+			name: "publish to respond",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"r", "respond"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>r"),
+			wantErr: "respond",
+		},
+		{
+			name: "publish to code to respond",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"mid", "process"}, {"r", "respond"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>mid", "mid>r"),
+			wantErr: "respond",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Compile("f", tc.fc, reg)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Compile() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Compile() = nil, want error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("Compile() error = %q, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}

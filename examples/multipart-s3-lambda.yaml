@@ -1,6 +1,6 @@
-# Multipart split with S3 object storage + Lambda notify: one upload fans out
-# so the file is stored as raw bytes in S3 and a small JSON envelope invokes a
-# Lambda function (fields + file metadata, no base64 bytes).
+# Multipart split with S3 object storage + Lambda notify: one upload stores
+# the file as raw bytes in S3, then Event-invokes Lambda with metadata after
+# PutObject returns (publish success continuation).
 #
 # Requires UPLOAD_SOURCE_SECRET and ARCHIVE_BUCKET.
 #
@@ -12,12 +12,10 @@
 #
 # How it works:
 #   1. envelope body_format: multipart parses the request into {fields, files}.
-#   2. Fan-out from `env` clones the envelope onto two branches.
-#   3. The S3 branch reshapes body to the single file object and publishes
-#      with payload: object — S3 PutObject writes decoded bytes with the
-#      vendor Content-Type and a filename suffix on the key.
-#   4. The Lambda branch publishes fields + file metadata (no bytes) as the
-#      normal JSON envelope via Event invoke.
+#   2. for_s3 reshapes body to the single file object for payload: object.
+#   3. out_s3 PutObjects the decoded bytes.
+#   4. After S3 returns, for_lambda strips content so the Lambda envelope is
+#      metadata only; out_lambda Event-invokes the worker.
 #
 # Object payload body contract: {content: "<base64>", filename?, content_type?}.
 # The 4 MiB code-node limits account for base64 expansion of the 2 MiB file cap.
@@ -54,7 +52,7 @@ flows:
       - {id: auth, type: auth, description: "Verifies HMAC over the raw multipart bytes before parsing.", scheme: hmac_sha256_hex, secret: "${UPLOAD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
       - id: env
         type: envelope
-        description: "Parses parts into {fields, files}. include_content keeps file bytes for the S3 branch."
+        description: "Parses parts into {fields, files}. include_content keeps file bytes for the S3 publish."
         body_format: multipart
         multipart:
           max_parts: 2
@@ -62,7 +60,7 @@ flows:
           include_content: true
       - id: for_s3
         type: code
-        description: "S3 object payload needs the file object itself as body (content + metadata)."
+        description: "S3 object payload needs the file object as body; stash form fields in vars for the post-S3 Lambda step."
         timeout: 50ms
         max_input_bytes: 4194304
         max_output_bytes: 4194304
@@ -72,31 +70,11 @@ flows:
           if (!doc) {
             throw new Error('missing files.document');
           }
-          return {body: doc, vars: input.vars || {}};
-      - id: for_lambda
-        type: code
-        description: "Lambda branch body: form fields + file metadata, no base64 payload."
-        timeout: 50ms
-        max_input_bytes: 4194304
-        script: |
-          const files = (input.body && input.body.files) || {};
-          const meta = {};
-          for (const [name, file] of Object.entries(files)) {
-            meta[name] = {
-              filename: file.filename || '',
-              content_type: file.content_type || '',
-              size: file.size || 0
-            };
-          }
           return {
-            body: {
-              // Object key layout: uploads/yyyy/mm/dd/<timestamp>-<id>[-<filename>]
-              // under destinations.archive.s3.bucket (see docs/configuration.md § S3).
-              archive_prefix: 'uploads',
-              fields: (input.body && input.body.fields) || {},
-              files: meta
-            },
-            vars: input.vars || {}
+            body: doc,
+            vars: Object.assign({}, input.vars || {}, {
+              fields: (input.body && input.body.fields) || {}
+            })
           };
       - id: out_s3
         type: publish
@@ -104,6 +82,29 @@ flows:
         destination: archive
         target: uploads
         payload: object
+      - id: for_lambda
+        type: code
+        description: "After S3 succeeds: strip file bytes; Lambda gets fields + file metadata."
+        timeout: 50ms
+        max_input_bytes: 4194304
+        script: |
+          const file = input.body || {};
+          return {
+            body: {
+              // Object key layout: uploads/yyyy/mm/dd/<timestamp>-<id>[-<filename>]
+              // under destinations.archive.s3.bucket (see docs/configuration.md § S3).
+              archive_prefix: 'uploads',
+              fields: (input.vars && input.vars.fields) || {},
+              files: {
+                document: {
+                  filename: file.filename || '',
+                  content_type: file.content_type || '',
+                  size: file.size || 0
+                }
+              }
+            },
+            vars: input.vars || {}
+          };
       - id: out_lambda
         type: publish
         description: "Event-invokes upload-worker with fields + file metadata (no bytes)."
@@ -114,6 +115,6 @@ flows:
       - body>auth
       - auth>env
       - env>for_s3
-      - env>for_lambda
       - for_s3>out_s3
+      - out_s3>for_lambda
       - for_lambda>out_lambda

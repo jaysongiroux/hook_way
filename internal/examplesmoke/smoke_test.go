@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,6 +98,7 @@ func TestExampleSmoke(t *testing.T) {
 
 			for _, name := range flowNames(cfg) {
 				t.Run(name, func(t *testing.T) {
+					pub.reset()
 					req := requestForFlow(t, cfg.Flows[name], jwtPriv)
 					ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
 					defer cancel()
@@ -105,6 +107,15 @@ func TestExampleSmoke(t *testing.T) {
 					srv.ServeHTTP(rec, req)
 					if rec.Code < 200 || rec.Code >= 300 {
 						t.Fatalf("%s %s = %d body %s", req.Method, req.URL.Path, rec.Code, rec.Body.String())
+					}
+					if strings.Contains(rel, "multipart-s3-lambda") {
+						got := pub.targets()
+						if len(got) < 2 {
+							t.Fatalf("publishes = %v, want S3 then Lambda", got)
+						}
+						if got[0] != "uploads" || got[1] != "upload-worker" {
+							t.Fatalf("publish order = %v, want [uploads upload-worker]", got)
+						}
 					}
 				})
 			}
@@ -448,9 +459,27 @@ func signJWTRS256(t *testing.T, priv *rsa.PrivateKey, opts flowconfig.AuthOption
 	return s
 }
 
-type capturingPublisher struct{}
+type capturingPublisher struct {
+	mu    sync.Mutex
+	order []string
+}
 
-func (p *capturingPublisher) Publish(context.Context, string, string, queue.Message) error {
+func (p *capturingPublisher) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.order = nil
+}
+
+func (p *capturingPublisher) targets() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.order...)
+}
+
+func (p *capturingPublisher) Publish(_ context.Context, _, target string, _ queue.Message) error {
+	p.mu.Lock()
+	p.order = append(p.order, target)
+	p.mu.Unlock()
 	return nil
 }
 func (p *capturingPublisher) Ready(context.Context) error { return nil }

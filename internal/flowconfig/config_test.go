@@ -449,3 +449,51 @@ flows:
 		}
 	}
 }
+
+func TestLoadBytesAcceptsPublishSuccessContinuation(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1024}
+destinations:
+  a: {type: webhook, webhook: {url: "https://example.test/a"}}
+  b: {type: webhook, webhook: {url: "https://example.test/b"}}
+flows:
+  chain:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: first, type: publish, destination: a, target: t1}
+      - {id: second, type: publish, destination: b, target: t2}
+    edges: [in>body, body>auth, auth>env, env>first, first>second]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	for _, issue := range issues {
+		if issue.Severity == config.SeverityError {
+			t.Fatalf("chained publish should validate: %+v", issues)
+		}
+	}
+}
+
+func TestLoadBytesRejectsPublishToRespond(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1024}
+destinations:
+  primary: {type: webhook, webhook: {url: "https://example.test"}}
+flows:
+  bad:
+    nodes:
+      - {id: in, type: http_trigger, path: /w, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: t}
+      - {id: r, type: respond, status: 200}
+    edges: [in>body, body>auth, auth>env, env>out, out>r]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	joined := issuesText(issues)
+	if !strings.Contains(joined, "respond") {
+		t.Fatalf("issues %q must reject respond on a publish success continuation", joined)
+	}
+}

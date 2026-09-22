@@ -478,7 +478,7 @@
   },
   "publish": {
     "input": "Envelope",
-    "output": "Terminal",
+    "output": "Envelope",
     "detached": true,
     "on_error": true,
     "schema": {

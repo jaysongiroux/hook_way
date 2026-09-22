@@ -86,3 +86,16 @@ test("a labelled port takes exactly one edge", () => {
   expect(isValidConnection(connect(from, b, "true"), [from, a, b], taken)).toBe(false);
   expect(isValidConnection(connect(from, b, "false"), [from, a, b], taken)).toBe(true);
 });
+
+test("publish may connect to another publish once", () => {
+  const { from, to, nodes } = pair("publish", "publish");
+  expect(isValidConnection(connect(from, to), nodes, [])).toBe(true);
+  const third = createNode("publish", { x: 200, y: 0 });
+  const taken: Edge[] = [{ id: "e1", source: from.id, target: to.id, sourceHandle: "out" }];
+  expect(isValidConnection(connect(from, third), [...nodes, third], taken)).toBe(false);
+});
+
+test("publish cannot connect to respond", () => {
+  const { from, to, nodes } = pair("publish", "respond");
+  expect(isValidConnection(connect(from, to), nodes, [])).toBe(false);
+});

@@ -231,11 +231,12 @@ type RespondOptions struct {
 }
 
 type nodeDefinition struct {
-	name       string
-	in, out    graph.PortType
-	detached   bool
-	newOptions func() any
-	newNode    func(graph.NodeConfig) (graph.Node, error)
+	name                string
+	in, out             graph.PortType
+	detached            bool
+	successContinuation bool
+	newOptions          func() any
+	newNode             func(graph.NodeConfig) (graph.Node, error)
 }
 
 func define[T any](name string, in, out graph.PortType, detached bool, validate func(T) error, build func(string, T) graph.Node) nodeDefinition {
@@ -353,15 +354,27 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		defineErr("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) (graph.Node, error) {
 			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
 		}),
-		defineErr("publish", graph.PortEnvelope, graph.PortTerminal, true, validatePublish, func(id string, o PublishOptions) (graph.Node, error) {
+		defineErr("publish", graph.PortEnvelope, graph.PortEnvelope, true, validatePublish, func(id string, o PublishOptions) (graph.Node, error) {
 			return newPublishNode(id, o, opts.Publishers)
-		}),
+		}).withSuccessContinuation(),
 		defineErr("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode),
 	}
 }
 
+func (d nodeDefinition) withSuccessContinuation() nodeDefinition {
+	d.successContinuation = true
+	return d
+}
+
 func (d nodeDefinition) spec() graph.NodeSpec {
-	return graph.NodeSpec{Type: d.name, In: d.in, Out: d.out, Detached: d.detached, New: d.newNode}
+	return graph.NodeSpec{
+		Type:                d.name,
+		In:                  d.in,
+		Out:                 d.out,
+		Detached:            d.detached,
+		SuccessContinuation: d.successContinuation,
+		New:                 d.newNode,
+	}
 }
 
 type stubNode struct{ name string }

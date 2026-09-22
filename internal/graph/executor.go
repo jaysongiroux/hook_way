@@ -174,13 +174,25 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	e.markVisited(id)
 	nctx := ctx
 	cancel := func() {}
+	ownsBudget := false
 	if b.spec.Detached {
 		e.runBeforeDetached(in)
-		nctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), e.opts.PublishTimeout)
+		if ctx.Value(publishBudgetKey{}) != nil {
+			// Already inside a publish success chain: reuse the shared budget.
+			nctx = ctx
+		} else {
+			var stop context.CancelFunc
+			nctx, stop = context.WithTimeout(context.WithoutCancel(ctx), e.opts.PublishTimeout)
+			nctx = context.WithValue(nctx, publishBudgetKey{}, struct{}{})
+			// Defer keeps the budget open through a success continuation;
+			// an error path also cancels early so on_error sees the request ctx.
+			defer stop()
+			cancel = stop
+			ownsBudget = true
+		}
 	}
 	started := time.Now()
 	out, runErr := invoke(nctx, b.node, in)
-	cancel()
 	var pe PanicError
 	if errors.As(runErr, &pe) {
 		pe.NodeID = id
@@ -233,6 +245,12 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		e.addCompensation(Compensation{NodeID: id, Node: comp, Input: saved})
 	}
 	if err != nil {
+		// Cancel an owned budget before on_error so a root publish timeout
+		// still recovers on the request context (I10). Mid-chain nodes do
+		// not own the budget; their on_error sees the exhausted deadline.
+		if ownsBudget {
+			cancel()
+		}
 		if handled := e.followOnError(ctx, id, errorInput); handled == nil {
 			return nil
 		} else if !errors.Is(handled, errNoOnError) {
@@ -250,11 +268,30 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
 	}
 	if isTerminal {
+		successors := successEdges(e.flow.out[id])
+		if b.spec.SuccessContinuation && len(successors) > 0 {
+			// Suppress only on_error: the success edge runs with the input
+			// envelope on the detached budget, after Publish returned nil.
+			for _, edge := range e.flow.out[id] {
+				if edge.FromPort == "on_error" {
+					e.suppressBranch(edge.To)
+				}
+			}
+			next, cloneErr := clonePayload(in)
+			if cloneErr != nil {
+				return fmt.Errorf("node %q success continuation: %w", id, cloneErr)
+			}
+			return e.followSuccessors(nctx, id, next)
+		}
 		e.suppress(id)
 		return nil
 	}
 	return e.followSuccessors(ctx, id, out)
 }
+
+// publishBudgetKey marks a context as owning (or sharing) one publish_timeout
+// budget for a SuccessContinuation chain.
+type publishBudgetKey struct{}
 
 func concretePort(p Payload) (PortType, error) {
 	switch p.(type) {

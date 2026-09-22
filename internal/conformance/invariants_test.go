@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	"github.com/jaysongiroux/hook_way/internal/httpapi"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 // TestI1_LoopHopCheckRunsBeforeBodyRead asserts invariant I1 from
@@ -278,6 +281,93 @@ func TestI10_PublishDetachedFromRequestContext(t *testing.T) {
 		t.Fatalf("status = %d, want 202 after client cancel; body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestI10a_PublishSuccessContinuationSharesDetachedBudget pins the publish
+// success-edge contract: the continuation runs only after the first publish
+// succeeds, on the same WithoutCancel + publish_timeout budget, so a cancelled
+// request does not cancel the chain.
+func TestI10a_PublishSuccessContinuationSharesDetachedBudget(t *testing.T) {
+	pub := &orderedPublisher{entered: make(chan struct{}, 2)}
+	src := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+  publish_timeout: 2s
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.test"
+flows:
+  chain:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/chain, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "testsecret", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: first, type: publish, destination: primary, target: first-q}
+      - {id: second, type: publish, destination: primary, target: second-q}
+    edges: [in>body, body>auth, auth>env, env>first, first>second]
+`
+	srv := newServer(t, src, pub)
+	ctx, cancel := context.WithCancel(context.Background())
+	body := []byte(`{"ok":true}`)
+	req := signedRequest(http.MethodPost, "/webhooks/chain", body).WithContext(ctx)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- post(srv, req)
+	}()
+	select {
+	case <-pub.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first publish never started")
+	}
+	cancel()
+	rec := <-done
+	if pub.sawCancel.Load() {
+		t.Fatal("I10a: publish chain observed a canceled request context")
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rec.Code, rec.Body.String())
+	}
+	targets := pub.targets()
+	if len(targets) != 2 || targets[0] != "first-q" || targets[1] != "second-q" {
+		t.Fatalf("publish order = %v, want [first-q second-q]", targets)
+	}
+}
+
+type orderedPublisher struct {
+	mu        sync.Mutex
+	order     []string
+	entered   chan struct{}
+	sawCancel atomic.Bool
+}
+
+func (p *orderedPublisher) Publish(ctx context.Context, _, target string, _ queue.Message) error {
+	if p.entered != nil {
+		select {
+		case p.entered <- struct{}{}:
+		default:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		p.sawCancel.Store(true)
+		return err
+	}
+	p.mu.Lock()
+	p.order = append(p.order, target)
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *orderedPublisher) targets() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.order...)
+}
+
+func (p *orderedPublisher) Ready(context.Context) error { return nil }
+func (p *orderedPublisher) Close() error                { return nil }
 
 // TestI11_UnknownAuthSchemeFailsClosed asserts every request is rejected.
 func TestI11_UnknownAuthSchemeFailsClosed(t *testing.T) {

@@ -59,6 +59,12 @@ type NodeSpec struct {
 	// too and must stay on the request context, because it writes to the
 	// caller's connection.
 	Detached bool
+	// SuccessContinuation allows a detached destination to declare Out as
+	// PortEnvelope and take at most one unlabeled success edge. That edge
+	// runs only after a successful publish, carrying the input envelope on
+	// the same publish_timeout budget. Zero success edges remains a legal
+	// leaf. Set only for publish.
+	SuccessContinuation bool
 	// New builds a node from its config. Returning an error fails the load.
 	New func(NodeConfig) (Node, error)
 }
@@ -85,7 +91,11 @@ func (r *Registry) Register(s NodeSpec) error {
 		return fmt.Errorf("graph: NodeSpec %q declares Out=None; only In may be None", s.Type)
 	case s.In > PortTerminal || s.Out > PortTerminal || s.In == PortTerminal:
 		return fmt.Errorf("graph: NodeSpec %q has invalid ports %s -> %s", s.Type, s.In, s.Out)
-	case s.Detached && s.Out != PortTerminal:
+	case s.SuccessContinuation && !s.Detached:
+		return fmt.Errorf("graph: SuccessContinuation %q must be detached", s.Type)
+	case s.SuccessContinuation && s.Out != PortEnvelope:
+		return fmt.Errorf("graph: SuccessContinuation %q must produce Envelope", s.Type)
+	case s.Detached && s.Out != PortTerminal && !s.SuccessContinuation:
 		return fmt.Errorf("graph: detached destination %q must produce Terminal", s.Type)
 	}
 	if r.specs == nil {

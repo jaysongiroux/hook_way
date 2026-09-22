@@ -37,6 +37,14 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
     if (!ports.includes(sourceHandle)) return false;
     if (existing.some((e) => e.source === c.source && e.sourceHandle === sourceHandle)) return false;
   } else if (sourceHandle !== HANDLE_OUT) return false;
+  // Detached destinations (publish) allow at most one success edge; respond
+  // writes the caller connection and cannot follow a publish continuation.
+  if (from.detached && sourceHandle === HANDLE_OUT) {
+    if (existing.some((e) => e.source === c.source && (e.sourceHandle ?? HANDLE_OUT) === HANDLE_OUT)) {
+      return false;
+    }
+    if (tgt.data.nodeType === "respond") return false;
+  }
   return from.output !== "Terminal" && portAccepts(to.input, from.output);
 }
 

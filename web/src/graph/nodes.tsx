@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { Group, Paper, Stack, Text } from "@mantine/core";
+import { destinationTypeOf, NodeGlyph } from "./nodeIcon";
 import type { CSSProperties } from "react";
 import type { HookwayNode } from "./model";
 import { labelledPorts, NODE_SCHEMAS, nodeHasOnError, nodeLabel } from "./nodeSchema";
@@ -77,6 +78,9 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const labelled = labelledPorts(data.nodeType, data.options);
   const showDefaultOut = output !== "Terminal" && labelled.length === 0;
   const showError = nodeHasOnError(data.nodeType);
+  const destinations = useGraphStore((s) => s.destinations);
+  const destinationType =
+    data.nodeType === "publish" ? destinationTypeOf(destinations, String(data.options.destination ?? "")) : "";
   return (
     <Paper withBorder radius="sm" style={{ ...CARD, ...useSelectionRing(id, color) }}>
       {input !== "None" && (
@@ -89,12 +93,17 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
         />
       )}
       <Stack gap={2}>
-        <Text fw={600} size="sm" c={DARK.text}>
-          {data.yamlId}
-        </Text>
-        <Text size="xs" c={DARK.muted} style={{ ...ONE_LINE, fontFamily: "ui-monospace, Menlo, monospace" }}>
-          {nodeLabel(data.nodeType)}
-        </Text>
+        <Group gap={8} wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+          <NodeGlyph nodeType={data.nodeType} destinationType={destinationType} />
+          <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+            <Text fw={600} size="sm" c={DARK.text} style={ONE_LINE}>
+              {data.yamlId}
+            </Text>
+            <Text size="xs" c={DARK.muted} style={{ ...ONE_LINE, fontFamily: "ui-monospace, Menlo, monospace" }}>
+              {nodeLabel(data.nodeType)}
+            </Text>
+          </Stack>
+        </Group>
         {description && (
           <Text size="xs" c={DARK.text} title={description} style={DESCRIPTION}>
             {description}

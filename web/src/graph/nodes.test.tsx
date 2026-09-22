@@ -7,6 +7,7 @@ import { FlowNode } from "./nodes";
 import { useGraphStore } from "./store";
 import { createNode, resetIdCounters } from "./model";
 import { NODE_SIZE } from "../tokens";
+import { NODE_ICON_SIZE } from "./nodeIcon";
 
 function wrap(ui: React.ReactNode) {
   return render(
@@ -36,8 +37,40 @@ test("FlowNode shows id, type, and a source handle", () => {
   );
   expect(screen.getByText(n.id)).toBeInTheDocument();
   expect(screen.getByText("http trigger")).toBeInTheDocument();
+  const icon = container.querySelector('[data-node-icon="http_trigger"] svg');
+  expect(icon).not.toBeNull();
+  expect(icon).toHaveAttribute("width", String(NODE_ICON_SIZE));
+  expect(icon).toHaveAttribute("height", String(NODE_ICON_SIZE));
   expect(container.querySelector(".react-flow__handle-right")).not.toBeNull();
   expect(container.querySelector(".react-flow__handle-left")).toBeNull();
+});
+
+test("every node icon uses the same color", () => {
+  resetIdCounters();
+  const filter = createNode("filter", { x: 0, y: 0 });
+  const publish = createNode("publish", { x: 0, y: 0 });
+  publish.data.options = { destination: "orders", target: "q" };
+  useGraphStore.setState({ destinations: { orders: { type: "sqs" } } });
+  const { container } = wrap(
+    <>
+      <FlowNode id={filter.id} type="flow" data={filter.data} {...nodeProps} />
+      <FlowNode id={publish.id} type="flow" data={publish.data} {...nodeProps} />
+    </>,
+  );
+  const colors = [...container.querySelectorAll("[data-node-icon]")].map((el) => (el as HTMLElement).style.color);
+  expect(colors).toHaveLength(2);
+  expect(colors[0]).toBe(colors[1]);
+  expect(colors[0]).not.toBe("");
+});
+
+test("a publish node shows the icon of its destination", () => {
+  resetIdCounters();
+  const n = createNode("publish", { x: 0, y: 0 });
+  n.data.options = { destination: "orders", target: "github-main" };
+  useGraphStore.setState({ destinations: { orders: { type: "sqs" }, events: { type: "kafka" } } });
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  expect(container.querySelector('[data-node-icon="sqs"] svg')).not.toBeNull();
+  expect(container.querySelector('[data-node-icon="publish"]')).toBeNull();
 });
 
 test("switch renders labelled output ports and an on-error handle", () => {
@@ -147,7 +180,7 @@ test("an ellipsised summary stays readable on hover", () => {
   const url = "https://hooks.slack.test/services/T0000000/B0000000/averylongsecrettoken";
   n.data.options = { ...n.data.options, url };
   wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
-  // The card is a fixed 208px, so a URL this long is cut off on screen. The
+  // The card is a fixed NODE_SIZE width, so a URL this long is cut off on screen. The
   // full value has to remain reachable without opening the Inspector.
   expect(screen.getByText(url)).toHaveAttribute("title", url);
 });

@@ -31,7 +31,7 @@ var wantedCatalog = map[string]struct {
 	"switch":       {graph.PortEnvelope, graph.PortEnvelope, false},
 	"if_else":      {graph.PortEnvelope, graph.PortEnvelope, false},
 	"http_request": {graph.PortEnvelope, graph.PortEnvelope, false},
-	"publish":      {graph.PortEnvelope, graph.PortTerminal, true},
+	"publish":      {graph.PortEnvelope, graph.PortEnvelope, true},
 	"respond":      {graph.PortEnvelope, graph.PortTerminal, false},
 }
 
@@ -81,6 +81,9 @@ func TestPublishIsOnlyDetachedType(t *testing.T) {
 		s, _ := r.Lookup(name)
 		if s.Detached != (name == "publish") {
 			t.Errorf("%s detached=%v", name, s.Detached)
+		}
+		if s.SuccessContinuation != (name == "publish") {
+			t.Errorf("%s SuccessContinuation=%v", name, s.SuccessContinuation)
 		}
 	}
 }

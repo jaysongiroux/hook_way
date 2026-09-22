@@ -54,7 +54,8 @@ func (f *Flow) NodeIDs() []string { return append([]string(nil), f.order...) }
 //     different: the error path carries the failing node's input, so the
 //     target must Accepts(from.In).
 //  6. every non-root node is reachable from the root
-//  7. every leaf produces PortTerminal
+//  7. every leaf produces PortTerminal, or is a SuccessContinuation with
+//     zero success edges (optional single continuation after publish)
 //  8. the graph is acyclic
 //
 // Check 5 enforces phase compatibility, preventing gates after read_body and
@@ -208,16 +209,19 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		}
 	}
 
-	// (7): leaves must be Terminal, and non-terminals need a success path.
+	// (7): leaves must be Terminal (or a SuccessContinuation with no success
+	// edge), and non-terminals need a success path unless they are a
+	// SuccessContinuation leaf that only has on_error edges.
 	for _, id := range f.order {
-		if len(f.out[id]) == 0 && f.nodes[id].spec.Out != PortTerminal {
+		spec := f.nodes[id].spec
+		if len(f.out[id]) == 0 && spec.Out != PortTerminal && !spec.SuccessContinuation {
 			ce.Problems = append(ce.Problems, fmt.Sprintf(
 				"node %q (%s) has no outgoing edge but produces %s, not Terminal: "+
 					"events reaching it would be silently dropped",
-				id, f.nodes[id].spec.Type, f.nodes[id].spec.Out))
+				id, spec.Type, spec.Out))
 			continue
 		}
-		if f.nodes[id].spec.Out == PortTerminal {
+		if spec.Out == PortTerminal {
 			continue
 		}
 		hasSuccess := false
@@ -227,10 +231,37 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 				break
 			}
 		}
-		if !hasSuccess && len(f.out[id]) > 0 {
+		if !hasSuccess && len(f.out[id]) > 0 && !spec.SuccessContinuation {
 			ce.Problems = append(ce.Problems, fmt.Sprintf(
 				"node %q (%s) has only on_error successors; a success path is required",
-				id, f.nodes[id].spec.Type))
+				id, spec.Type))
+		}
+	}
+
+	// SuccessContinuation: at most one unlabeled success edge, and respond
+	// must not be reachable along that path (respond writes the caller
+	// connection and is not detached).
+	for _, id := range f.order {
+		if !f.nodes[id].spec.SuccessContinuation {
+			continue
+		}
+		success := successEdges(f.out[id])
+		if len(success) > 1 {
+			ce.Problems = append(ce.Problems, fmt.Sprintf(
+				"node %q (%s) has %d success edges; SuccessContinuation allows at most one",
+				id, f.nodes[id].spec.Type, len(success)))
+		}
+		for _, edge := range success {
+			if edge.FromPort != "" {
+				ce.Problems = append(ce.Problems, fmt.Sprintf(
+					"node %q (%s): SuccessContinuation success edge must be unlabeled, got port %q",
+					id, f.nodes[id].spec.Type, edge.FromPort))
+			}
+		}
+		if respondID := f.successReachableType(id, "respond"); respondID != "" {
+			ce.Problems = append(ce.Problems, fmt.Sprintf(
+				"node %q (%s): respond node %q is reachable via a success continuation; respond is not detached",
+				id, f.nodes[id].spec.Type, respondID))
 		}
 	}
 
@@ -332,6 +363,29 @@ func (f *Flow) walk(id string, seen map[string]bool) {
 		seen[e.To] = true
 		f.walk(e.To, seen)
 	}
+}
+
+// successReachableType walks only unlabeled success edges from id and returns
+// the first node whose type matches, or "" if none. on_error is not followed.
+func (f *Flow) successReachableType(id, nodeType string) string {
+	seen := map[string]bool{}
+	var walk func(string) string
+	walk = func(cur string) string {
+		for _, e := range successEdges(f.out[cur]) {
+			if seen[e.To] {
+				continue
+			}
+			seen[e.To] = true
+			if f.nodes[e.To].spec.Type == nodeType {
+				return e.To
+			}
+			if found := walk(e.To); found != "" {
+				return found
+			}
+		}
+		return ""
+	}
+	return walk(id)
 }
 
 // findCycle returns one cycle as a node path, or nil. Iterative-free DFS with

@@ -20,8 +20,8 @@ contains the last:
 | `PortRequestHead` | method, path, query, headers, source IP, hop count — deliberately **no body** | `http_trigger` |
 | `PortRawRequest` | a `RequestHead` plus the raw, unverified body bytes | `read_body` |
 | `PortVerified` | a `RawRequest` whose signature was checked against those exact bytes | `auth` / `no_auth` |
-| `PortEnvelope` | a `Verified` payload plus the parsed body and resolved variables | `envelope` |
-| `PortTerminal` | a leaf: a response was written or a delivery completed, nothing flows on | `publish`, `respond` |
+| `PortEnvelope` | a `Verified` payload plus the parsed body and resolved variables | `envelope`, and optionally a successful `publish` continuation |
+| `PortTerminal` | a leaf: a response was written or a delivery completed, nothing flows on | `respond` (and a `publish` with no success edge) |
 
 Two consequences do the real work:
 
@@ -37,8 +37,10 @@ Two consequences do the real work:
 `PortType.Accepts` is strict equality, deliberately: widening it to
 assignability looks like a simplification and silently destroys those
 guarantees, because `RawRequest` *contains* a `RequestHead`. Every leaf must
-produce `PortTerminal`, and exactly one trigger (`In == PortNone`) is allowed
-per flow.
+produce `PortTerminal` (or be a `publish` with no success edge), and exactly
+one trigger (`In == PortNone`) is allowed per flow. A successful `publish` may
+take one unlabeled success edge that runs after delivery on the same
+`publish_timeout` budget.
 
 The lattice lives in `internal/graph/port.go`; the compiler and executor are
 the rest of `internal/graph`. The guarantees it buys, and the ones tests rather

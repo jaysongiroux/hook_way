@@ -22,6 +22,9 @@ import { useGraphStore } from "./store";
 import { Button, Text } from "@mantine/core";
 import { DARK, EDGE } from "../tokens";
 
+/** React Flow stops at 0.5 by default, which cuts off zoom-out on a wide flow. */
+const MIN_ZOOM = 0.1;
+
 function parallelGroups(edges: Edge[]): Map<string, { index: number; count: number }> {
   const byKey = new Map<string, string[]>();
   for (const e of edges) {
@@ -82,7 +85,7 @@ function CanvasInner() {
 
   useEffect(() => {
     if (arrangeSeq === 0) return;
-    const id = requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200 }));
+    const id = requestAnimationFrame(() => fitView({ padding: 0.2, duration: 200, minZoom: MIN_ZOOM }));
     return () => cancelAnimationFrame(id);
   }, [arrangeSeq, fitView]);
 
@@ -118,7 +121,8 @@ function CanvasInner() {
         style={{ background: DARK.bg }}
         nodes={nodes}
         edges={routedEdges}
-        fitViewOptions={{ padding: 0.2 }}
+        minZoom={MIN_ZOOM}
+        fitViewOptions={{ padding: 0.2, minZoom: MIN_ZOOM }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
