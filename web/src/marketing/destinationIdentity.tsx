@@ -33,6 +33,7 @@ export const DESTINATION_PRESENTATIONS: Record<string, DestinationPresentation> 
   s3: { label: "Amazon S3", icon: FaAws },
   sns: { label: "Amazon SNS", icon: FaAws },
   sqs: { label: "Amazon SQS", icon: FaAws },
+  lambda: { label: "AWS Lambda", icon: FaAws },
   temporal: { label: "Temporal", icon: SiTemporal },
   webhook: { label: "Webhook", icon: TbWebhook },
 };

@@ -82,6 +82,7 @@ type DestinationConfig struct {
 	SQS                SQSConfig
 	SNS                SNSConfig
 	S3                 S3Config
+	Lambda             LambdaConfig
 	Postgres           PostgresConfig
 	Mongo              MongoConfig
 	Redis              RedisConfig
@@ -144,6 +145,17 @@ type SNSConfig struct {
 	Endpoint        string
 	AccessKeyID     string
 	SecretAccessKey string
+}
+
+// LambdaConfig is the AWS Lambda destination connection block. Credentials
+// mirror SQS/SNS: both static keys or neither (default credential chain).
+// InvocationType is "" (Event) | Event | RequestResponse.
+type LambdaConfig struct {
+	Region          string
+	Endpoint        string
+	AccessKeyID     string
+	SecretAccessKey string
+	InvocationType  string
 }
 
 type S3Config struct {
@@ -333,6 +345,13 @@ type rawDestinationConfig struct {
 		AccessKeyID     string `yaml:"access_key_id"`
 		SecretAccessKey string `yaml:"secret_access_key"`
 	} `yaml:"sns"`
+	Lambda struct {
+		Region          string `yaml:"region"`
+		Endpoint        string `yaml:"endpoint"`
+		AccessKeyID     string `yaml:"access_key_id"`
+		SecretAccessKey string `yaml:"secret_access_key"`
+		InvocationType  string `yaml:"invocation_type"`
+	} `yaml:"lambda"`
 	S3 struct {
 		Region          string `yaml:"region"`
 		Endpoint        string `yaml:"endpoint"`
@@ -558,6 +577,13 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			Endpoint:        raw.SNS.Endpoint,
 			AccessKeyID:     raw.SNS.AccessKeyID,
 			SecretAccessKey: raw.SNS.SecretAccessKey,
+		},
+		Lambda: LambdaConfig{
+			Region:          raw.Lambda.Region,
+			Endpoint:        raw.Lambda.Endpoint,
+			AccessKeyID:     raw.Lambda.AccessKeyID,
+			SecretAccessKey: raw.Lambda.SecretAccessKey,
+			InvocationType:  raw.Lambda.InvocationType,
 		},
 		S3: S3Config{
 			Region:          raw.S3.Region,

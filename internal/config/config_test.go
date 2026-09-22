@@ -382,6 +382,61 @@ destinations:
 	}
 }
 
+func TestLoadLambdaDestination(t *testing.T) {
+	body := `
+server:
+  addr: ":8080"
+  max_body_bytes: 1
+destinations:
+  workers:
+    type: lambda
+    lambda:
+      region: us-east-1
+      endpoint: http://localhost:4566
+      access_key_id: test
+      secret_access_key: test
+      invocation_type: RequestResponse
+`
+	cfg, err := loadSharedYAML(t, body)
+	if err != nil {
+		t.Fatalf("load returned error: %v", err)
+	}
+	got := cfg.Destinations["workers"]
+	if got.Type != "lambda" || got.Lambda.Region != "us-east-1" || got.Lambda.InvocationType != "RequestResponse" {
+		t.Fatalf("bad lambda destination: %#v", got)
+	}
+}
+
+func TestValidateRejectsLambdaWithoutRegion(t *testing.T) {
+	cfg := Config{
+		Server:       ServerConfig{Addr: ":8080", MaxBodyBytes: 1},
+		Destinations: map[string]DestinationConfig{"workers": {Type: "lambda", Lambda: LambdaConfig{}}},
+		Endpoints: map[string]EndpointConfig{"e": {
+			Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+			Destinations: []EndpointDestinationConfig{{Destination: "workers", Target: "fn"}},
+		}},
+	}
+	if issues := validationIssues(cfg); !hasIssue(issues, "destinations.workers.lambda.region") {
+		t.Fatalf("expected region required, got %#v", issues)
+	}
+}
+
+func TestValidateRejectsInvalidLambdaInvocationType(t *testing.T) {
+	cfg := Config{
+		Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1},
+		Destinations: map[string]DestinationConfig{"workers": {Type: "lambda", Lambda: LambdaConfig{
+			Region: "us-east-1", InvocationType: "DryRun",
+		}}},
+		Endpoints: map[string]EndpointConfig{"e": {
+			Enabled: true, Path: "/p", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+			Destinations: []EndpointDestinationConfig{{Destination: "workers", Target: "fn"}},
+		}},
+	}
+	if issues := validationIssues(cfg); !hasIssue(issues, "destinations.workers.lambda.invocation_type") {
+		t.Fatalf("expected invocation_type error, got %#v", issues)
+	}
+}
+
 func TestValidateRejectsSQSOptionsOnNonSQSDestination(t *testing.T) {
 	cfg := endpointConfigFor(
 		map[string]DestinationConfig{

@@ -16,7 +16,7 @@ import (
 // in lockstep with. A new destination type that is not listed here has no
 // publish coverage.
 var catalogDestinationTypes = []string{
-	"rabbitmq", "sqs", "sns", "s3", "redis_stream", "redis_list",
+	"rabbitmq", "sqs", "sns", "s3", "lambda", "redis_stream", "redis_list",
 	"redis_pubsub", "redis_kv", "postgres", "mongodb", "kafka", "webhook", "temporal",
 }
 

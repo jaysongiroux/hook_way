@@ -130,7 +130,7 @@ func TestRun_SchemaDestinationsListsTypes(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
 		t.Fatalf("destination schema output not valid JSON: %v", err)
 	}
-	for _, name := range []string{"webhook", "rabbitmq", "redis_kv"} {
+	for _, name := range []string{"webhook", "rabbitmq", "redis_kv", "lambda"} {
 		entry, ok := doc[name].(map[string]any)
 		if !ok {
 			t.Errorf("schema --destinations missing %s", name)
@@ -140,8 +140,8 @@ func TestRun_SchemaDestinationsListsTypes(t *testing.T) {
 			t.Errorf("%s missing block", name)
 		}
 	}
-	if len(doc) != 13 {
-		t.Fatalf("schema --destinations listed %d types, want 13", len(doc))
+	if len(doc) != 14 {
+		t.Fatalf("schema --destinations listed %d types, want 14", len(doc))
 	}
 }
 

@@ -6,4 +6,4 @@ Remaining:
 - Shared (Redis) rate-limit and replay-guard stores (pod-local by design, D11).
 - Per-publish replay snapshots for branch-specific transforms and object payloads.
 - Split admin API keys
-- invoking aws lambdas
+- Split destinations and credentials

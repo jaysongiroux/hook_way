@@ -36,7 +36,8 @@ test("required options are marked on the schema", () => {
 });
 
 test("destination catalog lists the types the marketing page counts", () => {
-  expect(DEST_TYPES).toHaveLength(13);
+  expect(DEST_TYPES).toHaveLength(14);
   expect(DEST_TYPES).toContain("webhook");
   expect(DEST_TYPES).toContain("redis_stream");
+  expect(DEST_TYPES).toContain("lambda");
 });

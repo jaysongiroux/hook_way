@@ -105,7 +105,7 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookway: {
         level: "yes",
         detail:
-          "13 catalog types: RabbitMQ, SQS, SNS, S3, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, plus Temporal task-queue wiring whose workflow settings are not yet exposed in standalone YAML",
+          "14 catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, plus Temporal task-queue wiring whose workflow settings are not yet exposed in standalone YAML",
       },
       hookdeck: { level: "partial", detail: "HTTP, CLI (local), and Mock API only" },
       convoy: {

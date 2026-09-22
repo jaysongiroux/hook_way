@@ -320,6 +320,38 @@ func TestFactoryCreatesSNSPublisherWithTargets(t *testing.T) {
 	}
 }
 
+func TestFactoryCreatesLambdaPublisherWithTargets(t *testing.T) {
+	var got LambdaConfig
+	factory := NewFactory(FactoryOptions{
+		LambdaConnector: func(ctx context.Context, destinationID string, cfg LambdaConfig) (Publisher, error) {
+			got = cfg
+			return &recordingPublisher{}, nil
+		},
+	})
+	_, err := factory.Create(context.Background(), config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"workers": {Type: "lambda", Lambda: config.LambdaConfig{
+				Region: "us-east-1", Endpoint: "http://localhost:4566",
+				InvocationType: "RequestResponse",
+			}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"orders": {Enabled: true, Destinations: []config.EndpointDestinationConfig{{
+				Destination: "workers", Target: "orders-worker:prod",
+			}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.Region != "us-east-1" || got.Endpoint != "http://localhost:4566" || got.InvocationType != "RequestResponse" {
+		t.Fatalf("bad lambda config: %#v", got)
+	}
+	if len(got.Targets) != 1 || got.Targets[0].Name != "orders-worker:prod" {
+		t.Fatalf("bad targets: %#v", got.Targets)
+	}
+}
+
 func TestRoutingPublisherRoutesReadinessAndCloseByDestination(t *testing.T) {
 	billing := &recordingPublisher{}
 	activity := &recordingPublisher{readyErr: errors.New("down")}

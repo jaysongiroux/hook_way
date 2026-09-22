@@ -168,7 +168,7 @@ into whatever global provider happens to be installed.
 
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, or Temporal task queue). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, Temporal task queue, or Lambda function name/ARN). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `lambda`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 
@@ -289,6 +289,36 @@ SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint o
 - `destinations.<id>.sns.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
 
 `sns_options` and `fifo` are **not** fields on the `publish` node or on the destination. Same FIFO caveat as SQS: a `.fifo` suffix is not enough to publish. Use a standard topic from operator YAML.
+
+### AWS Lambda
+
+Lambda fields live under `destinations.<id>.lambda`. Hookway invokes each publish target with the JSON Message envelope as the event payload. Credentials mirror SQS/SNS.
+
+- `destinations.<id>.type`: set to `lambda`.
+- `destinations.<id>.lambda.region`: required AWS region, e.g. `us-east-1`.
+- `destinations.<id>.lambda.endpoint`: optional endpoint override; set to `http://localhost:4566` for LocalStack.
+- `destinations.<id>.lambda.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
+- `destinations.<id>.lambda.invocation_type`: `Event` (default) or `RequestResponse`.
+  - **Event**: `Publish` succeeds when AWS accepts the invoke. Function failures are retried by AWS asynchronously; Hookway does not see them. Payload limit: 256 KiB.
+  - **RequestResponse**: `Publish` waits for the function to finish. A `FunctionError` fails the publish (like webhook `delivery_mode: sync`). Adds function runtime latency to the inbound request — raise `server.publish_timeout` (and the coupled `write_timeout` / `shutdown_timeout`) when functions may run longer than the 10s default. Payload limit: 6 MiB.
+
+The publish `target` is the AWS `FunctionName`: a function name, `name:alias` / `name:version` / the LATEST qualifier, or a function ARN. One destination (region + credentials) can invoke many functions. `create: true` is **rejected** — Hookway does not create functions. `payload: object` is not supported (envelope JSON only). `message_attributes` are ignored. `on_existing_conflict` is not valid for lambda.
+
+IAM: `lambda:InvokeFunction` on each target; `lambda:GetFunction` for `/ready` probes of static (non-template) targets. Dynamic `{variable}` targets skip the startup probe.
+
+Function return values are not wired into later graph nodes (`publish` stays Terminal). See `examples/destinations/lambda.yaml`.
+
+```yaml
+destinations:
+  workers:
+    type: "lambda"
+    lambda:
+      region: "us-east-1"
+      # endpoint: "${AWS_ENDPOINT}"
+      # access_key_id: "${AWS_ACCESS_KEY_ID}"
+      # secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+      invocation_type: "Event"   # or RequestResponse
+```
 
 ### AWS S3
 
@@ -1043,7 +1073,7 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 ### Envelope and publish
 
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw|multipart`). `json` decodes to an object; `xml` decodes to an element tree that `filter`, `code`, `transform` `xml_prune`, and `http_request` `body: transformed` all understand; `multipart` decodes a `multipart/form-data` upload to `{fields, files}` (see [Multipart bodies](#multipart-bodies)); `raw` leaves the body empty and publishes the bytes as `raw_body_base64`. Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
-- `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. `destination` (id under top-level `destinations`), `target` (queue/topic/routing key, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10), optional `payload` (`envelope` default, or `object` for s3 / redis_kv — see [Publish payload modes](#publish-payload-modes)).
+- `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. Lambda targets additionally allow function ARNs and `name:qualifier` forms (1–256 characters). `destination` (id under top-level `destinations`), `target` (queue/topic/routing key/function name, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10), optional `payload` (`envelope` default, or `object` for s3 / redis_kv — see [Publish payload modes](#publish-payload-modes)).
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
 - `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`, `allow_private_targets`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`. A captured path variable containing a `..` segment, a `#`, a `?`, a backslash, or an ASCII control character is rejected with `400`. A `{variable}` in the `url` **host** must be followed by a literal dotted domain suffix, and a templated host is additionally checked against the private-network egress policy unless `allow_private_targets: true` — see [`http_request` outbound egress policy](#http_request-outbound-egress-policy). See also [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
 - `transform`: `changed_fields`, `field_map` (JSON bodies), `xml_prune` (XML bodies). `hookway validate` rejects a kind that does not match the `body_format` on the path reaching it.

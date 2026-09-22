@@ -158,7 +158,7 @@ Flows can set `delivery_failure_policy`. `stop_on_failure` is the default and pu
 
 Hookway publishes from each flow `publish` node. The default `payload: envelope` writes a JSON Message. On `s3` and `redis_kv`, `payload: object` stores decoded file bytes instead; S3 also uses the supplied filename and Content-Type when present. See `examples/multipart-split.yaml` and [Configuration § Publish payload modes](docs/configuration.md#publish-payload-modes). Every publish names a `destination` entry and a `target` (queue name, topic name, or RabbitMQ routing key). With `create: true`, route queues or topics are declared automatically at startup.
 
-Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for reference configs for each type.
+Backends are configured under top-level `destinations`, keyed by id. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `lambda`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for reference configs for each type.
 
 Dead-letter exchange/queue declaration is optional. Use RabbitMQ `dead_letter` config when Hookway should create the DLX/DLQ and bind declared queues with `x-dead-letter-*` arguments; leave it disabled when infrastructure is owned elsewhere.
 

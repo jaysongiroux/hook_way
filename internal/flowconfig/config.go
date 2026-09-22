@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -227,10 +228,67 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 						"payload: object cannot be used while replay capture is enabled for this flow",
 						"disable replay for the process, skip capture for this no_auth flow, or use payload: envelope"))
 				}
+				if dest.Type == "lambda" {
+					field := "flows." + name + ".nodes." + nc.ID
+					if opts.Create {
+						issues = append(issues, cfgIssue(field+".create",
+							"create is not supported for lambda destinations (Hookway does not create functions)",
+							"remove create, or set create: false"))
+					}
+					issues = append(issues, lambdaTargetIssues(field+".target", opts.Target)...)
+				}
 			}
 		}
 	}
 	return issues
+}
+
+// lambdaFunctionName matches AWS Lambda FunctionName forms: plain name,
+// name:qualifier (including :$LATEST), partial ARN, or full ARN (max 256).
+var lambdaFunctionName = regexp.MustCompile(
+	`^(?:` +
+		`[a-zA-Z0-9](?:[a-zA-Z0-9._-]{0,63})(?::(?:\$LATEST|[a-zA-Z0-9._-]+))?` +
+		`|` +
+		`\d{12}:function:[a-zA-Z0-9](?:[a-zA-Z0-9._-]{0,63})(?::(?:\$LATEST|[a-zA-Z0-9._-]+))?` +
+		`|` +
+		`arn:aws(?:-[a-z]+)?:lambda:[a-z0-9-]+:\d{12}:function:[a-zA-Z0-9](?:[a-zA-Z0-9._-]{0,63})(?::(?:\$LATEST|[a-zA-Z0-9._-]+))?` +
+		`)$`,
+)
+
+// lambdaTargetLiteral constrains literal text around {variable} placeholders
+// in a templated lambda target (colons allowed for "{fn}:prod").
+var lambdaTargetLiteral = regexp.MustCompile(`^[a-zA-Z0-9._$:-]*$`)
+
+func lambdaTargetIssues(field, target string) []config.ValidationIssue {
+	tpl, err := vars.Parse(target)
+	if err != nil {
+		return []config.ValidationIssue{cfgIssue(field, "target template is malformed: "+err.Error(),
+			"use {variable} placeholders with balanced braces, e.g. \"{fn}:prod\"")}
+	}
+	if tpl.HasPlaceholders() {
+		if !lambdaTargetLiteral.MatchString(tpl.Literal()) {
+			return []config.ValidationIssue{cfgIssue(field,
+				"target template literal text contains unsupported characters",
+				"use letters, numbers, dot, underscore, hyphen, colon, or $ around {variable} placeholders")}
+		}
+		if len(target) > 256 {
+			return []config.ValidationIssue{cfgIssue(field,
+				"target template exceeds 256 characters",
+				"shorten the function name template")}
+		}
+		return nil
+	}
+	if target == "" || len(target) > 256 {
+		return []config.ValidationIssue{cfgIssue(field,
+			"lambda target must be 1-256 characters",
+			"set target to a function name, name:alias, or function ARN")}
+	}
+	if !lambdaFunctionName.MatchString(target) {
+		return []config.ValidationIssue{cfgIssue(field,
+			"lambda target is not a valid function name or ARN",
+			"use a function name (optionally :alias / :version / :$LATEST) or a function ARN")}
+	}
+	return nil
 }
 
 // Keep this check in flowconfig rather than importing queue: the same validator

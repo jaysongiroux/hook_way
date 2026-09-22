@@ -24,7 +24,7 @@ Local compose or a static binary in the company’s own environment. Config is v
 
 ## Capabilities and Constraints
 
-Confirmed: HMAC / JWT / header_exact / no_auth; JSON / XML / multipart / raw bodies; 13 destination types; `publish.payload: object` on S3 and redis_kv; typed graph edges; fail-closed unknown auth; process-local rate limits; optional in-memory replay guard; in-flight ceiling; webhook/Kafka/RabbitMQ retries then dead-letter. The public site must not claim hot reload, RBAC, SSO, OpenTelemetry, Helm, or encryption at rest.
+Confirmed: HMAC / JWT / header_exact / no_auth; JSON / XML / multipart / raw bodies; 14 destination types; `publish.payload: object` on S3 and redis_kv; typed graph edges; fail-closed unknown auth; process-local rate limits; optional in-memory replay guard; in-flight ceiling; webhook/Kafka/RabbitMQ retries then dead-letter. The public site must not claim hot reload, RBAC, SSO, OpenTelemetry, Helm, or encryption at rest.
 
 ## Brand Commitments
 

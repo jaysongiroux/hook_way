@@ -139,10 +139,10 @@ func validationIssues(c Config) []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", or \"temporal\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"lambda\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", or \"temporal\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "lambda" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
 			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" && dest.Type != "temporal" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", and \"temporal\""))
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"lambda\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", and \"temporal\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -152,6 +152,17 @@ func validationIssues(c Config) []ValidationIssue {
 		if dest.Type == "sns" {
 			if dest.SNS.Region == "" {
 				issues = append(issues, validationError(fieldPrefix+".sns.region", "region is required for sns destinations", "set region to an AWS region such as \"us-east-1\""))
+			}
+		}
+		if dest.Type == "lambda" {
+			if dest.Lambda.Region == "" {
+				issues = append(issues, validationError(fieldPrefix+".lambda.region", "region is required for lambda destinations", "set region to an AWS region such as \"us-east-1\""))
+			}
+			switch dest.Lambda.InvocationType {
+			case "", "Event", "RequestResponse":
+				// ok
+			default:
+				issues = append(issues, validationError(fieldPrefix+".lambda.invocation_type", fmt.Sprintf("%q is not supported", dest.Lambda.InvocationType), "use \"Event\" or \"RequestResponse\", or omit for Event"))
 			}
 		}
 		if dest.Type == "s3" {

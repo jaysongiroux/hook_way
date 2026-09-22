@@ -37,8 +37,8 @@ func TestDestinationTypeSchemasCoverKnownTypes(t *testing.T) {
 	if schemas["redis_kv"].Block != "redis" || schemas["mongodb"].Block != "mongodb" {
 		t.Fatalf("block keys = redis_kv:%q mongodb:%q", schemas["redis_kv"].Block, schemas["mongodb"].Block)
 	}
-	if len(schemas) != 13 {
-		t.Fatalf("destination schemas=%d, want 13", len(schemas))
+	if len(schemas) != 14 {
+		t.Fatalf("destination schemas=%d, want 14", len(schemas))
 	}
 }
 

@@ -46,6 +46,7 @@ var destTypeBlocks = map[string]string{
 	"sqs":          "sqs",
 	"sns":          "sns",
 	"s3":           "s3",
+	"lambda":       "lambda",
 	"postgres":     "postgres",
 	"mongodb":      "mongodb",
 	"kafka":        "kafka",

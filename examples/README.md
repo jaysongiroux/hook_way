@@ -25,6 +25,7 @@ Each file showcases one destination type with all available options documented v
 | `destinations/rabbitmq.yaml` | Full RabbitMQ option surface: exchange, dead-letter exchange/queue, queue_defaults, TLS, publisher_channels, and a flow that fans out to two publish nodes. |
 | `destinations/sqs.yaml` | AWS SQS destination: two standard queues. `fifo` / `sqs_options` are not publish-node fields. |
 | `destinations/sns.yaml` | AWS SNS destination: single topic auto-created at startup. |
+| `destinations/lambda.yaml` | AWS Lambda destination: Event (default) or RequestResponse invoke; `target` is the function name / ARN. `create: true` is rejected. |
 | `destinations/s3.yaml` | AWS S3 destination: one JSON Message per event under a date-partitioned key prefix, with SSE options and auto-bucket creation. `publish.payload: object` stores decoded file bytes instead (see `multipart-split.yaml`). |
 | `destinations/redis_stream.yaml` | Redis / Valkey stream destination: single-node mode; annotated comments for cluster, sentinel, and TLS topology. |
 | `destinations/redis_list.yaml` | Redis / Valkey list destination: LPUSH work-queue. `redis_options.max_len` (LTRIM) is not a publish-node field. |

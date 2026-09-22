@@ -283,6 +283,85 @@ flows:
 	}
 }
 
+func TestLambdaPublishRejectsCreate(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations:
+  workers:
+    type: lambda
+    lambda: {region: us-east-1}
+flows:
+  orders:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: workers, target: orders-worker, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	if !containsIssue(issues, "create") && !containsMessage(issues, "create is not supported") {
+		t.Fatalf("issues = %+v, want create rejected for lambda", issues)
+	}
+}
+
+func TestLambdaPublishAcceptsNameQualifierAndARN(t *testing.T) {
+	for _, target := range []string{
+		"orders-worker",
+		"orders-worker:prod",
+		"orders-worker:$LATEST",
+		"arn:aws:lambda:us-east-1:123456789012:function:orders-worker",
+		"arn:aws:lambda:us-east-1:123456789012:function:orders-worker:prod",
+	} {
+		src := `
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations:
+  workers:
+    type: lambda
+    lambda: {region: us-east-1}
+flows:
+  orders:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: workers, target: "` + target + `"}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+		_, issues := LoadBytes([]byte(src), "test", false)
+		for _, iss := range issues {
+			if iss.Severity == config.SeverityError {
+				t.Fatalf("target %q: issues = %+v", target, issues)
+			}
+		}
+	}
+}
+
+func TestLambdaPublishRejectsBadTarget(t *testing.T) {
+	const src = `
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations:
+  workers:
+    type: lambda
+    lambda: {region: us-east-1}
+flows:
+  orders:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: workers, target: "bad name with spaces"}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	_, issues := LoadBytes([]byte(src), "test", false)
+	if !containsMessage(issues, "not a valid function name") {
+		t.Fatalf("issues = %+v, want invalid lambda target", issues)
+	}
+}
+
 func TestObjectPayloadAllowedOnS3(t *testing.T) {
 	const src = `
 server:

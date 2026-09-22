@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
@@ -19,6 +20,7 @@ type RabbitMQConnector func(ctx context.Context, destinationID string, cfg Rabbi
 type SQSConnector func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error)
 type SNSConnector func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error)
 type S3Connector func(ctx context.Context, destinationID string, cfg S3Config) (Publisher, error)
+type LambdaConnector func(ctx context.Context, destinationID string, cfg LambdaConfig) (Publisher, error)
 
 // WebhookConnector is an optional test seam: when set on FactoryOptions, Create
 // calls it instead of NewWebhookPublisher for each webhook destination.
@@ -71,6 +73,7 @@ type FactoryOptions struct {
 	SNSConnector      SNSConnector
 	RedisConnector    RedisConnector
 	S3Connector       S3Connector
+	LambdaConnector   LambdaConnector
 	PostgresConnector PostgresConnector
 	MongoConnector    MongoConnector
 	KafkaConnector    KafkaConnector
@@ -86,6 +89,7 @@ type Factory struct {
 	snsConnector      SNSConnector
 	redisConnector    RedisConnector
 	s3Connector       S3Connector
+	lambdaConnector   LambdaConnector
 	postgresConnector PostgresConnector
 	mongoConnector    MongoConnector
 	kafkaConnector    KafkaConnector
@@ -136,6 +140,16 @@ func NewFactory(opts FactoryOptions) *Factory {
 				}
 			})
 			return NewS3Publisher(ctx, client, cfg)
+		}
+	}
+	lambdaConnector := opts.LambdaConnector
+	if lambdaConnector == nil {
+		lambdaConnector = func(ctx context.Context, destinationID string, cfg LambdaConfig) (Publisher, error) {
+			awsCfg, err := awsconf.Load(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
+			if err != nil {
+				return nil, err
+			}
+			return NewLambdaPublisher(lambda.NewFromConfig(awsCfg), cfg), nil
 		}
 	}
 	redisConnector := opts.RedisConnector
@@ -291,6 +305,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		snsConnector:      snsConnector,
 		redisConnector:    redisConnector,
 		s3Connector:       s3Connector,
+		lambdaConnector:   lambdaConnector,
 		postgresConnector: postgresConnector,
 		mongoConnector:    mongoConnector,
 		kafkaConnector:    kafkaConnector,
@@ -381,6 +396,21 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				DestinationID:   id,
 				Logger:          f.logger,
 				Targets:         collectS3Targets(cfg, id),
+			})
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "lambda":
+			publisher, err := f.lambdaConnector(ctx, id, LambdaConfig{
+				Region:          destination.Lambda.Region,
+				Endpoint:        destination.Lambda.Endpoint,
+				AccessKeyID:     destination.Lambda.AccessKeyID,
+				SecretAccessKey: destination.Lambda.SecretAccessKey,
+				InvocationType:  destination.Lambda.InvocationType,
+				DestinationID:   id,
+				Logger:          f.logger,
+				Targets:         collectLambdaTargets(cfg, id),
 			})
 			if err != nil {
 				return nil, err
@@ -673,6 +703,37 @@ func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
 		if _, ok := seen[t]; !ok {
 			seen[t] = struct{}{}
 			targets = append(targets, SNSTarget{Name: t})
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	return targets
+}
+
+func collectLambdaTargets(cfg config.Config, destinationID string) []LambdaTarget {
+	seen := map[string]struct{}{}
+	var targets []LambdaTarget
+	for _, endpoint := range cfg.Endpoints {
+		if !endpoint.Enabled {
+			continue
+		}
+		for _, route := range endpoint.DestinationRoutes() {
+			if route.Destination != destinationID {
+				continue
+			}
+			if _, ok := seen[route.Target]; ok {
+				continue
+			}
+			seen[route.Target] = struct{}{}
+			targets = append(targets, LambdaTarget{
+				Template: routeMatcher(endpoint, route),
+				Name:     route.Target,
+			})
+		}
+	}
+	for _, t := range deadLetterTargets(cfg, destinationID) {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			targets = append(targets, LambdaTarget{Name: t})
 		}
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
