@@ -25,7 +25,8 @@ test("two branches are gated by a filter and one is not", () => {
 test("node chrome matches the builder catalog", () => {
   expect(nodeChrome(byId("ep"))).toMatchObject({ showIn: false, showOut: true, showError: false });
   expect(nodeChrome(byId("f1"))).toMatchObject({ showIn: true, showOut: true, showError: true });
-  expect(nodeChrome(byId("sqs"))).toMatchObject({ showIn: true, showOut: false, showError: true });
+  // publish declares Envelope so a success continuation can attach an out handle.
+  expect(nodeChrome(byId("sqs"))).toMatchObject({ showIn: true, showOut: true, showError: true });
 });
 
 test("every edge connects nodes that exist and moves left to right", () => {
