@@ -1,5 +1,16 @@
 import { expect, test } from "vitest";
-import { NODE_SCHEMAS, NODE_TYPES, DEST_TYPES, schemaRequired, schemaType, schemaProperties } from "./nodeSchema";
+import {
+  NODE_SCHEMAS,
+  NODE_TYPES,
+  DEST_TYPES,
+  CONN_TYPES,
+  connSchema,
+  connTypeForDest,
+  connOwnedPaths,
+  schemaRequired,
+  schemaType,
+  schemaProperties,
+} from "./nodeSchema";
 
 test("every catalog node type has palette metadata", () => {
   expect(NODE_TYPES).toHaveLength(18);
@@ -46,4 +57,36 @@ test("destination catalog lists the types the marketing page counts", () => {
   expect(DEST_TYPES).toContain("webhook");
   expect(DEST_TYPES).toContain("redis_stream");
   expect(DEST_TYPES).toContain("lambda");
+});
+
+test("every connection type in the generated catalog has fields", () => {
+  expect(CONN_TYPES).toEqual(["aws", "kafka", "mongodb", "postgres", "rabbitmq", "redis", "temporal"]);
+  for (const type of CONN_TYPES) {
+    expect(Object.keys(schemaProperties(connSchema(type))).length, type).toBeGreaterThan(0);
+  }
+});
+
+// CONN_TYPE_FOR_DEST mirrors connTypeForDestType in Go. If the two drift, the
+// builder offers a connection the loader will reject (or hides one it accepts).
+test("every destination type except webhook maps to a real connection type", () => {
+  for (const dest of DEST_TYPES) {
+    const conn = connTypeForDest(dest);
+    if (dest === "webhook") {
+      expect(conn, "a webhook credential carries no host, so it is not a connection").toBeUndefined();
+      continue;
+    }
+    expect(conn, dest).toBeDefined();
+    expect(CONN_TYPES, dest).toContain(conn);
+  }
+});
+
+test("connOwnedPaths walks into nested blocks", () => {
+  const aws = connOwnedPaths("aws");
+  expect(aws).toEqual(["region", "endpoint", "access_key_id", "secret_access_key"]);
+  const pg = connOwnedPaths("postgres");
+  expect(pg).toContain("tls");
+  expect(pg).toContain("tls.client_key");
+  // tls.enabled is a redis/kafka/temporal field; postgres TLS follows the DSN.
+  expect(pg).not.toContain("tls.enabled");
+  expect(connOwnedPaths("redis")).toContain("tls.enabled");
 });

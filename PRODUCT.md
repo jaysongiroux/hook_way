@@ -16,11 +16,11 @@ Hookway receives third-party webhook POST requests, verifies authentication, and
 
 ## Positioning
 
-One self-hosted binary, one YAML file. Verification is named by wire format (HMAC layout, JWT algorithm, static header), not by vendor. Destinations are declared once and referenced by publish nodes. The builder generates that YAML; it does not talk to a running process.
+One self-hosted binary, one YAML file. Verification is named by wire format (HMAC layout, JWT algorithm, static header), not by vendor. Destinations are declared once and referenced by publish nodes; shared credentials are declared once as a named connection and referenced by destinations. The builder generates that YAML; it does not talk to a running process.
 
 ## Operating Context
 
-Local compose or a static binary in the company’s own environment. Config is validated with `hookway validate` before serve. Prometheus metrics and a Grafana dashboard ship in-repo. Replay, when enabled, is a separate listener. Secrets are environment variables referenced as `${VAR}`.
+Local compose or a static binary in the company’s own environment. Config is validated with `hookway validate` before serve. Prometheus metrics and a Grafana dashboard ship in-repo. Replay, when enabled, is a separate listener. Secrets are environment variables referenced as `${VAR}`, and shared destination credentials live in a top-level `connections` block.
 
 ## Capabilities and Constraints
 

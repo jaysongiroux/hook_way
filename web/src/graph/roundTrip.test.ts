@@ -57,3 +57,17 @@ test("round-trips the multipart example, nested option block included", () => {
   expect(JSON.stringify(config)).toContain("max_part_bytes");
   expect(normalize(config)).toEqual(normalize(parsed));
 });
+
+// examples/connections.yaml exercises the connections block, which the
+// builder manages rather than passing through configExtra. It also carries a
+// replay block whose connection: sibling is not something the builder edits,
+// so this is the case that catches a managed key being emitted in the wrong
+// place or dropped entirely.
+test("round-trips the connections example, replay reference included", () => {
+  const path = join(dirname(fileURLToPath(import.meta.url)), "../../../examples/connections.yaml");
+  const parsed = parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const model = fromConfig(parsed);
+  expect(Object.keys(model.connections)).toEqual(["aws_prod", "pg_main"]);
+  const { config } = toConfig({ ...model, nodes: layout(model.nodes, model.edges) });
+  expect(normalize(config)).toEqual(normalize(parsed));
+});

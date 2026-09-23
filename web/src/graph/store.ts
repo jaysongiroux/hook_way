@@ -26,6 +26,7 @@ interface GraphState extends GraphDocument {
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
   updateEdgeData: (id: string, patch: Record<string, unknown>) => void;
   setServerConfig: (patch: Record<string, unknown>) => void;
+  setConnections: (connections: Record<string, unknown>) => void;
   setDestinations: (destinations: Record<string, unknown>) => void;
   setDeliveryFailurePolicy: (value: string) => void;
   setSelected: (id: string | null) => void;
@@ -103,6 +104,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     for (const [k, v] of Object.entries(merged)) if (v !== "" && v !== null && v !== undefined) pruned[k] = v;
     set({ serverConfig: pruned });
   },
+  setConnections: (connections) => set({ connections }),
   setDestinations: (destinations) => set({ destinations }),
   setDeliveryFailurePolicy: (value) => set({ deliveryFailurePolicy: value || undefined }),
   setSelected: (id) => set({ selectedId: id, selectedEdgeId: null }),
@@ -175,6 +177,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       edges: s.edges,
       serverConfig: s.serverConfig,
       configExtra: s.configExtra,
+      connections: s.connections,
       destinations: s.destinations,
       activeFlow: s.activeFlow,
       otherFlows: s.otherFlows,

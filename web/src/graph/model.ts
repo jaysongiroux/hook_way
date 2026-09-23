@@ -25,6 +25,7 @@ export interface GraphDocument {
   edges: Edge[];
   serverConfig: Record<string, unknown>;
   configExtra: Record<string, unknown>;
+  connections: Record<string, unknown>;
   destinations: Record<string, unknown>;
   activeFlow: string;
   otherFlows: Record<string, FlowSnapshot>;
@@ -80,6 +81,7 @@ export function emptyDocument(): GraphDocument {
     edges: [],
     serverConfig: { ...DEFAULT_SERVER },
     configExtra: {},
+    connections: {},
     destinations: {},
     activeFlow: DEFAULT_FLOW,
     otherFlows: {},

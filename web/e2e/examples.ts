@@ -32,6 +32,8 @@ export function exampleFixtures(): ExampleFixture[] {
     "xml.yaml",
     "multipart.yaml",
     "multipart-split.yaml",
+    "multipart-s3-lambda.yaml",
+    "connections.yaml",
     ...listYaml("destinations", () => true),
     ...listYaml("auth", () => true),
     ...listYaml("showcase", (file) => !file.includes("invalid")),
@@ -58,6 +60,24 @@ export function flowNames(config: Record<string, unknown>): string[] {
 
 export function destinationNames(config: Record<string, unknown>): string[] {
   return isRecord(config.destinations) ? Object.keys(config.destinations) : [];
+}
+
+export function connectionNames(config: Record<string, unknown>): string[] {
+  return isRecord(config.connections) ? Object.keys(config.connections) : [];
+}
+
+/**
+ * A connection is authored flat, so its fields sit alongside `type` rather
+ * than under a per-type block -- unlike destEntry below.
+ */
+export function connEntry(config: Record<string, unknown>, name: string): { type: string; fields: Record<string, unknown> } {
+  const connections = isRecord(config.connections) ? config.connections : {};
+  const entry = isRecord(connections[name]) ? connections[name] : {};
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(entry)) {
+    if (key !== "type") fields[key] = value;
+  }
+  return { type: String(entry.type ?? ""), fields };
 }
 
 export interface FlowNodeYaml {

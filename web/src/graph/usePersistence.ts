@@ -34,6 +34,7 @@ export function usePersistence(): void {
             edges: state.edges,
             serverConfig: state.serverConfig,
             configExtra: state.configExtra,
+            connections: state.connections,
             destinations: state.destinations,
             activeFlow: state.activeFlow,
             otherFlows: state.otherFlows,

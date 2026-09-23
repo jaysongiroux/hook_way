@@ -76,7 +76,13 @@ type RedisConfig struct {
 }
 
 type DestinationConfig struct {
-	Type               string
+	Type string
+	// Connection is the connections entry this destination referenced, or ""
+	// when it was configured inline. It records what was *authored*: the name
+	// is kept even when it failed to resolve, so a consumer reading a Config
+	// can still see the intent. Whether a merge actually happened is a
+	// separate question, answered by SharedConfig.ConnectionOf.
+	Connection         string
 	OnExistingConflict string
 	RabbitMQ           RabbitMQConfig
 	SQS                SQSConfig
@@ -300,7 +306,12 @@ func convertPostgresConfig(raw rawPostgresConfig) PostgresConfig {
 }
 
 type rawDestinationConfig struct {
-	Type               string `yaml:"type"`
+	Type string `yaml:"type"`
+	// Connection names an entry in the top-level connections block whose type
+	// can serve this destination type (see connTypeForDestType). Its fields
+	// are merged into the backend block below by applyConnection, before
+	// convertDestination runs.
+	Connection         string `yaml:"connection"`
 	OnExistingConflict string `yaml:"on_existing_conflict"`
 	RabbitMQ           struct {
 		URL               string                  `yaml:"url"`
@@ -542,6 +553,7 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	}
 	return DestinationConfig{
 		Type:               raw.Type,
+		Connection:         raw.Connection,
 		OnExistingConflict: policy,
 		RabbitMQ: RabbitMQConfig{
 			URL: raw.RabbitMQ.URL, Exchange: raw.RabbitMQ.Exchange,

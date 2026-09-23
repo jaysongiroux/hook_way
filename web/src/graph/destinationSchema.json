@@ -1,6 +1,7 @@
 {
   "kafka": {
     "block": "kafka",
+    "connection": "kafka",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -80,6 +81,7 @@
   },
   "lambda": {
     "block": "lambda",
+    "connection": "aws",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -105,6 +107,7 @@
   },
   "mongodb": {
     "block": "mongodb",
+    "connection": "mongodb",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -145,6 +148,7 @@
   },
   "postgres": {
     "block": "postgres",
+    "connection": "postgres",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -188,6 +192,7 @@
   },
   "rabbitmq": {
     "block": "rabbitmq",
+    "connection": "rabbitmq",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -303,6 +308,7 @@
   },
   "redis_kv": {
     "block": "redis",
+    "connection": "redis",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -364,6 +370,7 @@
   },
   "redis_list": {
     "block": "redis",
+    "connection": "redis",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -425,6 +432,7 @@
   },
   "redis_pubsub": {
     "block": "redis",
+    "connection": "redis",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -486,6 +494,7 @@
   },
   "redis_stream": {
     "block": "redis",
+    "connection": "redis",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -547,6 +556,7 @@
   },
   "s3": {
     "block": "s3",
+    "connection": "aws",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -581,6 +591,7 @@
   },
   "sns": {
     "block": "sns",
+    "connection": "aws",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -603,6 +614,7 @@
   },
   "sqs": {
     "block": "sqs",
+    "connection": "aws",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -625,6 +637,7 @@
   },
   "temporal": {
     "block": "temporal",
+    "connection": "temporal",
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {

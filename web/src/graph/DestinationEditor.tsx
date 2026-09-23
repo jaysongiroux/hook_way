@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { Button, Divider, Group, Select, Stack, Text, TextInput } from "@mantine/core";
-import { DEST_SCHEMAS, DEST_TYPES, destSchema } from "./nodeSchema";
+import { DEST_SCHEMAS, DEST_TYPES, connOwnedPaths, connTypeForDest, destSchema } from "./nodeSchema";
 import { destFieldHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
 import { destinationPresentation } from "../marketing/destinationIdentity";
+import { useGraphStore } from "./store";
 import { DARK } from "../tokens";
+
+/** The Connection select's "no connection" option. */
+const INLINE = "__inline";
 
 export interface DestinationEditorProps {
   name: string;
@@ -28,6 +32,19 @@ export function DestinationEditor({ name, entry, taken, onRename, onChange, onRe
   const blockValue = (entry[block] ?? {}) as Record<string, unknown>;
   const { label, icon: Icon } = destinationPresentation(type);
 
+  const connections = useGraphStore((s) => s.connections);
+  const wantConnType = connTypeForDest(type);
+  const connection = String(entry.connection ?? "");
+  // Only connections whose type can serve this backend are offered. A postgres
+  // credential cannot fill an s3 destination, and the Go validator rejects it.
+  const usable = Object.entries(connections)
+    .filter(([, v]) => (v as Record<string, unknown> | undefined)?.type === wantConnType)
+    .map(([name]) => name);
+  // Fields the chosen connection supplies are hidden rather than shown empty:
+  // setting them here as well is a validation error, so offering them would
+  // only let you author config that cannot load.
+  const ownedByConnection = connection ? connOwnedPaths(wantConnType ?? "") : [];
+
   const changeType = (next: string) => {
     const nextSpec = destSchema(next);
     const nextBlock = nextSpec?.block ?? next;
@@ -35,7 +52,25 @@ export function DestinationEditor({ name, entry, taken, onRename, onChange, onRe
     // variants share `redis:`, so switching between them keeps the connection
     // you already typed. Across unrelated backends the old keys are not merely
     // useless, they export as invalid config under the new block's name.
-    onChange({ type: next, [nextBlock]: nextBlock === block ? blockValue : {} });
+    const carried = nextBlock === block ? blockValue : {};
+    // The connection reference is dropped unless the new type takes the same
+    // credential shape, for the same reason.
+    const keepConn = connection && connTypeForDest(next) === wantConnType;
+    onChange({ type: next, ...(keepConn ? { connection } : {}), [nextBlock]: carried });
+  };
+
+  const changeConnection = (next: string) => {
+    if (next === INLINE) {
+      const { connection: _dropped, ...rest } = entry;
+      onChange(rest);
+      return;
+    }
+    // Clear any connection-owned values already typed into the block, so
+    // choosing a connection cannot leave behind a field that now conflicts
+    // with it.
+    const owned = new Set(connOwnedPaths(wantConnType ?? ""));
+    const kept = Object.fromEntries(Object.entries(blockValue).filter(([k]) => !owned.has(k)));
+    onChange({ type, connection: next, [block]: kept });
   };
 
   return (
@@ -67,12 +102,34 @@ export function DestinationEditor({ name, entry, taken, onRename, onChange, onRe
           onChange={(v) => changeType(v ?? type)}
         />
       </Group>
+      {wantConnType && (
+        <Select
+          label="Connection"
+          description={
+            usable.length > 0
+              ? `Reuse a ${wantConnType} connection's credentials, or configure this destination inline.`
+              : `No ${wantConnType} connection is defined yet. Add one in the Connections panel to share credentials.`
+          }
+          data={[{ value: INLINE, label: "Configure inline" }, ...usable.map((n) => ({ value: n, label: n }))]}
+          value={connection || INLINE}
+          allowDeselect={false}
+          comboboxProps={{ keepMounted: false }}
+          onChange={(v) => changeConnection(v ?? INLINE)}
+        />
+      )}
       <SchemaForm
         schema={spec.schema}
         value={blockValue}
-        onChange={(blockVal) => onChange({ type, [block]: blockVal as Record<string, unknown> })}
+        onChange={(blockVal) =>
+          onChange({
+            type,
+            ...(connection ? { connection } : {}),
+            [block]: blockVal as Record<string, unknown>,
+          })
+        }
         fieldHelp={destFieldHelp}
         groupObjects
+        hideFields={ownedByConnection}
       />
     </Stack>
   );

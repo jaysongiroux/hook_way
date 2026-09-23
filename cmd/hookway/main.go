@@ -179,6 +179,7 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	nodes := flags.Bool("nodes", false, "emit per-node option JSON Schema metadata")
 	destinations := flags.Bool("destinations", false, "emit per-destination-type JSON Schema metadata")
+	connections := flags.Bool("connections", false, "emit per-connection-type JSON Schema metadata")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -195,6 +196,15 @@ func runSchema(args []string, stdout, stderr io.Writer) int {
 		data, err := json.MarshalIndent(config.DestinationTypeSchemas(), "", "  ")
 		if err != nil {
 			writef(stderr, "generate destination schema: %v\n", err)
+			return 1
+		}
+		writeln(stdout, string(data))
+		return 0
+	}
+	if *connections {
+		data, err := json.MarshalIndent(config.ConnectionTypeSchemas(), "", "  ")
+		if err != nil {
+			writef(stderr, "generate connection schema: %v\n", err)
 			return 1
 		}
 		writeln(stdout, string(data))

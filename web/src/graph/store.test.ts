@@ -60,6 +60,7 @@ test("setGraph replaces the document and clears selection", () => {
     edges: [],
     serverConfig: { addr: ":8080" },
     configExtra: {},
+    connections: {},
     destinations: {},
     activeFlow: "github",
     otherFlows: {},

@@ -29,17 +29,25 @@ server:
   addr: ":8080"
   max_body_bytes: 3145728
 
+# Both destinations below talk to the same AWS account, so the region and
+# credentials are declared once here and referenced by name. See
+# examples/connections.yaml for the full walkthrough.
+connections:
+  aws:
+    type: aws
+    region: "us-east-1"
+
 destinations:
   archive:
     type: s3
+    connection: aws
     s3:
-      region: "us-east-1"
       bucket: "${ARCHIVE_BUCKET}"
       create: true
   workers:
     type: lambda
+    connection: aws
     lambda:
-      region: "us-east-1"
       # Event (default): succeed when AWS accepts the invoke. Use
       # RequestResponse only when the inbound sender should see function errors.
       invocation_type: Event

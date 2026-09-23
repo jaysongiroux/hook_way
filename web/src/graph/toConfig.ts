@@ -17,9 +17,14 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
     edges: doc.edges,
     deliveryFailurePolicy: doc.deliveryFailurePolicy,
   });
+  const connections = pruneEmpty(doc.connections);
   const destinations = pruneEmpty(doc.destinations);
   const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig) : { ...DEFAULT_SERVER };
   const config: Record<string, unknown> = { server };
+  // Connections come before destinations, so the file reads in the order the
+  // references resolve. Omitted entirely when empty, for the same
+  // import/export fidelity reason as destinations below.
+  if (connections) config.connections = connections;
   // A proxy-style flow (http_request, no publish) declares no destinations at
   // all, and examples/xml.yaml is one. Emitting `destinations: {}` there adds
   // a key the operator never wrote and breaks import/export fidelity, so the

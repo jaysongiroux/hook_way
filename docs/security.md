@@ -101,6 +101,11 @@ Hookway compensates for the part it controls: when an `auth` node declares `sour
 
 Put secrets in environment variables and reference them from YAML with `${ENV_NAME}`, or use `auth.secret_ref` (`env` / `file` / `aws_secrets_manager`) with a refresh interval and optional overlap window so rotation is not a flag day. See [Configuration § Secret references](configuration.md#secret-references). Hookway does not print expanded secret values.
 
+Destination credentials belong in a named [connection](configuration.md#connections) when more than one destination shares them — one `aws` connection serves `s3`, `sqs`, `sns`, and `lambda` destinations, so the credential is declared and rotated in one place, and `connections:` enumerates every secret the process can reach. Two caveats:
+
+- **Connections resolve at load time.** Unlike `auth.secret_ref`, there is no background refresh: rotating a destination credential requires a restart, because the backend clients capture their credentials when they are constructed.
+- **A connection widens what one leaked block exposes.** A leaked `destinations.<id>` block exposes one backend; a leaked `connections.aws_prod` exposes everything that AWS account can reach. See [Configuration § Blast radius](configuration.md#blast-radius) and limitation L3 in [Invariants](invariants.md).
+
 ## Request Handling
 
 - Only configured flow paths are accepted for ingress.

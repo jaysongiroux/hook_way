@@ -8,6 +8,7 @@ import { ExportModal } from "./graph/ExportModal";
 import { EnvPanel } from "./graph/EnvPanel";
 import { ServerPanel } from "./graph/ServerPanel";
 import { DestinationsPanel } from "./graph/DestinationsPanel";
+import { ConnectionsPanel } from "./graph/ConnectionsPanel";
 import { ImportModal } from "./graph/ImportModal";
 import { BuilderHeader } from "./graph/BuilderHeader";
 import { SidePanel, usePanelWidths } from "./graph/BuilderShell";
@@ -30,6 +31,7 @@ export default function App() {
   const [envOpen, { open: openEnv, close: closeEnv }] = useDisclosure(false);
   const [serverOpen, { open: openServer, close: closeServer }] = useDisclosure(false);
   const [destOpen, { open: openDest, close: closeDest }] = useDisclosure(false);
+  const [connOpen, { open: openConn, close: closeConn }] = useDisclosure(false);
   const [clearOpen, { open: openClear, close: closeClear }] = useDisclosure(false);
   const [inspectorOpen, { open: openInspector, close: closeInspector }] = useDisclosure(false);
   const compact = useMediaQuery("(max-width: 64em)") ?? false;
@@ -70,6 +72,7 @@ export default function App() {
         onImport={openImport}
         onExport={openExport}
         onDestinations={openDest}
+        onConnections={openConn}
         onEnv={openEnv}
         onServer={openServer}
         onLoadExample={() => useGraphStore.getState().setGraph(starterDocument())}
@@ -107,6 +110,7 @@ export default function App() {
       <EnvPanel opened={envOpen} onClose={closeEnv} />
       <ServerPanel opened={serverOpen} onClose={closeServer} />
       <DestinationsPanel opened={destOpen} onClose={closeDest} />
+      <ConnectionsPanel opened={connOpen} onClose={closeConn} />
       <Modal opened={clearOpen} onClose={closeClear} title="Clear the canvas?" size="sm" transitionProps={{ duration: 0 }}>
         <Stack gap="sm">
           <Text size="sm">

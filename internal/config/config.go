@@ -187,6 +187,7 @@ type rawConfig struct {
 	Metrics      MetricsConfig                   `yaml:"metrics"`
 	Logging      LoggingConfig                   `yaml:"logging"`
 	Replay       rawReplayConfig                 `yaml:"replay"`
+	Connections  map[string]rawConnectionConfig  `yaml:"connections"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 }
 

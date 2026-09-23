@@ -20,6 +20,7 @@ export function SchemaForm({
   onBlurValidate = true,
   fieldHelp,
   groupObjects = false,
+  hideFields,
 }: {
   schema: JSONSchema | undefined;
   value: unknown;
@@ -36,6 +37,13 @@ export function SchemaForm({
    * table, so it holds for backends added to destinationSchema.json later.
    */
   groupObjects?: boolean;
+  /**
+   * Top-level field names to leave out of the form. The destination editor
+   * passes the fields a chosen connection owns: setting them on the
+   * destination as well is a validation error, so the form should not offer
+   * them rather than letting you author config that cannot load.
+   */
+  hideFields?: string[];
 }) {
   if (!isSchemaObject(schema)) {
     return (
@@ -47,10 +55,14 @@ export function SchemaForm({
     );
   }
   const properties = schemaProperties(schema);
-  const keys = Object.keys(properties);
-  if (keys.length === 0 && schemaType(schema) === "object" && isSchemaObject(schema.additionalProperties)) {
+  const hidden = new Set(hideFields ?? []);
+  // The free-form-map check keys off the schema's own shape, not the filtered
+  // list: hiding every field of a small block (an sns destination whose
+  // connection supplies all four) must not make it look like a map.
+  if (Object.keys(properties).length === 0 && schemaType(schema) === "object" && isSchemaObject(schema.additionalProperties)) {
     return <MapField value={asObject(value)} onChange={onChange} />;
   }
+  const keys = Object.keys(properties).filter((key) => !hidden.has(key));
   const required = new Set(schemaRequired(schema));
   const obj = asObject(value);
   const grouped = groupObjects ? keys.filter((key) => schemaType(properties[key]) === "object") : [];

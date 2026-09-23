@@ -1,0 +1,273 @@
+{
+  "aws": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "region": {
+        "type": "string"
+      },
+      "endpoint": {
+        "type": "string"
+      },
+      "access_key_id": {
+        "type": "string"
+      },
+      "secret_access_key": {
+        "type": "string"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "kafka": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "brokers": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "sasl": {
+        "properties": {
+          "mechanism": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "tls": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ca_cert": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "mongodb": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "uri": {
+        "type": "string"
+      },
+      "max_pool_size": {
+        "type": "integer"
+      },
+      "tls": {
+        "properties": {
+          "ca_cert": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "postgres": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "url": {
+        "type": "string"
+      },
+      "max_conns": {
+        "type": "integer"
+      },
+      "tls": {
+        "properties": {
+          "ca_cert": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "rabbitmq": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "url": {
+        "type": "string"
+      },
+      "publisher_channels": {
+        "type": "integer"
+      },
+      "tls": {
+        "properties": {
+          "ca_cert": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "redis": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "mode": {
+        "type": "string"
+      },
+      "url": {
+        "type": "string"
+      },
+      "addrs": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "master_name": {
+        "type": "string"
+      },
+      "username": {
+        "type": "string"
+      },
+      "password": {
+        "type": "string"
+      },
+      "db": {
+        "type": "integer"
+      },
+      "tls": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ca_cert": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "temporal": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "host_port": {
+        "type": "string"
+      },
+      "namespace": {
+        "type": "string"
+      },
+      "api_key": {
+        "type": "string"
+      },
+      "connect_timeout": {
+        "type": "string"
+      },
+      "tls": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ca_cert": {
+            "type": "string"
+          },
+          "client_cert": {
+            "type": "string"
+          },
+          "client_key": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "insecure_skip_verify": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  }
+}

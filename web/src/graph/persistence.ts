@@ -37,6 +37,7 @@ export async function loadGraph(): Promise<GraphDocument | null> {
       edges: rec.edges ?? [],
       serverConfig: rec.serverConfig ?? base.serverConfig,
       configExtra: rec.configExtra ?? {},
+      connections: rec.connections ?? {},
       destinations: rec.destinations ?? {},
       activeFlow: rec.activeFlow ?? base.activeFlow,
       otherFlows: rec.otherFlows ?? {},

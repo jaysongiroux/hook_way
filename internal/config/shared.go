@@ -22,6 +22,20 @@ type SharedConfig struct {
 	Logging      LoggingConfig
 	Replay       ReplayConfig
 	Destinations map[string]DestinationConfig
+	// ConnectionOf maps an owner path ("destinations.events", "replay") to the
+	// connection it resolved through. Only the name and type are kept: the
+	// values themselves have already been merged into Destinations and Replay,
+	// and retaining them would put a second copy of every credential in memory
+	// and a second thing that could be logged or serialized. ValidationIssues
+	// uses this to re-point issues at the path the operator actually wrote.
+	ConnectionOf map[string]ConnectionRef
+}
+
+// ConnectionRef identifies the connection an owner resolved through. It
+// deliberately carries no credential material.
+type ConnectionRef struct {
+	Name string
+	Type string
 }
 
 // rawServerConfig is the authored YAML shape. Runtime ServerConfig cannot be
@@ -43,13 +57,17 @@ type rawServerConfig = struct {
 }
 
 type rawReplayConfig = struct {
-	Enabled             bool              `yaml:"enabled"`
-	Addr                string            `yaml:"addr"`
-	SkipUnauthenticated bool              `yaml:"skip_unauthenticated"`
-	TTL                 string            `yaml:"ttl"`
-	MaxEvents           int64             `yaml:"max_events"`
-	CleanupInterval     string            `yaml:"cleanup_interval"`
-	Postgres            rawPostgresConfig `yaml:"postgres"`
+	Enabled             bool   `yaml:"enabled"`
+	Addr                string `yaml:"addr"`
+	SkipUnauthenticated bool   `yaml:"skip_unauthenticated"`
+	TTL                 string `yaml:"ttl"`
+	MaxEvents           int64  `yaml:"max_events"`
+	CleanupInterval     string `yaml:"cleanup_interval"`
+	// Connection names a postgres entry in the top-level connections block,
+	// spelled the same way a destination references one. The connection owns
+	// url / max_conns / tls; the postgres block below keeps schema and table.
+	Connection string            `yaml:"connection"`
+	Postgres   rawPostgresConfig `yaml:"postgres"`
 }
 
 type rawSharedConfig struct {
@@ -58,12 +76,13 @@ type rawSharedConfig struct {
 	Metrics      MetricsConfig                   `yaml:"metrics"`
 	Logging      LoggingConfig                   `yaml:"logging"`
 	Replay       rawReplayConfig                 `yaml:"replay"`
+	Connections  map[string]rawConnectionConfig  `yaml:"connections"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 }
 
 var sharedYAMLFields = map[string]struct{}{
 	"server": {}, "security": {}, "metrics": {}, "logging": {},
-	"replay": {}, "destinations": {},
+	"replay": {}, "connections": {}, "destinations": {},
 }
 
 // DecodeSharedYAML strictly decodes the common process-scoped sections from a
@@ -107,6 +126,10 @@ func DecodeSharedYAML(data []byte, source string, allowedExtras ...string) (Shar
 	}
 
 	issues = append(issues, unknownYAMLFields(&filtered, reflect.TypeOf(rawSharedConfig{}), "")...)
+	// Runs on the node tree rather than the decoded struct: a zero value
+	// cannot tell "absent" from "written as 0/false", which is exactly what
+	// the connection/destination split has to distinguish.
+	issues = append(issues, connectionBindingIssues(&filtered)...)
 
 	encoded, err := yaml.Marshal(&filtered)
 	if err != nil {
@@ -277,6 +300,17 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 		replayCleanupInterval = time.Hour
 	}
 
+	// Connections are resolved into the raw blocks before conversion, so
+	// duration parsing and defaulting still happen once, in convertDestination.
+	connectionOf := make(map[string]ConnectionRef)
+	replayPostgres := raw.Replay.Postgres
+	if name := raw.Replay.Connection; name != "" {
+		if conn, ok := raw.Connections[name]; ok && conn.Type == "postgres" {
+			mergeByYAMLTag(reflect.ValueOf(&replayPostgres).Elem(), reflect.ValueOf(conn), "", ownedConnPaths(conn.Type))
+			connectionOf["replay"] = ConnectionRef{Name: name, Type: conn.Type}
+		}
+	}
+
 	shared := SharedConfig{
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
@@ -295,11 +329,20 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 			SkipUnauthenticated: raw.Replay.SkipUnauthenticated,
 			TTL:                 replayTTL, MaxEvents: raw.Replay.MaxEvents,
 			CleanupInterval: replayCleanupInterval,
-			Postgres:        convertPostgresConfig(raw.Replay.Postgres),
+			Postgres:        convertPostgresConfig(replayPostgres),
 		},
 		Destinations: map[string]DestinationConfig{},
+		ConnectionOf: connectionOf,
 	}
-	for id, rawDestination := range raw.Destinations {
+	// Sorted so issues from the destination loop are emitted deterministically.
+	for _, id := range sortedStringKeys(raw.Destinations) {
+		rawDestination := raw.Destinations[id]
+		if name := rawDestination.Connection; name != "" {
+			if conn, ok := raw.Connections[name]; ok && conn.Type == connTypeForDestType[rawDestination.Type] {
+				applyConnection(&rawDestination, conn)
+				connectionOf["destinations."+id] = ConnectionRef{Name: name, Type: conn.Type}
+			}
+		}
 		destination, destinationIssues := convertDestination("destinations."+id, rawDestination)
 		issues = append(issues, destinationIssues...)
 		shared.Destinations[id] = destination

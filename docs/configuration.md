@@ -166,9 +166,105 @@ your own build. Hookway does not claim OpenTelemetry support; it propagates
 `traceparent` end to end (see the envelope reference below) and emits spans
 into whatever global provider happens to be installed.
 
+## Connections
+
+`connections` is an optional top-level map of named credentials keyed by stable id. A connection holds everything needed to *reach and authenticate* a backend; a destination that references it keeps only its own sink — the bucket, table, topic, or key prefix it writes to. One AWS account can then serve an `s3`, an `sns`, an `sqs`, and a `lambda` destination from a single declaration, and rotating the credential is one edit in one place.
+
+```yaml
+connections:
+  aws_prod:
+    type: aws
+    region: us-east-1
+    access_key_id: "${AWS_ACCESS_KEY_ID}"
+    secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+
+destinations:
+  events_bucket:
+    type: s3
+    connection: aws_prod
+    s3: {bucket: hookway-events, sse: AES256}
+  notify:
+    type: sns
+    connection: aws_prod
+```
+
+A connection is authored **flat**: `type` sits alongside its own fields rather than above a per-type block, unlike a destination. Ids are 1–128 characters of letters, digits, underscore, or hyphen — stricter than a destination id, which also permits `.`, because validation issue paths are resolved segment by segment and a dot makes them ambiguous.
+
+Connections are entirely optional and purely additive. Every destination can still be configured inline, which is what `examples/destinations/*.yaml` do.
+
+### Connection types
+
+| `type` | Owns | Serves destination types | Destination keeps |
+|---|---|---|---|
+| `aws` | `region`, `endpoint`, `access_key_id`, `secret_access_key` | `s3`, `sqs`, `sns`, `lambda` | s3: `bucket`, `create`, `sse`, `sse_kms_key_id` · lambda: `invocation_type` · sqs/sns: nothing |
+| `redis` | `mode`, `url`, `addrs`, `master_name`, `username`, `password`, `db`, `tls` | `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv` | `key_prefix` |
+| `postgres` | `url`, `max_conns`, `tls` | `postgres` (and `replay`, below) | `schema`, `table` |
+| `kafka` | `brokers`, `sasl`, `tls` | `kafka` | `acks`, `compression`, `publish_timeout`, `retry` |
+| `mongodb` | `uri`, `max_pool_size`, `tls` | `mongodb` | `database` |
+| `rabbitmq` | `url`, `publisher_channels`, `tls` | `rabbitmq` | `exchange`, `exchange_type`, `durable`, `publish_timeout`, `declare_queues`, `dead_letter`, `queue_defaults`, `retry` |
+| `temporal` | `host_port`, `namespace`, `api_key`, `connect_timeout`, `tls` | `temporal` | `start_timeout` |
+
+`key_prefix` stays on the destination on purpose, so two redis destinations can share one server with different prefixes.
+
+There is **no `webhook` connection type**. It would carry an auth header and TLS material but no host, so unlike every other type the credential would not travel with the address of the thing it authenticates to — one profile could be attached to destinations pointing at different vendors. Shared outbound webhook auth is an auth profile rather than a connection, and `destinations.<id>.webhook.auth` remains per-destination.
+
+`tls.enabled` exists only on `redis`, `kafka`, and `temporal`. For `postgres`, `mongodb`, and `rabbitmq`, transport security is implied by the connection string (`sslmode`, `mongodb+srv`, `amqps://`) and the `tls` block carries only custom CA and mutual-TLS material.
+
+### The split is strict
+
+A field belongs either to the connection or to the destination, never both. Setting a connection-owned field on a destination that also names a connection is a validation error:
+
+```
+destinations.events.s3.region: region is provided by connection "aws_prod" and
+must not be set on the destination
+```
+
+This is deliberate: an override-merge would leave "which of these two places did this value come from" as a question you have to answer by reading both. Validation of these bindings runs against the YAML document rather than the decoded config, so a field written as an explicit zero — `redis.db: 0`, `tls.insecure_skip_verify: false`, `postgres.max_conns: 0` — is caught rather than mistaken for an omitted one.
+
+An error in a value the connection supplied is reported at the path you wrote, with the destination that pulled it in named for context:
+
+```
+connections.aws_prod.region: region is required for s3 destinations
+(via destinations.events.connection)
+```
+
+A connection defined but referenced by nothing is reported at severity `warning`, so it does not block `hookway validate` or startup.
+
+### Resolution and rotation
+
+Connections are resolved once, at load time, exactly like inline config. The merged result is an ordinary destination, so nothing about publishing, readiness, or retry behaviour changes.
+
+That means **rotating a destination credential still requires a restart.** `connections` changes *where* a secret lives, not *when* it is read. Only inbound auth supports live rotation, via [`auth.secret_ref`](#secret-references) and its background refresh and overlap window; there is no equivalent for destinations, because the backend clients (pgxpool, Kafka writers, Redis clients, AMQP connections) capture their credentials at construction.
+
+Secrets in a connection are written the same way as anywhere else: `${ENV_VAR}` references, expanded at load. Note that expansion runs over the whole file as text *before* it is parsed, so a `${VAR}` written inside a comment still counts as a reference.
+
+### Blast radius
+
+Consolidating credentials narrows the number of places to look, and widens what a single leaked block exposes. Before, a leaked `destinations.archive` block exposed one bucket; afterwards a leaked `connections.aws_prod` exposes every bucket, queue, topic, and function that account can reach. That is the trade the feature makes deliberately. It does not change limitation **L3** in [Invariants](invariants.md) — one process still holds one set of destination credentials — but it does make the full set enumerable in one block, which is what you want when deciding whether to split a deployment by trust domain.
+
+### Sharing a connection with the replay store
+
+`replay` references a `postgres` connection with the same spelling a destination uses, so the replay store and a `postgres` destination can share one credential:
+
+```yaml
+connections:
+  pg_main:
+    type: postgres
+    url: "${POSTGRES_URL}"
+
+replay:
+  enabled: true
+  addr: ":9091"
+  connection: pg_main
+  postgres:
+    table: replay_       # a prefix here, not a single sink table
+```
+
+`replay.connection` must name a `postgres` connection; any other type is rejected. See `examples/connections.yaml` for a complete, validated config.
+
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, Temporal task queue, or Lambda function name/ARN). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `lambda`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. Each entry may either configure its backend inline (every example under `examples/destinations/` does) or set `connection: <name>` to take its credentials from a [connection](#connections) and keep only its sink fields. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, Temporal task queue, or Lambda function name/ARN). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `lambda`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 

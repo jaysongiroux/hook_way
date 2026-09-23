@@ -11,6 +11,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
   const edges = useGraphStore((s) => s.edges);
   const serverConfig = useGraphStore((s) => s.serverConfig);
   const configExtra = useGraphStore((s) => s.configExtra);
+  const connections = useGraphStore((s) => s.connections);
   const destinations = useGraphStore((s) => s.destinations);
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const otherFlows = useGraphStore((s) => s.otherFlows);
@@ -22,6 +23,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
       edges,
       serverConfig,
       configExtra,
+      connections,
       destinations,
       activeFlow,
       otherFlows,
@@ -33,7 +35,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
     } catch (e) {
       return { yaml: "", error: e instanceof ExportError ? e.message : String(e) };
     }
-  }, [nodes, edges, serverConfig, configExtra, destinations, activeFlow, otherFlows, deliveryFailurePolicy]);
+  }, [nodes, edges, serverConfig, configExtra, connections, destinations, activeFlow, otherFlows, deliveryFailurePolicy]);
 
   const [issues, setIssues] = useState<ValidationIssue[] | null>(null);
   useEffect(() => {

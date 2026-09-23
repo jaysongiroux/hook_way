@@ -373,3 +373,60 @@ flows:
 		t.Fatalf("issues = %#v", resp.Issues)
 	}
 }
+
+const configConnectionModeMissingEnvVar = `server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+connections:
+  cache:
+    type: redis
+    mode: "${DEFINITELY_UNSET_HOOKWAY_TEST_REDIS_MODE}"
+    url: "redis://redis:6379"
+destinations:
+  events:
+    type: "redis_stream"
+    connection: cache
+flows:
+  test:
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: test-target}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+
+// TestValidateWithEnv_MissingConnectionVarDowngradesToWarning is the
+// regression guard for the one thing about named connections that could not be
+// handled purely by merging them into the destination.
+//
+// Structural issues are produced against the post-merge config, so without
+// config.remapConnectionIssues this enum failure would be reported at
+// "destinations.events.redis.mode" -- a path that does not exist in the
+// document, because the operator wrote it under connections. fieldStillHasMissingRef
+// would then fail to resolve it, the downgrade would not happen, and
+// `hookway validate --json` would hard-fail in CI for every connection-based
+// config whose secrets are not exported. That is precisely the workflow the
+// lenient-expansion contract exists to support.
+func TestValidateWithEnv_MissingConnectionVarDowngradesToWarning(t *testing.T) {
+	resp := ValidateWithEnv([]byte(configConnectionModeMissingEnvVar), true)
+
+	for _, iss := range resp.Issues {
+		if iss.Severity == "error" {
+			t.Fatalf("expected no error-severity issues, got %#v in %#v", iss, resp.Issues)
+		}
+	}
+	var sawModeIssue bool
+	for _, iss := range resp.Issues {
+		if iss.Field == "connections.cache.mode" {
+			sawModeIssue = true
+		}
+		if iss.Field == "destinations.events.redis.mode" {
+			t.Errorf("issue was left on a path the operator never wrote: %#v", iss)
+		}
+	}
+	if !sawModeIssue {
+		t.Fatalf("expected the mode issue to be reported on connections.cache.mode, got %#v", resp.Issues)
+	}
+}

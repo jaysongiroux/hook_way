@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { BuilderPage } from "./builder";
 import {
+  connectionNames,
+  connEntry,
   destinationNames,
   destEntry,
   exampleFixtures,
@@ -68,6 +70,28 @@ for (const fixture of exampleFixtures()) {
         }
         await builder.backToFlow();
       }
+    }
+
+    const connNames = connectionNames(fixture.config);
+    if (connNames.length > 0) {
+      const connDialog = await builder.openConfigItem("Connections");
+      await expect(connDialog.getByRole("heading", { name: "Connections" })).toBeVisible();
+      for (const name of connNames) {
+        await connDialog.getByRole("button", { name: `Select ${name}`, exact: true }).click();
+        const card = connDialog.getByTestId(`connection-${name}`);
+        await expect(card).toBeVisible();
+        await expect(card.getByLabel("Name", { exact: true })).toHaveValue(name);
+        const conn = connEntry(fixture.config, name);
+        await expect(card.getByLabel("Type", { exact: true })).toHaveValue(conn.type);
+        for (const [key, value] of Object.entries(conn.fields)) {
+          if (!isRecord(value)) continue;
+          await card.getByRole("button", { name: new RegExp(`^${humanLabel(key)}`) }).click();
+        }
+        for (const [key, value] of Object.entries(conn.fields)) {
+          await expectYamlValue(card, key, value);
+        }
+      }
+      await builder.closeDialog();
     }
 
     const destNames = destinationNames(fixture.config);

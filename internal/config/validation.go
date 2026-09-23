@@ -77,7 +77,66 @@ func validationError(field, message, suggestion string) ValidationIssue {
 // ValidationIssues validates only process-scoped configuration. The shared
 // contract allows no destinations because a flow may only respond to its caller.
 func (s SharedConfig) ValidationIssues() []ValidationIssue {
-	return normalizeIssueSeverities(validationIssues(s.asConfig()))
+	return normalizeIssueSeverities(remapConnectionIssues(s.ConnectionOf, validationIssues(s.asConfig())))
+}
+
+// remapConnectionIssues re-points issues at the YAML path the operator wrote.
+// validationIssues runs against the post-merge config, so a value supplied by
+// a connection is reported as "destinations.events.postgres.url" even though
+// the file says "connections.pg_main.url".
+//
+// This is not cosmetic. configapi.ValidateWithEnv downgrades a structural
+// error to a warning when the field's value still contains an unresolved
+// "${", and it finds that value by walking the issue's dotted path through the
+// parsed YAML. A path that does not exist in the document resolves to nothing,
+// no downgrade happens, and `hookway validate --json` hard-fails in CI for
+// every connection-based config whose secrets are not exported -- which is
+// precisely the workflow that contract exists to support.
+func remapConnectionIssues(connectionOf map[string]ConnectionRef, issues []ValidationIssue) []ValidationIssue {
+	if len(connectionOf) == 0 {
+		return issues
+	}
+	for i, issue := range issues {
+		owner, rest, ok := splitOwnerPath(issue.Field)
+		if !ok {
+			continue
+		}
+		ref, bound := connectionOf[owner]
+		if !bound {
+			continue
+		}
+		// rest is "<block>.<path>"; drop the block, because a connection is
+		// authored flat rather than under a per-type block.
+		_, path, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		// Only connection-owned fields move. A sink field such as
+		// destinations.events.postgres.table stays where the operator wrote it.
+		if _, owned := ownedConnPaths(ref.Type)[path]; !owned {
+			continue
+		}
+		issues[i].Field = joinYAMLPath(joinYAMLPath("connections", ref.Name), path)
+		issues[i].Message = issue.Message + fmt.Sprintf(" (via %s.connection)", owner)
+	}
+	return issues
+}
+
+// splitOwnerPath splits an issue field into the owner whose connection binding
+// applies ("destinations.events", "replay") and the remainder.
+func splitOwnerPath(field string) (owner, rest string, ok bool) {
+	if after, found := strings.CutPrefix(field, "replay."); found {
+		return "replay", after, true
+	}
+	after, found := strings.CutPrefix(field, "destinations.")
+	if !found {
+		return "", "", false
+	}
+	id, rest, found := strings.Cut(after, ".")
+	if !found {
+		return "", "", false
+	}
+	return "destinations." + id, rest, true
 }
 
 func validationIssues(c Config) []ValidationIssue {

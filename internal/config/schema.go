@@ -15,6 +15,12 @@ import (
 // describes shape for form rendering and obvious field-type checks.
 func SchemaJSON() ([]byte, error) {
 	r := NewSchemaReflector()
+	// Inline every named sub-struct instead of emitting $defs/$ref. The
+	// connection blocks share named TLS and SASL types, which would otherwise
+	// turn this previously ref-free document into one no current consumer
+	// knows how to dereference. Set here rather than on NewSchemaReflector so
+	// the per-node and per-destination schemas keep their own settings.
+	r.DoNotReference = true
 	schema := r.Reflect(&rawConfig{})
 	return json.MarshalIndent(schema, "", "  ")
 }
@@ -35,8 +41,13 @@ func NewSchemaReflector() *jsonschema.Reflector {
 
 // DestTypeSchema is the JSON Schema for one destination type's nested block.
 type DestTypeSchema struct {
-	Block  string             `json:"block"`
-	Schema *jsonschema.Schema `json:"schema"`
+	Block string `json:"block"`
+	// Connection is the connection type that can serve this destination, or
+	// "" for a destination with no connection form (webhook). Published so
+	// the config UI reads the pairing from the generated catalog instead of
+	// hand-mirroring connTypeForDestType in TypeScript.
+	Connection string             `json:"connection,omitempty"`
+	Schema     *jsonschema.Schema `json:"schema"`
 }
 
 // destTypeBlocks maps the user-facing destination type name to the YAML block
@@ -72,9 +83,25 @@ func DestinationTypeSchemas() map[string]DestTypeSchema {
 			continue
 		}
 		out[typeName] = DestTypeSchema{
-			Block:  block,
-			Schema: reflector.ReflectFromType(field.Type),
+			Block:      block,
+			Connection: connTypeForDestType[typeName],
+			Schema:     reflector.ReflectFromType(field.Type),
 		}
+	}
+	return out
+}
+
+// ConnectionTypeSchemas reflects each connection type's field set so the
+// config UI can render a form per type without a hand-maintained field list.
+// Unlike a destination, a connection is authored flat -- `type:` alongside its
+// fields -- so there is no block name to report.
+func ConnectionTypeSchemas() map[string]*jsonschema.Schema {
+	reflector := NewSchemaReflector()
+	reflector.Anonymous = true
+	reflector.DoNotReference = true
+	out := make(map[string]*jsonschema.Schema, len(connectionShapes))
+	for typeName, shape := range connectionShapes {
+		out[typeName] = reflector.ReflectFromType(reflect.TypeOf(shape))
 	}
 	return out
 }

@@ -148,6 +148,28 @@ func TestRun_SchemaDestinationsListsTypes(t *testing.T) {
 func TestCommittedWebSchemasMatchCLI(t *testing.T) {
 	assertCommittedSchema(t, "web/src/graph/nodeSchema.json", []string{"schema", "--nodes"})
 	assertCommittedSchema(t, "web/src/graph/destinationSchema.json", []string{"schema", "--destinations"})
+	assertCommittedSchema(t, "web/src/graph/connectionSchema.json", []string{"schema", "--connections"})
+}
+
+func TestSchemaConnectionsListsEveryConnectionType(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"schema", "--connections"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("schema --connections exit %d: %s", code, stderr.String())
+	}
+	var doc map[string]struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, name := range []string{"aws", "redis", "postgres", "kafka", "mongodb", "rabbitmq", "temporal"} {
+		if len(doc[name].Properties) == 0 {
+			t.Errorf("connection type %q has no properties", name)
+		}
+	}
+	if len(doc) != 7 {
+		t.Fatalf("schema --connections listed %d types, want 7", len(doc))
+	}
 }
 
 func assertCommittedSchema(t *testing.T, rel string, args []string) {

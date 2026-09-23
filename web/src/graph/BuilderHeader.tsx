@@ -13,6 +13,7 @@ export function BuilderHeader({
   onImport,
   onExport,
   onDestinations,
+  onConnections,
   onEnv,
   onServer,
   onLoadExample,
@@ -25,6 +26,7 @@ export function BuilderHeader({
   onImport: () => void;
   onExport: () => void;
   onDestinations: () => void;
+  onConnections: () => void;
   onEnv: () => void;
   onServer: () => void;
   onLoadExample: () => void;
@@ -80,6 +82,7 @@ export function BuilderHeader({
               <Menu.Item onClick={onLoadExample}>Load production example</Menu.Item>
               <Menu.Divider />
               <Menu.Label>Workspace</Menu.Label>
+              <Menu.Item onClick={onConnections}>Connections</Menu.Item>
               <Menu.Item onClick={onDestinations}>Destinations</Menu.Item>
               <Menu.Item onClick={onEnv}>Environment</Menu.Item>
               <Menu.Item onClick={onServer}>Server</Menu.Item>

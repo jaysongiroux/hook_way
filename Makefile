@@ -33,13 +33,14 @@ wasm-harness: wasm
 	cd cmd/hookway-wasm/harness && python3 -m http.server 8091
 
 # node-schema regenerates the JSON catalogs the config UI imports. node-schema-check
-# fails if the committed files drifted from `hookway schema --nodes/--destinations`.
+# fails if the committed files drifted from `hookway schema --nodes/--destinations/--connections`.
 node-schema:
 	$(GO) run ./cmd/hookway schema --nodes > web/src/graph/nodeSchema.json
 	$(GO) run ./cmd/hookway schema --destinations > web/src/graph/destinationSchema.json
+	$(GO) run ./cmd/hookway schema --connections > web/src/graph/connectionSchema.json
 
 node-schema-check: node-schema
-	@git diff --exit-code -- web/src/graph/nodeSchema.json web/src/graph/destinationSchema.json
+	@git diff --exit-code -- web/src/graph/nodeSchema.json web/src/graph/destinationSchema.json web/src/graph/connectionSchema.json
 
 web-install:
 	cd web && npm install

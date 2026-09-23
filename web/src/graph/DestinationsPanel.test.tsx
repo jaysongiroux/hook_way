@@ -157,3 +157,83 @@ test("switching between redis variants keeps the connection they share", () => {
     redis: { url: "redis://localhost:6379", db: 2 },
   });
 });
+
+test("a destination offers only connections whose type can serve its backend", () => {
+  useGraphStore.setState({
+    connections: {
+      aws_prod: { type: "aws", region: "us-east-1" },
+      pg_main: { type: "postgres", url: "postgres://db/x" },
+    },
+  });
+  setDestinations({ archive: { type: "s3", s3: { bucket: "cold" } } });
+  wrap();
+
+  fireEvent.click(within(editor("archive")).getByLabelText("Connection"));
+
+  expect(screen.getByRole("option", { name: "aws_prod" })).toBeInTheDocument();
+  // A postgres credential cannot fill an s3 destination; internal/config
+  // rejects it, so the form must not offer it.
+  expect(screen.queryByRole("option", { name: "pg_main" })).not.toBeInTheDocument();
+});
+
+test("choosing a connection hides the fields it supplies and keeps the sink fields", () => {
+  useGraphStore.setState({ connections: { aws_prod: { type: "aws", region: "us-east-1" } } });
+  setDestinations({ archive: { type: "s3", s3: { bucket: "cold", region: "eu-west-2" } } });
+  wrap();
+
+  fireEvent.click(within(editor("archive")).getByLabelText("Connection"));
+  fireEvent.click(screen.getByRole("option", { name: "aws_prod" }));
+
+  // region is connection-owned, so the value already typed is dropped rather
+  // than left behind to conflict with the connection.
+  expect(useGraphStore.getState().destinations).toEqual({
+    archive: { type: "s3", connection: "aws_prod", s3: { bucket: "cold" } },
+  });
+  expect(within(editor("archive")).queryByLabelText("region")).not.toBeInTheDocument();
+  expect(within(editor("archive")).getByLabelText("bucket")).toHaveValue("cold");
+});
+
+test("switching back to inline drops the connection reference", () => {
+  useGraphStore.setState({ connections: { aws_prod: { type: "aws" } } });
+  setDestinations({ archive: { type: "s3", connection: "aws_prod", s3: { bucket: "cold" } } });
+  wrap();
+
+  fireEvent.click(within(editor("archive")).getByLabelText("Connection"));
+  fireEvent.click(screen.getByRole("option", { name: "Configure inline" }));
+
+  expect(useGraphStore.getState().destinations).toEqual({ archive: { type: "s3", s3: { bucket: "cold" } } });
+  expect(within(editor("archive")).getByLabelText("region")).toBeInTheDocument();
+});
+
+test("a webhook destination has no connection select", () => {
+  // A webhook credential carries no host, so it is an auth profile rather than
+  // a connection and has no connection type to reference.
+  setDestinations({ forward: { type: "webhook", webhook: { url: "https://x" } } });
+  wrap();
+
+  expect(within(editor("forward")).queryByLabelText("Connection")).not.toBeInTheDocument();
+});
+
+test("switching between redis variants keeps the connection reference", () => {
+  useGraphStore.setState({ connections: { r: { type: "redis", mode: "single" } } });
+  setDestinations({ events: { type: "redis_stream", connection: "r", redis: { key_prefix: "evt:" } } });
+  wrap();
+
+  fireEvent.change(within(editor("events")).getByLabelText("Type"), { target: { value: "redis_list" } });
+  fireEvent.click(screen.getByRole("option", { name: "redis_list" }));
+
+  expect(useGraphStore.getState().destinations).toEqual({
+    events: { type: "redis_list", connection: "r", redis: { key_prefix: "evt:" } },
+  });
+});
+
+test("switching to an unrelated backend drops the connection reference", () => {
+  useGraphStore.setState({ connections: { r: { type: "redis", mode: "single" } } });
+  setDestinations({ events: { type: "redis_stream", connection: "r", redis: {} } });
+  wrap();
+
+  fireEvent.change(within(editor("events")).getByLabelText("Type"), { target: { value: "kafka" } });
+  fireEvent.click(screen.getByRole("option", { name: "kafka" }));
+
+  expect(useGraphStore.getState().destinations).toEqual({ events: { type: "kafka", kafka: {} } });
+});
