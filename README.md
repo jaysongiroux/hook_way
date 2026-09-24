@@ -51,7 +51,7 @@ than types are holding, are enumerated in
 
 | Tool | Version | Needed for |
 |---|---|---|
-| Go | 1.25.4 or newer (`go.mod`; CI pins `1.25.x`, the image builds on `golang:1.25.13-alpine`) | building, testing, `go run ./cmd/hookway` |
+| Go | 1.26.8 or newer (`go.mod`; CI pins `1.26.x`, the image builds on `golang:1.26.8-alpine`) | building, testing, `go run ./cmd/hookway` |
 | Node.js | 20 (`NODE_VERSION` in `.github/workflows/reusable-ci.yml`) | the config builder under `web/` |
 | Docker | any recent version | `make dev-up`, `make docker-build`, and every integration suite |
 | Python 3 | any | `make wasm-harness` only (it serves the harness with `python3 -m http.server`) |

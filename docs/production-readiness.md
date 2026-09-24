@@ -454,7 +454,7 @@ Reviewing `.github/workflows/release.yml`:
 | No SBOM | — | Cannot answer "are we affected by CVE-X" without rebuilding. Increasingly a procurement requirement. |
 | No signing / provenance | No cosign, no SLSA, no GitHub attestations | Consumers cannot verify image authenticity. |
 | Single architecture | No `platforms:` on `build-push-action` | Blocks Graviton/arm64 fleets — a real cost and availability constraint. |
-| Base image by tag | `FROM golang:1.25.13-alpine` | Not reproducible; pin by digest. The criticism stands — the pin just tracks a newer patch now. |
+| Base image by tag | `FROM golang:1.26.8-alpine` | Not reproducible; pin by digest. The criticism stands — the pin just tracks a newer patch now. |
 | No released binaries | Docker Hub image only | Blocks VM/bare-metal deployments; no checksums or signatures. |
 | ~~No CodeQL/SAST~~ | `gosec` runs via golangci-lint | **Partly closed.** First-party Go is scanned; there is still no CodeQL. |
 | ~~One monolithic job~~ | Was "11 sequential test steps in `release-check`" | **Closed.** CI is 14 jobs in `reusable-ci.yml`, staged lint → test → deploy (an 11-way integration matrix, Playwright, images), behind one required `All checks passed` status. |
