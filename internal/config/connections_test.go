@@ -198,32 +198,6 @@ destinations:
 	}
 }
 
-// TestReplayResolvesAPostgresConnection pins the second consumer of a postgres
-// connection: the replay store shares one credential with a destination.
-func TestReplayResolvesAPostgresConnection(t *testing.T) {
-	doc := serverBlock + `
-connections:
-  pg:
-    type: postgres
-    url: postgres://db:5432/x
-replay:
-  enabled: true
-  addr: ":9091"
-  connection: pg
-  postgres:
-    table: replay_
-destinations:
-  rows: {type: postgres, connection: pg, postgres: {table: events}}
-`
-	shared := decodeShared(t, doc)
-	if got := shared.Replay.Postgres.URL; got != "postgres://db:5432/x" {
-		t.Errorf("replay.postgres.url = %q, want the connection's url", got)
-	}
-	if got := shared.Replay.Postgres.Table; got != "replay_" {
-		t.Errorf("replay.postgres.table = %q, want the sink field preserved", got)
-	}
-}
-
 // TestConnectionFieldsMatchDestinationBlocks mechanizes the strict split. The
 // connection structs deliberately repeat field names from rawDestinationConfig
 // instead of sharing types with it (sharing would either reorder the reflected

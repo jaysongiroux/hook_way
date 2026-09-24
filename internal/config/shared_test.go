@@ -28,16 +28,6 @@ metrics:
   runtime_metrics: false
 logging:
   level: debug
-replay:
-  enabled: true
-  addr: ":9091"
-  skip_unauthenticated: true
-  ttl: 24h
-  max_events: 12
-  cleanup_interval: 30m
-  postgres:
-    url: postgres://localhost/replay
-    max_conns: 3
 destinations:
   outgoing:
     type: webhook
@@ -69,9 +59,6 @@ flows: {}
 	}
 	if shared.Logging.Level != "debug" {
 		t.Fatalf("logging = %#v", shared.Logging)
-	}
-	if !shared.Replay.Enabled || shared.Replay.TTL != 24*time.Hour || shared.Replay.CleanupInterval != 30*time.Minute || shared.Replay.Postgres.Schema != "public" {
-		t.Fatalf("replay = %#v", shared.Replay)
 	}
 	webhook := shared.Destinations["outgoing"].Webhook
 	if webhook.URL != "https://example.test/hooks" || webhook.Timeout != 10*time.Second {
@@ -228,4 +215,21 @@ func hasIssueField(issues []ValidationIssue, field string) bool {
 		}
 	}
 	return false
+}
+
+// The embedded replay store's block is gone; its fields are simply unknown.
+func TestDecodeSharedYAMLRejectsTheOldReplayShape(t *testing.T) {
+	src := `
+server: {addr: ":8080"}
+replay:
+  enabled: true
+flows: {}
+`
+	_, issues := DecodeSharedYAML([]byte(src), "test", "flows")
+	for _, issue := range issues {
+		if issue.Severity == SeverityError && issue.Field == "replay.enabled" {
+			return
+		}
+	}
+	t.Fatalf("issues = %#v, want an unknown-field error for replay.enabled", issues)
 }

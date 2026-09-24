@@ -136,6 +136,12 @@ func discoverExamples(t *testing.T) (valid, invalid []string) {
 		if d.Name() == "docker-compose.yaml" {
 			return nil
 		}
+		// Every replay.yaml (examples/replay/, examples/dev/) configures
+		// hookway-replay, not core; TestTheReplayExamplesValidate in
+		// internal/replay/config covers them.
+		if d.Name() == "replay.yaml" {
+			return nil
+		}
 		if strings.Contains(d.Name(), "invalid") {
 			invalid = append(invalid, path)
 			return nil
@@ -219,8 +225,6 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"PROXY_TOKEN":             "proxy-token",
 		"ROUTING_TABLE":           "routing_data",
 		"ROUTING_DB_URL":          "postgres://localhost:5432/routing",
-		"REPLAY_DB_URL":           "postgres://localhost:5432/db",
-		"REPLAY_API_KEY":          "replay-key",
 		"SLACK_WEBHOOK_URL":       upstreamURL,
 		"SLACK_SOURCE_SECRET":     "slack-secret",
 		"DISCORD_WEBHOOK_URL":     upstreamURL,
@@ -229,6 +233,8 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"UPLOAD_SOURCE_SECRET":    "upload-secret",
 		"XML_SOURCE_SECRET":       "xml-secret",
 		"XML_UPSTREAM_URL":        upstreamURL,
+		"REPLAY_CAPTURE_TOKEN":    "capture-token-0123456789abcdefghijkl",
+		"REPLAY_CONTROL_TOKEN":    "control-token-0123456789abcdefghij",
 	}
 	for k, v := range vals {
 		t.Setenv(k, v)

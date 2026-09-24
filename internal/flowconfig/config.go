@@ -153,6 +153,10 @@ func decodeFlows(data []byte, source string) (map[string]graph.FlowConfig, []con
 		name := flowsNode.Content[i].Value
 		node := flowsNode.Content[i+1]
 		field := "flows." + name
+		if !graph.ValidID(name) {
+			issues = append(issues, cfgIssue(field, "flow name must be printable UTF-8 of at most 1024 bytes, without whitespace, ':' or '>'", "rename the flow"))
+			continue
+		}
 		if node.Kind != yaml.MappingNode {
 			issues = append(issues, cfgIssue(field, "flow must be a mapping", ""))
 			continue
@@ -202,7 +206,6 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 	issues := RoutingIssues(cfg)
 	for _, name := range sortedKeys(cfg.Flows) {
 		flow := cfg.Flows[name]
-		replayCaptured := replayCapturesFlow(cfg.Replay, flow)
 		for _, nc := range flow.Nodes {
 			switch nc.Type {
 			case "publish":
@@ -222,11 +225,6 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".payload",
 						fmt.Sprintf("payload: object is not supported for destination type %q", dest.Type),
 						"use an s3 or redis_kv destination, or omit payload (envelope)"))
-				}
-				if opts.Payload == "object" && replayCaptured {
-					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".payload",
-						"payload: object cannot be used while replay capture is enabled for this flow",
-						"disable replay for the process, skip capture for this no_auth flow, or use payload: envelope"))
 				}
 				if dest.Type == "lambda" {
 					field := "flows." + name + ".nodes." + nc.ID
@@ -295,20 +293,6 @@ func lambdaTargetIssues(field, target string) []config.ValidationIssue {
 // is compiled to WebAssembly and the queue package pulls in backend SDKs.
 func objectPayloadDestType(destType string) bool {
 	return destType == "s3" || destType == "redis_kv"
-}
-
-func replayCapturesFlow(replay config.ReplayConfig, flow graph.FlowConfig) bool {
-	if !replay.Enabled {
-		return false
-	}
-	if replay.SkipUnauthenticated {
-		for _, node := range flow.Nodes {
-			if node.Type == "no_auth" {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // RoutingIssues is shared by validation and serving so an ambiguous path

@@ -18,6 +18,8 @@ export interface FlowSnapshot {
   nodes: HookwayNode[];
   edges: Edge[];
   deliveryFailurePolicy?: string;
+  /** Flow keys the builder does not model (e.g. capture_failures), written back unchanged. */
+  flowExtra?: Record<string, unknown>;
 }
 
 export interface GraphDocument {
@@ -30,6 +32,8 @@ export interface GraphDocument {
   activeFlow: string;
   otherFlows: Record<string, FlowSnapshot>;
   deliveryFailurePolicy?: string;
+  /** Flow keys the builder does not model (e.g. capture_failures), written back unchanged. */
+  flowExtra?: Record<string, unknown>;
 }
 
 const counters: Record<string, number> = {};
@@ -85,6 +89,10 @@ export function emptyDocument(): GraphDocument {
     destinations: {},
     activeFlow: DEFAULT_FLOW,
     otherFlows: {},
+    // Explicit, so loading or clearing a document resets the previous
+    // flow's values in the store (zustand merges state shallowly).
+    deliveryFailurePolicy: undefined,
+    flowExtra: undefined,
   };
 }
 

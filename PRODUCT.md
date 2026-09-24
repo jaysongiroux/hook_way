@@ -20,16 +20,16 @@ One self-hosted binary, one YAML file. Verification is named by wire format (HMA
 
 ## Operating Context
 
-Local compose or a static binary in the company’s own environment. Config is validated with `hookway validate` before serve. Prometheus metrics and a Grafana dashboard ship in-repo. Replay, when enabled, is a separate listener. Secrets are environment variables referenced as `${VAR}`, and shared destination credentials live in a top-level `connections` block.
+Local compose or a static binary in the company’s own environment. Config is validated with `hookway validate` before serve. Prometheus metrics and a Grafana dashboard ship in-repo. Secrets are environment variables referenced as `${VAR}`, and shared destination credentials live in a top-level `connections` block.
 
 ## Capabilities and Constraints
 
-Confirmed: HMAC / JWT / header_exact / no_auth; JSON / XML / multipart / raw bodies; 14 destination types; `publish.payload: object` on S3 and redis_kv; typed graph edges; fail-closed unknown auth; process-local rate limits; optional in-memory replay guard; in-flight ceiling; webhook/Kafka/RabbitMQ retries then dead-letter. The public site must not claim hot reload, RBAC, SSO, OpenTelemetry, Helm, or encryption at rest.
+Confirmed: HMAC / JWT / header_exact / no_auth; JSON / XML / multipart / raw bodies; 14 destination types; `publish.payload: object` on S3 and redis_kv; typed graph edges; fail-closed unknown auth; process-local rate limits; optional in-memory replay guard; in-flight ceiling; webhook/Kafka/RabbitMQ retries then dead-letter; an optional replay service keeps the deliveries a destination missed after the sender already got its 2xx, for an operator to retry through an API (no UI, no automatic re-drive; 7-day default retention). The public site must not claim hot reload, RBAC, SSO, OpenTelemetry, Helm, encryption at rest, a replay UI, automatic re-drive, or exactly-once delivery.
 
 ## Brand Commitments
 
 - Name: Hookway. Logo mark (hook into a waypoint) belongs in the navbar on both the overview and the builder.
-- Voice: precise, operational, no hype. Numbers on the site are counts a reader can verify in the repo.
+- Voice: precise, operational, no hype. Numbers on the site are counts a reader can verify in the repo. Describe behaviour in the reader's terms, not the code's: "the sender already got its 2xx", not "an acknowledged failure"; "retry that delivery", not "redrive the record".
 - Visual (user-pinned): corporate and professional; marketing and builder are one system. Typical AI landing-page chrome is out of bounds (glow orbs, candy accents, neon-on-navy palettes, decorative card bars).
 
 ## Evidence on Hand

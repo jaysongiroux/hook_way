@@ -150,7 +150,8 @@ export const COMPARE_ROWS: CompareRow[] = [
     values: {
       hookway: {
         level: "partial",
-        detail: "Optional Postgres replay store and API when configured; no hosted inspector UI",
+        detail:
+          "Optional replay service keeps events a destination missed after the sender got its 2xx; retry just that delivery from its API",
       },
       hookdeck: { level: "yes", detail: "Persisted event log, issues, bulk retry in the product UI" },
       convoy: { level: "yes", detail: "Delivery logs, retries, and dashboards" },

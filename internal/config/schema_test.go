@@ -19,9 +19,27 @@ func TestSchemaJSON_IsValidJSONWithTopLevelKeys(t *testing.T) {
 	if !ok {
 		t.Fatalf("schema has no top-level properties object: %v", doc)
 	}
-	for _, key := range []string{"server", "security", "metrics", "logging", "replay", "destinations"} {
+	for _, key := range []string{"server", "security", "metrics", "logging", "destinations"} {
 		if _, ok := props[key]; !ok {
 			t.Errorf("schema properties missing %q (present: %v)", key, keys(props))
+		}
+	}
+	replay, ok := props["replay"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema lacks the replay block (present: %v)", keys(props))
+	}
+	replayProps, _ := replay["properties"].(map[string]any)
+	for _, key := range []string{"url", "capture_token", "max_record_bytes", "tls", "control"} {
+		if _, ok := replayProps[key]; !ok {
+			t.Errorf("replay schema lacks %q", key)
+		}
+	}
+	flows, _ := props["flows"].(map[string]any)
+	flow, _ := flows["additionalProperties"].(map[string]any)
+	flowProps, _ := flow["properties"].(map[string]any)
+	for _, key := range []string{"nodes", "edges", "delivery_failure_policy", "capture_failures"} {
+		if _, ok := flowProps[key]; !ok {
+			t.Errorf("flow schema lacks %q (flows = %v)", key, flows)
 		}
 	}
 }

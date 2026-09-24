@@ -7,10 +7,9 @@ Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hoo
 
 | File | Description |
 |------|-------------|
-| `config.yaml` | Minimal canonical config: one RabbitMQ destination, one `hmac_sha256_hex` GitHub flow (`/webhooks/github`). This is the default for `make validate` and `make run`. |
+| `config.yaml` | Minimal canonical config: one RabbitMQ destination, one `hmac_sha256_hex` GitHub flow (`/webhooks/github`). This is the default for `make validate` and `make run` (core on the host, no replay service). |
 | `filters.yaml` | Filtering reference: a filter node after envelope with a silent drop, a branch-level filter that fans out selectively, and `on_no_match: reject` (422) using numeric, regex, and `exists` operators. See `docs/configuration.md` § Filtering. |
 | `variables.yaml` | Dynamic routing reference: an environment comes from a path placeholder or filtered header, `field_map` copies a JSON body field to `vars.tenant`, and `{name}` placeholders select a pre-provisioned SQS queue and webhook URL. Unknown environments and unresolved templates fail closed. See `docs/configuration.md` § Variables. |
-| `replay.yaml` | Webhook-replay reference: one RabbitMQ flow plus `replay` enabled with a bounded Postgres-backed store (`ttl`, `max_events`, `cleanup_interval`) and its protected API on a separate `replay.addr` listener, authenticated via `security.api_key`. See `docs/configuration.md` § Replay and `docs/security.md` § Replay. |
 | `on_error.yaml` | Error-port reference: `http_request` 5xx to a DLQ (`ack:on_error>dlq`) or an explicit 502 (`up:on_error>fail`); `rate_limit:on_error` to a 429; `auth:on_error` to a 401; `envelope:on_error` to a 400. `http_trigger`, `read_body`, and `no_auth` have no error port. Also shows `http_request` `retry` combined with an `on_error` path. See `docs/configuration.md` § Flows. |
 | `xml.yaml` | XML reference: `body_format: xml`, a filter on an element path, a `code` node reading the DOM, `xml_prune`, and `body: transformed` forwarding. See `docs/configuration.md` § XML bodies. |
 | `multipart.yaml` | Multipart reference: `body_format: multipart` with limits, a filter on `files.document.content_type`, and a `code` node reading upload metadata. See `docs/configuration.md` § Multipart bodies. |
@@ -111,13 +110,24 @@ make test-examples
 
 `make test-examples` is what CI's Examples job runs after `validate-examples`. It uses a fake publisher (no Docker) and a loopback HTTP server for env-driven `http_request` URLs. `invalid-*` files must fail validation.
 
-**The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically. `make validate-examples` does **not** walk: its loop hand-enumerates the eight top-level files by name —
+**The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically (except files named `replay.yaml`, which configure the replay service, not core). `make validate-examples` validates every top-level `*.yaml` (except `docker-compose.yaml`), globs `destinations/`, `auth/`, `templates/`, and `showcase/` (skipping `invalid-*`), and names the `dev/` and `replay/` files explicitly — each directory's `core.yaml` with `hookway validate`, its `replay.yaml` with `hookway-replay validate`.
 
-```
-examples/config.yaml  filters.yaml  replay.yaml  variables.yaml
-on_error.yaml  xml.yaml  multipart.yaml  multipart-split.yaml
-```
+So **a new subdirectory is silently skipped by `validate-examples`** until the Makefile learns about it; place new examples at the top level or in a globbed subdirectory, or add the directory to the recipe.
 
-— and then globs `destinations/*.yaml`, `auth/*.yaml`, `templates/*.yaml`, and `showcase/*.yaml`.
+## Dev stack (`make dev-up`)
 
-So a new file in one of those four subdirectories is covered by both targets, but **a new *top-level* example is silently skipped by `validate-examples`** — no error, no warning, it simply is not validated. When you add one, add its filename to that list in the Makefile as well, or place it in a globbed subdirectory instead.
+| File | Description |
+|------|-------------|
+| `docker-compose.yaml` | The `make dev-up` stack: core, RabbitMQ, a second HTTP destination (`notify-sink`), the replay service, PostgreSQL, and a one-shot `migrate`. Every variable has a working default. `make compose-e2e-test` deploys this file and drives it end to end. |
+| `dev/core.yaml` | Core's config for the stack: the GitHub flow from `config.yaml`, fanned out to RabbitMQ and `notify-sink` under `skip_failed`, with the `replay:` block on. Stop `notify-sink` and the missed delivery waits in the replay service. |
+| `dev/replay.yaml` | The replay service's config for the stack: database, core's control URL, retention, workers, and scoped keys. |
+
+[docs/local-development.md](../docs/local-development.md) walks through sending a webhook, taking `notify-sink` down, and retrying what it missed.
+
+## Replay service, two replicas each (`replay/`)
+
+| File | Description |
+|------|-------------|
+| `replay/docker-compose.yaml` | Core ×2, the replay service ×2, PostgreSQL, a one-shot `migrate`, and two HTTP sinks (stop `audit-sink` for a partial failure that gets captured). `docker compose -f examples/replay/docker-compose.yaml up --build`. |
+| `replay/core.yaml` | Core config with the `replay:` block: a `skip_failed` fan-out whose failed publishes are captured. |
+| `replay/replay.yaml` | The replay service's config (`hookway-replay validate --config …`): database, core's control URL, retention, workers, and scoped keys. See `docs/replay-service.md`. |

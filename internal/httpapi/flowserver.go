@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -20,16 +19,15 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/capture"
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/publishmsg"
 	"github.com/jaysongiroux/hook_way/internal/queue"
-	"github.com/jaysongiroux/hook_way/internal/replaystore"
 	"github.com/jaysongiroux/hook_way/internal/secretref"
-	"github.com/jaysongiroux/hook_way/internal/transform"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
@@ -47,13 +45,24 @@ type FlowServer struct {
 	flows          map[string]mountedFlow
 	mux            *http.ServeMux
 	readiness      *readinessProber
-	replay         ReplayCapturer
 	// closers holds resources with background goroutines -- currently
 	// secret_ref resolvers, each of which runs a refresh ticker. Close()
 	// stops them; without this they outlive the server they belong to.
 	closers   []io.Closer
 	closeOnce sync.Once
 	closeErr  error
+	// capture, when set, records acknowledged failures for the replay service.
+	capture *capture.Capturer
+}
+
+// SetCapturer turns on failure capture. Call it before serving.
+func (s *FlowServer) SetCapturer(c *capture.Capturer) { s.capture = c }
+
+type captureRequestKey struct{}
+
+func captureRequestFrom(ctx context.Context) *capture.Request {
+	r, _ := ctx.Value(captureRequestKey{}).(*capture.Request)
+	return r
 }
 
 var nodeTracer = otel.Tracer("hookway")
@@ -70,7 +79,6 @@ type mountedFlow struct {
 	flow       *graph.Flow
 	destByNode map[string]string
 	destIDs    []string
-	hasNoAuth  bool
 	// broken is set when graph.Compile failed. The path is still registered
 	// so matching requests return 500 rather than 404 (I13).
 	broken bool
@@ -85,113 +93,16 @@ func (r queueResolver) Resolve(string) (flowconfig.Publisher, error) {
 type queuePublisherAdapter struct{ pub queue.Publisher }
 
 func (a queuePublisherAdapter) Publish(ctx context.Context, destinationID, renderedTarget string, env graph.Envelope) error {
-	msg, err := graphEnvelopeToMessage(env, destinationID, renderedTarget)
+	if creq := captureRequestFrom(ctx); creq != nil {
+		ctx = creq.WithOrigin(ctx, flowconfig.PublishingNode(ctx))
+	}
+	msg, err := publishmsg.FromEnvelope(env, destinationID, renderedTarget)
 	if err != nil {
 		// Conversion failures are deterministic payload problems; retrying the
 		// destination cannot fix malformed object metadata or base64 content.
 		return graph.NodeError{Status: http.StatusBadRequest, Err: fmt.Errorf("prepare publish payload: %w", err)}
 	}
 	return a.pub.Publish(ctx, destinationID, renderedTarget, msg)
-}
-
-func graphEnvelopeToMessage(env graph.Envelope, destID, target string) (msg queue.Message, err error) {
-	// Identity and redacted metadata come from capture; payload and variables
-	// come from the current branch after transforms/code.
-	defer func() {
-		if err != nil {
-			return
-		}
-		msg.Body = env.Body
-		msg.Variables = env.Vars
-		var doc *transform.Document
-		switch body := env.Body.(type) {
-		case transform.Document:
-			doc = &body
-		case *transform.Document:
-			doc = body
-		}
-		if doc != nil {
-			var raw []byte
-			raw, err = transform.SerializeXML(*doc)
-			if err != nil {
-				return
-			}
-			encoded := base64.StdEncoding.EncodeToString(raw)
-			msg.Body, msg.RawBodyBase64 = nil, &encoded
-		} else if env.Body != nil {
-			msg.RawBodyBase64 = nil
-		}
-		msg, err = attachObjectPayload(msg, env)
-	}()
-	if cap, ok := env.Extra.(flowconfig.CapturedEvent); ok {
-		msg := envelopeToMessage(cap.Event)
-		msg.DestinationQueueID = destID
-		msg.Queue = target
-		if env.Vars != nil {
-			msg.Variables = env.Vars
-		}
-		return attachMessageAttributes(msg, env), nil
-	}
-	head := env.V.Raw.Head
-	query := map[string]any{}
-	for k, v := range head.Query {
-		query[k] = append([]string(nil), v...)
-	}
-	var rawB64 *string
-	if env.Body == nil && len(env.V.Raw.Body) > 0 {
-		encoded := base64.StdEncoding.EncodeToString(env.V.Raw.Body)
-		rawB64 = &encoded
-	}
-	return attachMessageAttributes(queue.Message{
-		SchemaVersion: "1.0", ID: head.EventID, RequestID: head.RequestID, TraceID: head.TraceID,
-		Traceparent: head.Traceparent, Endpoint: head.Path, DestinationQueueID: destID, Queue: target,
-		ReceivedAt: time.Now().UTC(), Method: head.Method, Path: head.Path, Headers: head.Header,
-		Query: query, Body: env.Body, RawBodyBase64: rawB64, SourceIP: head.SourceIP,
-		Variables: env.Vars, RawBody: env.V.Raw.Body, OrigHeaders: head.Header, Hops: head.Hops,
-	}, env), nil
-}
-
-func attachObjectPayload(msg queue.Message, env graph.Envelope) (queue.Message, error) {
-	switch env.PayloadMode {
-	case "", "envelope":
-		msg.PayloadMode = "envelope"
-		return msg, nil
-	case "object":
-		// Use the original request's Content-Type for raw bodies. msg.Headers is
-		// intentionally redacted/allowlisted and may omit Content-Type entirely.
-		var rawBody []byte
-		var rawBodyBase64 *string
-		var rawContentType string
-		if env.BodyFormat == "raw" {
-			rawBody = msg.RawBody
-			rawBodyBase64 = msg.RawBodyBase64
-			rawContentType = env.V.Raw.Head.Header.Get("Content-Type")
-		}
-		data, contentType, filename, err := queue.ObjectFromBody(
-			env.Body, rawBody, rawBodyBase64, rawContentType,
-		)
-		if err != nil {
-			return msg, err
-		}
-		msg.PayloadMode = "object"
-		msg.ObjectBytes = data
-		msg.ObjectContentType = contentType
-		msg.ObjectFilename = filename
-		return msg, nil
-	default:
-		return msg, fmt.Errorf("unknown publish payload mode %q", env.PayloadMode)
-	}
-}
-
-func attachMessageAttributes(msg queue.Message, env graph.Envelope) queue.Message {
-	if len(env.MessageAttributes) == 0 {
-		return msg
-	}
-	msg.MessageAttributes = make(map[string]queue.MessageAttribute, len(env.MessageAttributes))
-	for k, v := range env.MessageAttributes {
-		msg.MessageAttributes[k] = queue.MessageAttribute{DataType: v.DataType, StringValue: v.Value}
-	}
-	return msg
 }
 
 func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics) (*FlowServer, error) {
@@ -275,14 +186,13 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			logger.Error("flow failed to compile; path will return 500 not 404",
 				"flow", name, "error", compileErr)
 		}
-		hasNoAuth := flowHasNoAuth(fc)
-		if hasNoAuth {
+		if flowHasNoAuth(fc) {
 			logger.Warn("flow uses no_auth; requests are accepted without verification", "flow", name)
 		}
 		s.flows[name] = mountedFlow{
 			name: name, methods: methodSet(methods), allow: strings.Join(methods, ", "),
 			flow: compiled, destByNode: destByNode, destIDs: uniqueDestIDs(destByNode),
-			hasNoAuth: hasNoAuth, broken: compileErr != nil || compiled == nil,
+			broken: compileErr != nil || compiled == nil,
 		}
 		pattern, err := vars.ParsePath(path)
 		if err != nil {
@@ -372,7 +282,7 @@ func methodSet(methods []string) map[string]struct{} {
 func (s *FlowServer) helpers() *Server {
 	return &Server{
 		cfg: s.process, logger: s.logger, metrics: s.metrics,
-		trustedProxies: s.trustedProxies, readiness: s.readiness, replay: s.replay,
+		trustedProxies: s.trustedProxies, readiness: s.readiness,
 	}
 }
 
@@ -435,13 +345,6 @@ func (s *FlowServer) Close() error {
 		s.closeErr = errors.Join(errs...)
 	})
 	return s.closeErr
-}
-
-func (s *FlowServer) SetReplayCapturer(c ReplayCapturer) {
-	s.replay = c
-	if pinger, ok := c.(interface{ Ping(context.Context) error }); ok {
-		s.readiness.setReplayPing(pinger.Ping)
-	}
 }
 
 func (s *FlowServer) matchFlow(path string) (mountedFlow, map[string]string, bool) {
@@ -529,34 +432,22 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	} else {
 		head.EventID = uuid.NewString()
 	}
+	// The request settles with its final status — including a panic's 500 —
+	// only after the response is decided, so capture never shapes it.
+	creq := s.capture.Begin(mf.name, head)
+	defer func() {
+		if rec := recover(); rec != nil {
+			creq.Settle(http.StatusInternalServerError)
+			panic(rec)
+		}
+		creq.Settle(status)
+	}()
 
 	ctx := flowconfig.WithBodyReader(r.Context(), r.Body)
-	captureEnabled := s.replay != nil && (!s.cfg.Replay.SkipUnauthenticated || !mf.hasNoAuth)
-	captured := false
-	capturedID := head.EventID
-	term, runErr := mf.flow.Run(ctx, head, graph.RunOptions{
+	ctx = context.WithValue(ctx, captureRequestKey{}, creq)
+	opts := graph.RunOptions{
 		PublishTimeout:    s.cfg.Server.PublishTimeout,
 		FanoutConcurrency: s.cfg.Server.FanoutConcurrencyLimit(),
-		BeforeDetached: func(in graph.Payload) {
-			if !captureEnabled {
-				return
-			}
-			env, ok := in.(graph.Envelope)
-			if !ok {
-				return
-			}
-			if s.cfg.Replay.SkipUnauthenticated && env.V.Identity == auth.AuthTypeNoAuth {
-				return
-			}
-			ev, captureErr := replayEventFromEnvelope(mf.name, env, head.EventID)
-			if captureErr != nil {
-				s.logger.Warn("replay envelope failed", "flow", mf.name, "error", captureErr)
-				return
-			}
-			captured = true
-			capturedID = ev.ID
-			s.helpers().captureEvent(r.Context(), ev)
-		},
 		OnNode: func(ev graph.NodeEvent) {
 			outcome := "ok"
 			if ev.Err != nil {
@@ -604,7 +495,11 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			}
 			span.End(trace.WithTimestamp(time.Now()))
 		},
-	})
+	}
+	if creq != nil {
+		opts.OnFailure = creq.OnFailure
+	}
+	term, runErr := mf.flow.Run(ctx, head, opts)
 	if graph.NeedsCompensation(term, runErr) {
 		timeout := s.cfg.Server.PublishTimeout
 		if cErr := graph.RunCompensations(r.Context(), term, runErr, timeout); cErr != nil {
@@ -616,9 +511,6 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	published, failed := deliveryMaps(mf, term)
-	if captured {
-		s.helpers().recordOutcome(r.Context(), capturedID, deliveriesFromResults(published, failed))
-	}
 	if runErr != nil {
 		status = statusFromNodeError(runErr)
 		if status == http.StatusServiceUnavailable {
@@ -669,7 +561,7 @@ func (s *FlowServer) writeFlowError(w http.ResponseWriter, r *http.Request, mf m
 		s.metrics.Forbidden(mf.name, "", "")
 		s.writeJSON(w, r, status, map[string]string{"error": "forbidden"})
 	case http.StatusConflict:
-		s.metrics.ReplayRejected(mf.name, "", "")
+		s.metrics.DuplicateRejected(mf.name, "", "")
 		s.writeJSON(w, r, status, map[string]string{"error": "replay detected"})
 	case http.StatusRequestEntityTooLarge:
 		s.writeJSON(w, r, status, map[string]string{"error": "payload too large"})
@@ -725,17 +617,6 @@ func deliveryMaps(mf mountedFlow, term graph.Terminal) (published, failed []map[
 	return published, failed
 }
 
-func replayEventFromEnvelope(flow string, env graph.Envelope, eventID string) (replaystore.Event, error) {
-	msg, err := graphEnvelopeToMessage(env, "", "")
-	if err != nil {
-		return replaystore.Event{}, err
-	}
-	if msg.ID == "" {
-		msg.ID = eventID
-	}
-	return replaystore.Event{ID: msg.ID, Endpoint: flow, IdempotencyKey: msg.IdempotencyKey, RequestID: msg.RequestID, TraceID: msg.TraceID, ReceivedAt: msg.ReceivedAt, Envelope: msg}, nil
-}
-
 // bindSecretRef builds a secret resolver and returns both its lookup function
 // and its closer. The closer must be retained: the resolver runs a refresh
 // ticker goroutine that otherwise outlives the server.
@@ -770,7 +651,7 @@ type flowReadyState struct {
 }
 
 func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
-	dest, replayErr, fresh, _ := s.readiness.destinationSnapshot(time.Now())
+	dest, fresh, _ := s.readiness.destinationSnapshot(time.Now())
 	if !fresh {
 		s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{
 			"error": "not ready", "status": "not_ready",
@@ -794,9 +675,6 @@ func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
 			if destErr := destError(dest, id); destErr != nil {
 				unready = append(unready, id)
 			}
-		}
-		if replayErr != nil {
-			unready = append(unready, "replay_store")
 		}
 		state := flowReadyState{Ready: len(unready) == 0, Unready: unready}
 		if state.Ready {

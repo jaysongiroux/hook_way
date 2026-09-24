@@ -165,3 +165,24 @@ test("insertSubgraph does not collide with a hand-added node of the same id", ()
   expect(new Set(s.nodes.map((n) => n.data.yamlId)).size).toBe(3);
   expect(s.edges[0].source).toBe("fmt_2");
 });
+
+test("switching flows keeps each flow's unmodelled fields", () => {
+  const s = useGraphStore.getState();
+  s.setGraph({ ...emptyDocument(), activeFlow: "a", flowExtra: { capture_failures: false } });
+  s.addFlow("b");
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+  useGraphStore.getState().setActiveFlow("a");
+  expect(useGraphStore.getState().flowExtra).toEqual({ capture_failures: false });
+  expect(useGraphStore.getState().document().flowExtra).toEqual({ capture_failures: false });
+});
+
+test("loading or clearing a document drops the previous flow's unmodelled fields", () => {
+  const s = useGraphStore.getState();
+  s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false }, deliveryFailurePolicy: "skip_failed" });
+  s.setGraph(emptyDocument());
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+  expect(useGraphStore.getState().deliveryFailurePolicy).toBeUndefined();
+  s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false } });
+  s.clear();
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+});

@@ -16,6 +16,7 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
     nodes: doc.nodes,
     edges: doc.edges,
     deliveryFailurePolicy: doc.deliveryFailurePolicy,
+    flowExtra: doc.flowExtra,
   });
   const connections = pruneEmpty(doc.connections);
   const destinations = pruneEmpty(doc.destinations);
@@ -39,7 +40,7 @@ function snapshotToFlow(snap: FlowSnapshot): Record<string, unknown> {
   const nodes = snap.nodes.map(nodeToYaml);
   const byRf = new Map(snap.nodes.map((n) => [n.id, n]));
   const edges = snap.edges.map((e) => edgeToYaml(e, byRf));
-  const out: Record<string, unknown> = { nodes, edges };
+  const out: Record<string, unknown> = { ...(snap.flowExtra ?? {}), nodes, edges };
   if (snap.deliveryFailurePolicy) out.delivery_failure_policy = snap.deliveryFailurePolicy;
   return out;
 }

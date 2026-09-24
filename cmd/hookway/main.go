@@ -17,16 +17,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/capture"
+	"github.com/jaysongiroux/hook_way/internal/cli"
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/configapi"
+	"github.com/jaysongiroux/hook_way/internal/control"
 	"github.com/jaysongiroux/hook_way/internal/editor"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/httpapi"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/metrics"
 	"github.com/jaysongiroux/hook_way/internal/queue"
-	"github.com/jaysongiroux/hook_way/internal/replayapi"
-	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 // version and commit identify the build. They default to "dev"/"none" for a
@@ -38,40 +39,55 @@ var (
 	commit  = "none"
 )
 
-// replayCleanupShutdownWait bounds how long shutdown waits for the replay
-// cleanup goroutine to exit after its context is cancelled. It is a small
-// fixed duration -- NOT derived from cfg.Replay.CleanupInterval (default
-// 1h) -- because the cleanup ctx is cancelled first and a mid-sweep pgx call
-// (Ping/PurgeExpired/PurgeOverCount) respects ctx cancellation, so the
-// goroutine exits near-instantly; a wedged sweep can't delay shutdown past
-// this wait, and tying it to CleanupInterval would let shutdown block for up
-// to an hour -- far past a typical k8s terminationGracePeriodSeconds (~30s),
-// so it would never actually protect shutdown.
-const replayCleanupShutdownWait = 5 * time.Second
-
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// run dispatches subcommands and returns a process exit code.
+// run dispatches subcommands and returns a process exit code. With no
+// command, or only flags, it serves.
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "validate" {
+	if len(args) == 0 {
+		return runServe(args, stdout, stderr)
+	}
+	switch args[0] {
+	case "-h", "-help", "--help":
+		program.WriteHelp(stdout)
+		return cli.ExitOK
+	case "help":
+		return runHelp(args[1:], stdout, stderr)
+	case "serve":
+		return runServe(args[1:], stdout, stderr)
+	case "validate":
 		return runValidate(args[1:], stdout, stderr)
-	}
-	if len(args) > 0 && args[0] == "healthcheck" {
+	case "healthcheck":
 		return runHealthcheck(args[1:], stdout, stderr)
-	}
-	if len(args) > 0 && args[0] == "schema" {
+	case "schema":
 		return runSchema(args[1:], stdout, stderr)
-	}
-	if len(args) > 0 && args[0] == "editor" {
+	case "editor":
 		return runEditor(args[1:], stdout, stderr)
-	}
-	if len(args) > 0 && args[0] == "version" {
+	case "version":
+		if code, ok := program.Parse("version", flag.NewFlagSet("version", flag.ContinueOnError), args[1:], stdout, stderr); !ok {
+			return code
+		}
 		writef(stdout, "hookway %s (%s)\n", version, commit)
-		return 0
+		return cli.ExitOK
 	}
-	return runServe(args, stdout, stderr)
+	if strings.HasPrefix(args[0], "-") {
+		return runServe(args, stdout, stderr)
+	}
+	return program.UnknownCommand(stderr, args[0])
+}
+
+// runHelp prints the command list, or one command's help page.
+func runHelp(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		program.WriteHelp(stdout)
+		return cli.ExitOK
+	}
+	if _, ok := program.Lookup(args[0]); !ok || len(args) > 1 {
+		return program.UnknownCommand(stderr, strings.Join(args, " "))
+	}
+	return run([]string{args[0], "-h"}, stdout, stderr)
 }
 
 // runValidate checks config syntax and semantic validation without opening network connections.
@@ -88,13 +104,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 //     an opaque literal and only structural/syntax issues can appear.
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("validate", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configFlag := flags.String("config", "", "path to Hookway YAML config")
-	jsonOut := flags.Bool("json", false, "emit validation results as JSON")
-	noEnv := flags.Bool("no-env", false, "skip ${VAR} environment expansion; check syntax and structure only")
-	strict := flags.Bool("strict", false, "treat lint warnings as errors")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	configFlag := flags.String("config", "", "the config `FILE` to check (default $HOOKWAY_CONFIG)")
+	jsonOut := flags.Bool("json", false, `print {"issues": [...]} on stdout; an unset ${VAR} is a warning`)
+	noEnv := flags.Bool("no-env", false, "leave ${VAR} unexpanded; check syntax and structure only")
+	strict := flags.Bool("strict", false, "fail on lint warnings too")
+	if code, ok := program.Parse("validate", flags, args, stdout, stderr); !ok {
+		return code
 	}
 	path, err := config.ResolvePath(*configFlag)
 	if err != nil {
@@ -176,12 +191,11 @@ func blockingValidationIssues(issues []config.ValidationIssue) []config.Validati
 // runSchema prints the JSON Schema describing the Hookway config to stdout.
 func runSchema(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("schema", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	nodes := flags.Bool("nodes", false, "emit per-node option JSON Schema metadata")
-	destinations := flags.Bool("destinations", false, "emit per-destination-type JSON Schema metadata")
-	connections := flags.Bool("connections", false, "emit per-connection-type JSON Schema metadata")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	nodes := flags.Bool("nodes", false, "print each node type's ports and option schema")
+	destinations := flags.Bool("destinations", false, "print each destination type's option schema")
+	connections := flags.Bool("connections", false, "print each connection type's option schema")
+	if code, ok := program.Parse("schema", flags, args, stdout, stderr); !ok {
+		return code
 	}
 	if *nodes {
 		data, err := json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
@@ -240,11 +254,10 @@ func editorAPIKey(configFlag string) (string, error) {
 // runEditor serves the config API (GET /schema, POST /validate) for a config UI.
 func runEditor(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("editor", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	addr := flags.String("addr", ":8090", "listen address for the config API")
-	configFlag := flags.String("config", "", "path to Hookway YAML config (for API-key auth)")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	addr := flags.String("addr", ":8090", "the `ADDR` to listen on")
+	configFlag := flags.String("config", "", "config `FILE` whose security.api_key protects the API (default $HOOKWAY_CONFIG)")
+	if code, ok := program.Parse("editor", flags, args, stdout, stderr); !ok {
+		return code
 	}
 	apiKey, err := editorAPIKey(*configFlag)
 	if err != nil {
@@ -280,11 +293,10 @@ func hostPort(addr string) string {
 // runHealthcheck returns success when the target endpoint responds with any 2xx status.
 func runHealthcheck(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	url := flags.String("url", "http://127.0.0.1:8080/healthz", "health endpoint URL")
-	timeout := flags.Duration("timeout", 5*time.Second, "health request timeout")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	url := flags.String("url", "http://127.0.0.1:8080/healthz", "the `URL` to GET")
+	timeout := flags.Duration("timeout", 5*time.Second, "give up after `DURATION`")
+	if code, ok := program.Parse("healthcheck", flags, args, stdout, stderr); !ok {
+		return code
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
@@ -307,14 +319,40 @@ func runHealthcheck(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runServe loads config, connects the message queue publisher, and serves until shutdown.
+// newCapturer builds failure capture when the replay block is configured.
+func newCapturer(cfg flowconfig.Config, m *metrics.Metrics, logger *slog.Logger) (*capture.Capturer, error) {
+	if !cfg.Replay.Configured {
+		return nil, nil
+	}
+	host, _ := os.Hostname()
+	return capture.New(capture.Options{Config: cfg, Metrics: m, Logger: logger, CoreVersion: version, CoreInstance: host})
+}
+
+// newControlServer builds the control listener replay redrives through, when
+// the replay block is configured.
+func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metrics.Metrics, logger *slog.Logger) *control.Server {
+	if !cfg.Replay.Configured {
+		return nil
+	}
+	flows := make([]string, 0, len(cfg.Flows))
+	for name := range cfg.Flows {
+		flows = append(flows, name)
+	}
+	host, _ := os.Hostname()
+	ctl := cfg.Replay.Control
+	return control.New(control.Options{
+		Addr: ctl.Addr, Token: ctl.Token, MaxConcurrent: ctl.MaxConcurrent, MaxRecordBytes: cfg.Replay.MaxRecordBytes,
+		Flows: flows, Redriver: redriver, Metrics: m, Logger: logger, CoreVersion: version, CoreInstance: host,
+	})
+}
+
+// runServe loads config, connects the destinations, and serves until shutdown.
 func runServe(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("hookway", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	configFlag := flags.String("config", "", "path to Hookway YAML config")
-	versionFlag := flags.Bool("version", false, "print version and exit")
-	if err := flags.Parse(args); err != nil {
-		return 2
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	configFlag := flags.String("config", "", "the config `FILE` (default $HOOKWAY_CONFIG)")
+	versionFlag := flags.Bool("version", false, "print the version and exit")
+	if code, ok := program.Parse("serve", flags, args, stdout, stderr); !ok {
+		return code
 	}
 	if *versionFlag {
 		writef(stdout, "hookway %s (%s)\n", version, commit)
@@ -364,9 +402,24 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 			logger.Warn("rabbitmq TLS certificate verification is disabled (destinations.<id>.rabbitmq.tls.insecure_skip_verify=true); do not use this in production", "destination_id", id)
 		}
 	}
-	publisher, err := queue.NewFactory(queue.FactoryOptions{Metrics: appMetrics, Logger: logger}).Create(context.Background(), cfg)
+	capturer, err := newCapturer(flowCfg, appMetrics, logger)
+	if err != nil {
+		logger.Error("replay capture setup failed", "error", err)
+		return 1
+	}
+	closeCapturer := func() {
+		if capturer != nil {
+			_ = capturer.Close()
+		}
+	}
+	factoryOpts := queue.FactoryOptions{Metrics: appMetrics, Logger: logger}
+	if capturer != nil {
+		factoryOpts.OnTerminalFailure = capturer.OnTerminalFailure
+	}
+	publisher, err := queue.NewFactory(factoryOpts).Create(context.Background(), cfg)
 	if err != nil {
 		logger.Error("message queue connection failed", "error", err)
+		closeCapturer()
 		return 1
 	}
 
@@ -374,22 +427,11 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		logger.Error("flow server failed", "error", err)
 		_ = publisher.Close()
+		closeCapturer()
 		return 1
 	}
+	flowApp.SetCapturer(capturer)
 	app := flowApp
-
-	var replayStore *replaystore.Store
-	if cfg.Replay.Enabled {
-		replayStore, err = replaystore.New(context.Background(), cfg.Replay, logger)
-		if err != nil {
-			logger.Error("replay store connection failed", "error", err)
-			_ = app.Close()
-			_ = publisher.Close()
-			return 1
-		}
-		app.SetReplayCapturer(replayStore)
-		logger.Info("replay capture enabled")
-	}
 
 	probeCtx, cancelProbe := context.WithCancel(context.Background())
 	proberDone := app.StartReadinessProbe(probeCtx)
@@ -424,25 +466,13 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		}()
 	}
 
-	var replaySrv *http.Server
-	var stopCleanup func()
-	if replayStore != nil {
-		cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
-		cleanupDone := replayStore.StartCleanup(cleanupCtx, cfg.Replay.TTL, cfg.Replay.MaxEvents, cfg.Replay.CleanupInterval, appMetrics)
-		stopCleanup = func() {
-			cancelCleanup()
-			select {
-			case <-cleanupDone:
-			case <-time.After(replayCleanupShutdownWait):
-				logger.Warn("replay cleanup did not stop within timeout")
-			}
-		}
-
-		replaySrv = replayapi.NewServer(cfg.Replay.Addr, cfg.Security.APIKey, replayStore, publisher, nil, appMetrics, logger)
+	ctl := newControlServer(flowCfg, flowApp, appMetrics, logger)
+	if ctl != nil {
+		controlHTTP := ctl.HTTPServer()
 		go func() {
-			logger.Info("hookway replay API listening", "addr", cfg.Replay.Addr)
-			if err := replaySrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logger.Error("replay API server stopped", "error", err)
+			logger.Info("hookway control listener", "addr", controlHTTP.Addr)
+			if err := controlHTTP.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("control listener stopped", "error", err)
 				errs <- err
 			}
 		}()
@@ -451,14 +481,23 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	closers := []io.Closer{app, publisher}
-	if replayStore != nil {
-		closers = []io.Closer{replayStore, app, publisher}
+	if capturer != nil {
+		closers = append(closers, capturer) // after the publisher: draining engines can still capture
+	}
+	servers := []shutdowner{srv}
+	if metricsSrv != nil {
+		servers = append(servers, metricsSrv)
+	}
+	if ctl != nil {
+		// Its Shutdown waits for in-flight redrives, so the publishers they
+		// deliver through close only after those finish.
+		servers = append(servers, ctl)
 	}
 	res := servingResources{
 		logger:  logger,
 		signals: signals,
-		servers: []*http.Server{srv, metricsSrv, replaySrv},
-		after:   []func(){stopCleanup, stopProbe},
+		servers: servers,
+		after:   []func(){stopProbe},
 		closers: closers,
 	}
 

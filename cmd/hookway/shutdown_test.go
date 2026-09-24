@@ -31,7 +31,7 @@ func TestDrainClosesInOrderAndJoinsErrors(t *testing.T) {
 	res := servingResources{
 		after: []func(){func() { afterCalled = true }},
 		closers: []io.Closer{
-			orderCloser{name: "replay", order: &order, err: errors.New("replay close")},
+			orderCloser{name: "first", order: &order, err: errors.New("first close")},
 			orderCloser{name: "flow", order: &order, err: errors.New("flow close")},
 			orderCloser{name: "publisher", order: &order},
 		},
@@ -40,11 +40,11 @@ func TestDrainClosesInOrderAndJoinsErrors(t *testing.T) {
 	if !afterCalled {
 		t.Fatal("in-flight wait (after) was not called")
 	}
-	if err == nil || !strings.Contains(err.Error(), "replay close") || !strings.Contains(err.Error(), "flow close") {
+	if err == nil || !strings.Contains(err.Error(), "first close") || !strings.Contains(err.Error(), "flow close") {
 		t.Fatalf("joined errors = %v", err)
 	}
-	if len(order) != 3 || order[0] != "replay" || order[1] != "flow" || order[2] != "publisher" {
-		t.Fatalf("close order = %v, want replay, flow, publisher", order)
+	if len(order) != 3 || order[0] != "first" || order[1] != "flow" || order[2] != "publisher" {
+		t.Fatalf("close order = %v, want first, flow, publisher", order)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestDrainShutsDownEveryListenerIncludingMain(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	res := servingResources{servers: []*http.Server{mainSrv, auxSrv}}
+	res := servingResources{servers: []shutdowner{mainSrv, auxSrv}}
 	if err := res.drain(ctx); err != nil {
 		t.Fatalf("drain: %v", err)
 	}

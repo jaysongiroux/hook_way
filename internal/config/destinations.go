@@ -267,11 +267,8 @@ type rawRabbitMQQueueOptions struct {
 	DeadLetterRoutingKey string `yaml:"dead_letter_routing_key"`
 }
 
-// rawPostgresConfig is the YAML mirror of PostgresConfig, shared by every raw
-// config block that embeds a Postgres connection: postgres destinations
-// (rawDestinationConfig.Postgres) and the replay store (rawConfig.Replay.Postgres,
-// see config.go). Keeping one raw shape (and one convertPostgresConfig below)
-// means ${ENV} expansion and TLS fields behave identically for both.
+// rawPostgresConfig is the YAML mirror of PostgresConfig, used by postgres
+// destinations (rawDestinationConfig.Postgres).
 type rawPostgresConfig struct {
 	URL      string `yaml:"url"`
 	Schema   string `yaml:"schema"`
@@ -287,8 +284,7 @@ type rawPostgresConfig struct {
 }
 
 // convertPostgresConfig maps a raw postgres connection block to the typed
-// PostgresConfig, defaulting Schema to "public" when omitted. Shared by the
-// postgres-destination conversion path and the replay store's conversion path.
+// PostgresConfig, defaulting Schema to "public" when omitted.
 func convertPostgresConfig(raw rawPostgresConfig) PostgresConfig {
 	return PostgresConfig{
 		URL:      raw.URL,

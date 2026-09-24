@@ -81,7 +81,7 @@ func mongoTLSSet(c config.MongoTLSConfig) bool {
 }
 
 // buildMongoTLSConfig assembles a *tls.Config from the Mongo TLS options.
-// It mirrors buildPostgresTLSConfig so the two stay consistent.
+// It mirrors tlsfiles.Files.Build so the two stay consistent.
 func buildMongoTLSConfig(c config.MongoTLSConfig) (*tls.Config, error) {
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if c.ServerName != "" {

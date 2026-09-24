@@ -62,8 +62,11 @@ than types are holding, are enumerated in
 make dev-up
 ```
 
-`make dev-up` brings up `examples/docker-compose.yaml`: RabbitMQ plus Hookway
-running `examples/config.yaml`.
+`make dev-up` brings up `examples/docker-compose.yaml`: Hookway, RabbitMQ, a
+second HTTP destination, and the replay service with its PostgreSQL store.
+Core runs `examples/dev/core.yaml`, the GitHub flow from `examples/config.yaml`
+fanned out to both destinations. [Local Development](docs/local-development.md)
+shows how to take one destination down and retry what it missed.
 
 **The default signing secret is `change-me`.** The compose file defaults
 `GITHUB_WEBHOOK_SECRET` to `change-me` and `RABBITMQ_URL` to
@@ -104,7 +107,7 @@ make validate
 Add `--strict` for the CI-grade check: it promotes lint warnings (a flow with
 no `rate_limit`, a `code` node with no explicit `timeout`, and the like) to
 blocking errors, so a warning cannot ride into `main` unnoticed. It works on
-both the text and `--json` output. See [CLI § Validate](docs/cli.md#validate).
+both the text and `--json` output. See [CLI § hookway validate](docs/cli.md#hookway-validate).
 
 ```bash
 go run ./cmd/hookway validate --config examples/config.yaml --strict
@@ -136,7 +139,6 @@ go run ./cmd/hookway --config examples/config.yaml
 - `GET /readyz` reports the same cached readiness state as `/ready`.
 - `GET /health` is a liveness alias for `/healthz` (it does NOT report readiness), so infrastructure treating `/health` as a liveness probe will not restart pods on transient destination outages.
 - `GET /metrics` exposes Prometheus metrics when enabled.
-- When `replay` is enabled, captured events can be listed, inspected, and re-delivered via a protected API on a separate `replay.addr` listener. See [Configuration § Replay](docs/configuration.md#replay) and [Security § Replay](docs/security.md#replay).
 
 Successful webhook response:
 
@@ -180,6 +182,22 @@ Immutable conflicts (e.g., FIFO vs standard queue type) always fail startup rega
 
 **IAM Note:** The default `reconcile` mode requires additional IAM permissions (`sqs:SetQueueAttributes` or `sns:SetTopicAttributes`). If operating under least-privilege IAM policies that cannot grant these permissions, set `on_existing_conflict: warn` or `on_existing_conflict: error` instead.
 
+## Replay failed deliveries (optional)
+
+A sender that got a 2xx will not send the event again. So when a destination
+misses it afterwards (a `skip_failed` publish that failed, or an async webhook
+that ran out of retries), the event is gone unless something kept it. The
+replay service (`hookway-replay`) is that something: add a `replay:` block to
+core's config and core hands each of those failures to it. From there you
+list what failed and why, download the payload, and retry or dismiss it
+through the replay API. A retry picks the flow up at the node that failed,
+under the configuration you run today, so destinations that already got the
+event are not sent it again.
+
+`make dev-up` runs it by default. See [docs/replay-service.md](docs/replay-service.md)
+for the API and operations, [docs/cli.md](docs/cli.md#hookway-replay) for its
+commands, and [examples/replay](examples/replay) for a two-replica setup.
+
 ## Config builder
 
 The web UI at `/builder` (served by `hookway editor` after `make ui`, or via
@@ -206,9 +224,9 @@ which is generated and gitignored. Without it `make web-dev` serves a 404 for
 that file and in-browser validation is **silently** dead — the page still
 loads and still looks like it validated. (`make ui` and `make web-e2e` both
 depend on `wasm`; `make web-dev` does not.) See
-[CLI § WASM validator](docs/cli.md#wasm-validator).
+[CLI § hookway-wasm](docs/cli.md#hookway-wasm).
 
-See [CLI § Editor API](docs/cli.md#editor-api).
+See [CLI § hookway editor](docs/cli.md#hookway-editor).
 
 ## Development
 
@@ -225,8 +243,11 @@ make mongodb-integration-test
 make kafka-integration-test
 make webhook-integration-test
 make temporal-integration-test
-make replaystore-integration-test
-make test-all              # go test ./... -count=1 — unit plus ALL NINE container suites
+make replay-integration-test # replay store, API, workers, two replicas (PostgreSQL testcontainer)
+make replay-acceptance-test  # the real hookway + hookway-replay binaries, two replicas each
+make compose-e2e-test        # deploy the make dev-up stack in Docker; record and replay a missed delivery
+make bench-replay          # capture overhead and replay ingest benchmarks
+make test-all              # go test ./... -count=1 — unit plus every container suite
 make lint
 make web-install && make docker-build   # docker-build depends on `make ui`, which needs node_modules
 make vuln-scan
@@ -235,7 +256,7 @@ make vuln-scan
 `make test-all` is `go test ./... -count=1` with no `-short`, so it is not
 "unit + RabbitMQ + AWS + Redis": it runs every container-backed suite —
 RabbitMQ, AWS (LocalStack), Redis, Postgres, MongoDB, Kafka, Webhook,
-Temporal, and the replay store. Those suites self-skip when Docker is
+and Temporal. Those suites self-skip when Docker is
 unavailable.
 
 `make test-examples` walks `examples/`, so a new file there is picked up
@@ -254,9 +275,14 @@ clone or it fails with `vite: not found`.
 
 GitHub Actions is split across **four** workflow files. Three are entrypoints; the fourth holds the actual gate.
 
-- **Reusable CI** (`.github/workflows/reusable-ci.yml`) — the gate itself, called by both CI and Release via `workflow_call`. All 13 jobs live here and run in parallel: **Go** (unit, invariant conformance, vet, `go mod tidy -diff`, deadcode), **Go race**, **Examples**, **Web** (npm install, node-schema drift, vitest, knip), **Web e2e** (Playwright), **Image** (docker build + `ui-check` + Trivy), **golangci-lint**, **govulncheck**, **Coverage**, **Formatting** (gofmt + `git diff --check`), **Observability** (Grafana dashboard tests + promtool on `deploy/alerts.yaml`), a 9-way **integration** matrix (RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, Webhook, Temporal, Replay store), and **All checks passed**, the single required status that `needs:` every one of the others. Any of them failing — including `golangci-lint`, `govulncheck`, `Coverage`, `Formatting`, and `Observability` — blocks the PR.
+- **Reusable CI** (`.github/workflows/reusable-ci.yml`) — the gate itself, called by both CI and Release via `workflow_call`. Its jobs run in three stages, and each stage starts only after every job in the one before has passed:
+  1. **Lint** — **Formatting** (gofmt + `git diff --check`), **golangci-lint**, **govulncheck**, **Static checks** (vet, `go mod tidy -diff`, deadcode), and **Web lint** (node-schema drift, knip).
+  2. **Test** — **Go** (unit + invariant conformance), **Go race**, **Examples**, **Web** (vitest), **Coverage**, and **Observability** (Grafana dashboard tests + promtool on `deploy/alerts.yaml`).
+  3. **Deploy** — **Web e2e** (Playwright), **Image** (docker build of the core and replay images, a smoke run, `ui-check`, and Trivy on both), and an 11-way **integration** matrix: RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, Webhook, Temporal, Replay, Replay acceptance, and **Compose end-to-end** (the default `examples/docker-compose.yaml` stack, driven with signed webhooks through a capture and a replay).
+
+  A lint failure skips the tests, and a test failure skips the containers, so a typo costs a few minutes instead of a full integration run. **All checks passed** is the single required status; it `needs:` every job and treats a skipped job as a failure.
 - **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. A thin caller of Reusable CI; nothing is published. The **Examples** job validates the enumerated configs under `examples/` and then boots each one, POSTing a signed request to every flow so the files we document cannot drift from what the server actually runs.
-- **Release** (`.github/workflows/release.yml`) — pushing a `v*` tag (or dispatching the workflow with an existing tag). Re-runs Reusable CI, publishes the Docker image, syncs the Docker Hub description from `docs/dockerhub/README.md`, and creates a GitHub Release with generated notes. Pushes to `main` do not publish.
+- **Release** (`.github/workflows/release.yml`) — pushing a `v*` tag (or dispatching the workflow with an existing tag). Re-runs Reusable CI and, only once it passes, publishes the core and replay Docker images, syncs the Docker Hub description from `docs/dockerhub/README.md`, and creates a GitHub Release with generated notes. Pushes to `main` do not publish.
 - **Security** (`.github/workflows/security.yml`) — weekly, on demand, and when `go.mod` / Docker / lockfiles change on `main`. Runs `govulncheck` and a Trivy image scan uploaded to GitHub code scanning.
 
 Cut a release from a commit already on `main`:

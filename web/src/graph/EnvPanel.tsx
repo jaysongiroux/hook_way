@@ -15,6 +15,7 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const otherFlows = useGraphStore((s) => s.otherFlows);
   const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
+  const flowExtra = useGraphStore((s) => s.flowExtra);
   let vars: string[] = [];
   try {
     const doc: GraphDocument = {
@@ -27,6 +28,7 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
       activeFlow,
       otherFlows,
       deliveryFailurePolicy,
+      flowExtra,
     };
     const { config } = toConfig(doc);
     vars = scanEnvVars(toYaml(config));

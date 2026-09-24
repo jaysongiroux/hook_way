@@ -22,8 +22,6 @@ func TestReviewCodeBodyReachesPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = srv.Close() })
-	capture := &fakeReplayCapturer{}
-	srv.SetReplayCapturer(capture)
 	body := `{"original":true}`
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/github", strings.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC([]byte(body)))
@@ -35,10 +33,6 @@ func TestReviewCodeBodyReachesPublisher(t *testing.T) {
 	got := pub.published[0].msg.Body.(map[string]any)
 	if got["changed"] != true || got["original"] != nil {
 		t.Fatalf("published original body: %#v", got)
-	}
-	captured := capture.capturedEvents()
-	if len(captured) != 1 || captured[0].Envelope.Body.(map[string]any)["changed"] != true {
-		t.Fatalf("replay retained original body: %+v", captured)
 	}
 }
 
@@ -68,7 +62,7 @@ func TestReviewStandaloneLookupFailsBeforeTraffic(t *testing.T) {
 	}
 }
 
-func TestReviewCustomAuthCredentialsStayOutOfCodeAndCapture(t *testing.T) {
+func TestReviewCustomAuthCredentialsStayOutOfPublishedMessage(t *testing.T) {
 	for _, source := range []string{"header", "query"} {
 		t.Run(source, func(t *testing.T) {
 			src := strings.Replace(testFlowYAML, "scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256", "scheme: exact, secret: credential, source: {kind: "+source+", key: X-Partner}", 1)
@@ -81,8 +75,6 @@ func TestReviewCustomAuthCredentialsStayOutOfCodeAndCapture(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = srv.Close() })
-			capture := &fakeReplayCapturer{}
-			srv.SetReplayCapturer(capture)
 			path := "/webhooks/github"
 			if source == "query" {
 				path += "?X-Partner=credential"
@@ -96,12 +88,15 @@ func TestReviewCustomAuthCredentialsStayOutOfCodeAndCapture(t *testing.T) {
 			if rec.Code != 202 {
 				t.Fatalf("%d %s", rec.Code, rec.Body.String())
 			}
-			data, err := json.Marshal(capture.capturedEvents())
+			if len(pub.published) != 1 {
+				t.Fatalf("published = %d, want 1", len(pub.published))
+			}
+			data, err := json.Marshal(pub.published[0].msg)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if strings.Contains(string(data), "credential") {
-				t.Fatalf("credential leaked: %s", data)
+				t.Fatalf("credential leaked into the published message: %s", data)
 			}
 		})
 	}
@@ -125,8 +120,6 @@ func TestReviewDynamicTargetWorksThroughRealFactory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = srv.Close() }()
-	capture := &fakeReplayCapturer{}
-	srv.SetReplayCapturer(capture)
 	body := `{"ok":true}`
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/tenant", strings.NewReader(body))
 	req.Header.Set("X-Hub-Signature-256", githubHMAC([]byte(body)))
@@ -135,8 +128,13 @@ func TestReviewDynamicTargetWorksThroughRealFactory(t *testing.T) {
 	if rec.Code != 202 {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	outcomes := capture.recordedOutcomes()
-	if len(outcomes) != 1 || outcomes[0].deliveries[0].Target != "tenant-webhooks" {
-		t.Fatalf("replay target is not rendered: %+v", outcomes)
+	var resp struct {
+		Destinations []map[string]string `json:"destinations"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Destinations) != 1 || resp.Destinations[0]["queue"] != "tenant-webhooks" {
+		t.Fatalf("rendered target not reported: %s", rec.Body.String())
 	}
 }

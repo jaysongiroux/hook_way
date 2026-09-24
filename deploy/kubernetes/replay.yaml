@@ -1,0 +1,100 @@
+# The replay service: two replicas sharing one PostgreSQL database. Run
+# migrate-job.yaml first; serve refuses to start on an older schema.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hookway-replay
+data:
+  replay.yaml: |
+    server:
+      addr: ":8080"
+    metrics:
+      enabled: true
+      path: /metrics
+      addr: ":9091"
+    database:
+      url: "${REPLAY_DATABASE_URL}"
+      max_conns: 10
+    core:
+      control_url: "http://hookway-core-control:9092"
+      control_token: "${REPLAY_CONTROL_TOKEN}"
+    retention:
+      ttl: 168h
+      max_records: 1000000
+      max_bytes: 107374182400
+      max_record_bytes: 16777216
+      gc_interval: 15m
+    workers:
+      concurrency: 4
+      execution_timeout: 30s
+      lease: 60s
+    keys:
+      - name: core
+        token: "${REPLAY_CAPTURE_TOKEN}"
+        scopes: [capture]
+      - name: operator
+        token: "${REPLAY_OPERATOR_TOKEN}"
+        scopes: [read, payload, retry]
+      # Prometheus scrapes with its own key, which can do nothing else.
+      - name: prometheus
+        token: "${REPLAY_METRICS_TOKEN}"
+        scopes: [metrics]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hookway-replay
+  labels: {app.kubernetes.io/name: hookway-replay}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: hookway-replay}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: hookway-replay}
+    spec:
+      # Longer than workers.execution_timeout, so in-flight runs finalize.
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: replay
+          image: hookway-replay:latest
+          args: ["serve", "--config", "/etc/hookway-replay/replay.yaml"]
+          env:
+            - name: REPLAY_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: database-url}}
+            - name: REPLAY_CONTROL_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: control-token}}
+            - name: REPLAY_CAPTURE_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: capture-token}}
+            - name: REPLAY_OPERATOR_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: operator-token}}
+            - name: REPLAY_METRICS_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: metrics-token}}
+          ports:
+            - {name: api, containerPort: 8080}
+            - {name: metrics, containerPort: 9091}
+          readinessProbe:
+            httpGet: {path: /readyz, port: api}
+          livenessProbe:
+            httpGet: {path: /healthz, port: api}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/hookway-replay, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: hookway-replay}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hookway-replay
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: hookway-replay}
+  ports:
+    - {name: api, port: 8080, targetPort: api}

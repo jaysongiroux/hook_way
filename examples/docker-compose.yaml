@@ -1,3 +1,28 @@
+# `make dev-up`: Hookway, RabbitMQ, and the replay service, with no setup.
+#
+#   hookway      core, on http://localhost:8080 (GitHub flow at /webhooks/github)
+#   rabbitmq     the main destination; management UI on http://localhost:15672
+#   notify-sink  a second destination: `docker compose stop notify-sink` to
+#                make its delivery fail while RabbitMQ still succeeds
+#   replay       keeps the deliveries that failed after the sender got its 202;
+#                API on http://localhost:8081
+#   postgres     the replay service's store (not published to the host)
+#   migrate      applies the replay schema once, then exits
+#
+# Core's config is dev/core.yaml; the replay service's is dev/replay.yaml.
+# docs/local-development.md walks through capturing and retrying a failure.
+#
+# Every variable below falls back to a working dev default. Export your own
+# before `make dev-up` to override one. The RabbitMQ host must stay
+# `rabbitmq` (the compose service name), not `localhost`: the URL is resolved
+# inside the container. The token defaults are for local use only.
+x-replay-env: &replay-env
+  REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:-dev-capture-token-0123456789abcdef}
+  REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:-dev-control-token-0123456789abcdef}
+  REPLAY_OPERATOR_TOKEN: ${REPLAY_OPERATOR_TOKEN:-dev-operator-token-0123456789abcde}
+  REPLAY_METRICS_TOKEN: ${REPLAY_METRICS_TOKEN:-dev-metrics-token-0123456789abcdefg}
+  REPLAY_DATABASE_URL: postgres://replay:replay@postgres:5432/replay?sslmode=disable
+
 services:
   rabbitmq:
     image: rabbitmq:3-management
@@ -7,22 +32,80 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
 
   hookway:
     build:
       context: ..
       dockerfile: Dockerfile
+      target: core
+    # Longer than the replay service's execution_timeout plus core's
+    # shutdown_timeout, so `docker compose stop` lets in-flight retries finish.
+    stop_grace_period: 60s
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
+      notify-sink:
+        condition: service_started
     ports:
       - "8080:8080"
     environment:
       HOOKWAY_CONFIG: /etc/hookway/config.yaml
-      # Both fall back to a working dev default, so `make dev-up` needs no
-      # setup. Exporting either variable before `make dev-up` overrides it --
-      # note the RabbitMQ host must be `rabbitmq` (the compose service name),
-      # not `localhost`, because the URL is resolved inside the container.
       RABBITMQ_URL: ${RABBITMQ_URL:-amqp://guest:guest@rabbitmq:5672/}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-change-me}
+      REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:-dev-capture-token-0123456789abcdef}
+      REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:-dev-control-token-0123456789abcdef}
     volumes:
-      - ./config.yaml:/etc/hookway/config.yaml:ro
+      - ./dev/core.yaml:/etc/hookway/config.yaml:ro
+
+  notify-sink:
+    image: hashicorp/http-echo:1.0
+    command: ["-listen=:8080", "-text=ok"]
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: replay
+      POSTGRES_PASSWORD: replay
+      POSTGRES_DB: replay
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U replay -d replay"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: replay
+    command: ["migrate", "--config", "/etc/hookway-replay/replay.yaml"]
+    environment: *replay-env
+    volumes:
+      - ./dev/replay.yaml:/etc/hookway-replay/replay.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  replay:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: replay
+    command: ["serve", "--config", "/etc/hookway-replay/replay.yaml"]
+    # Longer than workers.execution_timeout, so in-flight runs finalize.
+    stop_grace_period: 45s
+    environment: *replay-env
+    volumes:
+      - ./dev/replay.yaml:/etc/hookway-replay/replay.yaml:ro
+    ports:
+      # Not 8090: `hookway editor` defaults to it.
+      - "8081:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

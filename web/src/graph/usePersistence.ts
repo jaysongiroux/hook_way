@@ -39,6 +39,7 @@ export function usePersistence(): void {
             activeFlow: state.activeFlow,
             otherFlows: state.otherFlows,
             deliveryFailurePolicy: state.deliveryFailurePolicy,
+            flowExtra: state.flowExtra,
           }),
         DEBOUNCE_MS,
       );

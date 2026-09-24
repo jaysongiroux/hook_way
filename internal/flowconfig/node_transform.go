@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -105,16 +106,20 @@ func (n transformNode) changedFields(env graph.Envelope) (graph.Payload, error) 
 	if name == "" {
 		name = "changed_fields"
 	}
-	if env.Vars == nil {
-		env.Vars = map[string]string{}
+	// Copy before writing: nodes never mutate their input (I19).
+	vars := maps.Clone(env.Vars)
+	if vars == nil {
+		vars = map[string]string{}
 	}
-	env.Vars[name] = encoded
+	vars[name] = encoded
+	env.Vars = vars
 	return env, nil
 }
 
 func (n transformNode) fieldMap(env graph.Envelope) (graph.Payload, error) {
 	body := env.Body
-	varsOut := env.Vars
+	// Copy before writing: nodes never mutate their input (I19).
+	varsOut := maps.Clone(env.Vars)
 	if varsOut == nil {
 		varsOut = map[string]string{}
 	}

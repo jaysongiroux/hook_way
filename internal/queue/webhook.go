@@ -148,7 +148,7 @@ func (p *WebhookPublisher) provisionDelivery(_ context.Context, base *webhookDel
 func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
 	d, err := p.delivery.resolve(ctx, target, p.provisionDelivery)
 	if err != nil {
-		return fmt.Errorf("webhook %q: target %q is not configured", p.destID, target)
+		return targetNotConfiguredError{kind: "webhook", destID: p.destID, target: target}
 	}
 	if p.urlTemplate.HasPlaceholders() {
 		// Templated destination url: render the base from the event's routing
@@ -169,16 +169,20 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 		rendered.url = joinWebhookURL(base, d.target)
 		d = &rendered
 	}
-	if p.syncMode {
-		_, _, err := d.run(ctx, msg, p.metrics)
+	if p.syncMode || InlineDelivery(ctx) {
+		// The caller waits for the real outcome. An inline delivery (a
+		// redrive) never dead-letters, even on an async destination with
+		// dead_letter configured: the caller owns the failure.
+		outcome, attempts, err := d.run(ctx, msg, p.metrics)
 		if err != nil {
-			return fmt.Errorf("webhook %q: %w", p.destID, err)
+			return fmt.Errorf("webhook %q: %w", p.destID, &DeliveryError{Outcome: outcome, Attempts: attempts, Err: err})
 		}
 		return nil
 	}
-	if err := p.engine.Enqueue(webhookJob{delivery: d, msg: msg}); err != nil {
+	origin, _ := OriginFrom(ctx)
+	if err := p.engine.Enqueue(webhookJob{delivery: d, msg: msg, origin: origin}); err != nil {
 		reason := "engine_closing"
-		if errors.Is(err, errWebhookQueueFull) {
+		if errors.Is(err, ErrWebhookQueueFull) {
 			reason = "queue_full"
 		}
 		if p.metrics != nil {
@@ -194,6 +198,14 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 func (p *WebhookPublisher) setDeadLetterPublisher(fn deadLetterFunc) {
 	if p.engine != nil {
 		p.engine.setDeadLetter(fn)
+	}
+}
+
+// setTerminalFailure wires the terminal-failure callback onto the owned
+// engine. No-op in sync mode: a sync failure returns to the caller.
+func (p *WebhookPublisher) setTerminalFailure(fn TerminalFailureFunc) {
+	if p.engine != nil {
+		p.engine.setTerminalFailure(fn)
 	}
 }
 
@@ -237,7 +249,7 @@ func webhookTLSSet(c config.WebhookTLSConfig) bool {
 	return c.CACert != "" || c.ClientCert != "" || c.ClientKey != "" || c.ServerName != "" || c.InsecureSkipVerify
 }
 
-// buildWebhookTLSConfig mirrors buildTLSConfig (rabbitmq) / buildPostgresTLSConfig.
+// buildWebhookTLSConfig mirrors buildTLSConfig (rabbitmq) / tlsfiles.Files.Build.
 func buildWebhookTLSConfig(c config.WebhookTLSConfig) (*tls.Config, error) {
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if c.ServerName != "" {

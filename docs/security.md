@@ -129,7 +129,7 @@ For horizontally scaled deployments, enforce global quotas at a shared edge or g
 
 ## Replay Protection
 
-Replay protection is process-local. By default it keys on a hash of raw body bytes; an explicit key can use headers/path variables. A replay can pass on another replica (N pods permit N reservations). Hookway has no cluster-wide replay guard; the optional replay capture database does not provide one. Consumers must deduplicate.
+Replay protection is process-local. By default it keys on a hash of raw body bytes; an explicit key can use headers/path variables. A replay can pass on another replica (N pods permit N reservations). Hookway has no cluster-wide replay guard. Consumers must deduplicate.
 
 ## Header Redaction and Allowlisting
 
@@ -160,7 +160,32 @@ Hookway does not durably spool requests locally. With `stop_on_failure`, a webho
 
 The webhook publish itself runs detached from the inbound HTTP request's context (`server.publish_timeout`, default `10s`, matching `write_timeout`/`shutdown_timeout`): once the request body is read and the signature verified, a sender disconnect or client-side timeout no longer aborts the in-flight fan-out, since that work is already committed to being delivered. The detached publish is still bounded by `server.publish_timeout` so a stalled destination cannot hang a delivery indefinitely; exceeding it fails the publish (surfaced as `503`) the same as any other publish error. Config validation requires `publish_timeout <= shutdown_timeout` and `publish_timeout <= write_timeout`: a sync-mode publish that outlives either would make a clean shutdown falsely report failure, or make the sender see a spurious timeout and retry after the response can no longer be written.
 
-**Readiness:** `/ready` and `/readyz` report **per flow**. Each unique destination is probed once per interval (O(unique destinations), not O(flows × destinations)). A flow is ready when every destination its `publish` nodes reference is ready. The HTTP status is **200 while at least one flow is ready**, so one saturated destination cannot take an unrelated flow out of load-balancer rotation (D9). Set `server.readiness_require_all: true` for 503 if any flow is unready. When replay capture is enabled, a down replay store marks every flow unready. An async webhook destination reports not-ready once its delivery queue reaches 90% of capacity. `/health`/`/healthz` stay liveness-only and never reflect destination or replay-store readiness.
+**Readiness:** `/ready` and `/readyz` report **per flow**. Each unique destination is probed once per interval (O(unique destinations), not O(flows × destinations)). A flow is ready when every destination its `publish` nodes reference is ready. The HTTP status is **200 while at least one flow is ready**, so one saturated destination cannot take an unrelated flow out of load-balancer rotation (D9). Set `server.readiness_require_all: true` for 503 if any flow is unready. An async webhook destination reports not-ready once its delivery queue reaches 90% of capacity. `/health`/`/healthz` stay liveness-only and never reflect destination readiness.
+
+## Failure capture
+
+With the `replay:` block configured, core uploads captured failures to the
+replay service: each record holds the failed node's input — the request body
+and, for proxy redrive, the original headers — plus the payload being sent.
+The replay service stores them until retention expires, so treat its database
+like the destinations it can redrive into: keep `replay.url` and the control
+listener (`replay.control.addr`) on private networks, encrypt replay's
+storage, and treat `capture_token` and `control.token` as secrets. Metadata
+never carries credentials: error messages keep only the scheme and host of
+any URL, and `node_config_hash` and `destination_hash` are computed with
+secret-named fields, header maps, URL userinfo, queries, and fragments, and
+`key=value` secrets removed. Snapshot and payload bytes are never logged.
+See [replay-service.md § Security](replay-service.md#security).
+
+The control listener lets whoever holds `control.token` make core run any
+node of any flow with a snapshot of their choosing — skipping the
+authentication, `replay_guard`, and rate limits upstream of that node — and so
+deliver arbitrary payloads to any configured destination. Anyone who can
+write to the replay service's database can do the same through a retry. Bind
+the listener to a private interface or network, never expose it through the
+ingress that serves webhooks, restrict database access like a destination
+credential, and rotate the token like one. The token is compared in constant
+time and never logged.
 
 ## Logging
 
@@ -187,18 +212,6 @@ scrape_configs:
     static_configs:
       - targets: ["hookway:9090"]
 ```
-
-## Replay
-
-The optional replay store and its API (see [Configuration § Replay](configuration.md#replay)) re-deliver past webhook events to their original destinations, so it carries its own authentication and isolation requirements beyond the read-only metrics/config-API key.
-
-- **Separate listener.** The replay API is served on `replay.addr`, a dedicated listener distinct from the public webhook port (`server.addr`). Keep `replay.addr` off the internet-facing network path and behind the same network controls (firewalls, private subnets, VPN) you'd use for any admin-plane traffic — it is not designed to be reachable from the same network as webhook senders.
-- **Mandatory authentication.** `replay.enabled: true` requires a non-empty `security.api_key`; config validation rejects the config otherwise. This is enforced (not merely recommended) because the replay API is not read-only — `POST /replay/replay` and `POST /replay/events/{id}/replay` re-inject stored payloads into live destinations, so an unauthenticated instance of this API would let anyone replay arbitrary captured traffic. Callers authenticate the same way as the metrics endpoint: `Authorization: Bearer <security.api_key>`.
-- **Capture scope.** Only events that pass the flow's own authentication are ever captured — a request that fails auth verification is rejected before capture, so the replay store cannot become a side channel for unauthenticated payloads. Set `replay.skip_unauthenticated: true` to additionally exclude `no_auth` flows from capture, since those flows have no caller identity to attribute a captured event to.
-- **Best-effort capture, readiness-gated store.** Writing a captured event (or its delivery outcome) to the replay store is strictly best-effort: a store error or panic is caught, logged, and counted in `hookway_replay_capture_failures_total{op}` — it never blocks the webhook response or changes its status code. When replay is enabled, the store's reachability is AND-joined into every flow's readiness (and exposed as `hookway_replay_store_up`) so a store outage does not silently accept events that cannot be captured. Unrelated *destination* failures still do not sideline healthy flows. `/health`/`/healthz` stay liveness-only.
-- **Replay identity and idempotency.** A replayed event is always a new envelope: fresh `id`, `replay_of` set to the original event id, hop count reset to `0`. Consumers that dedupe on `id` (the documented contract) process every replay as a new event; correlate with `replay_of`. `reprocess` only changes `idempotency_key`, which ingest leaves empty — `false` keeps the stored value, `true` mints a new UUID. That flag only matters for consumers still keyed on `idempotency_key`.
-- **Failed and unattempted routes are replayable.** On `stop_on_failure`, the first failed destination and any routes not yet attempted are recorded as `failed` delivery rows, so `POST /replay/events/{id}/replay` has a destination list even when the inbound webhook returned `503`.
-- **Proxy-mode webhook replay.** Capture persists the original raw body (`raw_body_base64`) and unredacted request headers (`orig_headers`) in the replay store so a proxy-mode webhook destination can be reconstructed on replay. Those fields are store-only — they are not published to other destinations.
 
 ## Sync proxy (`http_request` / `respond`)
 
@@ -287,7 +300,6 @@ A `code` node with no explicit `timeout` is a config warning; the 1s default sti
 - Tune `destinations.<id>.rabbitmq.publisher_channels` to the desired publish concurrency per destination (default 8).
 - Tune `server.fanout_concurrency` to bound per-request goroutines and concurrent publishes across fan-out routes (default 8).
 - Serve metrics on a private port via `metrics.addr` so `/metrics` is not exposed on the internet-facing webhook listener.
-- If `replay` is enabled, keep `replay.addr` off the internet-facing network path (private port/network, same as `metrics.addr`) and always set `security.api_key` — config validation already requires it, but treat the key with the same care as any credential capable of re-injecting webhook traffic. A replay-store outage reports the pod not-ready so traffic is shed until the store is reachable again.
 - Forward structured logs and Prometheus metrics to centralized systems, and alert on auth failures, rate limits, saturation (`hookway_saturated_total`), publish failures, and readiness failures.
 - Set `security.forwarded_header_allowlist` so only intended headers reach consumers.
 - Set `logging.header_allowlist` so only intended headers appear in request logs (empty logs none).

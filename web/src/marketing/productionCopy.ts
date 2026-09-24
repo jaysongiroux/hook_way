@@ -5,6 +5,9 @@
 // docs/production-readiness.md are deliberately absent: no readiness drain, no
 // durable ingest spool, no automatic re-drive, no config hot reload, no scoped
 // admin tokens, no OpenTelemetry export, and no throughput claim.
+//
+// Write for the reader, not the code: "the sender already got its 2xx" says
+// what "an acknowledged failure" means to someone who runs webhooks.
 
 export interface ProductionCard {
   id: string;
@@ -47,17 +50,17 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     line: "Verification fails closed; rate limits and replay protection are set per flow.",
   },
   {
-    id: "replay",
-    title: "Re-delivers captured events",
-    value: "4",
-    valueLabel: "replay API routes",
-    line: "When enabled, accepted events land in Postgres and can be re-delivered singly or in bulk.",
-  },
-  {
     id: "packaging",
     title: "Ships as one binary",
     value: "1",
     valueLabel: "static binary, non-root",
-    line: "A scratch image with a TLS 1.2 floor wherever a destination speaks TLS.",
+    line: "A scratch image; outbound TLS is 1.2 or newer. Nothing else to run unless you add replay.",
+  },
+  {
+    id: "replay",
+    title: "Keeps what a destination missed",
+    value: "7",
+    valueLabel: "days a missed delivery is kept",
+    line: "The sender already got its 2xx, so the optional replay service holds the event for you to retry.",
   },
 ];

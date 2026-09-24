@@ -36,15 +36,15 @@ function doc(path: string, title: string, description: string): DocLink {
 export const DOC_LINKS: DocLink[] = [
   doc("README.md", "Overview and quick start", "What Hookway is and how to run it locally."),
   doc("docs/configuration.md", "Configuration reference", "Every block, field, and default, with worked samples."),
-  doc("docs/cli.md", "CLI reference", "Serve, validate, and edit configs from the CLI."),
+  doc("docs/cli.md", "CLI reference", "Every command and flag of hookway and hookway-replay."),
   doc("docs/security.md", "Security model", "Signature verification, auth, and the threat model."),
   doc("docs/production-readiness.md", "Production readiness", "Limits, metrics, and failure modes in production."),
-  doc("docs/local-development.md", "Local development", "Run the stack and its dependencies locally."),
+  doc("docs/local-development.md", "Local development", "Run the stack, stop a destination, and replay what it missed."),
 ];
 
 export const EXAMPLES = {
   path: "examples",
   title: "Example configs",
-  description: "Ready-to-run YAML for XML, multipart, conditional routing, replay, and every destination.",
+  description: "Ready-to-run YAML for XML, multipart, conditional routing, and every destination.",
   href: repoTree("examples"),
 };

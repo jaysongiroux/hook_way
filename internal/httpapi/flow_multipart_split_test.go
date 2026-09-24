@@ -9,9 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/jaysongiroux/hook_way/internal/graph"
-	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 // multipartSplitYAML fans out a multipart upload: object payload to the
@@ -255,15 +252,6 @@ func TestObjectPayloadRejectsInvalidFileContentTypeAsBadRequest(t *testing.T) {
 		// stop_on_failure follows edge order: the S3 branch fails before the
 		// metadata branch, so no destination should be attempted.
 		t.Fatalf("published = %d, want 0", len(pub.published))
-	}
-}
-
-func TestObjectPayloadRawFallbackRequiresRawBodyFormat(t *testing.T) {
-	rawBase64 := base64.StdEncoding.EncodeToString([]byte("null"))
-	msg := queue.Message{RawBody: []byte("null"), RawBodyBase64: &rawBase64}
-	env := graph.Envelope{BodyFormat: "json", PayloadMode: "object"}
-	if _, err := attachObjectPayload(msg, env); err == nil {
-		t.Fatal("JSON null was accepted as a raw object payload")
 	}
 }
 

@@ -16,6 +16,11 @@ func Lint(cfg Config) []config.ValidationIssue {
 	for _, name := range sortedKeys(cfg.Flows) {
 		issues = append(issues, lintFlow(name, cfg)...)
 	}
+	if cfg.Replay.Configured && cfg.Replay.TLS.InsecureSkipVerify {
+		issues = append(issues, cfgWarning("replay.tls.insecure_skip_verify",
+			"certificate verification is disabled for uploads to the replay service",
+			"set replay.tls.ca_cert to the replay service's CA instead; do not use this in production"))
+	}
 	return issues
 }
 

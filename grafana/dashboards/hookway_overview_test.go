@@ -3,6 +3,7 @@ package dashboards
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -161,12 +162,7 @@ func TestDashboardHasRequiredPanelsAndVariables(t *testing.T) {
 		"Redis Pub/Sub Dropped (no subscriber)",
 		"Panics by Location",
 		"Destination Readiness",
-		"Replay Store Up",
 		"Build Info",
-		"Events Captured",
-		"Capture Failures",
-		"Replays Triggered",
-		"Events Purged",
 		"Node Duration",
 		"Node Errors",
 		"Node Error Ratio",
@@ -232,5 +228,70 @@ func TestNewReliabilityPanelsUseBoundedMetrics(t *testing.T) {
 		if !found[title] {
 			t.Errorf("missing panel %q", title)
 		}
+	}
+}
+
+// Every hookway_* series a panel or variable queries must be declared in
+// internal/metrics/metrics.go, or the panel silently shows "No data" after a
+// metric is removed or renamed.
+func TestDashboardQueriesOnlyDeclaredMetrics(t *testing.T) {
+	src, err := os.ReadFile("../../internal/metrics/metrics.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	for _, m := range regexp.MustCompile(`"(hookway_[a-z0-9_]+)"`).FindAllStringSubmatch(string(src), -1) {
+		declared[m[1]] = true
+	}
+	name := regexp.MustCompile(`hookway_[a-z0-9_]+`)
+	check := func(where, expr string) {
+		for _, used := range name.FindAllString(expr, -1) {
+			base := used
+			for _, suffix := range []string{"_bucket", "_count", "_sum"} {
+				if trimmed := strings.TrimSuffix(used, suffix); trimmed != used && declared[trimmed] {
+					base = trimmed
+				}
+			}
+			if !declared[base] {
+				t.Errorf("%s queries %s, which internal/metrics/metrics.go does not declare", where, used)
+			}
+		}
+	}
+	d := loadDashboard(t)
+	for _, panel := range d.Panels {
+		for _, target := range panel.Targets {
+			check("panel "+panel.Title, target.Expr)
+		}
+	}
+	for _, v := range d.Templating.List {
+		check("variable "+v.Name, v.Definition)
+	}
+}
+
+func TestCaptureAndRedrivePanels(t *testing.T) {
+	d := loadDashboard(t)
+	want := map[string]string{
+		"Captured failures":  "hookway_capture_total",
+		"Capture drops":      "hookway_capture_dropped_total",
+		"Capture buffer":     "hookway_capture_buffer_bytes",
+		"Redrives":           "hookway_control_runs_total",
+		"Redrives in flight": "hookway_control_inflight",
+	}
+	for _, p := range d.Panels {
+		needle, ok := want[p.Title]
+		if !ok {
+			continue
+		}
+		joined := ""
+		for _, target := range p.Targets {
+			joined += target.Expr
+		}
+		if !strings.Contains(joined, needle) {
+			t.Errorf("panel %q does not query %s", p.Title, needle)
+		}
+		delete(want, p.Title)
+	}
+	for title := range want {
+		t.Errorf("missing panel %q", title)
 	}
 }

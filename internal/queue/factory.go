@@ -81,6 +81,7 @@ type FactoryOptions struct {
 	WebhookConnector  WebhookConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
+	OnTerminalFailure TerminalFailureFunc // capture hook for async webhook failures no dead letter accepted
 }
 
 type Factory struct {
@@ -97,6 +98,7 @@ type Factory struct {
 	webhookConnector  WebhookConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
+	onTerminalFailure TerminalFailureFunc
 }
 
 func NewFactory(opts FactoryOptions) *Factory {
@@ -313,6 +315,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		webhookConnector:  opts.WebhookConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
+		onTerminalFailure: opts.OnTerminalFailure,
 	}
 }
 
@@ -490,6 +493,9 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 	}
 	for _, wp := range webhookPubs {
 		wp.setDeadLetterPublisher(dlqPublish)
+		if f.onTerminalFailure != nil {
+			wp.setTerminalFailure(f.onTerminalFailure)
+		}
 	}
 
 	return NewRoutingPublisher(publishers), nil

@@ -39,7 +39,6 @@ var errNotProbed = errors.New("readiness not yet probed")
 type readinessResult struct {
 	err       error
 	dest      map[string]error
-	replayErr error
 	checkedAt time.Time
 }
 
@@ -66,10 +65,6 @@ type readinessProber struct {
 	interval  time.Duration
 	timeout   time.Duration
 	result    atomic.Pointer[readinessResult]
-	// replayPing, when set, is included in every probe so a replay-store
-	// outage takes the pod out of rotation (AND-joined with destinations).
-	// Capture itself stays best-effort; this only affects /ready.
-	replayPing func(context.Context) error
 
 	// staleLoggedAt records the checkedAt of the cached result that most
 	// recently triggered the "reported unhealthy due to staleness" warning
@@ -96,9 +91,10 @@ func newReadinessProber(publisher queue.Publisher, appMetrics *metrics.Metrics, 
 	}
 }
 
-// status reports the cached readiness error and whether the pod should be
-// considered ready as of now. A missing (never-probed) or stale result is
-// not-ready even if the last recorded error was nil.
+// destinationSnapshot reports the cached per-destination readiness, whether
+// the result is fresh enough to trust, and the aggregate probe error. A
+// missing (never-probed) or stale result is not-ready even if the last
+// recorded error was nil.
 //
 // A stale result (the prober is wedged or has never completed a probe
 // recently enough) is logged as a distinct Warn, separate from a per-probe
@@ -108,20 +104,16 @@ func newReadinessProber(publisher queue.Publisher, appMetrics *metrics.Metrics, 
 // distinct cached result's checkedAt) rather than once per /ready request,
 // since kubelet polls /ready frequently and the underlying cached result does
 // not change again until the next successful probe.
-func (p *readinessProber) setReplayPing(ping func(context.Context) error) {
-	p.replayPing = ping
-}
-
-func (p *readinessProber) destinationSnapshot(now time.Time) (dest map[string]error, replayErr error, ready bool, err error) {
+func (p *readinessProber) destinationSnapshot(now time.Time) (dest map[string]error, ready bool, err error) {
 	res := p.result.Load()
 	if res == nil {
-		return nil, nil, false, errNotProbed
+		return nil, false, errNotProbed
 	}
 	if age := now.Sub(res.checkedAt); age > stalenessFactor*p.interval {
 		p.logStaleOnce(res.checkedAt, age)
-		return res.dest, res.replayErr, false, fmt.Errorf("readiness result is stale (last probed %s ago)", age.Round(time.Second))
+		return res.dest, false, fmt.Errorf("readiness result is stale (last probed %s ago)", age.Round(time.Second))
 	}
-	return res.dest, res.replayErr, true, res.err
+	return res.dest, true, res.err
 }
 
 // logStaleOnce logs the staleness warning the first time status observes a
@@ -168,21 +160,10 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 		dest[destWildcard] = aggErr
 	}
 
-	var replayErr error
-	if p.replayPing != nil {
-		if err := p.replayPing(probeCtx); err != nil {
-			p.metrics.ReplayStoreUp(false)
-			replayErr = err
-			aggErr = errors.Join(aggErr, fmt.Errorf("replay_store: %w", err))
-		} else {
-			p.metrics.ReplayStoreUp(true)
-		}
-	}
-
 	if aggErr != nil {
 		p.logger.Error("readiness probe failed", "error", aggErr.Error())
 	}
-	p.result.Store(&readinessResult{err: aggErr, dest: dest, replayErr: replayErr, checkedAt: time.Now()})
+	p.result.Store(&readinessResult{err: aggErr, dest: dest, checkedAt: time.Now()})
 }
 
 // run kicks an immediate probe, then re-probes every interval until ctx is

@@ -42,6 +42,7 @@ export async function loadGraph(): Promise<GraphDocument | null> {
       activeFlow: rec.activeFlow ?? base.activeFlow,
       otherFlows: rec.otherFlows ?? {},
       deliveryFailurePolicy: rec.deliveryFailurePolicy,
+      flowExtra: rec.flowExtra,
     };
   } catch {
     return null;

@@ -246,3 +246,24 @@ func TestCompileSuccessContinuation(t *testing.T) {
 		})
 	}
 }
+
+// Node ids travel in capture metadata and redrive results, which replay
+// accepts only as printable UTF-8 of at most 1024 bytes. An id outside that
+// would make every record at the node unstorable and every redrive unknown.
+func TestNodeIDsMustBeStorableText(t *testing.T) {
+	for _, id := range []string{"af\x01ter", "caf\xe9", strings.Repeat("a", 1025), "del\x7f"} {
+		if validID(id) {
+			t.Errorf("validID(%q) = true", id)
+		}
+	}
+	for _, id := range []string{"out", "publish-2", "café", strings.Repeat("a", 1024)} {
+		if !validID(id) {
+			t.Errorf("validID(%q) = false", id)
+		}
+	}
+	fc := flowConfig([][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}, {"o\x01ut", "dest"}},
+		"in>body", "body>auth", "auth>env", "env>o\x01ut")
+	if _, err := Compile("github", fc, testRegistry(t)); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("Compile = %v, want the control character refused", err)
+	}
+}

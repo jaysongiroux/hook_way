@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"reflect"
 	"regexp"
 	"sort"
@@ -123,11 +124,8 @@ func remapConnectionIssues(connectionOf map[string]ConnectionRef, issues []Valid
 }
 
 // splitOwnerPath splits an issue field into the owner whose connection binding
-// applies ("destinations.events", "replay") and the remainder.
+// applies ("destinations.events") and the remainder.
 func splitOwnerPath(field string) (owner, rest string, ok bool) {
-	if after, found := strings.CutPrefix(field, "replay."); found {
-		return "replay", after, true
-	}
 	after, found := strings.CutPrefix(field, "destinations.")
 	if !found {
 		return "", "", false
@@ -431,27 +429,6 @@ func validationIssues(c Config) []ValidationIssue {
 		// ok
 	default:
 		issues = append(issues, validationError("logging.level", fmt.Sprintf("%q is not supported", c.Logging.Level), "use \"debug\", \"info\", \"warn\", or \"error\", or omit for the default of \"info\""))
-	}
-	if c.Replay.Enabled {
-		if c.Replay.Postgres.URL == "" {
-			issues = append(issues, validationError("replay.postgres.url", "a Postgres URL is required when replay is enabled", "set replay.postgres.url, e.g. ${REPLAY_DB_URL}"))
-		}
-		if c.Security.APIKey == "" {
-			issues = append(issues, validationError("replay.enabled", "the replay API re-injects traffic and must be authenticated; set security.api_key when replay is enabled", "set security.api_key (e.g. ${REPLAY_API_KEY}) or disable replay"))
-		}
-		if c.Replay.Addr == "" {
-			issues = append(issues, validationError("replay.addr", "listen address is required when replay is enabled", "set replay.addr to a host:port such as \":9091\""))
-		}
-		if c.Replay.TTL < 0 {
-			issues = append(issues, validationError("replay.ttl", "must be zero (keep forever) or a positive duration", "168h or omit"))
-		}
-		if c.Replay.MaxEvents < 0 {
-			issues = append(issues, validationError("replay.max_events", "must be zero (no cap) or a positive integer", "1000000 or omit"))
-		}
-		if c.Replay.CleanupInterval < 0 {
-			issues = append(issues, validationError("replay.cleanup_interval", "must be a positive duration", "omit to use the 1h default"))
-		}
-		issues = append(issues, postgresConnValidationIssues("replay.postgres", c.Replay.Postgres)...)
 	}
 	var endpointPaths []compiledEndpointPath
 	queueOptions := map[string]RabbitMQQueueOptions{}
@@ -802,6 +779,7 @@ func validationIssues(c Config) []ValidationIssue {
 			}
 		}
 	}
+	issues = append(issues, replayIssues(c)...)
 	return issues
 }
 
@@ -1297,16 +1275,11 @@ func describeBindings(b map[string]string) string {
 
 // postgresConnValidationIssues validates the fields shared by every Postgres
 // connection block: schema/table identifier safety, max_conns range, and
-// mutual-TLS both-or-neither. It is used by both the postgres-destination
-// path and the replay-store path (see rawPostgresConfig / convertPostgresConfig
-// in destinations.go), so the two never drift.
+// mutual-TLS both-or-neither. It is used by the postgres-destination path.
 //
-// It deliberately does NOT decide whether url or table are required -- that
-// differs by caller: a postgres destination always requires both a url and a
-// table (its single sink table name), while the replay store only requires a
-// url once enabled and treats table as an optional prefix override (see
-// ReplayConfig's doc comment). Callers check those themselves with
-// context-specific field names and messages before calling this helper.
+// It deliberately does NOT decide whether url or table are required; the
+// caller checks those with context-specific field names and messages before
+// calling this helper.
 func postgresConnValidationIssues(prefix string, cfg PostgresConfig) []ValidationIssue {
 	var issues []ValidationIssue
 	if cfg.Table != "" && !pgIdentifier.MatchString(cfg.Table) {
@@ -1451,6 +1424,52 @@ func sourceValueIssues(field, source, value, path, noun string, allowEmpty bool,
 		}
 	default:
 		issues = append(issues, validationError(field+".source", fmt.Sprintf("%q is not supported", source), sourceHint))
+	}
+	return issues
+}
+
+// minReplayTokenLen matches the replay service's own minimum for its keys.
+const minReplayTokenLen = 32
+
+// unexpandedReference reports a ${VAR} left in place by validation that does
+// not expand the environment; its length says nothing about the secret.
+func unexpandedReference(s string) bool { return strings.Contains(s, "${") }
+
+func replayIssues(c Config) []ValidationIssue {
+	r := c.Replay
+	if !r.Configured {
+		return nil
+	}
+	var issues []ValidationIssue
+	if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		issues = append(issues, validationError("replay.url", "must be the replay service's absolute http or https URL", "set replay.url, for example \"https://replay.internal\""))
+	}
+	if len(r.CaptureToken) < minReplayTokenLen && !unexpandedReference(r.CaptureToken) {
+		issues = append(issues, validationError("replay.capture_token", fmt.Sprintf("is required and must be at least %d characters", minReplayTokenLen), "reference a generated secret, for example \"${REPLAY_CAPTURE_TOKEN}\""))
+	}
+	if r.MaxRecordBytes < 0 {
+		issues = append(issues, validationError("replay.max_record_bytes", "must be positive", fmt.Sprintf("omit it for the default of %d (16 MiB)", DefaultReplayMaxRecordBytes)))
+	}
+	if (r.TLS.ClientCert == "") != (r.TLS.ClientKey == "") {
+		issues = append(issues, validationError("replay.tls", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+	}
+	ctl := r.Control
+	switch {
+	case ctl.Addr == "":
+		issues = append(issues, validationError("replay.control.addr", "is required: the replay service redrives failures through this listener", "set a private listen address such as \":9092\""))
+	case ctl.Addr == c.Server.Addr:
+		issues = append(issues, validationError("replay.control.addr", "must differ from server.addr", "keep the control listener off the public webhook port"))
+	case c.Metrics.Enabled && c.Metrics.Addr != "" && ctl.Addr == c.Metrics.Addr:
+		issues = append(issues, validationError("replay.control.addr", "must differ from metrics.addr", "give the control listener its own port"))
+	}
+	switch {
+	case len(ctl.Token) < minReplayTokenLen && !unexpandedReference(ctl.Token):
+		issues = append(issues, validationError("replay.control.token", fmt.Sprintf("is required and must be at least %d characters", minReplayTokenLen), "reference a generated secret, for example \"${REPLAY_CONTROL_TOKEN}\""))
+	case ctl.Token == r.CaptureToken:
+		issues = append(issues, validationError("replay.control.token", "must differ from replay.capture_token", "use separate secrets: one lets core write to replay, the other lets replay drive core"))
+	}
+	if ctl.MaxConcurrent < 0 {
+		issues = append(issues, validationError("replay.control.max_concurrent", "must be positive", fmt.Sprintf("omit it for the default of %d", DefaultReplayControlMaxConcurrent)))
 	}
 	return issues
 }

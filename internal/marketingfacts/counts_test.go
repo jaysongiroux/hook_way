@@ -206,17 +206,6 @@ func TestQuotedWebhookRetryDefaultsMatchPublisher(t *testing.T) {
 	requireCopyContains(t, copySrc, quotedMax, "the maximum webhook backoff")
 }
 
-func TestQuotedReplayRouteCountMatchesAPI(t *testing.T) {
-	const quoted = "4"
-	src := readRepoFile(t, "internal/replayapi/api.go")
-	routes := regexp.MustCompile(`mux\.HandleFunc\(`).FindAllString(src, -1)
-	if strconv.Itoa(len(routes)) != quoted {
-		t.Fatalf("internal/replayapi/api.go registers %d routes but %s quotes %s",
-			len(routes), productionCopyPath, quoted)
-	}
-	requireTileValue(t, readRepoFile(t, productionCopyPath), quoted, "the replay API route count")
-}
-
 func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
 	const quoted = "45"
 	src := readRepoFile(t, "internal/metrics/metrics.go")
@@ -314,4 +303,17 @@ func TestRetryAfterClaimNamesOnlyHTTPDestinations(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The replay tile headlines how long a missed delivery is kept by default.
+func TestQuotedReplayRetentionMatchesDefault(t *testing.T) {
+	const quoted = "7"
+	const path = "internal/replay/config/config.go"
+	hours := singleInt(t, readRepoFile(t, path), path,
+		`defaultTTL\s*=\s*(\d+)\s*\*\s*time\.Hour`, "the defaultTTL retention")
+	if hours%24 != 0 || strconv.Itoa(hours/24) != quoted {
+		t.Fatalf("%s keeps records for %dh by default but %s quotes %s days",
+			path, hours, productionCopyPath, quoted)
+	}
+	requireTileValue(t, readRepoFile(t, productionCopyPath), quoted, "the default replay retention in days")
 }

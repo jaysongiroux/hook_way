@@ -16,6 +16,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const otherFlows = useGraphStore((s) => s.otherFlows);
   const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
+  const flowExtra = useGraphStore((s) => s.flowExtra);
 
   const exported = useMemo(() => {
     const doc: GraphDocument = {
@@ -28,6 +29,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
       activeFlow,
       otherFlows,
       deliveryFailurePolicy,
+      flowExtra,
     };
     try {
       const { config } = toConfig(doc);
@@ -35,7 +37,7 @@ export function ExportModal({ opened, onClose }: { opened: boolean; onClose: () 
     } catch (e) {
       return { yaml: "", error: e instanceof ExportError ? e.message : String(e) };
     }
-  }, [nodes, edges, serverConfig, configExtra, connections, destinations, activeFlow, otherFlows, deliveryFailurePolicy]);
+  }, [nodes, edges, serverConfig, configExtra, connections, destinations, activeFlow, otherFlows, deliveryFailurePolicy, flowExtra]);
 
   const [issues, setIssues] = useState<ValidationIssue[] | null>(null);
   useEffect(() => {

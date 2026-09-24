@@ -71,3 +71,20 @@ test("round-trips the connections example, replay reference included", () => {
   const { config } = toConfig({ ...model, nodes: layout(model.nodes, model.edges) });
   expect(normalize(config)).toEqual(normalize(parsed));
 });
+
+test("flow-level fields the builder does not model survive a round trip", () => {
+  const src = {
+    server: { addr: ":8080", max_body_bytes: 1048576 },
+    replay: { url: "https://replay.internal", capture_token: "${REPLAY_CAPTURE_TOKEN}" },
+    flows: {
+      first: { capture_failures: false, nodes: [{ id: "in", type: "http_trigger", path: "/a" }], edges: [] },
+      second: { capture_failures: true, delivery_failure_policy: "skip_failed", nodes: [{ id: "in", type: "http_trigger", path: "/b" }], edges: [] },
+    },
+  };
+  const { config } = toConfig(fromConfig(src));
+  const flows = config.flows as Record<string, Record<string, unknown>>;
+  expect(flows.first.capture_failures).toBe(false);
+  expect(flows.second.capture_failures).toBe(true);
+  expect(flows.second.delivery_failure_policy).toBe("skip_failed");
+  expect(config.replay).toEqual(src.replay);
+});

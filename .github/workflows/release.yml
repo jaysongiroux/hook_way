@@ -1,6 +1,7 @@
 # Cut a release from an existing v* tag. Re-runs CI, then publishes the
-# Docker Hub image (semver + latest for non-prereleases), syncs the Hub
-# description, and opens a GitHub Release. Pushes to main do not publish.
+# Docker Hub images — core, and the replay service as `<image>-replay` —
+# (semver + latest for non-prereleases), syncs the Hub description, and opens
+# a GitHub Release. Pushes to main do not publish.
 name: Release
 
 on:
@@ -139,9 +140,31 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: core
           push: true
           tags: ${{ steps.docker-meta.outputs.tags }}
           labels: ${{ steps.docker-meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build-info.outputs.version }}
+            COMMIT=${{ steps.build-info.outputs.commit }}
+
+      - name: Docker metadata (replay)
+        id: docker-meta-replay
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}-replay
+          tags: |
+            type=semver,pattern={{raw}},value=${{ env.TAG }}
+            type=raw,value=latest,enable=${{ env.PRERELEASE == 'false' }}
+
+      - name: Push replay Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: replay
+          push: true
+          tags: ${{ steps.docker-meta-replay.outputs.tags }}
+          labels: ${{ steps.docker-meta-replay.outputs.labels }}
           build-args: |
             VERSION=${{ steps.build-info.outputs.version }}
             COMMIT=${{ steps.build-info.outputs.commit }}

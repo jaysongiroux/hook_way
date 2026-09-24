@@ -41,8 +41,8 @@ interface GraphState extends GraphDocument {
   clear: () => void;
 }
 
-function snapshotOf(s: Pick<GraphState, "nodes" | "edges" | "deliveryFailurePolicy">): FlowSnapshot {
-  return { nodes: s.nodes, edges: s.edges, deliveryFailurePolicy: s.deliveryFailurePolicy };
+function snapshotOf(s: Pick<GraphState, "nodes" | "edges" | "deliveryFailurePolicy" | "flowExtra">): FlowSnapshot {
+  return { nodes: s.nodes, edges: s.edges, deliveryFailurePolicy: s.deliveryFailurePolicy, flowExtra: s.flowExtra };
 }
 
 export const useGraphStore = create<GraphState>((set, get) => ({
@@ -140,6 +140,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       nodes,
       edges: next.edges,
       deliveryFailurePolicy: next.deliveryFailurePolicy,
+      flowExtra: next.flowExtra,
       selectedId: null,
       selectedEdgeId: null,
     });
@@ -159,6 +160,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       nodes: [],
       edges: [],
       deliveryFailurePolicy: undefined,
+      flowExtra: undefined,
       selectedId: null,
       selectedEdgeId: null,
     });
@@ -182,6 +184,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       activeFlow: s.activeFlow,
       otherFlows: s.otherFlows,
       deliveryFailurePolicy: s.deliveryFailurePolicy,
+      flowExtra: s.flowExtra,
     };
   },
   clear: () => set({ ...emptyDocument(), selectedId: null, selectedEdgeId: null }),

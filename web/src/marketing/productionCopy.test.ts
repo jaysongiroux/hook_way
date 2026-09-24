@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
 import { PRODUCTION_CARDS } from "./productionCopy";
+import { COMPARE_ROWS } from "./compareCopy";
 
+// Six two-column tiles fill the six-column bento exactly: two full rows.
 test("the section covers six themes as compact tiles", () => {
   expect(PRODUCTION_CARDS).toHaveLength(6);
   for (const c of PRODUCTION_CARDS) {
@@ -15,7 +17,7 @@ test("the section covers six themes as compact tiles", () => {
 // Each headline value is a count a reader could verify in the repo.
 test("every tile headlines a real number", () => {
   const values = PRODUCTION_CARDS.map((c) => c.value);
-  expect(values).toEqual(["256", "3", "45", "11", "4", "1"]);
+  expect(values).toEqual(["256", "3", "45", "11", "1", "7"]);
 });
 
 // Retry blocks exist for rabbitmq, kafka, and webhook only.
@@ -79,4 +81,65 @@ test("the copy claims nothing the project does not implement", () => {
   ]) {
     expect(text, `copy must not claim "${absent}"`).not.toContain(absent);
   }
+});
+
+// The replay service is optional and operator-driven: say so in plain words,
+// and never claim a UI, automatic re-drive, or exactly-once delivery.
+const overclaims = [/automatic/i, /\bUI\b/, /dashboard/i, /exactly/i, /guarantee/i];
+
+test("the replay comparison is partial and honest", () => {
+  const row = COMPARE_ROWS.find((r) => r.id === "replay")!;
+  const hookway = row.values.hookway;
+  expect(hookway.level).toBe("partial");
+  expect(hookway.detail).toMatch(/optional replay service/i);
+  expect(hookway.detail).toMatch(/\bAPI\b/);
+  for (const re of overclaims) expect(hookway.detail).not.toMatch(re);
+});
+
+// The comparison cell once read "stores acknowledged failed deliveries",
+// which is how the code talks, not how a reader does.
+test("replay copy speaks the reader's language, not the implementation's", () => {
+  const replayCopy = [
+    COMPARE_ROWS.find((r) => r.id === "replay")!.values.hookway.detail,
+    ...PRODUCTION_CARDS.filter((c) => c.id === "replay").flatMap((c) => [c.title, c.valueLabel, c.line]),
+  ].join(" ");
+  for (const jargon of [/acknowledged/i, /redrive|re-drive/i, /capture/i, /snapshot/i, /record/i]) {
+    expect(replayCopy).not.toMatch(jargon);
+  }
+});
+
+test("the replay tile headlines the default retention and stays opt-in", () => {
+  const replay = PRODUCTION_CARDS.find((c) => c.id === "replay")!;
+  expect(replay.value).toBe("7");
+  expect(replay.valueLabel).toMatch(/days/);
+  expect(replay.line).toMatch(/optional/i);
+  expect(replay.line).toMatch(/retry/i);
+  for (const re of overclaims) expect(`${replay.title} ${replay.line}`).not.toMatch(re);
+});
+
+// "Ships as one binary" is true of core; the tile has to say replay is an
+// extra you choose to run.
+test("the packaging tile says replay is opt-in", () => {
+  const packaging = PRODUCTION_CARDS.find((c) => c.id === "packaging")!;
+  expect(packaging.line).toMatch(/unless you add replay/i);
+});
+
+// Core serves plain HTTP; its TLS 1.2 minimum is on the connections it makes
+// to destinations. An unscoped "TLS 1.2 floor" reads as inbound TLS.
+test("TLS claims say they are about outbound connections", () => {
+  for (const c of PRODUCTION_CARDS) {
+    for (const text of [c.title, c.valueLabel, c.line]) {
+      if (/TLS/.test(text)) expect(text, `"${text}"`).toMatch(/outbound/i);
+    }
+  }
+});
+
+// Capture fires on any 2xx, and the dev flow answers 202: "its 200" is wrong.
+test("replay copy says 2xx, not 200", () => {
+  const replayCopy = [
+    COMPARE_ROWS.find((r) => r.id === "replay")!.values.hookway.detail,
+    ...PRODUCTION_CARDS.filter((c) => c.id === "replay").flatMap((c) => [c.title, c.valueLabel, c.line]),
+  ].join(" ");
+  expect(replayCopy).toMatch(/2xx/);
+  expect(replayCopy).not.toMatch(/\b200\b/);
 });

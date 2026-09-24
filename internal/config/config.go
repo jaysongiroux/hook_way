@@ -149,35 +149,38 @@ type LoggingConfig struct {
 	HeaderAllowlist []string `yaml:"header_allowlist"`
 }
 
-// ReplayConfig configures the optional webhook-replay store: a Postgres-backed
-// record of accepted inbound events, served over its own protected listener so
-// operators can inspect and re-deliver past webhooks. Disabled (the zero
-// value) by default; nothing is captured, no listener is started, and no
-// Postgres connection is required.
+// Replay defaults.
+const (
+	DefaultReplayMaxRecordBytes       int64 = 16 << 20
+	DefaultReplayControlMaxConcurrent       = 8
+)
+
+// ReplayConfig connects core to the optional replay service. With the block
+// absent Configured is false, and failure capture and the control listener
+// are both off.
 type ReplayConfig struct {
-	Enabled bool
-	// Addr is the dedicated listener address for the replay API, e.g. ":9091".
-	// Required when Enabled, so the replay API is never accidentally exposed
-	// on the public webhook port.
-	Addr string
-	// SkipUnauthenticated, when true, skips event capture for endpoints whose
-	// auth.type is "no_auth", since such endpoints have no caller identity to
-	// attribute a captured event to.
-	SkipUnauthenticated bool
-	// TTL bounds how long a captured event is retained before the background
-	// cleanup sweep deletes it. Zero means keep forever.
-	TTL time.Duration
-	// MaxEvents caps the total number of retained events (oldest evicted
-	// first by the cleanup sweep). Zero means no cap.
-	MaxEvents int64
-	// CleanupInterval is how often the background sweep runs to enforce TTL
-	// and MaxEvents. Defaults to 1h when Enabled and left unset.
-	CleanupInterval time.Duration
-	// Postgres is the replay store's database connection. Reuses the same
-	// PostgresConfig shape as postgres destinations; unlike a postgres
-	// destination, Table is not a required single-sink table name -- replay
-	// uses its own fixed table names and treats Table as an optional prefix.
-	Postgres PostgresConfig
+	Configured     bool
+	URL            string
+	CaptureToken   string
+	MaxRecordBytes int64 // per artifact; larger artifacts make a metadata-only record
+	TLS            ReplayTLSConfig
+	Control        ReplayControlConfig
+}
+
+// ReplayTLSConfig is core's client TLS for uploads to the replay service.
+type ReplayTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+// ReplayControlConfig is the private listener replay calls to redrive.
+type ReplayControlConfig struct {
+	Addr          string
+	Token         string
+	MaxConcurrent int
 }
 
 type rawConfig struct {
@@ -186,9 +189,19 @@ type rawConfig struct {
 	RateLimit    RateLimitConfig                 `yaml:"rate_limit"`
 	Metrics      MetricsConfig                   `yaml:"metrics"`
 	Logging      LoggingConfig                   `yaml:"logging"`
-	Replay       rawReplayConfig                 `yaml:"replay"`
+	Replay       *rawReplayConfig                `yaml:"replay"`
 	Connections  map[string]rawConnectionConfig  `yaml:"connections"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
+	Flows        map[string]flowSchema           `yaml:"flows"`
+}
+
+// flowSchema describes one flow for `hookway schema` only; internal/flowconfig
+// decodes flows. Node options are per type (hookway schema --nodes).
+type flowSchema struct {
+	Nodes                 []map[string]any `yaml:"nodes"`
+	Edges                 []string         `yaml:"edges"`
+	DeliveryFailurePolicy string           `yaml:"delivery_failure_policy,omitempty" jsonschema:"enum=stop_on_failure,enum=skip_failed"`
+	CaptureFailures       *bool            `yaml:"capture_failures,omitempty"`
 }
 
 // MissingEnvIssues builds one ValidationIssue per referenced-but-unset

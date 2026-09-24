@@ -8,7 +8,7 @@ export function Production() {
   return (
     <Section
       title="Operational controls ship with the binary"
-      lead="In-flight limits and publish retries apply by default; Prometheus metrics and the replay API ship in the binary but must be enabled in config. The numbers below are current defaults and counts."
+      lead="In-flight limits and publish retries apply by default; Prometheus metrics ship in the binary but must be enabled in config. The numbers below are current defaults and counts."
       background={DARK.recessed}
     >
       <Bento>
