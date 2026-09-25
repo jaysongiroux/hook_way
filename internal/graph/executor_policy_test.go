@@ -306,48 +306,6 @@ func TestSkipFailedHonorsConcurrencyLimit(t *testing.T) {
 	}
 }
 
-// TestSkipFailedCapturesOnceAcrossConcurrentDestinations guards decision D8:
-// writes per event must not scale with destination count. BeforeDetached is
-// the replay capture INSERT, and concurrent fan-out must not fire it twice.
-func TestSkipFailedCapturesOnceAcrossConcurrentDestinations(t *testing.T) {
-	var mu sync.Mutex
-	calls := 0
-	r := registryWithRecorder(t, &recorder{})
-	s := r.specs["dest"]
-	s.New = func(NodeConfig) (Node, error) {
-		return &fnNode{out: Terminal{}, fn: func(context.Context) { time.Sleep(20 * time.Millisecond) }}, nil
-	}
-	r.specs["dest"] = s
-
-	nodes := [][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}}
-	edges := []string{"in>body", "body>auth", "auth>env"}
-	for i := range 4 {
-		id := fmt.Sprintf("d%d", i)
-		nodes = append(nodes, [2]string{id, "dest"})
-		edges = append(edges, "env>"+id)
-	}
-	fc := flowConfig(nodes, edges...)
-	fc.DeliveryFailurePolicy = "skip_failed"
-	f := mustCompile(t, fc, r)
-
-	if _, err := f.Run(context.Background(), RequestHead{}, RunOptions{
-		PublishTimeout: 5 * time.Second, FanoutConcurrency: 4,
-		BeforeDetached: func(Payload) {
-			mu.Lock()
-			calls++
-			mu.Unlock()
-		},
-	}); err != nil {
-		t.Fatalf("Run() = %v", err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if calls != 1 {
-		t.Fatalf("BeforeDetached called %d times across 4 concurrent destinations, want 1: "+
-			"replay writes per event must not scale with destination count (D8)", calls)
-	}
-}
-
 // TestSkipFailedPrefersRealErrorOverContextError: when one
 // destination is cancelled and another fails for a real reason, the reported
 // error must be the real one or the root cause is lost from logs and replay.

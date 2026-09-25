@@ -1,9 +1,14 @@
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
-# Binaries for programs and plugins
+# Binaries for programs and plugins. `make build` writes the two commands to
+# bin/; `go build ./cmd/hookway` (one package at a time) writes to the repo
+# root.
 /hookway
+/hookway-replay
 /hookway-wasm
+/bin/hookway
+/bin/hookway-replay
 *.exe
 *.exe~
 *.dll
@@ -17,6 +22,7 @@
 # repo root on purpose: an unanchored *.out would silently swallow Go golden
 # files under any testdata/ directory.
 /coverage.out
+/replay-store-coverage.out
 /coverage.txt
 /*.out
 *.coverprofile

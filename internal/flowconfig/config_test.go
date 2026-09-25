@@ -391,65 +391,6 @@ flows:
 	}
 }
 
-func TestObjectPayloadRejectedWhenReplayCapturesFlow(t *testing.T) {
-	const src = `
-server: {addr: ":8080", max_body_bytes: 1048576}
-security: {api_key: replay-secret}
-replay:
-  enabled: true
-  addr: ":9091"
-  postgres: {url: "postgres://localhost/hookway"}
-destinations:
-  archive:
-    type: s3
-    s3: {region: us-east-1, bucket: b}
-flows:
-  upload:
-    nodes:
-      - {id: in, type: http_trigger, path: /upload, methods: [POST]}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: auth, scheme: header_exact, header: X-Token, value: secret}
-      - {id: env, type: envelope, body_format: raw}
-      - {id: out, type: publish, destination: archive, target: uploads, payload: object}
-    edges: [in>body, body>auth, auth>env, env>out]
-`
-	_, issues := LoadBytes([]byte(src), "test", false)
-	if !containsMessage(issues, "cannot be used while replay capture is enabled") {
-		t.Fatalf("issues = %+v, want object/replay compatibility error", issues)
-	}
-}
-
-func TestObjectPayloadAllowedWhenReplaySkipsNoAuthFlow(t *testing.T) {
-	const src = `
-server: {addr: ":8080", max_body_bytes: 1048576}
-security: {api_key: replay-secret}
-replay:
-  enabled: true
-  addr: ":9091"
-  skip_unauthenticated: true
-  postgres: {url: "postgres://localhost/hookway"}
-destinations:
-  archive:
-    type: s3
-    s3: {region: us-east-1, bucket: b}
-flows:
-  upload:
-    nodes:
-      - {id: in, type: http_trigger, path: /upload, methods: [POST]}
-      - {id: body, type: read_body, max_bytes: 1048576}
-      - {id: auth, type: no_auth}
-      - {id: env, type: envelope, body_format: raw}
-      - {id: out, type: publish, destination: archive, target: uploads, payload: object}
-    edges: [in>body, body>auth, auth>env, env>out]
-`
-	_, issues := LoadBytes([]byte(src), "test", false)
-	for _, issue := range issues {
-		if issue.Severity == config.SeverityError {
-			t.Fatalf("LoadBytes issues = %+v", issues)
-		}
-	}
-}
-
 func TestLoadBytesAcceptsPublishSuccessContinuation(t *testing.T) {
 	const src = `
 server: {addr: ":8080", max_body_bytes: 1024}
@@ -495,5 +436,52 @@ flows:
 	joined := issuesText(issues)
 	if !strings.Contains(joined, "respond") {
 		t.Fatalf("issues %q must reject respond on a publish success continuation", joined)
+	}
+}
+
+func TestLoadBytesCarriesTheReplayBlockAndCaptureFlag(t *testing.T) {
+	src := `
+server: {addr: ":8080", max_body_bytes: 1048576}
+replay:
+  url: "https://replay.internal"
+  capture_token: "capture-token-0123456789abcdefghijkl"
+  control: {addr: ":9092", token: "control-token-0123456789abcdefghij"}
+flows:
+  quiet:
+    capture_failures: false
+    nodes:
+      - {id: in, type: http_trigger, path: /hooks/quiet, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope}
+      - {id: ok, type: respond, status: 202}
+    edges: [in>body, body>auth, auth>env, env>ok]
+`
+	cfg, issues := LoadBytes([]byte(src), "test", false)
+	for _, issue := range issues {
+		if issue.EffectiveSeverity() == config.SeverityError {
+			t.Fatalf("issues = %+v", issues)
+		}
+	}
+	if !cfg.Replay.Configured || cfg.Flows["quiet"].CapturesFailures() || !cfg.ServingConfig().Replay.Configured {
+		t.Fatalf("replay %+v, quiet captures %v", cfg.Replay, cfg.Flows["quiet"].CapturesFailures())
+	}
+}
+
+// Flow names travel in capture metadata and metric labels like node ids do.
+func TestLoadBytesRejectsUnstorableFlowNames(t *testing.T) {
+	for _, name := range []string{"or\\x01ders", "two words"} {
+		src := "server: {addr: \":8080\", max_body_bytes: 1024}\nflows:\n  \"" + name + "\":\n    nodes:\n      - {id: in, type: http_trigger, path: /a, methods: [POST]}\n    edges: []\n"
+		_, issues := LoadBytes([]byte(src), "test", false)
+		var found bool
+		for _, issue := range issues {
+			if strings.HasPrefix(issue.Field, "flows.") && issue.EffectiveSeverity() == config.SeverityError &&
+				strings.Contains(issue.Message, "flow name") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("flow %q: issues = %+v, want a flow name error", name, issues)
+		}
 	}
 }

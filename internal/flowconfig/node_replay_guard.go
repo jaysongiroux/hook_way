@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/graph"
-	"github.com/jaysongiroux/hook_way/internal/replay"
+	"github.com/jaysongiroux/hook_way/internal/replayguard"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type replayGuardNode struct {
 	id    string
 	opts  ReplayGuardOptions
-	cache *replay.Cache
+	cache *replayguard.Cache
 	key   vars.Template
 }
 
@@ -33,7 +33,7 @@ func newReplayGuard(id string, opts ReplayGuardOptions) (graph.Node, error) {
 		return nil, err
 	}
 	return &replayGuardNode{
-		id: id, opts: opts, cache: replay.NewCache(ttl, maxEntries), key: tpl,
+		id: id, opts: opts, cache: replayguard.NewCache(ttl, maxEntries), key: tpl,
 	}, nil
 }
 

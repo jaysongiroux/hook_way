@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 const SURFACES = [
-  { name: "Server settings", render: () => <ServerPanel opened onClose={() => {}} /> },
+  { name: "Core server settings", render: () => <ServerPanel opened onClose={() => {}} /> },
   { name: "Environment variables", render: () => <EnvPanel opened onClose={() => {}} /> },
   { name: "Destinations", render: () => <DestinationsPanel opened onClose={() => {}} /> },
 ];

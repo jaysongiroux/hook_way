@@ -1,8 +1,9 @@
-.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down unit race fmt-check diff-check coverage observability-check golangci-lint govulncheck
+.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test bench-replay lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down unit race fmt-check diff-check coverage observability-check golangci-lint govulncheck
 
 GO ?= go
 CONFIG ?= examples/config.yaml
 IMAGE ?= hookway:local
+REPLAY_IMAGE ?= hookway-replay:local
 
 # VERSION/COMMIT are baked into the binary via -ldflags so `hookway version`
 # and the hookway_build_info metric identify the build they came from. Both
@@ -15,6 +16,7 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 
 build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway ./cmd/hookway
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway-replay ./cmd/hookway-replay
 
 wasm:
 	mkdir -p internal/editor/assets web/public
@@ -109,7 +111,9 @@ COVERAGE_PROFILE ?= coverage.out
 # Raise it when coverage improves; override per-invocation with
 # `make coverage COVERAGE_FLOOR=85`.
 COVERAGE_FLOOR ?= 80.9
-COVER_PKGS := $(shell $(GO) list ./... | grep -v '/scripts/')
+# internal/replay/store and its container harness are measured by
+# replay-integration-test instead: under -short they have nothing to run.
+COVER_PKGS := $(shell $(GO) list ./... | grep -v '/scripts/' | grep -v '/internal/replay/store$$' | grep -v '/internal/replay/replaytest$$')
 
 coverage:
 	$(GO) test $(UNIT_FLAGS) -covermode=atomic -coverprofile=$(COVERAGE_PROFILE) $(COVER_PKGS)
@@ -169,12 +173,43 @@ webhook-integration-test:
 temporal-integration-test:
 	$(GO) test ./internal/queue -run 'TestTemporalIntegration' -count=1
 
-replaystore-integration-test:
-	$(GO) test ./internal/replaystore -run 'TestReplayStore' -count=1
+# replay-integration-test runs the replay service's container-backed tests
+# (the store and serve end to end) and enforces the store's own coverage
+# floor. The store is SQL that only a real PostgreSQL can exercise, so the
+# -short coverage profile leaves it out (see COVER_PKGS) and this target
+# measures it instead.
+REPLAY_STORE_COVERAGE_FLOOR ?= 80.0
+replay-integration-test:
+	$(GO) test ./internal/replay/... ./cmd/hookway-replay -count=1 -covermode=atomic -coverpkg=./internal/replay/store -coverprofile=replay-store-coverage.out
+	@total="$$($(GO) tool cover -func=replay-store-coverage.out | awk '/^total:/ { print substr($$3, 1, length($$3)-1) }')"; \
+	awk -v t="$$total" -v f="$(REPLAY_STORE_COVERAGE_FLOOR)" 'BEGIN { if ((t+0) < (f+0)) { printf "replay store coverage %s%% is below floor %s%%\n", t, f; exit 1 } printf "replay store coverage %s%% (floor %s%%)\n", t, f }'
+
+# replay-acceptance-test runs the real hookway and hookway-replay binaries —
+# two replicas of each — against a PostgreSQL container.
+replay-acceptance-test:
+	HOOKWAY_ACCEPTANCE=1 $(GO) test ./internal/acceptance -count=1 -v -timeout 15m
+
+# compose-e2e-test deploys the `make dev-up` stack (examples/docker-compose.yaml)
+# in Docker, sends signed GitHub webhooks, stops a destination, and checks that
+# the missed delivery is kept by the replay service and that one retry through
+# its API delivers it. Binaries are compiled on the host and copied into
+# scratch images; COMPOSE_E2E_BUILD=dockerfile builds the release images from
+# the Dockerfile instead (CI does).
+COMPOSE_E2E_BUILD ?= binaries
+
+compose-e2e-test:
+	HOOKWAY_COMPOSE_E2E=1 HOOKWAY_COMPOSE_E2E_BUILD=$(COMPOSE_E2E_BUILD) $(GO) test ./internal/composee2e -count=1 -timeout 20m -v
+
+# bench-replay measures core's request-path cost of failure capture and the
+# replay service's ingest throughput (the latter needs Docker).
+bench-replay:
+	$(GO) test ./internal/httpapi -run '^$$' -bench BenchmarkCaptureOverhead -benchtime 200x -count 1
+	HOOKWAY_REQUIRE_INTEGRATION=1 $(GO) test ./internal/replay/store -run '^$$' -bench BenchmarkIngest -benchtime 30x -count 1
 
 # test-all runs every test once, with no -short, so all nine container-backed
-# suites run: RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, webhook, Temporal,
-# and the replay store. Integration tests self-skip when Docker is unavailable.
+# suites run: RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, webhook,
+# Temporal, and the replay store. Integration tests self-skip when Docker is
+# unavailable.
 # -count=1 disables the test cache so the container-backed suites actually run.
 test-all:
 	$(GO) test ./... -count=1
@@ -239,8 +274,6 @@ validate-examples:
 		PROXY_TOKEN=testtoken \
 		ROUTING_TABLE=routing_data \
 		ROUTING_DB_URL=postgres://localhost:5432/routing \
-		REPLAY_DB_URL=postgres://localhost:5432/db \
-		REPLAY_API_KEY=dummy \
 		SLACK_WEBHOOK_URL=https://hooks.slack.test/services/T000/B000/dummy \
 		SLACK_SOURCE_SECRET=dummy \
 		DISCORD_WEBHOOK_URL=https://discord.test/api/webhooks/000/dummy \
@@ -248,7 +281,12 @@ validate-examples:
 		UPLOAD_SOURCE_SECRET=dummy \
 		XML_SOURCE_SECRET=dummy \
 		XML_UPSTREAM_URL=https://upstream.test/xml \
-		HOOKWAY_API_KEY=dummy; \
+		HOOKWAY_API_KEY=dummy \
+		REPLAY_CAPTURE_TOKEN=capture-token-0123456789abcdefghijkl \
+		REPLAY_CONTROL_TOKEN=control-token-0123456789abcdefghij \
+		REPLAY_OPERATOR_TOKEN=operator-token-0123456789abcdefghi \
+		REPLAY_METRICS_TOKEN=metrics-token-0123456789abcdefghijk \
+		REPLAY_DATABASE_URL=postgres://localhost:5432/replay; \
 	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
@@ -257,6 +295,12 @@ validate-examples:
 		case $$f in *invalid-*) continue ;; esac; \
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
+	done; \
+	for d in dev replay; do \
+		echo "validating examples/$$d/core.yaml"; \
+		$(GO) run ./cmd/hookway validate --config examples/$$d/core.yaml || exit 1; \
+		echo "validating examples/$$d/replay.yaml"; \
+		$(GO) run ./cmd/hookway-replay validate --config examples/$$d/replay.yaml || exit 1; \
 	done
 
 # test-examples boots every valid example config and POSTs a signed request to
@@ -270,17 +314,21 @@ run:
 	HOOKWAY_CONFIG=$(CONFIG) $(GO) run ./cmd/hookway
 
 docker-build: ui
-	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
+	docker build --target core --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
+	docker build --target replay --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(REPLAY_IMAGE) .
 
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(REPLAY_IMAGE)
 
-# Mirrors the required CI gate (.github/workflows/reusable-ci.yml `all-checks-passed`).
+# Mirrors the required CI gate (.github/workflows/reusable-ci.yml `success`).
 # Keep these two lists in sync: a green release-check should predict a green CI.
-release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replaystore-integration-test lint golangci-lint govulncheck coverage fmt-check deadcode conformance observability-check ui-check docker-build vuln-scan
+release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test lint golangci-lint govulncheck coverage fmt-check deadcode conformance observability-check ui-check docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build
 
+# --volumes: the broker and the replay store keep their data in anonymous
+# volumes that a fresh `up` never reattaches, so leaving them only leaks disk.
 dev-down:
-	docker compose -f examples/docker-compose.yaml down
+	docker compose -f examples/docker-compose.yaml down --volumes

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 
 	"github.com/jaysongiroux/hook_way/internal/configapi"
+	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
 )
 
 // Validate validates raw YAML config and returns the JSON encoding of
@@ -42,6 +43,26 @@ func Schema() (string, error) {
 // `hookway schema --nodes`).
 func NodeSchemas() (string, error) {
 	b, err := configapi.NodeSchemas()
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ReplayValidate validates replay.yaml without expanding environment
+// references against the browser or editor host.
+func ReplayValidate(yaml string) (string, error) {
+	resp := replayconfigapi.Validate([]byte(yaml))
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ReplaySchema returns the replay service's on-disk YAML shape.
+func ReplaySchema() (string, error) {
+	b, err := replayconfigapi.Schema()
 	if err != nil {
 		return "", err
 	}

@@ -2,14 +2,12 @@ package queue
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"errors"
 	"fmt"
-	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/pgtls"
+	"github.com/jaysongiroux/hook_way/internal/tlsfiles"
 )
 
 // pgOps is the thin, mockable interface the Postgres publisher depends on. It
@@ -50,12 +48,8 @@ func newPostgresClient(ctx context.Context, cfg config.PostgresConfig) (pgOps, e
 	if cfg.MaxConns > 0 {
 		poolCfg.MaxConns = cfg.MaxConns
 	}
-	if postgresTLSSet(cfg.TLS) {
-		tlsCfg, err := buildPostgresTLSConfig(cfg.TLS)
-		if err != nil {
-			return nil, err
-		}
-		poolCfg.ConnConfig.TLSConfig = tlsCfg
+	if err := pgtls.Apply(&poolCfg.ConnConfig.Config, tlsfiles.Files(cfg.TLS), "postgres tls"); err != nil {
+		return nil, err
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
@@ -66,43 +60,4 @@ func newPostgresClient(ctx context.Context, cfg config.PostgresConfig) (pgOps, e
 		return nil, fmt.Errorf("postgres: ping: %w", err)
 	}
 	return &pgxPoolOps{pool: pool}, nil
-}
-
-func postgresTLSSet(c config.PostgresTLSConfig) bool {
-	return c.CACert != "" || c.ClientCert != "" || c.ClientKey != "" ||
-		c.ServerName != "" || c.InsecureSkipVerify
-}
-
-// buildPostgresTLSConfig assembles a *tls.Config from the Postgres TLS options.
-// It mirrors buildRedisTLSConfig so the two implementations stay consistent.
-func buildPostgresTLSConfig(c config.PostgresTLSConfig) (*tls.Config, error) {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.ServerName != "" {
-		cfg.ServerName = c.ServerName
-	}
-	if c.InsecureSkipVerify {
-		cfg.InsecureSkipVerify = true //nolint:gosec // intentional, user-opted in
-	}
-	if c.CACert != "" {
-		pem, err := os.ReadFile(c.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("read postgres tls ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("postgres tls ca_cert %q contained no valid certificates", c.CACert)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.ClientCert != "" || c.ClientKey != "" {
-		if c.ClientCert == "" || c.ClientKey == "" {
-			return nil, errors.New("postgres tls client_cert and client_key must both be set for mutual TLS")
-		}
-		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load postgres tls client cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	return cfg, nil
 }

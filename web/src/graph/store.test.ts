@@ -59,6 +59,8 @@ test("setGraph replaces the document and clears selection", () => {
     nodes: [n],
     edges: [],
     serverConfig: { addr: ":8080" },
+    coreReplayConfig: null,
+    replayServiceConfig: null,
     configExtra: {},
     connections: {},
     destinations: {},
@@ -164,4 +166,47 @@ test("insertSubgraph does not collide with a hand-added node of the same id", ()
   expect(ids).toEqual(["fmt", "fmt_2", "post"]);
   expect(new Set(s.nodes.map((n) => n.data.yamlId)).size).toBe(3);
   expect(s.edges[0].source).toBe("fmt_2");
+});
+
+test("switching flows keeps each flow's unmodelled fields", () => {
+  const s = useGraphStore.getState();
+  s.setGraph({ ...emptyDocument(), activeFlow: "a", flowExtra: { capture_failures: false } });
+  s.addFlow("b");
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+  useGraphStore.getState().setActiveFlow("a");
+  expect(useGraphStore.getState().flowExtra).toEqual({ capture_failures: false });
+  expect(useGraphStore.getState().document().flowExtra).toEqual({ capture_failures: false });
+});
+
+test("loading or clearing a document drops the previous flow's unmodelled fields", () => {
+  const s = useGraphStore.getState();
+  s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false }, deliveryFailurePolicy: "skip_failed" });
+  s.setGraph(emptyDocument());
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+  expect(useGraphStore.getState().deliveryFailurePolicy).toBeUndefined();
+  s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false } });
+  s.clear();
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+});
+
+test("replay setup, partial clear, and removal keep document boundaries explicit", () => {
+  useGraphStore.getState().clear();
+  useGraphStore.getState().addReplayConfiguration();
+  expect(useGraphStore.getState().coreReplayConfig).toMatchObject({ url: "http://replay:8080" });
+  expect(useGraphStore.getState().replayServiceConfig).toMatchObject({ retention: { ttl: "168h" } });
+
+  useGraphStore.getState().clearCore();
+  expect(useGraphStore.getState().coreReplayConfig).toBeNull();
+  expect(useGraphStore.getState().replayServiceConfig).not.toBeNull();
+
+  useGraphStore.getState().removeReplayConfiguration();
+  expect(useGraphStore.getState().replayServiceConfig).toBeNull();
+});
+
+test("replacing an invalid imported replay block removes its raw value", () => {
+  useGraphStore.getState().setGraph({ ...emptyDocument(), configExtra: { replay: "invalid" } });
+  expect(useGraphStore.getState().configExtra.replay).toBe("invalid");
+  useGraphStore.getState().addReplayConfiguration();
+  expect(useGraphStore.getState().configExtra).not.toHaveProperty("replay");
+  expect(useGraphStore.getState().coreReplayConfig).toMatchObject({ url: "http://replay:8080" });
 });

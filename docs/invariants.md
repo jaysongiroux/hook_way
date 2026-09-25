@@ -32,7 +32,6 @@ runtime.
 | I6 | Auth verifies the **raw bytes**, never a re-serialized body | See [Security](security.md); Hookway does not parse, trim, normalize, or re-serialize the body before verifying |
 | I7 | The replay reservation happens after auth, before envelope build | An unauthenticated request must not consume an idempotency key |
 | I8 | Filters run before variable resolution | A filtered request is never reported as a variable-resolution error |
-| I9 | The replay-capture INSERT happens before the publish context is created | Publish always gets its full `publish_timeout` budget regardless of store latency |
 
 ## Execution semantics
 
@@ -47,10 +46,13 @@ tests are the only thing holding them.
 | I12 | A filter chain that fails to compile fails **closed** (matches nothing) | Same posture as I11 |
 | I13 | A flow that fails to compile still registers its path and returns 500, not 404 | A config error must not look like an unconfigured endpoint |
 | I14 | A filtered branch is never counted as a delivery failure | Keeps `delivery_failure_policy` semantics intact |
-| I15 | Replay capture is strictly best-effort; its errors and panics never change the response | Observability must not affect delivery |
+| I15 | Failure capture never changes a response or readiness | Capture only records during the run; records are built and uploaded by background workers after the status is final, the uploader never blocks a request, and it has no readiness probe. Replay being slow or down changes nothing a sender or load balancer sees |
 | I16 | Handler panics are recovered and become 500, not a dropped connection | |
 | I17 | The replay reservation is released on any failure where a retry could still make progress | Otherwise a legitimate retry is rejected 409 and the event is lost. Includes a *partial* failure under `skip_failed`, which returns 202 while some destinations still need the retry |
 | I18 | Auth uses timing-safe comparison throughout (`hmac.Equal` / `subtle.ConstantTimeCompare`) | Asserted structurally rather than by timing, which is flaky in CI |
+| I19 | Nodes never mutate their input payload (maps, slices, or XML documents); they return a changed copy | Failure capture keeps a failed node's input without copying it, so the recorded input must still be exactly what the node received |
+| I20 | A failure is captured only when the request's final status is 2xx and no `on_error` or `dead_letter` path handled it | Whoever acknowledged the event owns its delivery: a non-2xx leaves the retry to the sender, and a handled failure already took the author's recovery path. An async webhook failure waits for its request's final status before it is kept |
+| I21 | A redrive runs at most once per run and never triggers capture, dead-lettering, or compensations | Replay resends only after core answered `503 not_started` or never received the whole request, and core reads every byte before it starts. A redrive delivers inline and reports its real outcome, so capturing or dead-lettering it would handle one failure twice |
 
 ## Known limitations
 
@@ -60,7 +62,7 @@ revisited deliberately.
 | ID | Limitation | Consequence |
 |---|---|---|
 | L1 | Rate limiting and replay protection are in-process (per pod) | N replicas mean N × the configured limit, and replay protection is per-pod rather than per-cluster. Consumers dedupe on the envelope `id` (UUIDv7), which is the documented contract |
-| L2 | Flows are not resumable | A pod that dies mid-flow loses in-flight work; recovery is the sender's retry, which is why a publish failure returns 503 |
+| L2 | Flows are not resumable in-process | A pod that dies mid-flow loses in-flight work; recovery is the sender's retry, which is why a publish failure returns 503. A failure core already acknowledged can be retried by an operator through the replay service, which resumes the flow at the failed node (I21) |
 | L3 | One process, one set of destination credentials | A bug in any flow's handling can reach every destination the process can write to. Deploy split by trust domain when that blast radius matters. Named `connections` do not change this, but they make the full set enumerable in one block — see [Configuration § Blast radius](configuration.md#blast-radius) |
 | L4 | No in-process TLS | Terminate TLS at an ingress, ALB, or sidecar |
 | L5 | goja has no hard memory cap | See [Security § Code node](security.md#code-node) |

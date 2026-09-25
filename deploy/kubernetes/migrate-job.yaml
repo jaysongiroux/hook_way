@@ -1,0 +1,39 @@
+# Create this Job before each replay-service upgrade. Migrations are versioned
+# and idempotent. generateName makes every `kubectl create` a fresh run, even
+# when an earlier Job has not yet been removed by its TTL controller.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: hookway-replay-migrate-
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: hookway-replay:latest
+          args: ["migrate", "--config", "/etc/hookway-replay/replay.yaml"]
+          env:
+            - name: REPLAY_DATABASE_URL
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: database-url}}
+            - name: REPLAY_CONTROL_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: control-token}}
+            - name: REPLAY_CAPTURE_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: capture-token}}
+            - name: REPLAY_OPERATOR_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: operator-token}}
+            - name: REPLAY_METRICS_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: metrics-token}}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/hookway-replay, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: hookway-replay}

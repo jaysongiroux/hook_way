@@ -351,3 +351,13 @@ flows:
 		}
 	})
 }
+
+func TestLintWarnsWhenReplayTLSSkipsVerification(t *testing.T) {
+	cfg := Config{Replay: config.ReplayConfig{Configured: true, TLS: config.ReplayTLSConfig{InsecureSkipVerify: true}}}
+	for _, issue := range Lint(cfg) {
+		if issue.Field == "replay.tls.insecure_skip_verify" && issue.EffectiveSeverity() == config.SeverityWarning {
+			return
+		}
+	}
+	t.Fatal("no warning for replay.tls.insecure_skip_verify")
+}

@@ -3,6 +3,7 @@ package flowconfig
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -66,14 +67,17 @@ func (n *lookupNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 			}
 		}
 	}
-	if env.Vars == nil {
-		env.Vars = map[string]string{}
+	// Copy before writing: nodes never mutate their input (I19).
+	vars := maps.Clone(env.Vars)
+	if vars == nil {
+		vars = map[string]string{}
 	}
 	name := n.opts.Name
 	if name == "" {
 		name = n.id
 	}
-	env.Vars[name] = value
+	vars[name] = value
+	env.Vars = vars
 	return env, nil
 }
 

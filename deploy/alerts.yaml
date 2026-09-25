@@ -22,8 +22,8 @@ spec:
           labels:
             severity: warning
           annotations:
-            summary: Replay compensation failed
-            description: A replay reservation could not be released. Legitimate retries may be rejected until TTL expiry.
+            summary: Replay-guard reservation release failed
+            description: A replay_guard reservation could not be released. Legitimate retries may be rejected until TTL expiry.
         - alert: HookwaySecretRefreshFailures
           expr: increase(hookway_secret_refresh_failures_total[10m]) > 0
           for: 0m
@@ -71,3 +71,69 @@ spec:
           annotations:
             summary: Publish error ratio above 5%
             description: At least 20 publish attempts in 10m with more than 5% errors, sustained for 10m.
+    - name: hookway.replay
+      rules:
+        - alert: HookwayCaptureDrops
+          expr: sum(increase(hookway_capture_dropped_total[5m])) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: Core dropped captured failures
+            description: Failed deliveries core acknowledged were not stored in the replay service and cannot be retried (hookway_capture_dropped_total by reason). See docs/replay-service.md#runbook.
+        - alert: HookwayReplayUsageHigh
+          expr: (max(hookway_replay_usage_records) / max(hookway_replay_capacity_records) > 0.8) or (max(hookway_replay_usage_bytes) / max(hookway_replay_capacity_bytes) > 0.8)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Replay storage is over 80% of a retention limit
+            description: New captures are refused with 507 once retention.max_records or retention.max_bytes is reached. Dismiss or retry records, shorten retention.ttl, or raise the limit.
+        - alert: HookwayReplayCapacityRejections
+          expr: sum(increase(hookway_replay_captures_total{outcome="capacity"}[5m])) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: The replay service is refusing captures at capacity
+            description: Captures were answered 507; core drops them (hookway_capture_dropped_total{reason="capacity"}).
+        - alert: HookwayReplayQueuedRunStale
+          expr: max(hookway_replay_oldest_queued_run_seconds) > 300
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: Retry runs have waited over 5 minutes
+            description: Workers are not claiming queued runs. Check that replay replicas are running, workers.concurrency, and core's control listener.
+        - alert: HookwayReplayUnknownRecords
+          expr: max(hookway_replay_records{status="unknown"}) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: A redrive outcome is unknown
+            description: A run's response was lost or its lease expired, so the destination may or may not have received the event. An operator must check it and retry with acknowledge_duplicate_risk, or dismiss it. Includes lease-expired runs, which hookway_replay_runs_total does not count as unknown.
+        - alert: HookwayReplayRunFailureRatio
+          expr: (sum(increase(hookway_replay_runs_total{status="failed"}[15m])) / sum(increase(hookway_replay_runs_total[15m])) > 0.2) and sum(increase(hookway_replay_runs_total[15m])) >= 10
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Over 20% of retry runs are failing
+            description: Redrives keep failing at the destination or at core (executor_* reasons). Check hookway_replay_executor_calls_total and the run results.
+        - alert: HookwayReplayDatabaseDown
+          expr: min(hookway_replay_db_up) == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: A replay replica cannot reach its database
+            description: Captures fail (core drops them after its retries) and no runs progress until PostgreSQL is reachable.
+        - alert: HookwayReplayGCStalled
+          expr: sum(increase(hookway_replay_gc_runs_total{outcome="error"}[30m])) > 0 or (time() - max(hookway_replay_gc_last_success_timestamp_seconds)) > 3600
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: Replay GC is failing or has not succeeded in four intervals
+            description: Expired records are not being deleted, so usage keeps growing. The 3600s threshold is four default gc_interval (15m) periods; adjust it with gc_interval. With gc_interval 0 (GC run externally by `hookway-replay gc`), drop the timestamp clause — that command does not export metrics.

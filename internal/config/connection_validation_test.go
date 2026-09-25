@@ -149,34 +149,6 @@ destinations:
 	}
 }
 
-func TestConnectionUsedOnlyByReplayIsNotReportedUnused(t *testing.T) {
-	issues := decodeIssues(t, serverBlock+`
-connections:
-  pg: {type: postgres, url: "postgres://db/x"}
-replay:
-  enabled: true
-  addr: ":9091"
-  connection: pg
-destinations:
-  events: {type: s3, s3: {bucket: b, region: us-east-1}}
-`)
-	requireNoIssue(t, issues, "connections.pg")
-}
-
-func TestReplayRejectsANonPostgresConnection(t *testing.T) {
-	issues := decodeIssues(t, serverBlock+`
-connections:
-  r: {type: redis, mode: single, url: redis://redis:6379}
-replay:
-  enabled: true
-  addr: ":9091"
-  connection: r
-destinations:
-  events: {type: s3, s3: {bucket: b, region: us-east-1}}
-`)
-	requireIssue(t, issues, "replay.connection", "requires a \"postgres\" connection")
-}
-
 func TestConnectionNameCharsetIsValidated(t *testing.T) {
 	issues := decodeIssues(t, serverBlock+`
 connections:

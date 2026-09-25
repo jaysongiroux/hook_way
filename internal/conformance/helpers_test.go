@@ -19,7 +19,6 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/httpapi"
 	"github.com/jaysongiroux/hook_way/internal/queue"
-	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 const testSecret = "testsecret"
@@ -80,29 +79,6 @@ func (p *testPublisher) Publish(ctx context.Context, _, _ string, _ queue.Messag
 }
 func (p *testPublisher) Ready(context.Context) error { return nil }
 func (p *testPublisher) Close() error                { return nil }
-
-type blockingCapturer struct {
-	started, release chan struct{}
-	err              error
-	panic            bool
-}
-
-func (c *blockingCapturer) Capture(context.Context, replaystore.Event) error {
-	if c.started != nil {
-		close(c.started)
-	}
-	if c.release != nil {
-		<-c.release
-	}
-	if c.panic {
-		panic("capture panic")
-	}
-	return c.err
-}
-
-func (c *blockingCapturer) RecordOutcome(context.Context, string, []replaystore.Delivery) error {
-	return nil
-}
 
 func githubHMAC(body []byte) string {
 	mac := hmac.New(sha256.New, []byte(testSecret))

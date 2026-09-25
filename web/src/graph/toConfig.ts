@@ -16,11 +16,13 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
     nodes: doc.nodes,
     edges: doc.edges,
     deliveryFailurePolicy: doc.deliveryFailurePolicy,
+    flowExtra: doc.flowExtra,
   });
   const connections = pruneEmpty(doc.connections);
   const destinations = pruneEmpty(doc.destinations);
   const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig) : { ...DEFAULT_SERVER };
   const config: Record<string, unknown> = { server };
+  if (doc.coreReplayConfig !== null) config.replay = pruneEmpty(doc.coreReplayConfig) ?? {};
   // Connections come before destinations, so the file reads in the order the
   // references resolve. Omitted entirely when empty, for the same
   // import/export fidelity reason as destinations below.
@@ -31,7 +33,9 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
   // block is omitted rather than emitted empty. fromConfig already treats a
   // missing key as {}.
   if (destinations) config.destinations = destinations;
-  Object.assign(config, pruneEmpty(doc.configExtra), { flows });
+  const extra = pruneEmpty(doc.configExtra);
+  if (extra && doc.coreReplayConfig !== null) delete extra.replay;
+  Object.assign(config, extra, { flows });
   return { config };
 }
 
@@ -39,7 +43,7 @@ function snapshotToFlow(snap: FlowSnapshot): Record<string, unknown> {
   const nodes = snap.nodes.map(nodeToYaml);
   const byRf = new Map(snap.nodes.map((n) => [n.id, n]));
   const edges = snap.edges.map((e) => edgeToYaml(e, byRf));
-  const out: Record<string, unknown> = { nodes, edges };
+  const out: Record<string, unknown> = { ...(snap.flowExtra ?? {}), nodes, edges };
   if (snap.deliveryFailurePolicy) out.delivery_failure_policy = snap.deliveryFailurePolicy;
   return out;
 }

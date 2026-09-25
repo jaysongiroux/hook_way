@@ -62,7 +62,6 @@ func connectionBindingIssues(root *yaml.Node) []ValidationIssue {
 
 	referenced := make(map[string]bool, len(connTypes))
 	issues = append(issues, destinationConnectionIssues(root, connTypes, referenced)...)
-	issues = append(issues, replayConnectionIssues(root, connTypes, referenced)...)
 
 	for _, name := range mappingKeys(conns) {
 		if _, known := connTypes[name]; !known || referenced[name] {
@@ -70,7 +69,7 @@ func connectionBindingIssues(root *yaml.Node) []ValidationIssue {
 		}
 		issues = append(issues, ValidationIssue{
 			Field:      joinYAMLPath("connections", name),
-			Message:    "connection is not referenced by any destination or by replay",
+			Message:    "connection is not referenced by any destination",
 			Suggestion: "reference it from a destination's connection: field, or remove it",
 			Severity:   SeverityWarning,
 		})
@@ -142,27 +141,6 @@ func destinationConnectionIssues(root *yaml.Node, connTypes map[string]string, r
 		issues = append(issues, overriddenFieldIssues(entry, joinYAMLPath("destinations", id), destTypeBlocks[destType], connType, name)...)
 	}
 	return issues
-}
-
-func replayConnectionIssues(root *yaml.Node, connTypes map[string]string, referenced map[string]bool) []ValidationIssue {
-	replay := mappingValue(root, "replay")
-	name := scalarValue(replay, "connection")
-	if name == "" {
-		return nil
-	}
-	connType, ok := connTypes[name]
-	if !ok {
-		return []ValidationIssue{validationError("replay.connection",
-			fmt.Sprintf("references unknown connection %q", name),
-			knownConnectionsSuggestion(connTypes))}
-	}
-	referenced[name] = true
-	if connType != "postgres" {
-		return []ValidationIssue{validationError("replay.connection",
-			fmt.Sprintf("connection %q has type %q, but the replay store requires a %q connection", name, connType, "postgres"),
-			"use a connection of type \"postgres\", or configure replay.postgres inline")}
-	}
-	return overriddenFieldIssues(replay, "replay", "postgres", connType, name)
 }
 
 // overriddenFieldIssues reports connection-owned fields written inside the

@@ -8,6 +8,8 @@ export interface ValidationIssue {
 declare global {
   interface Window {
     hookwayValidate?: (yaml: string) => string;
+    hookwayReplayValidate?: (yaml: string) => string;
+    hookwayReplaySchema?: () => string;
     hookwayNodeSchemas?: () => string;
     Go?: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
   }
@@ -53,6 +55,46 @@ export async function validateYaml(yaml: string): Promise<ValidationIssue[] | nu
     const resp = await fetch("/validate", { method: "POST", headers: { "Content-Type": "application/yaml" }, body: yaml });
     if (!resp.ok) return null;
     return parseIssues(await resp.text());
+  } catch {
+    return null;
+  }
+}
+
+export async function validateReplayYaml(yaml: string): Promise<ValidationIssue[] | null> {
+  await loadValidator();
+  if (typeof window !== "undefined" && window.hookwayReplayValidate) {
+    try {
+      return parseIssues(window.hookwayReplayValidate(yaml));
+    } catch {
+      // A stale or broken WASM bridge should still allow the editor API path.
+    }
+  }
+  try {
+    const resp = await fetch("/validate-replay", {
+      method: "POST",
+      headers: { "Content-Type": "application/yaml" },
+      body: yaml,
+    });
+    if (!resp.ok) return null;
+    return parseIssues(await resp.text());
+  } catch {
+    return null;
+  }
+}
+
+export async function loadReplaySchema(): Promise<Record<string, unknown> | null> {
+  await loadValidator();
+  if (typeof window !== "undefined" && window.hookwayReplaySchema) {
+    try {
+      return JSON.parse(window.hookwayReplaySchema()) as Record<string, unknown>;
+    } catch {
+      // A stale or broken WASM bridge should still allow the editor API path.
+    }
+  }
+  try {
+    const resp = await fetch("/replay-schema");
+    if (!resp.ok) return null;
+    return (await resp.json()) as Record<string, unknown>;
   } catch {
     return null;
   }

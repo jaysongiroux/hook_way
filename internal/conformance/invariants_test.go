@@ -217,44 +217,6 @@ func TestI8_FiltersRunBeforeVariableResolution(t *testing.T) {
 
 }
 
-// TestI9_CaptureInsertBeforePublishContext asserts the capture INSERT finishes
-// on its own replayCaptureTimeout budget before the publish-timeout context
-// is created, so a slow store write cannot starve delivery (I9).
-func TestI9_CaptureInsertBeforePublishContext(t *testing.T) {
-	cfg := loadCfg(t, gatedYAML())
-	cfg.Server.PublishTimeout = 50 * time.Millisecond
-	pub := &testPublisher{}
-	srv, err := httpapi.NewFlowServer(cfg, pub, slog.Default(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = srv.Close() })
-	cap := &blockingCapturer{started: make(chan struct{}), release: make(chan struct{})}
-	srv.SetReplayCapturer(cap)
-
-	body := []byte(`{"ok":true}`)
-	req := signedRequest(http.MethodPost, "/webhooks/github", body)
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- post(srv, req) }()
-	select {
-	case <-cap.started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("capture was never invoked")
-	}
-	time.Sleep(200 * time.Millisecond)
-	close(cap.release)
-	rec := <-done
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d %s, want 202", rec.Code, rec.Body.String())
-	}
-	if pub.sawCancel.Load() {
-		t.Fatal("I9: publish observed a canceled/expired context; capture must not consume PublishTimeout")
-	}
-	if pub.published != 1 {
-		t.Fatalf("published = %d, want 1", pub.published)
-	}
-}
-
 // TestI10_PublishDetachedFromRequestContext cancels the client context while
 // publish is in flight; a detached destination must still complete.
 func TestI10_PublishDetachedFromRequestContext(t *testing.T) {
@@ -449,32 +411,6 @@ func TestI14_FilteredRoutesAreNotDeliveryFailures(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "failed") {
 		t.Fatalf("filtered branch must be absent from failed: %s", rec.Body.String())
-	}
-}
-
-// TestI15_ReplayCaptureIsBestEffort asserts capture errors and panics never
-// change the webhook response (I15).
-func TestI15_ReplayCaptureIsBestEffort(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		cap  *blockingCapturer
-	}{
-		{"error", &blockingCapturer{err: errors.New("insert failed")}},
-		{"panic", &blockingCapturer{panic: true}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			pub := &testPublisher{}
-			srv := newServer(t, gatedYAML(), pub)
-			srv.SetReplayCapturer(tc.cap)
-			body := []byte(`{"ok":true}`)
-			rec := post(srv, signedRequest(http.MethodPost, "/webhooks/github", body))
-			if rec.Code != http.StatusAccepted {
-				t.Fatalf("status = %d %s, want 202 (capture must not change the response)", rec.Code, rec.Body.String())
-			}
-			if pub.published != 1 {
-				t.Fatalf("published = %d, want 1", pub.published)
-			}
-		})
 	}
 }
 

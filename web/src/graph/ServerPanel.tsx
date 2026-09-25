@@ -34,9 +34,9 @@ export function ServerPanel({ opened, onClose }: { opened: boolean; onClose: () 
     <Modal
       opened={opened}
       onClose={onClose}
-      title="Server settings"
+      title="Core server settings"
       size="xl"
-      closeButtonProps={{ "aria-label": "Close Server settings" }}
+      closeButtonProps={{ "aria-label": "Close Core server settings" }}
     >
       <Stack gap="sm">
         <Text size="sm" c="dimmed">

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,6 +17,14 @@ type FlowConfig struct {
 	// DeliveryFailurePolicy is stop_on_failure (default) or skip_failed.
 	// It applies when a node fans out to destination (Detached) successors.
 	DeliveryFailurePolicy string `yaml:"delivery_failure_policy,omitempty"`
+	// CaptureFailures set to false turns failure capture off for this flow.
+	// Nil means true. It matters only when the replay block is configured.
+	CaptureFailures *bool `yaml:"capture_failures,omitempty"`
+}
+
+// CapturesFailures reports whether failures in this flow are captured.
+func (fc FlowConfig) CapturesFailures() bool {
+	return fc.CaptureFailures == nil || *fc.CaptureFailures
 }
 
 // Edge carries an optional output label (switch ports, or the reserved
@@ -28,8 +37,19 @@ func (e Edge) String() string {
 	}
 	return e.From + ":" + e.FromPort + ">" + e.To
 }
+
+// maxIDLen bounds a node id. Ids travel in capture metadata and redrive
+// results, which the replay service stores as printable text of at most 1024
+// bytes; an id outside that would make every failure at the node unstorable.
+const maxIDLen = 1024
+
+// ValidID reports whether s can name a node or a flow: non-empty printable
+// UTF-8 of at most 1024 bytes, with no whitespace, ':' or '>'.
+func ValidID(s string) bool { return validID(s) }
+
 func validID(s string) bool {
-	return s != "" && !strings.ContainsAny(s, ":>") && strings.IndexFunc(s, unicode.IsSpace) < 0
+	return s != "" && len(s) <= maxIDLen && utf8.ValidString(s) && !strings.ContainsAny(s, ":>") &&
+		strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 func ParseEdge(s string) (Edge, error) {
 	from, to, found := strings.Cut(strings.TrimSpace(s), ">")

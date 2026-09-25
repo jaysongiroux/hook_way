@@ -18,18 +18,26 @@ export interface FlowSnapshot {
   nodes: HookwayNode[];
   edges: Edge[];
   deliveryFailurePolicy?: string;
+  /** Flow keys the builder does not model (e.g. capture_failures), written back unchanged. */
+  flowExtra?: Record<string, unknown>;
 }
 
 export interface GraphDocument {
   nodes: HookwayNode[];
   edges: Edge[];
   serverConfig: Record<string, unknown>;
+  /** Core's optional top-level replay: connection/control block. */
+  coreReplayConfig: Record<string, unknown> | null;
+  /** The separate hookway-replay document; null keeps replay opt-in. */
+  replayServiceConfig: Record<string, unknown> | null;
   configExtra: Record<string, unknown>;
   connections: Record<string, unknown>;
   destinations: Record<string, unknown>;
   activeFlow: string;
   otherFlows: Record<string, FlowSnapshot>;
   deliveryFailurePolicy?: string;
+  /** Flow keys the builder does not model (e.g. capture_failures), written back unchanged. */
+  flowExtra?: Record<string, unknown>;
 }
 
 const counters: Record<string, number> = {};
@@ -80,11 +88,17 @@ export function emptyDocument(): GraphDocument {
     nodes: [],
     edges: [],
     serverConfig: { ...DEFAULT_SERVER },
+    coreReplayConfig: null,
+    replayServiceConfig: null,
     configExtra: {},
     connections: {},
     destinations: {},
     activeFlow: DEFAULT_FLOW,
     otherFlows: {},
+    // Explicit, so loading or clearing a document resets the previous
+    // flow's values in the store (zustand merges state shallowly).
+    deliveryFailurePolicy: undefined,
+    flowExtra: undefined,
   };
 }
 

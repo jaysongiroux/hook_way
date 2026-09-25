@@ -15,7 +15,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
 )
 
 const testFlowYAML = `
@@ -250,6 +253,33 @@ func TestPublishFailureReleasesReservation(t *testing.T) {
 	}
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("retry = %d, want 202", rec.Code)
+	}
+}
+
+// A duplicate rejected by replay_guard is counted as
+// hookway_duplicate_rejected_total. The name stays outside the
+// hookway_replay_* prefix, which is reserved for the replay service.
+func TestReplayGuardRejectionIncrementsDuplicateMetric(t *testing.T) {
+	m := metrics.New()
+	srv, err := NewFlowServer(loadFlowCfg(t, replayFlowYAML), &fakePublisher{}, slog.Default(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	body := []byte(`{"action":"opened"}`)
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusAccepted {
+		t.Fatalf("first delivery = %d, want 202", rec.Code)
+	}
+	if rec := postSignedFlow(srv, body); rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate delivery = %d, want 409", rec.Code)
+	}
+	expected := `
+# HELP hookway_duplicate_rejected_total Webhook requests rejected by a replay_guard node as duplicates.
+# TYPE hookway_duplicate_rejected_total counter
+hookway_duplicate_rejected_total{destination_queue_id="",endpoint="github",queue=""} 1
+`
+	if err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(expected), "hookway_duplicate_rejected_total"); err != nil {
+		t.Fatal(err)
 	}
 }
 

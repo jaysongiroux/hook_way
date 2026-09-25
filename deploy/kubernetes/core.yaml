@@ -1,0 +1,112 @@
+# Core: five replicas behind a public Service, plus a private ClusterIP
+# Service for the control listener the replay service redrives through.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hookway-core
+data:
+  config.yaml: |
+    server:
+      addr: ":8080"
+      max_body_bytes: 1048576
+    metrics:
+      enabled: true
+      path: /metrics
+      addr: ":9090"
+    replay:
+      url: "http://hookway-replay:8080"
+      capture_token: "${REPLAY_CAPTURE_TOKEN}"
+      control:
+        addr: ":9092"
+        token: "${REPLAY_CONTROL_TOKEN}"
+    destinations:
+      orders_api:
+        type: webhook
+        webhook:
+          url: "https://orders.example.internal/hooks"
+          delivery_mode: sync
+      audit_api:
+        type: webhook
+        webhook:
+          url: "https://audit.example.internal/hooks"
+          delivery_mode: sync
+    flows:
+      orders:
+        delivery_failure_policy: skip_failed
+        nodes:
+          - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+          - {id: body, type: read_body, max_bytes: 1048576}
+          - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+          - {id: env, type: envelope}
+          - {id: orders, type: publish, destination: orders_api, target: created}
+          - {id: audit, type: publish, destination: audit_api, target: created}
+        edges: [in>body, body>auth, auth>env, env>orders, env>audit]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hookway-core
+  labels: {app.kubernetes.io/name: hookway-core}
+spec:
+  replicas: 5
+  selector:
+    matchLabels: {app.kubernetes.io/name: hookway-core}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: hookway-core}
+    spec:
+      # At least replay's workers.execution_timeout (30 s) plus
+      # server.shutdown_timeout (10 s) and the capture drain (6 s): the control
+      # listener waits for in-flight redrives before publishers close.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: core
+          image: hookway:latest
+          env:
+            - {name: HOOKWAY_CONFIG, value: /etc/hookway/config.yaml}
+            - name: REPLAY_CAPTURE_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: capture-token}}
+            - name: REPLAY_CONTROL_TOKEN
+              valueFrom: {secretKeyRef: {name: hookway-replay-tokens, key: control-token}}
+            - name: ORDERS_WEBHOOK_SECRET
+              valueFrom: {secretKeyRef: {name: hookway-webhook-secrets, key: orders}}
+          ports:
+            - {name: http, containerPort: 8080}
+            - {name: metrics, containerPort: 9090}
+            - {name: control, containerPort: 9092}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/hookway, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: hookway-core}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hookway
+spec:
+  type: LoadBalancer
+  selector: {app.kubernetes.io/name: hookway-core}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+# Private: only the replay service may reach it (network-policies.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: hookway-core-control
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: hookway-core}
+  ports:
+    - {name: control, port: 9092, targetPort: control}

@@ -7,7 +7,7 @@ import (
 )
 
 // SkipIfShort skips a container-backed test under go test -short.
-func SkipIfShort(t *testing.T) {
+func SkipIfShort(t testing.TB) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping container test in -short mode")
@@ -16,7 +16,7 @@ func SkipIfShort(t *testing.T) {
 
 // RequireContainer treats a failed container start as Fatal when
 // HOOKWAY_REQUIRE_INTEGRATION=1 (CI), and Skip otherwise (local).
-func RequireContainer(t *testing.T, err error, name string) {
+func RequireContainer(t testing.TB, err error, name string) {
 	t.Helper()
 	if err == nil {
 		return

@@ -166,6 +166,79 @@ your own build. Hookway does not claim OpenTelemetry support; it propagates
 `traceparent` end to end (see the envelope reference below) and emits spans
 into whatever global provider happens to be installed.
 
+## Replay
+
+The optional `replay:` block connects core to the replay service
+(`hookway-replay`), which stores failed deliveries for inspection and
+operator-initiated retry. Without the block, failure capture and the control
+listener are off. The service itself is documented in
+[replay-service.md](replay-service.md).
+
+```yaml
+replay:
+  url: "https://replay.internal"           # the replay service's API (plain HTTP unless a proxy or mesh terminates TLS)
+  capture_token: "${REPLAY_CAPTURE_TOKEN}" # a replay key with the capture scope
+  max_record_bytes: 16777216               # per artifact; larger → metadata-only record
+  tls: {ca_cert: "", client_cert: "", client_key: "", server_name: ""}
+  control:
+    addr: ":9092"                          # private; must differ from server.addr and metrics.addr
+    token: "${REPLAY_CONTROL_TOKEN}"
+    max_concurrent: 8
+```
+
+Core records a failure only when it acknowledged the request (final status
+2xx) and no `on_error` or `dead_letter` path handled it (I20) — in practice a
+publish (or a success continuation after it) that failed under
+`delivery_failure_policy: skip_failed`, or an async webhook delivery that
+failed for good — retries exhausted or a terminal 4xx — with no dead letter,
+or whose dead-letter dispatch failed. An async
+failure waits for its request's final status before it is kept. A flow opts
+out with `capture_failures: false`.
+
+Each record carries metadata (flow, node, destination, sanitized error,
+attempts, config hashes), a snapshot of the failed node's input, and the
+payload the node was sending. A snapshot or payload over `max_record_bytes`,
+or one that cannot be reproduced exactly, makes the record metadata-only and
+not retryable.
+
+Uploads are best effort and never touch a request: four workers, at most 128
+records and 64 MiB buffered, at most three attempts within five seconds. A
+record that cannot be kept is dropped, logged at Error with its `event_id`,
+`flow`, and `node_id`, and counted. Replay being slow or down never changes a
+response or readiness (I15). Both tokens must be at least 32 characters and
+must differ; `${VAR}` references are accepted by `validate` without
+expansion. `tls` sets the client TLS for uploads (`client_cert` and
+`client_key` together for mutual TLS).
+
+The control listener (`replay.control.addr`) serves one route, `POST
+/internal/replay/v1/deliver`, for the replay service's workers; it is never
+part of readiness. Every request needs `Authorization: Bearer
+<control.token>`. Core reads the whole request before it starts, and answers
+`503` with code `not_started` — the only answer after which replay resends —
+when it is shutting down or already running `max_concurrent` redrives. A
+record the current configuration can no longer run is refused with `422` and a
+block reason (`unsupported_snapshot_version`, `hash_mismatch`,
+`flow_missing`, `flow_broken`, `node_missing`, `node_type_changed`,
+`destination_changed`, `target_not_configured`), and nothing is sent. Otherwise
+core resumes the flow at the failed node (or re-sends a `publish_only`
+message) with inline delivery, under the deadline replay sends, and reports
+each node's outcome; downstream failures come back as child records. A
+redrive never captures, dead-letters, or runs compensations (I21). At
+shutdown every listener stops accepting at once; the control listener answers
+`503 not_started` to anything still arriving and waits for its in-flight
+redrives — past `server.shutdown_timeout` if it must, bounded by the deadline
+replay sent — before publishers close. Give the process a termination grace
+period of at least replay's `workers.execution_timeout` plus
+`server.shutdown_timeout`.
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `hookway_capture_total` | `flow`, `outcome` | Captured failures by outcome: `uploaded` or `dropped`. |
+| `hookway_capture_dropped_total` | `reason` | Records that never reached replay: `buffer_full`, `upload_failed` (three attempts or five seconds spent), `capacity` (replay answered 507), `rejected` (replay refused the record, or core could not build it), `shutdown`. |
+| `hookway_capture_buffer_bytes` | — | Bytes waiting for upload, including in-flight uploads (gauge). |
+| `hookway_control_runs_total` | `flow`, `outcome` | Deliver requests answered: `succeeded`, `failed` (the resumed node failed), `blocked` (422), `not_started` (503), `rejected` (401/4xx), `error` (500). `flow` is a configured flow or `unknown`. |
+| `hookway_control_inflight` | — | Redrives running now (gauge). |
+
 ## Connections
 
 `connections` is an optional top-level map of named credentials keyed by stable id. A connection holds everything needed to *reach and authenticate* a backend; a destination that references it keeps only its own sink — the bucket, table, topic, or key prefix it writes to. One AWS account can then serve an `s3`, an `sns`, an `sqs`, and a `lambda` destination from a single declaration, and rotating the credential is one edit in one place.
@@ -198,7 +271,7 @@ Connections are entirely optional and purely additive. Every destination can sti
 |---|---|---|---|
 | `aws` | `region`, `endpoint`, `access_key_id`, `secret_access_key` | `s3`, `sqs`, `sns`, `lambda` | s3: `bucket`, `create`, `sse`, `sse_kms_key_id` · lambda: `invocation_type` · sqs/sns: nothing |
 | `redis` | `mode`, `url`, `addrs`, `master_name`, `username`, `password`, `db`, `tls` | `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv` | `key_prefix` |
-| `postgres` | `url`, `max_conns`, `tls` | `postgres` (and `replay`, below) | `schema`, `table` |
+| `postgres` | `url`, `max_conns`, `tls` | `postgres` | `schema`, `table` |
 | `kafka` | `brokers`, `sasl`, `tls` | `kafka` | `acks`, `compression`, `publish_timeout`, `retry` |
 | `mongodb` | `uri`, `max_pool_size`, `tls` | `mongodb` | `database` |
 | `rabbitmq` | `url`, `publisher_channels`, `tls` | `rabbitmq` | `exchange`, `exchange_type`, `durable`, `publish_timeout`, `declare_queues`, `dead_letter`, `queue_defaults`, `retry` |
@@ -241,26 +314,6 @@ Secrets in a connection are written the same way as anywhere else: `${ENV_VAR}` 
 ### Blast radius
 
 Consolidating credentials narrows the number of places to look, and widens what a single leaked block exposes. Before, a leaked `destinations.archive` block exposed one bucket; afterwards a leaked `connections.aws_prod` exposes every bucket, queue, topic, and function that account can reach. That is the trade the feature makes deliberately. It does not change limitation **L3** in [Invariants](invariants.md) — one process still holds one set of destination credentials — but it does make the full set enumerable in one block, which is what you want when deciding whether to split a deployment by trust domain.
-
-### Sharing a connection with the replay store
-
-`replay` references a `postgres` connection with the same spelling a destination uses, so the replay store and a `postgres` destination can share one credential:
-
-```yaml
-connections:
-  pg_main:
-    type: postgres
-    url: "${POSTGRES_URL}"
-
-replay:
-  enabled: true
-  addr: ":9091"
-  connection: pg_main
-  postgres:
-    table: replay_       # a prefix here, not a single sink table
-```
-
-`replay.connection` must name a `postgres` connection; any other type is rejected. See `examples/connections.yaml` for a complete, validated config.
 
 ## Destinations
 
@@ -642,7 +695,7 @@ Temporal fields live under `destinations.<id>.temporal`. Hookway starts one work
 
 **Duplicates count as delivered.** When the server reports that an execution with the derived workflow id already exists, Hookway logs it at debug level and returns success, so sender retries with a deterministic workflow id are idempotent (first-start-wins).
 
-**Failure handling.** There is no dead-letter path for this destination. Any other start error (frontend unreachable, `start_timeout` exceeded, unknown namespace, rejected start) fails the publish: under the default `stop_on_failure` policy the sender receives a 503 and is expected to retry; under `skip_failed` the route is marked failed and the other routes still deliver. The SDK retries transient gRPC errors internally within `start_timeout`. A stopped worker is not a failure: the start succeeds and the execution waits on the task queue. To recover events whose start still failed, enable the [replay store](#replay), which records every event with a per-destination `delivered`/`failed` outcome and can re-publish it.
+**Failure handling.** There is no dead-letter path for this destination. Any other start error (frontend unreachable, `start_timeout` exceeded, unknown namespace, rejected start) fails the publish: under the default `stop_on_failure` policy the sender receives a 503 and is expected to retry; under `skip_failed` the route is marked failed and the other routes still deliver. The SDK retries transient gRPC errors internally within `start_timeout`. A stopped worker is not a failure: the start succeeds and the execution waits on the task queue.
 
 **Readiness.** The destination's readiness probe calls the frontend gRPC health service; a proxy that blocks it will report the destination unready even though publishes succeed.
 
@@ -1134,6 +1187,7 @@ Node fields (every type):
 
 Flow fields:
 
+- `capture_failures`: optional, default `true`. Set `false` to never capture this flow's failures for the replay service (see [Replay](#replay)). It has no effect without the `replay:` block.
 - `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on envelope `id`.
 - `nodes` / `edges`: required.
 
@@ -1369,10 +1423,6 @@ header is used only as object metadata; it does not bypass
 `security.forwarded_header_allowlist` in the stored envelope.
 
 `hookway validate` rejects `payload: object` on any other destination type.
-It also rejects object mode on a flow captured by the optional replay store:
-the current replay format persists one JSON envelope per event, not each
-publish branch's decoded bytes. A `no_auth` flow excluded with
-`replay.skip_unauthenticated: true` is not captured and remains valid.
 `examples/multipart-split.yaml` is the reference flow (S3 + RabbitMQ).
 `examples/multipart-s3-lambda.yaml` is the same pattern with an Event Lambda
 notify instead of a queue.
@@ -1396,7 +1446,7 @@ is `queue.Message` in `internal/queue/publisher.go`.
 |---|---|---|---|
 | `schema_version` | string | yes | Envelope contract version, currently `"1.0"`. Additive changes keep the major; a removal or a change of meaning requires a new version. Gate your parser on this. |
 | `id` | string | yes | UUIDv7 event id, unique per delivery. **This is the dedup key.** Consumers dedupe on `id`. |
-| `idempotency_key` | string | **no — omitted on ingest** | Present in the struct and in replay responses, but ingest never populates it, so it is omitted from every normally-published envelope. Do not build dedup on it. See [Idempotency](security.md#idempotency). |
+| `idempotency_key` | string | **no — omitted on ingest** | Present in the struct, but ingest never populates it, so it is omitted from every normally-published envelope. Do not build dedup on it. See [Idempotency](security.md#idempotency). |
 | `request_id` | string | when non-empty | The inbound `X-Request-ID` (or `security.request_id_header`) if the sender supplied one, else a generated UUID. Matches the `X-Request-ID` response header and the `request_id` log field. |
 | `trace_id` | string | when non-empty | 32-hex W3C trace id, taken from the inbound `traceparent` or `X-Trace-ID` when either is a valid trace id, else generated. |
 | `traceparent` | string | when non-empty | The outbound W3C `traceparent` value: the inbound header verbatim when syntactically valid, otherwise one synthesized from `trace_id`. The **webhook** destination sets it as a real header on the outbound request (envelope and proxy modes); every other destination carries it inside the JSON and does nothing else with it. |
@@ -1412,9 +1462,8 @@ is `queue.Message` in `internal/queue/publisher.go`.
 | `raw_body_base64` | string | only when set | Base64 of the original bytes. Set by `body_format: raw`, and by XML publishes (which serialize the tree here and leave `body` null). |
 | `source_ip` | string | when non-empty | Client IP, resolved through `security.trusted_proxies` / `trusted_proxy_headers`. |
 | `auth` | object | yes | `{"type", "scheme", "verified"}` describing how the request was authenticated — the auth node's identity and scheme, with `verified: true`. A `no_auth` flow still emits the object. |
-| `variables` | object (string→string) | when non-empty | The routing variables resolved for this event — path placeholders, `transform` `field_map` outputs, `code`-derived values. Publishers render templated destination settings (e.g. a webhook `url`) from these, and replay re-reads them from the stored envelope. |
+| `variables` | object (string→string) | when non-empty | The routing variables resolved for this event — path placeholders, `transform` `field_map` outputs, `code`-derived values. Publishers render templated destination settings (e.g. a webhook `url`) from these. |
 | `dead_letter` | object | only on dead-letters | Present **only** when an async webhook delivery terminally failed and was redirected to a configured `dead_letter` destination. It records why. Additive, so `schema_version` stays `1.0`. Its absence is the normal case. |
-| `replay_of` | string | only on replays | Present **only** on envelopes produced by the replay API: the original captured event id this delivery is a replay of. A replay always gets a fresh `id`, so correlate with `replay_of`. Additive; absent on first-time deliveries. |
 
 Fields on `queue.Message` tagged `json:"-"` are in-memory only and never
 serialized: `RawBody` and `OrigHeaders` (proxy-mode webhook reconstruction),
@@ -1465,56 +1514,6 @@ Options:
 - `max_call_stack`: optional, default `1000` (C2).
 
 The interrupt is checked between JavaScript statements. A pathological regex may run until it finishes; use `filter` instead. Per-request VMs are not pooled (C6).
-
-## Replay
-
-`replay` configures an optional store of accepted inbound events (Postgres-backed) and a protected HTTP API to list, inspect, and re-deliver them. Disabled (the zero value) by default: nothing is captured, no listener is started, and no Postgres connection is required.
-
-- `replay.enabled`: optional boolean, default `false`.
-- `replay.addr`: required when enabled. The dedicated listener address for the replay API, e.g. `":9091"`. Separate from `server.addr` so the replay API is never accidentally exposed on the public webhook port.
-- `replay.skip_unauthenticated`: optional boolean, default `false`. When true, skips capture for flows whose graph includes a `no_auth` node, since those flows have no caller identity to attribute a captured event to.
-- `replay.ttl`: optional duration, default `0` (keep forever). Bounds how long a captured event is retained before the background cleanup sweep deletes it.
-- `replay.max_events`: optional non-negative integer, default `0` (no cap). Caps the total number of retained events; the cleanup sweep evicts the oldest events first once the cap is exceeded.
-- `replay.cleanup_interval`: optional duration, default `1h` when `replay.enabled` is true and the field is left unset. How often the background sweep runs to enforce `ttl` and `max_events`.
-- `replay.postgres`: required when enabled. Reuses the same connection shape as `destinations.<id>.postgres` (`url`, `schema`, `max_conns`, `tls`); unlike a postgres destination, `table` is not a required single-sink table name — the replay store uses its own fixed table names.
-
-Set at least one of `ttl`/`max_events` to bound storage — `ttl` bounds by age, `max_events` by row count; the cleanup loop enforces both.
-
-```yaml
-security:
-  api_key: "${REPLAY_API_KEY}"
-
-replay:
-  enabled: true
-  addr: ":9091"
-  skip_unauthenticated: true
-  ttl: "168h"
-  max_events: 1000000
-  cleanup_interval: "1h"
-  postgres:
-    url: "${REPLAY_DB_URL}"
-```
-
-**Authentication:** the replay API is protected by [`security.api_key`](#securityapi_key) (`Authorization: Bearer <key>`), the same key used by the metrics endpoint and config API. Config validation **requires** a non-empty `security.api_key` whenever `replay.enabled` is true — an unauthenticated API that can re-inject traffic into destinations is rejected at config load rather than silently left open.
-
-**Capture requires authentication to pass.** Only events that pass the flow's own authentication are captured — a request rejected by auth (bad signature, expired token, etc.) is never written to the replay store. `replay.skip_unauthenticated` additionally excludes `no_auth` flows from capture even though such requests do pass "authentication" (there being none to fail).
-
-### Replay API
-
-The replay API is served on `replay.addr`, distinct from the webhook listener:
-
-- `GET /replay/events`: list captured events. Query params: `endpoint` (flow name), `destination`, `target`, `status`, `since`/`until` (RFC 3339 timestamps), `limit`, `cursor` (opaque, from a previous response's `next_cursor`). Response: `{"events": [...], "next_cursor": "..."}`, where each event summary has `id`, `endpoint` (flow name), `status`, `idempotency_key` (empty for ingest), `received_at`.
-- `GET /replay/events/{id}`: fetch one captured event, including its full stored envelope. Response: `{"id", "endpoint", "status", "idempotency_key", "received_at", "envelope"}`. `404` when not found.
-- `POST /replay/events/{id}/replay`: re-deliver one captured event to every destination it was originally recorded as delivered/failed to. Body (optional): `{"reprocess": false}`. Response: `{"replayed_event_id", "original_event_id", "destinations": [...]}`. `404` when the event doesn't exist; `422` when the event has no recorded deliveries (see Limitations below).
-- `POST /replay/replay`: bulk re-delivery over a filtered set of events. Body (all fields optional): `{"endpoint", "destination", "target", "status", "since", "until", "reprocess": false, "dry_run": false, "max": 100}`. With `dry_run: true`, returns `{"matched": <count>, "dry_run": true}` and replays nothing. Otherwise replays up to `max` matching events (default and per-request ceiling; the store additionally clamps list pages to its own maximum) and returns `{"replayed": <count>, "capped": <bool>, "results": [...]}` — `capped` is true when more events matched the filter than were replayed in this request. `destination`/`target` here only **select** which events to replay (events that were recorded as delivered/failed to that destination) — they do not restrict delivery. Each matched event is still re-delivered to **all** of its own recorded destinations, not just the one used to select it.
-
-**`reprocess`:** a replayed event is always a new envelope: fresh `id`, `replay_of` set to the original event id, hop count reset to 0. Consumers that follow the documented contract (dedupe on `id`) therefore process every replay as a new event; correlate with `replay_of`. `reprocess` only touches `idempotency_key`, which ingest leaves empty: `false` (default) keeps the stored value (empty), `true` mints a new UUID. That flag only matters for consumers still keyed on `idempotency_key`.
-
-### Limitations
-
-An event with no recorded deliveries is not replayable (`422 Unprocessable Entity` on single replay; skipped with a reason in bulk replay). That is now limited to events that never reached publish (for example every route was filtered out). On `stop_on_failure`, the failed destination and any not-yet-attempted routes are recorded as `failed` so the event can be replayed.
-
-Proxy-mode webhook destinations are replayable: capture persists the original raw body and request headers in the replay store (`raw_body_base64` and `orig_headers`). Those fields are not forwarded to other destination types.
 
 ## Logging & observability
 

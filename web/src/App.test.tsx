@@ -28,7 +28,8 @@ test("renders the shell header and palette node items", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Config" }));
   expect(await screen.findByRole("menuitem", { name: "Import YAML" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Load production example" })).toBeInTheDocument();
-  expect(screen.getByRole("menuitem", { name: "Server" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Core server" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Replay service" })).toBeInTheDocument();
 });
 
 test("Clear asks for confirmation before wiping the graph", async () => {
@@ -40,9 +41,9 @@ test("Clear asks for confirmation before wiping the graph", async () => {
   useGraphStore.setState({ ...doc, selectedId: null, selectedEdgeId: null });
   renderApp();
   fireEvent.click(screen.getByRole("button", { name: "Clear" }));
-  expect(await screen.findByRole("heading", { name: /clear the canvas/i })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: /clear configuration/i })).toBeInTheDocument();
   expect(useGraphStore.getState().nodes).toHaveLength(1);
-  fireEvent.click(screen.getByRole("button", { name: "Clear canvas" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear entire workspace" }));
   await waitFor(() => expect(useGraphStore.getState().nodes).toHaveLength(0));
 });
 

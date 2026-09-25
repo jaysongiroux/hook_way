@@ -20,14 +20,13 @@ import (
 )
 
 // Server holds HTTP helpers shared by FlowServer (metrics, source IP,
-// request/trace ids, panic recovery, replay capture).
+// request/trace ids, panic recovery).
 type Server struct {
 	cfg            config.Config
 	logger         *slog.Logger
 	metrics        *metrics.Metrics
 	trustedProxies []*net.IPNet
 	readiness      *readinessProber
-	replay         ReplayCapturer
 }
 
 const readHeaderTimeout = 5 * time.Second

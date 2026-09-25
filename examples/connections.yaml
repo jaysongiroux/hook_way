@@ -30,10 +30,6 @@ server:
   addr: ":8080"
   max_body_bytes: 1048576
 
-# Required because replay is enabled below: the replay API re-injects traffic.
-security:
-  api_key: "${HOOKWAY_API_KEY}"
-
 connections:
   # One AWS account, used below by an s3, an sns, and a lambda destination.
   # Before connections, region and both key fields were repeated on all three.
@@ -49,9 +45,9 @@ connections:
     type: aws
     region: us-east-1
 
-  # One Postgres cluster, shared by the archive destination and the replay
-  # store below. The connection owns url / max_conns / tls; each consumer keeps
-  # its own schema and table.
+  # One Postgres cluster, used by the archive_rows destination below. The
+  # connection owns url / max_conns / tls; the destination keeps its own schema
+  # and table.
   pg_main:
     type: postgres
     url: "${POSTGRES_URL}"
@@ -86,16 +82,6 @@ destinations:
     postgres:
       schema: public
       table: webhook_events
-
-# The replay store references a postgres connection the same way a destination
-# does, so it shares one credential with archive_rows. `table` here is a
-# prefix for replay's own tables, not a single sink table.
-replay:
-  enabled: true
-  addr: ":9091"
-  connection: pg_main
-  postgres:
-    table: replay_
 
 flows:
   order_events:

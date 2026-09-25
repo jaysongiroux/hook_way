@@ -1,6 +1,15 @@
-# Called by CI (PRs / main) and Release. Runs the full gate in parallel:
-# Go unit/lint, race, shipped example configs, web unit, Playwright, each
-# integration suite, image+Trivy. Does not publish anything.
+# Called by CI (PRs / main) and Release. Does not publish anything.
+#
+# The gate runs in three stages, each waiting for every job of the one before:
+#
+#   1. Lint     formatting, golangci-lint, govulncheck, static checks, web lint
+#   2. Test     Go unit + conformance, race, examples, web unit, coverage,
+#               observability
+#   3. Deploy   Playwright, every integration suite (including the Compose
+#               end-to-end run), image build + Trivy
+#
+# A failed job skips every later stage, so a lint error costs minutes, not a
+# full integration run. Jobs inside a stage run in parallel.
 name: Reusable CI
 
 on:
@@ -16,42 +25,14 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: "1.25.x"
+  GO_VERSION: "1.26.x"
   NODE_VERSION: "20"
 
 jobs:
-  go:
-    name: Go
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
+  # ── Stage 1: lint ────────────────────────────────────────────────────────
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Unit tests
-        run: make unit
-
-      - name: Invariant conformance
-        run: make conformance
-
-      - name: Vet
-        run: make lint
-
-      - name: Module tidiness
-        run: go mod tidy -diff
-
-      - name: Dead code
-        run: make deadcode
-
-  examples:
-    name: Examples
+  formatting:
+    name: Formatting
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -65,16 +46,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Validate example configs
-        run: make validate-examples
+      - name: gofmt and whitespace
+        run: make fmt-check diff-check
 
-      - name: Serve and POST every example flow
-        run: make test-examples
-
-  go-race:
-    name: Go race
+  golangci:
+    name: golangci-lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,13 +64,56 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Race tests
-        run: make race
+      - uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.13.2
 
-  web:
-    name: Web
+  govulncheck:
+    name: govulncheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Vulnerability check
+        run: make govulncheck
+
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Vet
+        run: make lint
+
+      - name: Module tidiness
+        run: go mod tidy -diff
+
+      - name: Dead code
+        run: make deadcode
+
+  web-lint:
+    name: Web lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,14 +137,150 @@ jobs:
       - name: Node schema drift
         run: make node-schema-check
 
-      - name: Web unit tests
-        run: make web-test
-
       - name: Web dead code (knip)
         run: make web-knip
 
+  # ── Stage 2: test ────────────────────────────────────────────────────────
+
+  go:
+    name: Go
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Unit tests
+        run: make unit
+
+      - name: Invariant conformance
+        run: make conformance
+
+  go-race:
+    name: Go race
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Race tests
+        run: make race
+
+  examples:
+    name: Examples
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Validate example configs
+        run: make validate-examples
+
+      - name: Serve and POST every example flow
+        run: make test-examples
+
+  web:
+    name: Web
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Web unit tests
+        run: make web-test
+
+  coverage:
+    name: Coverage
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Coverage floor
+        run: make coverage
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+          if-no-files-found: error
+
+  observability:
+    name: Observability
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Dashboard tests and alert rules
+        run: make observability-check
+
+  # ── Stage 3: deploy (browsers, containers, images) ───────────────────────
+
   web-e2e:
     name: Web e2e
+    needs: [go, go-race, examples, web, coverage, observability]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -168,6 +325,7 @@ jobs:
 
   integration:
     name: ${{ matrix.name }}
+    needs: [go, go-race, examples, web, coverage, observability]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -190,8 +348,12 @@ jobs:
             target: webhook-integration-test
           - name: Temporal
             target: temporal-integration-test
-          - name: Replay store
-            target: replaystore-integration-test
+          - name: Replay
+            target: replay-integration-test
+          - name: Replay acceptance
+            target: replay-acceptance-test
+          - name: Compose end-to-end
+            target: compose-e2e-test COMPOSE_E2E_BUILD=dockerfile
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,6 +372,7 @@ jobs:
 
   image:
     name: Image
+    needs: [go, go-race, examples, web, coverage, observability]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -235,6 +398,11 @@ jobs:
       - name: Docker build
         run: make docker-build
 
+      - name: Smoke-run the images
+        run: |
+          docker run --rm hookway:local version
+          docker run --rm hookway-replay:local version
+
       - name: Check UI is staged
         run: make ui-check
 
@@ -256,125 +424,47 @@ jobs:
           path: trivy-results.sarif
           if-no-files-found: error
 
-  golangci:
-    name: golangci-lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
+      - name: Vulnerability scan (replay)
+        # Scan the replay image even when core's scan found something.
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@0.35.0
         with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
+          image-ref: hookway-replay:local
+          format: sarif
+          output: trivy-replay-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          limit-severities-for-sarif: true
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - uses: golangci/golangci-lint-action@v9.3.0
-        with:
-          version: v2.13.2
-
-  govulncheck:
-    name: govulncheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Vulnerability check
-        run: make govulncheck
-
-  coverage:
-    name: Coverage
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Coverage floor
-        run: make coverage
-
-      - name: Upload coverage artifacts
+      - name: Upload replay vulnerability scan artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage
-          path: |
-            coverage.out
-            coverage.txt
+          name: trivy-replay-results
+          path: trivy-replay-results.sarif
           if-no-files-found: error
-
-  formatting:
-    name: Formatting
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: gofmt and whitespace
-        run: make fmt-check diff-check
-
-  observability:
-    name: Observability
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Dashboard tests and alert rules
-        run: make observability-check
 
   # Single required check for branch protection. Adding jobs above does not
   # require updating the protected-branch settings if this name stays stable.
+  # A skipped job means an earlier stage failed, so it counts as a failure.
   success:
     name: All checks passed
     if: ${{ !cancelled() }}
     needs:
+      - formatting
+      - golangci
+      - govulncheck
+      - static
+      - web-lint
       - go
       - go-race
       - examples
       - web
+      - coverage
+      - observability
       - web-e2e
       - integration
       - image
-      - golangci
-      - govulncheck
-      - coverage
-      - formatting
-      - observability
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job did not succeed

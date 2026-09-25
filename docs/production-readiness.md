@@ -13,24 +13,24 @@
 
 | Item | Now |
 |---|---|
-| **P0-2** pending events unreplayable | **Closed.** Failed and unattempted `publish` routes are recorded so `stop_on_failure` 503s are replayable. |
+| **P0-2** pending events unreplayable | **Partially closed.** Failures core acknowledged (2xx) are captured by the optional replay service and can be retried by an operator ([replay-service.md](replay-service.md)). Events core refused with 503 still rely on the sender's retry; there is no ingest spool. |
 | **P0-5** no secret file / overlap | **Partial.** `auth.secret_ref` (`env` / `file` / `aws_secrets_manager`) with refresh + overlap. Still no SIGHUP / hot reload. |
 | **P2-5** `key_by` only `"ip"` / “MVP” | **Partial.** `rate_limit.key_by` is `source_ip` or `header.<name>`. The old validator guards config keys that are now rejected outright, so its "MVP" message is unreachable. The §5 body text is stale; this row is correct. |
 | **P2-6** readiness AND-aggregation | **Closed** (D9). `/ready` is 200 while at least one flow is ready; `server.readiness_require_all: true` restores 503-if-any. |
 | **P2-10** OpenTelemetry | **Spans only.** `OnNode` starts `hookway.node.*` spans on the global tracer; there is no OTLP exporter. Do not claim OpenTelemetry. See [configuration.md § OpenTelemetry spans](configuration.md#opentelemetry-spans). |
 | **P2-2** empty `idempotency_key` | **Still true, broader.** envelopes omit `idempotency_key`; consumers should dedupe on `id`. |
 | **P2-1** unvalidated `X-Trace-ID` | **Closed.** `traceIDFromRequest` now gates the `X-Trace-ID` fallback through `isValidTraceID` (length 32, hex, not all-zeros) — stricter than this document's own proposed fix. The §5 repro no longer reproduces. |
-| **P2-9** no Prometheus alert rules | **Closed.** `deploy/alerts.yaml` ships 7 alerts with `deploy/alerts_test.go`, promtool-validated in the required **Observability** CI job. |
+| **P2-9** no Prometheus alert rules | **Closed.** `deploy/alerts.yaml` ships 15 alerts with `deploy/alerts_test.go`, promtool-validated in the required **Observability** CI job. |
 | **P2-7b** no coverage gate | **Closed.** A statement-coverage floor is enforced by `make coverage` in the required **Coverage** job. (The fuzzing half of P2-7 is still open.) |
 | **P0-1** no LICENSE | **Partially closed.** A repo-root `LICENSE` (MIT) now ships. `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, and `CHANGELOG.md` are still absent. Note the original recommendation was Apache-2.0 for its patent grant; MIT has none. |
 | **P0-3** async webhook in-memory queue | **Still open** (documented in configuration.md). |
 | **P0-4** one static API key | **Still open.** |
 | **P1-1** no SIGTERM drain | **Still open.** The symbol moved (`cmd/hookway/shutdown.go`), the finding did not. |
 | **P1-2** process-local rate limit / replay guard | **Still open** (D11). |
-| **P1-3a** `ReadHeaderTimeout` on the main listener | **Closed.** All four servers (webhook, metrics, replay, editor) set it from the shared `readHeaderTimeout` const in `internal/httpapi/server.go`. |
+| **P1-3a** `ReadHeaderTimeout` on the main listener | **Closed.** The webhook, metrics, and editor servers set it from the shared `readHeaderTimeout` const in `internal/httpapi/server.go`; the control listener (`internal/control`) and the replay service set their own. |
 | **P1-3b** no in-process TLS / mTLS | **Still open.** There is no `server.tls.*` block and no `ListenAndServeTLS`; terminate at an ingress. |
-| **P1-4** replay store DDL on startup | **Still open.** |
-| **P1-6** `make lint` is `go vet` | **Mostly closed.** `make lint` is still `go vet`, but it is no longer the gate: `.golangci.yml` enables 12 linters (incl. `gosec`, `staticcheck`, `errcheck`) in a required job, and `govulncheck` runs in two workflows. ESLint and `npm audit` are genuinely still absent. See the rewritten §4 entry. |
+| **P1-4** replay store DDL on startup | **Closed.** The replay service has versioned migrations (`hookway-replay migrate`), and `serve` refuses an older schema. |
+| **P1-6** `make lint` is `go vet` | **Mostly closed.** `make lint` is still `go vet`, but it is no longer the gate: `.golangci.yml` enables 11 linters (incl. `gosec`, `staticcheck`, `errcheck`, and `depguard`, which enforces the core/replay import boundary) in a required job, and `govulncheck` runs in two workflows. ESLint and `npm audit` are genuinely still absent. See the rewritten §4 entry. |
 | **P1-8** no Helm chart | **Still open.** |
 
 ---
@@ -226,7 +226,7 @@ configured `security.api_key`. That same key guards:
 |---|---|
 | `/metrics` | Read observability data |
 | `hookway editor` config API | Read schema, validate config |
-| Replay API (`POST /replay/replay`) | **Re-inject arbitrary captured production traffic into live destinations** |
+| Replay API (`POST /replay/replay`) | (Removed.) **Re-inject arbitrary captured production traffic into live destinations** |
 
 Consequences:
 
@@ -361,6 +361,8 @@ and the same for the metrics/replay listeners.
 
 ### P1-4. Replay store has no versioned migrations
 
+> Superseded: the embedded replay store was removed.
+
 `internal/replaystore/store.go:84,148-186` runs `CREATE TABLE / CREATE INDEX IF NOT
 EXISTS` on every process start. Three consequences:
 
@@ -452,10 +454,10 @@ Reviewing `.github/workflows/release.yml`:
 | No SBOM | — | Cannot answer "are we affected by CVE-X" without rebuilding. Increasingly a procurement requirement. |
 | No signing / provenance | No cosign, no SLSA, no GitHub attestations | Consumers cannot verify image authenticity. |
 | Single architecture | No `platforms:` on `build-push-action` | Blocks Graviton/arm64 fleets — a real cost and availability constraint. |
-| Base image by tag | `FROM golang:1.25.13-alpine` | Not reproducible; pin by digest. The criticism stands — the pin just tracks a newer patch now. |
+| Base image by tag | `FROM golang:1.26.8-alpine` | Not reproducible; pin by digest. The criticism stands — the pin just tracks a newer patch now. |
 | No released binaries | Docker Hub image only | Blocks VM/bare-metal deployments; no checksums or signatures. |
 | ~~No CodeQL/SAST~~ | `gosec` runs via golangci-lint | **Partly closed.** First-party Go is scanned; there is still no CodeQL. |
-| ~~One monolithic job~~ | Was "11 sequential test steps in `release-check`" | **Closed.** CI is 13 parallel jobs in `reusable-ci.yml`, including a 9-way integration matrix, behind one required `All checks passed` status. |
+| ~~One monolithic job~~ | Was "11 sequential test steps in `release-check`" | **Closed.** CI is 14 jobs in `reusable-ci.yml`, staged lint → test → deploy (an 11-way integration matrix, Playwright, images), behind one required `All checks passed` status. |
 | ~~No coverage gate~~ | — | **Closed.** A statement-coverage floor is enforced by `make coverage` in the required **Coverage** job. |
 
 Note the workflow's `permissions: contents: read` default is correct and good practice —
@@ -681,7 +683,7 @@ of them.
 
 **Fix (remaining):** the shipped set does not yet cover an auth-failure rate spike,
 sustained `hookway_saturated_total`, `hookway_webhook_queue_depth` near capacity,
-`hookway_replay_store_up == 0`, or `hookway_config_load_failures_total > 0`. Note
+or `hookway_config_load_failures_total > 0`. Note
 the last one is of limited value: fatal pre-listener config failures are primarily
 visible via structured logs and a supervisor restart, because the process usually
 exits before Prometheus can scrape that counter.
@@ -755,14 +757,14 @@ markers above.
 ### Phase 2 — Make deploys safe *(~2 weeks)*
 6. Readiness drain on `SIGTERM` — P1-1
 7. Helm chart with correct probes, PDB, NetworkPolicy, ServiceMonitor — P1-8
-8. ~~Prometheus alert rules — P2-9~~ **Done** (7 alerts in `deploy/alerts.yaml`).
+8. ~~Prometheus alert rules — P2-9~~ **Done** (15 alerts in `deploy/alerts.yaml`).
 9. Supply chain: SHA-pin actions, SBOM, cosign, multi-arch, digest-pinned bases — P1-7
 
 ### Phase 3 — Close the durability hole *(~3 weeks)*
 10. ~~Record intended destinations at capture so `pending` events are replayable — P0-2.1~~ **Done.**
-11. Automatic re-drive worker from the replay store — P0-2.2
+11. ~~Automatic re-drive worker from the replay store — P0-2.2~~ **Replaced** by operator-initiated retries in the replay service ([replay-service.md](replay-service.md)).
 12. Durable or explicitly-contracted async webhook queue — P0-3
-13. Versioned migrations + `hookway migrate` subcommand — P1-4
+13. ~~Versioned migrations + `hookway migrate` subcommand — P1-4~~ **Done** (`hookway-replay migrate`).
 
 ### Phase 4 — Enterprise security & operability *(~4 weeks)*
 14. Split admin API keys, key lists for rotation, replay audit log — P0-4

@@ -18,7 +18,10 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/retry"
 )
 
-var errWebhookQueueFull = errors.New("webhook: delivery queue full")
+// ErrWebhookQueueFull is wrapped by Publish when an async webhook
+// destination's delivery queue is full.
+var ErrWebhookQueueFull = errors.New("webhook: delivery queue full")
+
 var errWebhookEngineClosing = errors.New("webhook: engine closing")
 
 // webhookDelivery is the resolved per-destination delivery config (built by the publisher).
@@ -43,6 +46,7 @@ type webhookDelivery struct {
 type webhookJob struct {
 	delivery *webhookDelivery
 	msg      Message
+	origin   Origin
 }
 
 // deadLetterFunc redirects a terminally-failed delivery to another destination.
@@ -58,7 +62,8 @@ type webhookDeliveryEngine struct {
 	drainTimeout time.Duration
 	metrics      WebhookMetrics
 	logger       *slog.Logger
-	deadLetter   deadLetterFunc // set post-build under mu via setDeadLetter
+	deadLetter   deadLetterFunc      // set post-build under mu via setDeadLetter
+	onTerminal   TerminalFailureFunc // set post-build under mu via setTerminalFailure
 }
 
 func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.Duration, m WebhookMetrics, logger *slog.Logger) *webhookDeliveryEngine {
@@ -90,6 +95,29 @@ func (e *webhookDeliveryEngine) setDeadLetter(fn deadLetterFunc) {
 	e.mu.Lock()
 	e.deadLetter = fn
 	e.mu.Unlock()
+}
+
+// setTerminalFailure wires the callback for deliveries that fail for good and
+// are not dead-lettered. It is set once during factory wiring.
+func (e *webhookDeliveryEngine) setTerminalFailure(fn TerminalFailureFunc) {
+	e.mu.Lock()
+	e.onTerminal = fn
+	e.mu.Unlock()
+}
+
+// reportTerminal hands a failed-for-good delivery to the terminal callback.
+func (e *webhookDeliveryEngine) reportTerminal(job webhookJob, outcome string, attempts int, err error) {
+	e.mu.RLock()
+	fn := e.onTerminal
+	e.mu.RUnlock()
+	if fn == nil {
+		return
+	}
+	d := job.delivery
+	fn(TerminalFailure{
+		DestinationID: e.destID, Target: d.metricTarget, RenderedTarget: d.target, Message: job.msg,
+		Outcome: outcome, Attempts: attempts, Err: err, FailedAt: time.Now().UTC(), Origin: job.origin,
+	})
 }
 
 // capacity is the fixed job-buffer capacity (used to publish the capacity gauge).
@@ -131,7 +159,7 @@ func (e *webhookDeliveryEngine) deliverRecovered(job webhookJob) {
 	e.deliver(job)
 }
 
-// Enqueue is non-blocking. Returns errWebhookQueueFull when the buffer is full,
+// Enqueue is non-blocking. Returns ErrWebhookQueueFull when the buffer is full,
 // or errWebhookEngineClosing if the engine is closing. The RLock/Lock pairing
 // with Close prevents a send on a closed channel.
 func (e *webhookDeliveryEngine) Enqueue(job webhookJob) error {
@@ -147,7 +175,7 @@ func (e *webhookDeliveryEngine) Enqueue(job webhookJob) error {
 		}
 		return nil
 	default:
-		return errWebhookQueueFull
+		return ErrWebhookQueueFull
 	}
 }
 
@@ -179,21 +207,22 @@ func (e *webhookDeliveryEngine) deliver(job webhookJob) {
 		e.metrics.WebhookQueueDepth(e.destID, len(e.jobs))
 	}
 	outcome, attempts, err := job.delivery.run(context.Background(), job.msg, e.metrics)
-	if err == nil {
+	if err == nil || e.dispatchDeadLetter(job, outcome, attempts) {
 		return
 	}
-	e.dispatchDeadLetter(job, outcome, attempts)
+	e.reportTerminal(job, outcome, attempts, err)
 }
 
 // dispatchDeadLetter redirects a terminally-failed delivery to the configured
-// dead-letter destination. When no dead-letter destination is configured this is
+// dead-letter destination and reports whether the dead-letter destination
+// accepted it. When no dead-letter destination is configured this is
 // a no-op (run already logged the terminal failure — log-and-drop). The
 // dead-letter destination is guaranteed non-webhook by config validation, so no
 // recursion is possible.
-func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome string, attempts int) {
+func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome string, attempts int) bool {
 	d := job.delivery
 	if d.dlqDestination == "" {
-		return // log-and-drop; run() already emitted the terminal Error log
+		return false // log-and-drop; run() already emitted the terminal Error log
 	}
 	e.mu.RLock()
 	resolver := e.deadLetter
@@ -210,7 +239,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 		if e.metrics != nil {
 			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -222,7 +251,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 		if e.metrics != nil {
 			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
-		return
+		return false
 	}
 	e.logger.Warn("webhook delivery dead-lettered",
 		slog.String("destination", e.destID), slog.String("target", d.target),
@@ -232,6 +261,20 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 	if e.metrics != nil {
 		e.metrics.WebhookDeadLetter(e.destID, d.metricTarget, outcome)
 	}
+	return true
+}
+
+// logTerminalFailure logs a terminal/exhausted delivery failure. When a
+// dead-letter destination is configured and the delivery is async, this is
+// demoted from Error to Warn: the dead letter that follows carries the
+// failure. An inline delivery (a redrive) never dead-letters — its failure
+// goes back to the caller — so it is never demoted.
+func (d *webhookDelivery) logTerminalFailure(ctx context.Context, msg string, args ...any) {
+	if d.dlqDestination != "" && !InlineDelivery(ctx) {
+		d.logger.Warn(msg, args...)
+		return
+	}
+	d.logger.Error(msg, args...)
 }
 
 // run performs the HTTP delivery for one message with retry/backoff. It honors
@@ -239,22 +282,6 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 // err on a 2xx; on terminal failure (terminal outcome, exhausted attempts, or a
 // cancelled ctx) it returns the final outcome, the number of attempts made, and
 // a non-nil error.
-// logTerminalFailure logs a terminal/exhausted delivery failure. When a
-// dead-letter destination is configured, this is demoted from Error to Warn:
-// dispatchDeadLetter (called next, by the engine, with the error returned
-// from run) will emit its own Warn on a successful dead-letter or Error on a
-// failed/unconfigured one. Without the demotion, a successfully dead-lettered
-// event would still trip Error-rate alerting even though the message was not
-// lost. A delivery with no DLQ configured has nowhere else to be logged, so it
-// keeps the Error level here (log-and-drop is the only record of the loss).
-func (d *webhookDelivery) logTerminalFailure(msg string, args ...any) {
-	if d.dlqDestination != "" {
-		d.logger.Warn(msg, args...)
-		return
-	}
-	d.logger.Error(msg, args...)
-}
-
 func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics) (outcome string, attempts int, err error) {
 	maxAttempts := d.retry.MaxAttempts
 	if maxAttempts <= 0 {
@@ -285,13 +312,13 @@ func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics
 					slog.String("event_id", msg.ID), slog.String("outcome", outcome))
 				return outcome, attempts, nil
 			}
-			d.logTerminalFailure("webhook delivery failed (terminal)",
+			d.logTerminalFailure(ctx, "webhook delivery failed (terminal)",
 				slog.String("destination", d.destID), slog.String("target", d.target),
 				slog.String("event_id", msg.ID), slog.String("outcome", outcome))
 			return outcome, attempts, fmt.Errorf("webhook %q target %q: delivery failed (%s)", d.destID, d.target, outcome)
 		}
 		if attempt == maxAttempts {
-			d.logTerminalFailure("webhook delivery failed (attempts exhausted)",
+			d.logTerminalFailure(ctx, "webhook delivery failed (attempts exhausted)",
 				slog.String("destination", d.destID), slog.String("target", d.target),
 				slog.String("event_id", msg.ID), slog.String("outcome", outcome), slog.Int("attempts", maxAttempts))
 			return outcome, attempts, fmt.Errorf("webhook %q target %q: delivery failed after %d attempts (%s)", d.destID, d.target, attempts, outcome)

@@ -13,18 +13,18 @@ import (
 )
 
 // SharedConfig is the process-scoped configuration: server, security, metrics,
-// logging, replay, and destination connections. Rate limiting is a flow node,
+// logging, and destination connections. Rate limiting is a flow node,
 // not a top-level limiter, and request pipelines are named flows.
 type SharedConfig struct {
 	Server       ServerConfig
 	Security     SecurityConfig
 	Metrics      MetricsConfig
 	Logging      LoggingConfig
-	Replay       ReplayConfig
+	Replay       ReplayConfig // the optional replay service connection
 	Destinations map[string]DestinationConfig
-	// ConnectionOf maps an owner path ("destinations.events", "replay") to the
+	// ConnectionOf maps an owner path ("destinations.events") to the
 	// connection it resolved through. Only the name and type are kept: the
-	// values themselves have already been merged into Destinations and Replay,
+	// values themselves have already been merged into Destinations,
 	// and retaining them would put a second copy of every credential in memory
 	// and a second thing that could be logged or serialized. ValidationIssues
 	// uses this to re-point issues at the path the operator actually wrote.
@@ -56,33 +56,41 @@ type rawServerConfig = struct {
 	ReadinessRequireAll bool   `yaml:"readiness_require_all"`
 }
 
-type rawReplayConfig = struct {
-	Enabled             bool   `yaml:"enabled"`
-	Addr                string `yaml:"addr"`
-	SkipUnauthenticated bool   `yaml:"skip_unauthenticated"`
-	TTL                 string `yaml:"ttl"`
-	MaxEvents           int64  `yaml:"max_events"`
-	CleanupInterval     string `yaml:"cleanup_interval"`
-	// Connection names a postgres entry in the top-level connections block,
-	// spelled the same way a destination references one. The connection owns
-	// url / max_conns / tls; the postgres block below keeps schema and table.
-	Connection string            `yaml:"connection"`
-	Postgres   rawPostgresConfig `yaml:"postgres"`
-}
-
 type rawSharedConfig struct {
 	Server       rawServerConfig                 `yaml:"server"`
 	Security     SecurityConfig                  `yaml:"security"`
 	Metrics      MetricsConfig                   `yaml:"metrics"`
 	Logging      LoggingConfig                   `yaml:"logging"`
-	Replay       rawReplayConfig                 `yaml:"replay"`
+	Replay       *rawReplayConfig                `yaml:"replay"`
 	Connections  map[string]rawConnectionConfig  `yaml:"connections"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
 }
 
+type rawReplayTLSConfig struct {
+	CACert             string `yaml:"ca_cert"`
+	ClientCert         string `yaml:"client_cert"`
+	ClientKey          string `yaml:"client_key"`
+	ServerName         string `yaml:"server_name"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify"`
+}
+
+type rawReplayControlConfig struct {
+	Addr          string `yaml:"addr"`
+	Token         string `yaml:"token"`
+	MaxConcurrent int    `yaml:"max_concurrent"`
+}
+
+type rawReplayConfig struct {
+	URL            string                 `yaml:"url"`
+	CaptureToken   string                 `yaml:"capture_token"`
+	MaxRecordBytes int64                  `yaml:"max_record_bytes"`
+	TLS            rawReplayTLSConfig     `yaml:"tls"`
+	Control        rawReplayControlConfig `yaml:"control"`
+}
+
 var sharedYAMLFields = map[string]struct{}{
-	"server": {}, "security": {}, "metrics": {}, "logging": {},
-	"replay": {}, "connections": {}, "destinations": {},
+	"server": {}, "security": {}, "metrics": {}, "logging": {}, "replay": {},
+	"connections": {}, "destinations": {},
 }
 
 // DecodeSharedYAML strictly decodes the common process-scoped sections from a
@@ -292,24 +300,10 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 	issues = appendNonEmptyIssue(issues, issue)
 	readinessTimeout, issue := parsePositiveDefaultDuration("server.readiness_timeout", raw.Server.ReadinessTimeout, 5*time.Second)
 	issues = appendNonEmptyIssue(issues, issue)
-	replayTTL, issue := parseDuration("replay.ttl", raw.Replay.TTL, 0)
-	issues = appendNonEmptyIssue(issues, issue)
-	replayCleanupInterval, issue := parseDuration("replay.cleanup_interval", raw.Replay.CleanupInterval, 0)
-	issues = appendNonEmptyIssue(issues, issue)
-	if raw.Replay.Enabled && replayCleanupInterval == 0 {
-		replayCleanupInterval = time.Hour
-	}
 
 	// Connections are resolved into the raw blocks before conversion, so
 	// duration parsing and defaulting still happen once, in convertDestination.
 	connectionOf := make(map[string]ConnectionRef)
-	replayPostgres := raw.Replay.Postgres
-	if name := raw.Replay.Connection; name != "" {
-		if conn, ok := raw.Connections[name]; ok && conn.Type == "postgres" {
-			mergeByYAMLTag(reflect.ValueOf(&replayPostgres).Elem(), reflect.ValueOf(conn), "", ownedConnPaths(conn.Type))
-			connectionOf["replay"] = ConnectionRef{Name: name, Type: conn.Type}
-		}
-	}
 
 	shared := SharedConfig{
 		Server: ServerConfig{
@@ -321,18 +315,23 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 			ReadinessInterval:   readinessInterval, ReadinessTimeout: readinessTimeout,
 			ReadinessRequireAll: raw.Server.ReadinessRequireAll,
 		},
-		Security: raw.Security,
-		Metrics:  raw.Metrics,
-		Logging:  raw.Logging,
-		Replay: ReplayConfig{
-			Enabled: raw.Replay.Enabled, Addr: raw.Replay.Addr,
-			SkipUnauthenticated: raw.Replay.SkipUnauthenticated,
-			TTL:                 replayTTL, MaxEvents: raw.Replay.MaxEvents,
-			CleanupInterval: replayCleanupInterval,
-			Postgres:        convertPostgresConfig(replayPostgres),
-		},
+		Security:     raw.Security,
+		Metrics:      raw.Metrics,
+		Logging:      raw.Logging,
 		Destinations: map[string]DestinationConfig{},
 		ConnectionOf: connectionOf,
+	}
+	if r := raw.Replay; r != nil {
+		shared.Replay = ReplayConfig{
+			Configured: true, URL: r.URL, CaptureToken: r.CaptureToken, MaxRecordBytes: r.MaxRecordBytes,
+			TLS: ReplayTLSConfig(r.TLS), Control: ReplayControlConfig(r.Control),
+		}
+		if shared.Replay.MaxRecordBytes == 0 {
+			shared.Replay.MaxRecordBytes = DefaultReplayMaxRecordBytes
+		}
+		if shared.Replay.Control.MaxConcurrent == 0 {
+			shared.Replay.Control.MaxConcurrent = DefaultReplayControlMaxConcurrent
+		}
 	}
 	// Sorted so issues from the destination loop are emitted deterministically.
 	for _, id := range sortedStringKeys(raw.Destinations) {

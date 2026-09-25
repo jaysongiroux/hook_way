@@ -4,7 +4,8 @@ import { DEFAULT_FLOW, DEFAULT_SERVER } from "./model";
 import { HANDLE_IN, HANDLE_OUT, edgePort } from "./connection";
 import { NODE_IDENTITY_KEYS } from "./nodeIdentity";
 
-const MANAGED_TOP = new Set(["server", "connections", "destinations", "flows"]);
+const MANAGED_TOP = new Set(["server", "replay", "connections", "destinations", "flows"]);
+const MANAGED_FLOW = new Set(["nodes", "edges", "delivery_failure_policy"]);
 
 export function fromConfig(config: Record<string, unknown>): GraphDocument {
   const flowsRaw = isObject(config.flows) ? config.flows : {};
@@ -14,12 +15,14 @@ export function fromConfig(config: Record<string, unknown>): GraphDocument {
   let nodes: HookwayNode[] = [];
   let edges: Edge[] = [];
   let deliveryFailurePolicy: string | undefined;
+  let flowExtra: Record<string, unknown> | undefined;
   for (const name of names) {
     const snap = parseFlow(isObject(flowsRaw[name]) ? flowsRaw[name] : {});
     if (name === activeFlow) {
       nodes = snap.nodes;
       edges = snap.edges;
       deliveryFailurePolicy = snap.deliveryFailurePolicy;
+      flowExtra = snap.flowExtra;
     } else {
       otherFlows[name] = snap;
     }
@@ -28,19 +31,26 @@ export function fromConfig(config: Record<string, unknown>): GraphDocument {
   for (const [k, v] of Object.entries(config)) {
     if (!MANAGED_TOP.has(k)) configExtra[k] = v;
   }
+  // A malformed replay block is still part of the imported document. Keep it
+  // visible in export until the operator replaces it with structured settings.
+  if (Object.prototype.hasOwnProperty.call(config, "replay") && !isObject(config.replay)) configExtra.replay = config.replay;
   const server = isObject(config.server) ? { ...config.server } : { ...DEFAULT_SERVER };
+  const coreReplayConfig = isObject(config.replay) ? { ...config.replay } : null;
   const connections = isObject(config.connections) ? { ...config.connections } : {};
   const destinations = isObject(config.destinations) ? { ...config.destinations } : {};
   return {
     nodes,
     edges,
     serverConfig: Object.keys(server).length > 0 ? server : { ...DEFAULT_SERVER },
+    coreReplayConfig,
+    replayServiceConfig: null,
     configExtra,
     connections,
     destinations,
     activeFlow,
     otherFlows,
     deliveryFailurePolicy,
+    flowExtra,
   };
 }
 
@@ -84,7 +94,16 @@ function parseFlow(raw: Record<string, unknown>): FlowSnapshot {
     });
   });
   const policy = String(raw.delivery_failure_policy ?? "").trim();
-  return { nodes, edges, deliveryFailurePolicy: policy || undefined };
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!MANAGED_FLOW.has(k)) extra[k] = v;
+  }
+  return {
+    nodes,
+    edges,
+    deliveryFailurePolicy: policy || undefined,
+    flowExtra: Object.keys(extra).length > 0 ? extra : undefined,
+  };
 }
 
 function parseEdge(spec: string): { from: string; port: string; to: string } | null {

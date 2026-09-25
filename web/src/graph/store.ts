@@ -12,6 +12,7 @@ import { layout, maybeLayout } from "./layout";
 import { emptyDocument, seedCounters, type GraphDocument, type HookwayNode, type FlowSnapshot } from "./model";
 import { offsetSubgraph, renameSubgraph } from "./subgraph";
 import type { TemplateSubgraph } from "./templates";
+import { defaultCoreReplayConfig, defaultReplayServiceConfig } from "./replayDefaults";
 
 let edgeSeq = 0;
 
@@ -26,6 +27,10 @@ interface GraphState extends GraphDocument {
   updateNodeData: (id: string, patch: Record<string, unknown>) => void;
   updateEdgeData: (id: string, patch: Record<string, unknown>) => void;
   setServerConfig: (patch: Record<string, unknown>) => void;
+  setCoreReplayConfig: (config: Record<string, unknown> | null) => void;
+  setReplayServiceConfig: (config: Record<string, unknown> | null) => void;
+  addReplayConfiguration: () => void;
+  removeReplayConfiguration: () => void;
   setConnections: (connections: Record<string, unknown>) => void;
   setDestinations: (destinations: Record<string, unknown>) => void;
   setDeliveryFailurePolicy: (value: string) => void;
@@ -39,10 +44,11 @@ interface GraphState extends GraphDocument {
   arrangeSeq: number;
   document: () => GraphDocument;
   clear: () => void;
+  clearCore: () => void;
 }
 
-function snapshotOf(s: Pick<GraphState, "nodes" | "edges" | "deliveryFailurePolicy">): FlowSnapshot {
-  return { nodes: s.nodes, edges: s.edges, deliveryFailurePolicy: s.deliveryFailurePolicy };
+function snapshotOf(s: Pick<GraphState, "nodes" | "edges" | "deliveryFailurePolicy" | "flowExtra">): FlowSnapshot {
+  return { nodes: s.nodes, edges: s.edges, deliveryFailurePolicy: s.deliveryFailurePolicy, flowExtra: s.flowExtra };
 }
 
 export const useGraphStore = create<GraphState>((set, get) => ({
@@ -104,12 +110,24 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     for (const [k, v] of Object.entries(merged)) if (v !== "" && v !== null && v !== undefined) pruned[k] = v;
     set({ serverConfig: pruned });
   },
+  setCoreReplayConfig: (coreReplayConfig) => set({ coreReplayConfig, configExtra: withoutReplay(get().configExtra) }),
+  setReplayServiceConfig: (replayServiceConfig) => set({ replayServiceConfig }),
+  addReplayConfiguration: () =>
+    set({
+      coreReplayConfig: get().coreReplayConfig ?? defaultCoreReplayConfig(),
+      replayServiceConfig: get().replayServiceConfig ?? defaultReplayServiceConfig(),
+      configExtra: withoutReplay(get().configExtra),
+    }),
+  removeReplayConfiguration: () => set({ coreReplayConfig: null, replayServiceConfig: null, configExtra: withoutReplay(get().configExtra) }),
   setConnections: (connections) => set({ connections }),
   setDestinations: (destinations) => set({ destinations }),
   setDeliveryFailurePolicy: (value) => set({ deliveryFailurePolicy: value || undefined }),
   setSelected: (id) => set({ selectedId: id, selectedEdgeId: null }),
   setSelectedEdge: (id) => set({ selectedEdgeId: id, selectedId: null }),
   setGraph: (doc) => {
+    const configExtra = { ...(doc.configExtra ?? {}) };
+    const legacyReplay = isRecord(configExtra.replay) ? { ...configExtra.replay } : null;
+    if (legacyReplay || doc.coreReplayConfig !== null) delete configExtra.replay;
     seedCounters(doc.nodes);
     const otherFlows: Record<string, FlowSnapshot> = {};
     for (const [name, snap] of Object.entries(doc.otherFlows ?? {})) {
@@ -118,6 +136,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({
       ...emptyDocument(),
       ...doc,
+      configExtra,
+      coreReplayConfig: doc.coreReplayConfig ?? legacyReplay,
+      replayServiceConfig: doc.replayServiceConfig ?? null,
       nodes: maybeLayout(doc.nodes, doc.edges),
       otherFlows,
       selectedId: null,
@@ -140,6 +161,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       nodes,
       edges: next.edges,
       deliveryFailurePolicy: next.deliveryFailurePolicy,
+      flowExtra: next.flowExtra,
       selectedId: null,
       selectedEdgeId: null,
     });
@@ -159,6 +181,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       nodes: [],
       edges: [],
       deliveryFailurePolicy: undefined,
+      flowExtra: undefined,
       selectedId: null,
       selectedEdgeId: null,
     });
@@ -176,13 +199,30 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       nodes: s.nodes,
       edges: s.edges,
       serverConfig: s.serverConfig,
+      coreReplayConfig: s.coreReplayConfig,
+      replayServiceConfig: s.replayServiceConfig,
       configExtra: s.configExtra,
       connections: s.connections,
       destinations: s.destinations,
       activeFlow: s.activeFlow,
       otherFlows: s.otherFlows,
       deliveryFailurePolicy: s.deliveryFailurePolicy,
+      flowExtra: s.flowExtra,
     };
   },
   clear: () => set({ ...emptyDocument(), selectedId: null, selectedEdgeId: null }),
+  clearCore: () => {
+    const replayServiceConfig = get().replayServiceConfig;
+    set({ ...emptyDocument(), replayServiceConfig, selectedId: null, selectedEdgeId: null });
+  },
 }));
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function withoutReplay(extra: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...extra };
+  delete next.replay;
+  return next;
+}

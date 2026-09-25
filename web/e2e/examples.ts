@@ -26,7 +26,6 @@ export function exampleFixtures(): ExampleFixture[] {
   const rels = [
     "config.yaml",
     "filters.yaml",
-    "replay.yaml",
     "variables.yaml",
     "on_error.yaml",
     "xml.yaml",

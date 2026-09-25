@@ -16,7 +16,6 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/metrics"
 	"github.com/jaysongiroux/hook_way/internal/queue"
-	"github.com/jaysongiroux/hook_way/internal/replaystore"
 )
 
 func newReadyFlowServer(t *testing.T, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics) *FlowServer {
@@ -262,58 +261,31 @@ func TestStaleReadinessLogsOncePerEpisode(t *testing.T) {
 	}
 }
 
-type pingCapturer struct {
-	err error
-}
-
-func (p *pingCapturer) Capture(context.Context, replaystore.Event) error { return nil }
-func (p *pingCapturer) RecordOutcome(context.Context, string, []replaystore.Delivery) error {
-	return nil
-}
-func (p *pingCapturer) Ping(context.Context) error { return p.err }
-
-func TestReadinessFailsWhenReplayStoreIsDown(t *testing.T) {
-	appMetrics := metrics.New()
-	srv := newReadyFlowServer(t, &fakePublisher{}, slog.Default(), appMetrics)
-	srv.SetReplayCapturer(&pingCapturer{err: errors.New("replay postgres down")})
+// Readiness depends only on flows and their destinations; nothing outside
+// core can take a flow out of rotation.
+func TestReadinessReportsOnlyFlowsAndDestinations(t *testing.T) {
+	srv := newReadyFlowServer(t, &fakePublisher{}, slog.Default(), metrics.New())
 	srv.readiness.probeOnce(context.Background())
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("/ready with down replay store = %d, want 503", rec.Code)
-	}
-
-	expected := `
-# HELP hookway_replay_store_up Reachability of the replay store's Postgres connection as observed by the background readiness prober and cleanup sweep (1 up, 0 down).
-# TYPE hookway_replay_store_up gauge
-hookway_replay_store_up 0
-`
-	if err := testutil.GatherAndCompare(appMetrics.Registry(), strings.NewReader(expected), "hookway_replay_store_up"); err != nil {
-		t.Fatalf("replay store up gauge: %v", err)
-	}
-}
-
-func TestReadinessPassesWhenReplayStoreIsUp(t *testing.T) {
-	appMetrics := metrics.New()
-	srv := newReadyFlowServer(t, &fakePublisher{}, slog.Default(), appMetrics)
-	srv.SetReplayCapturer(&pingCapturer{})
-	srv.readiness.probeOnce(context.Background())
-
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil)
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
+	srv.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/ready", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("/ready with up replay store = %d, want 200", rec.Code)
+		t.Fatalf("/ready = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-
-	expected := `
-# HELP hookway_replay_store_up Reachability of the replay store's Postgres connection as observed by the background readiness prober and cleanup sweep (1 up, 0 down).
-# TYPE hookway_replay_store_up gauge
-hookway_replay_store_up 1
-`
-	if err := testutil.GatherAndCompare(appMetrics.Registry(), strings.NewReader(expected), "hookway_replay_store_up"); err != nil {
-		t.Fatalf("replay store up gauge: %v", err)
+	if strings.Contains(rec.Body.String(), "replay_store") {
+		t.Fatalf("/ready mentions replay_store: %s", rec.Body.String())
+	}
+	var body struct {
+		Flows map[string]flowReadyState `json:"flows"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Flows) == 0 {
+		t.Fatalf("/ready reported no flows: %s", rec.Body.String())
+	}
+	for name, state := range body.Flows {
+		if !state.Ready || len(state.Unready) != 0 {
+			t.Fatalf("flow %q = %+v, want ready with nothing unready", name, state)
+		}
 	}
 }

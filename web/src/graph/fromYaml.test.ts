@@ -42,3 +42,8 @@ flows:
   expect(billing).toHaveLength(2);
   expect(billing[0].position).not.toEqual(billing[1].position);
 });
+
+test("requires a core YAML mapping", () => {
+  expect(() => fromYaml("# comments only\n")).toThrow(/must be a YAML mapping/);
+  expect(() => fromYaml("null\n")).toThrow(/must be a YAML mapping/);
+});

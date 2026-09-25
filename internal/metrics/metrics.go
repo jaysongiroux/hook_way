@@ -17,7 +17,7 @@ type Metrics struct {
 	rateLimited              *prometheus.CounterVec
 	saturated                *prometheus.CounterVec
 	forbidden                *prometheus.CounterVec
-	replayRejected           *prometheus.CounterVec
+	duplicateRejected        *prometheus.CounterVec
 	filtered                 *prometheus.CounterVec
 	variableUnresolved       *prometheus.CounterVec
 	variableLookup           *prometheus.CounterVec
@@ -48,15 +48,15 @@ type Metrics struct {
 	destinationReady         *prometheus.GaugeVec
 	panics                   *prometheus.CounterVec
 	buildInfo                *prometheus.GaugeVec
-	replayCaptured           *prometheus.CounterVec
-	replayCaptureFailures    *prometheus.CounterVec
-	replayTriggered          *prometheus.CounterVec
-	replayStoreUp            prometheus.Gauge
-	replayPurged             prometheus.Counter
 	compensationFailed       *prometheus.CounterVec
 	nodeTotal                *prometheus.CounterVec
 	nodeDuration             *prometheus.HistogramVec
 	secretRefreshFailures    *prometheus.CounterVec
+	captureTotal             *prometheus.CounterVec
+	captureDropped           *prometheus.CounterVec
+	captureBufferBytes       prometheus.Gauge
+	controlRuns              *prometheus.CounterVec
+	controlInflight          prometheus.Gauge
 	runtimeRegistered        bool
 }
 
@@ -82,9 +82,9 @@ func New() *Metrics {
 		Name: "hookway_forbidden_total",
 		Help: "Webhook requests rejected by the endpoint IP allowlist.",
 	}, []string{"endpoint", "destination_queue_id", "queue"})
-	m.replayRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "hookway_replay_rejected_total",
-		Help: "Webhook requests rejected as signature replays.",
+	m.duplicateRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_duplicate_rejected_total",
+		Help: "Webhook requests rejected by a replay_guard node as duplicates.",
 	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.filtered = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_filtered_total",
@@ -198,21 +198,6 @@ func New() *Metrics {
 	m.buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hookway_build_info", Help: "Build version and commit Hookway was compiled from (value is always 1).",
 	}, []string{"version", "commit"})
-	m.replayCaptured = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "hookway_replay_captured_total", Help: "Webhook events captured into the replay store.",
-	}, []string{"endpoint"})
-	m.replayCaptureFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "hookway_replay_capture_failures_total", Help: "Replay store capture/outcome-update failures (including recovered panics), by operation.",
-	}, []string{"op"})
-	m.replayTriggered = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "hookway_replay_triggered_total", Help: "Replay-store events re-delivered via the replay API, by mode.",
-	}, []string{"mode"})
-	m.replayStoreUp = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "hookway_replay_store_up", Help: "Reachability of the replay store's Postgres connection as observed by the background readiness prober and cleanup sweep (1 up, 0 down).",
-	})
-	m.replayPurged = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "hookway_replay_events_purged_total", Help: "Replay-store events purged by the background retention cleanup sweep (age and/or over-count).",
-	})
 	m.compensationFailed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_compensation_failed_total",
 		Help: "Replay-reservation release failures. A silent failure leaves the reservation until TTL, so a legitimate retry is rejected 409.",
@@ -230,15 +215,38 @@ func New() *Metrics {
 		Name: "hookway_secret_refresh_failures_total",
 		Help: "Background secret_ref refresh failures. The last known-good secret continues to be served.",
 	}, []string{"provider", "name"})
+	m.captureTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_capture_total",
+		Help: "Captured failures by flow and outcome (uploaded or dropped).",
+	}, []string{"flow", "outcome"})
+	m.captureDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_capture_dropped_total",
+		Help: "Captured failures dropped before reaching the replay service, by reason.",
+	}, []string{"reason"})
+	m.captureBufferBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hookway_capture_buffer_bytes",
+		Help: "Bytes of captured failures waiting for upload, including in-flight uploads.",
+	})
+	for _, reason := range CaptureDropReasons {
+		m.captureDropped.WithLabelValues(reason)
+	}
+	m.controlRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_control_runs_total",
+		Help: "Deliver requests the control listener answered, by flow and outcome.",
+	}, []string{"flow", "outcome"})
+	m.controlInflight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hookway_control_inflight",
+		Help: "Redrives the control listener is running now.",
+	})
 	m.registry.MustRegister(
-		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.replayRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected,
+		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.duplicateRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
-		m.destinationReady, m.panics, m.buildInfo, m.replayCaptured, m.replayCaptureFailures, m.replayTriggered,
-		m.replayStoreUp, m.replayPurged, m.compensationFailed, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
+		m.destinationReady, m.panics, m.buildInfo, m.compensationFailed, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
+		m.captureTotal, m.captureDropped, m.captureBufferBytes, m.controlRuns, m.controlInflight,
 	)
 	return m
 }
@@ -263,6 +271,35 @@ func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
 
 func (m *Metrics) Inflight(delta float64) { m.inflight.Add(delta) }
 
+// CaptureDropReasons are hookway_capture_dropped_total's reason values
+// (capture's Drop* constants). Each series is created at 0, so an alert on
+// increase() sees the very first drop.
+var CaptureDropReasons = []string{"buffer_full", "upload_failed", "capacity", "rejected", "shutdown"}
+
+// CaptureUploaded records a failure the replay service stored.
+func (m *Metrics) CaptureUploaded(flow string) {
+	m.captureTotal.WithLabelValues(flow, "uploaded").Inc()
+}
+
+// CaptureDropped records a captured failure that never reached the replay
+// service. reason is one of capture's Drop* constants.
+func (m *Metrics) CaptureDropped(flow, reason string) {
+	m.captureTotal.WithLabelValues(flow, "dropped").Inc()
+	m.captureDropped.WithLabelValues(reason).Inc()
+}
+
+// SetCaptureBufferBytes records the uploader's buffered bytes.
+func (m *Metrics) SetCaptureBufferBytes(n int64) { m.captureBufferBytes.Set(float64(n)) }
+
+// ControlRun records one deliver request. flow is a configured flow name or
+// "unknown"; outcome is one of control's Outcome* constants.
+func (m *Metrics) ControlRun(flow, outcome string) {
+	m.controlRuns.WithLabelValues(flow, outcome).Inc()
+}
+
+// SetControlInflight records the redrives running now.
+func (m *Metrics) SetControlInflight(n int64) { m.controlInflight.Set(float64(n)) }
+
 func (m *Metrics) HTTP(endpoint, destinationQueueID, queue string, status int) {
 	m.httpRequests.WithLabelValues(endpoint, destinationQueueID, queue, strconv.Itoa(status)).Inc()
 }
@@ -283,8 +320,10 @@ func (m *Metrics) Forbidden(endpoint, destinationQueueID, queue string) {
 	m.forbidden.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
 }
 
-func (m *Metrics) ReplayRejected(endpoint, destinationQueueID, queue string) {
-	m.replayRejected.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
+// DuplicateRejected records a request a replay_guard node rejected as a
+// duplicate (HTTP 409).
+func (m *Metrics) DuplicateRejected(endpoint, destinationQueueID, queue string) {
+	m.duplicateRejected.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
 }
 
 // Filtered counts a delivery dropped by a filter chain. level is "endpoint" or
@@ -426,53 +465,11 @@ func (m *Metrics) Panic(location string) {
 	m.panics.WithLabelValues(location).Inc()
 }
 
-// ReplayCaptured records a webhook event successfully inserted into the
-// replay store.
-func (m *Metrics) ReplayCaptured(endpoint string) {
-	m.replayCaptured.WithLabelValues(endpoint).Inc()
-}
-
-// ReplayCaptureFailure records a failed (or panicked) replay-store write. op
-// is "insert" (Capture) or "update" (RecordOutcome). Replay capture is
-// strictly best-effort, so this is the only observable trace of a failure --
-// it never changes the webhook response.
-func (m *Metrics) ReplayCaptureFailure(op string) {
-	m.replayCaptureFailures.WithLabelValues(op).Inc()
-}
-
-// ReplayTriggered records one replay-store event re-delivered via the replay
-// API. mode is "single" (per-event endpoint) or "bulk" (filtered batch), and
-// is incremented once per event replayed, not once per destination.
-func (m *Metrics) ReplayTriggered(mode string) {
-	m.replayTriggered.WithLabelValues(mode).Inc()
-}
-
-// ReplayStoreUp records whether the replay store's Postgres connection was
-// reachable as of the most recent readiness probe or cleanup sweep Ping.
-func (m *Metrics) ReplayStoreUp(up bool) {
-	value := 0.0
-	if up {
-		value = 1
-	}
-	m.replayStoreUp.Set(value)
-}
-
 // CompensationFailed records a failed replay-reservation release. The HTTP
 // response has already been decided; this is the only signal that a retry
 // may be rejected 409 until the cache TTL expires.
 func (m *Metrics) CompensationFailed(flow string) {
 	m.compensationFailed.WithLabelValues(flow).Inc()
-}
-
-// ReplayPurged records n replay-store events purged by the background
-// retention cleanup sweep. n<=0 is a no-op -- a sweep that purged nothing
-// (e.g. no events past TTL, or both ttl/max_events unset) should not
-// increment the counter.
-func (m *Metrics) ReplayPurged(n int) {
-	if n <= 0 {
-		return
-	}
-	m.replayPurged.Add(float64(n))
 }
 
 // Node records one graph node execution. outcome is "ok", "error", or "panic".

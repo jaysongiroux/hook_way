@@ -36,7 +36,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache: true
 
       - name: Run govulncheck
@@ -53,7 +53,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache: true
 
       - uses: actions/setup-node@v4
@@ -92,3 +92,32 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: trivy-results.sarif
+          category: trivy-core
+
+      - name: Vulnerability scan (replay)
+        # Scan the replay image even when core's scan found something.
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: hookway-replay:local
+          format: sarif
+          output: trivy-replay-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          limit-severities-for-sarif: true
+
+      - name: Upload replay vulnerability scan artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-replay-results
+          path: trivy-replay-results.sarif
+          if-no-files-found: error
+
+      - name: Upload replay SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-replay-results.sarif
+          category: trivy-replay

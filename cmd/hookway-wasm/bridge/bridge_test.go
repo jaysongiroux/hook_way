@@ -9,6 +9,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/configapi"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
 )
 
 // Validate must be a byte-identical pass-through of configapi.Validate for any
@@ -82,5 +83,31 @@ func TestNodeSchemasMatchFlowconfig(t *testing.T) {
 	}
 	if !strings.Contains(got, "http_trigger") || !strings.Contains(got, "publish") {
 		t.Errorf("node schema missing catalog entries")
+	}
+}
+
+func TestReplayValidateAndSchemaMatchConfigapi(t *testing.T) {
+	doc := `database: {url: "${REPLAY_DATABASE_URL}"}
+core: {control_url: "http://hookway:9092", control_token: "${REPLAY_CONTROL_TOKEN}"}
+keys: [{name: core, token: "${REPLAY_CAPTURE_TOKEN}", scopes: [capture]}]
+`
+	want, err := json.Marshal(replayconfigapi.Validate([]byte(doc)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := bridge.ReplayValidate(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Fatalf("replay validation mismatch\n got: %s\nwant: %s", got, want)
+	}
+
+	schema, err := bridge.ReplaySchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(schema, `"retention"`) || !strings.Contains(schema, `"keys"`) {
+		t.Fatalf("replay schema missing sections: %s", schema)
 	}
 }

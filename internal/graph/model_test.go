@@ -152,3 +152,15 @@ func mustMarshal(t *testing.T, node *yaml.Node) []byte {
 	}
 	return raw
 }
+
+func TestCapturesFailuresDefaultsToTrue(t *testing.T) {
+	off, on := false, true
+	for _, c := range []struct {
+		value *bool
+		want  bool
+	}{{nil, true}, {&on, true}, {&off, false}} {
+		if got := (FlowConfig{CaptureFailures: c.value}).CapturesFailures(); got != c.want {
+			t.Errorf("CaptureFailures %v → %v, want %v", c.value, got, c.want)
+		}
+	}
+}

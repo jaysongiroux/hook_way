@@ -1,5 +1,5 @@
 import { expect, test, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { ExportModal } from "./ExportModal";
@@ -20,4 +20,15 @@ test("renders exported YAML for the current graph", () => {
   );
   expect(screen.getByText(/flows:/)).toBeInTheDocument();
   expect(screen.getByText(/http_trigger/)).toBeInTheDocument();
+});
+
+test("exports replay.yaml independently when present", () => {
+  useGraphStore.getState().setReplayServiceConfig({
+    server: { addr: ":8080" },
+    database: { url: "${REPLAY_DATABASE_URL}" },
+  });
+  render(<MantineProvider theme={theme}><ExportModal opened onClose={() => {}} /></MantineProvider>);
+  fireEvent.click(screen.getByRole("tab", { name: "Replay YAML" }));
+  expect(screen.getByText(/REPLAY_DATABASE_URL/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Download replay.yaml" })).toBeInTheDocument();
 });

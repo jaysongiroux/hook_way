@@ -18,6 +18,18 @@ type NodeEvent struct {
 	Err              error
 }
 
+// FailureEvent reports one node whose error no on_error path handled. It fires
+// once, at the node where the error originated; ancestors that merely
+// propagate the error never fire. Input is the payload the node received. It
+// is not copied: nodes never mutate their input (I19), so it still holds what
+// the node was given.
+type FailureEvent struct {
+	NodeID   string
+	NodeType string
+	Input    Payload
+	Err      error
+}
+
 type RunOptions struct {
 	PublishTimeout time.Duration
 	// FanoutConcurrency bounds concurrent destination publishes for
@@ -28,9 +40,11 @@ type RunOptions struct {
 	// OnNode runs once after each attempted node, including failures and panics.
 	// An observer panic is isolated: instrumentation must not alter delivery.
 	OnNode func(NodeEvent)
-	// BeforeDetached runs once before the first detached node's publish-timeout
-	// context is created. Used for replay capture INSERT (I9). Panics are isolated.
-	BeforeDetached func(Payload)
+	// OnFailure runs for each node whose error no on_error path handled, at
+	// the node where the error originated. Under skip_failed it can be called
+	// from several fan-out goroutines at once, so it must be safe for
+	// concurrent use. An observer panic is isolated, like OnNode.
+	OnFailure func(FailureEvent)
 }
 
 // DeliveryTarget is optional destination metadata. Return the configured template,
@@ -64,15 +78,78 @@ func (f *Flow) Run(ctx context.Context, in Payload, opts RunOptions) (term Termi
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
 	err = e.node(ctx, f.root, seed)
 	if err != nil {
-		// Node order is stable and unattempted destinations never masquerade as success.
-		for _, id := range f.order {
-			b := f.nodes[id]
-			if b.spec.Detached && !e.visited[id] && !e.suppressed[id] {
-				e.term.Deliveries = append(e.term.Deliveries, e.delivery(b, nil, true))
-			}
-		}
+		e.recordUnattempted(nil)
 	}
 	slices.Reverse(e.term.Compensations)
+	return e.term, err
+}
+
+// RunFrom executes the flow starting at nodeID with in as that node's input.
+// It is the redrive entry point: nodes upstream of nodeID and sibling
+// branches never run, and compensations are never returned (a redrive holds
+// no sender reservation to release). on_error paths, success continuations,
+// skip_failed fan-out, OnNode, and OnFailure behave as in Run. Unattempted
+// destinations are reported only among nodes reachable from nodeID.
+//
+// The timing differs from Run on purpose: one budget bounds the whole resumed
+// run, PublishTimeout capped at ctx's deadline, so a redrive never outlives
+// the time its caller will wait. Like Run's publish budget it is detached from
+// cancellation (I10): a caller that disconnects mid-run does not abort a
+// delivery already under way. A ctx that has already ended runs nothing.
+func (f *Flow) RunFrom(ctx context.Context, nodeID string, in Payload, opts RunOptions) (term Terminal, err error) {
+	if opts.PublishTimeout <= 0 {
+		return term, errors.New("graph: RunOptions.PublishTimeout must be positive")
+	}
+	if f == nil || f.nodes == nil {
+		return term, errors.New("graph: uncompiled flow")
+	}
+	b, ok := f.nodes[nodeID]
+	if !ok {
+		return term, fmt.Errorf("graph: flow %q has no node %q", f.name, nodeID)
+	}
+	if in == nil {
+		return term, errors.New("graph: nil payload")
+	}
+	if _, err := concretePort(in); err != nil {
+		return term, err
+	}
+	// Resuming is for nodes after the envelope exists. Earlier nodes are
+	// gates (replay_guard, rate limits, auth) that must never rerun.
+	if b.spec.In != PortEnvelope {
+		return term, fmt.Errorf("graph: RunFrom starts only at a node that consumes an Envelope; %q consumes %s", nodeID, b.spec.In)
+	}
+	env, ok := in.(Envelope)
+	if !ok {
+		return term, fmt.Errorf("graph: node %q expects %s but was given %s", nodeID, b.spec.In, in.PortType())
+	}
+	// Branch selects a switch node's output port; it belongs to the run that
+	// set it, not to a resumed one.
+	env.Branch = ""
+	in = env
+	if err := ctx.Err(); err != nil {
+		return term, err
+	}
+	seed, err := clonePayload(in)
+	if err != nil {
+		return term, err
+	}
+	deadline := time.Now().Add(opts.PublishTimeout)
+	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
+		deadline = callerDeadline
+	}
+	bctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
+	defer cancel()
+	// Marking the context as already inside a publish budget makes every
+	// detached node reuse this one instead of starting a fresh PublishTimeout.
+	bctx = context.WithValue(bctx, publishBudgetKey{}, struct{}{})
+	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
+	err = e.node(bctx, nodeID, seed)
+	if err != nil {
+		reachable := map[string]bool{nodeID: true}
+		f.walk(nodeID, reachable)
+		e.recordUnattempted(reachable)
+	}
+	e.term.Compensations = nil
 	return e.term, err
 }
 
@@ -87,7 +164,6 @@ type execution struct {
 	mu                  sync.Mutex
 	term                Terminal
 	visited, suppressed map[string]bool
-	beforeDetached      sync.Once
 }
 
 func (e *execution) markVisited(id string) {
@@ -131,6 +207,21 @@ func (e *execution) delivery(b *bound, err error, unattempted bool) Delivery {
 	d := Delivery{NodeID: b.id, Err: err, Unattempted: unattempted}
 	d.Target = b.target
 	return d
+}
+
+// recordUnattempted appends an Unattempted delivery for every detached node
+// that neither ran nor was suppressed. within limits the scan to those node
+// ids; nil means the whole flow.
+func (e *execution) recordUnattempted(within map[string]bool) {
+	for _, id := range e.flow.order {
+		if within != nil && !within[id] {
+			continue
+		}
+		b := e.flow.nodes[id]
+		if b.spec.Detached && !e.visited[id] && !e.suppressed[id] {
+			e.term.Deliveries = append(e.term.Deliveries, e.delivery(b, nil, true))
+		}
+	}
 }
 func (e *execution) suppress(id string) {
 	e.mu.Lock()
@@ -176,7 +267,6 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	cancel := func() {}
 	ownsBudget := false
 	if b.spec.Detached {
-		e.runBeforeDetached(in)
 		if ctx.Value(publishBudgetKey{}) != nil {
 			// Already inside a publish success chain: reuse the shared budget.
 			nctx = ctx
@@ -265,6 +355,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		if b.spec.Detached && !errors.As(err, &ne) {
 			err = NodeError{NodeID: id, Status: 503, Err: err}
 		}
+		observeFailure(e.opts.OnFailure, FailureEvent{NodeID: id, NodeType: b.spec.Type, Input: in, Err: err})
 		return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
 	}
 	if isTerminal {
@@ -317,16 +408,12 @@ func observe(fn func(NodeEvent), ev NodeEvent) {
 	fn(ev)
 }
 
-func (e *execution) runBeforeDetached(in Payload) {
-	if e.opts.BeforeDetached == nil {
+func observeFailure(fn func(FailureEvent), ev FailureEvent) {
+	if fn == nil {
 		return
 	}
-	// All publishers must wait for the single capture, including its panic
-	// recovery, before starting their individual publish timeout (I9/I15).
-	e.beforeDetached.Do(func() {
-		defer func() { _ = recover() }()
-		e.opts.BeforeDetached(in)
-	})
+	defer func() { _ = recover() }()
+	fn(ev)
 }
 
 func selectedBranch(out Payload) string {

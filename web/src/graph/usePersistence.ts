@@ -12,7 +12,7 @@ export function usePersistence(): void {
     let cancelled = false;
     loadGraph().then((g) => {
       if (cancelled) return;
-      if (g && (g.nodes.length > 0 || g.edges.length > 0 || Object.keys(g.otherFlows).length > 0)) {
+      if (g) {
         setGraph(g);
         return;
       }
@@ -33,12 +33,15 @@ export function usePersistence(): void {
             nodes: state.nodes,
             edges: state.edges,
             serverConfig: state.serverConfig,
+            coreReplayConfig: state.coreReplayConfig,
+            replayServiceConfig: state.replayServiceConfig,
             configExtra: state.configExtra,
             connections: state.connections,
             destinations: state.destinations,
             activeFlow: state.activeFlow,
             otherFlows: state.otherFlows,
             deliveryFailurePolicy: state.deliveryFailurePolicy,
+            flowExtra: state.flowExtra,
           }),
         DEBOUNCE_MS,
       );

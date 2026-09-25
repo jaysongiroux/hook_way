@@ -3,7 +3,6 @@ package graph
 import (
 	"context"
 	"errors"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,26 +22,6 @@ func TestReviewBranchSelectionIsConsumed(t *testing.T) {
 	}
 	if !containsID(rec.entries(), "a") {
 		t.Fatal("selected branch never delivered")
-	}
-}
-
-func TestReviewCaptureCompletesBeforeEveryPublish(t *testing.T) {
-	rec := &recorder{}
-	fc := flowConfig([][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}, {"a", "dest"}, {"b", "dest"}}, "in>body", "body>auth", "auth>env", "env>a", "env>b")
-	fc.DeliveryFailurePolicy = "skip_failed"
-	var done atomic.Bool
-	var early atomic.Bool
-	f := mustCompile(t, fc, registryWithRecorder(t, rec))
-	_, err := f.Run(context.Background(), RequestHead{}, RunOptions{PublishTimeout: time.Second, BeforeDetached: func(Payload) { time.Sleep(30 * time.Millisecond); done.Store(true) }, OnNode: func(ev NodeEvent) {
-		if ev.NodeType == "dest" && !done.Load() {
-			early.Store(true)
-		}
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if early.Load() {
-		t.Fatal("destination completed before replay INSERT")
 	}
 }
 

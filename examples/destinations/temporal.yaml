@@ -11,8 +11,7 @@
 # idempotent.
 #
 # There is no dead-letter path: any other start failure returns a 503 so the
-# sender retries. Enable the replay store (see examples/replay.yaml) to record
-# every event with its per-destination outcome and re-publish failures.
+# sender retries.
 
 server:
   addr: ":8080"

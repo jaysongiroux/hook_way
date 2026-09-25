@@ -7,6 +7,7 @@ import { InspectorModal } from "./graph/InspectorModal";
 import { ExportModal } from "./graph/ExportModal";
 import { EnvPanel } from "./graph/EnvPanel";
 import { ServerPanel } from "./graph/ServerPanel";
+import { ReplaySettingsPanel } from "./graph/ReplaySettingsPanel";
 import { DestinationsPanel } from "./graph/DestinationsPanel";
 import { ConnectionsPanel } from "./graph/ConnectionsPanel";
 import { ImportModal } from "./graph/ImportModal";
@@ -30,6 +31,7 @@ export default function App() {
   const [exportOpen, { open: openExport, close: closeExport }] = useDisclosure(false);
   const [envOpen, { open: openEnv, close: closeEnv }] = useDisclosure(false);
   const [serverOpen, { open: openServer, close: closeServer }] = useDisclosure(false);
+  const [replayOpen, { open: openReplay, close: closeReplay }] = useDisclosure(false);
   const [destOpen, { open: openDest, close: closeDest }] = useDisclosure(false);
   const [connOpen, { open: openConn, close: closeConn }] = useDisclosure(false);
   const [clearOpen, { open: openClear, close: closeClear }] = useDisclosure(false);
@@ -47,9 +49,19 @@ export default function App() {
     compactRef.current = compact;
   }, [compact]);
 
-  const confirmClear = () => {
+  const clearWorkspace = () => {
     useGraphStore.getState().clear();
     void clearGraph();
+    closeClear();
+  };
+
+  const clearCore = () => {
+    useGraphStore.getState().clearCore();
+    closeClear();
+  };
+
+  const removeReplay = () => {
+    useGraphStore.getState().removeReplayConfiguration();
     closeClear();
   };
 
@@ -75,6 +87,7 @@ export default function App() {
         onConnections={openConn}
         onEnv={openEnv}
         onServer={openServer}
+        onReplay={openReplay}
         onLoadExample={() => useGraphStore.getState().setGraph(starterDocument())}
         onClear={openClear}
       />
@@ -109,21 +122,25 @@ export default function App() {
       <ExportModal opened={exportOpen} onClose={closeExport} />
       <EnvPanel opened={envOpen} onClose={closeEnv} />
       <ServerPanel opened={serverOpen} onClose={closeServer} />
+      <ReplaySettingsPanel opened={replayOpen} onClose={closeReplay} />
       <DestinationsPanel opened={destOpen} onClose={closeDest} />
       <ConnectionsPanel opened={connOpen} onClose={closeConn} />
-      <Modal opened={clearOpen} onClose={closeClear} title="Clear the canvas?" size="sm" transitionProps={{ duration: 0 }}>
-        <Stack gap="sm">
-          <Text size="sm">
-            This removes every node, edge, destination, and server setting from the saved draft. Import YAML again if you still have a copy.
-          </Text>
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={closeClear}>
-              Cancel
-            </Button>
-            <Button color="red" onClick={confirmClear}>
-              Clear canvas
-            </Button>
-          </Group>
+      <Modal opened={clearOpen} onClose={closeClear} title="Clear configuration?" size="sm" transitionProps={{ duration: 0 }}>
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">Choose the document boundary deliberately. These actions cannot be undone unless you exported a copy.</Text>
+          <Stack gap={4}>
+            <Button color="red" variant="light" justify="space-between" onClick={clearCore}>Clear core configuration</Button>
+            <Text size="xs" c="dimmed">Reset flows, destinations, connections, core server settings, and core&apos;s replay connection. Keep replay.yaml.</Text>
+          </Stack>
+          <Stack gap={4}>
+            <Button color="red" variant="light" justify="space-between" onClick={removeReplay}>Remove replay configuration</Button>
+            <Text size="xs" c="dimmed">Delete replay.yaml and remove core&apos;s replay integration block.</Text>
+          </Stack>
+          <Stack gap={4}>
+            <Button color="red" onClick={clearWorkspace}>Clear entire workspace</Button>
+            <Text size="xs" c="dimmed">Reset both YAML documents and remove the saved draft.</Text>
+          </Stack>
+          <Group justify="flex-end"><Button variant="default" onClick={closeClear}>Cancel</Button></Group>
         </Stack>
       </Modal>
     </Box>

@@ -196,14 +196,14 @@ func TestWebhookEngineQueueFull(t *testing.T) {
 	_ = e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "2", ReceivedAt: time.Now()}})
 	var full bool
 	for i := 0; i < 50; i++ { // account for scheduling; eventually queue is full
-		if err := e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "x", ReceivedAt: time.Now()}}); errors.Is(err, errWebhookQueueFull) {
+		if err := e.Enqueue(webhookJob{delivery: d, msg: Message{ID: "x", ReceivedAt: time.Now()}}); errors.Is(err, ErrWebhookQueueFull) {
 			full = true
 			break
 		}
 		time.Sleep(time.Millisecond)
 	}
 	if !full {
-		t.Fatalf("expected errWebhookQueueFull under load")
+		t.Fatalf("expected ErrWebhookQueueFull under load")
 	}
 	// block is unblocked by deferred close(block) above
 }
