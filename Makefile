@@ -235,9 +235,12 @@ lint:
 DEADCODE_ALLOW := cmd/hookway-wasm/bridge/|internal/queue/target_resolver.go.*dynamicLen
 
 deadcode:
-	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./... 2>/dev/null)"; \
+	@echo "deadcode: checking tests and entrypoints"
+	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./...)" || exit $$?; \
 	if [ -n "$$out" ]; then echo "dead code found (reachable from no test or entrypoint):"; echo "$$out"; exit 1; fi
-	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 ./cmd/... 2>/dev/null | grep -Ev '$(DEADCODE_ALLOW)')"; \
+	@echo "deadcode: checking production entrypoints"
+	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 ./cmd/...)" || exit $$?; \
+	out="$$(printf '%s\n' "$$out" | grep -Ev '$(DEADCODE_ALLOW)' || true)"; \
 	if [ -n "$$out" ]; then echo "dead code found (unreachable from any entrypoint; tests keep it alive):"; echo "$$out"; exit 1; fi
 	@echo "no dead code"
 
