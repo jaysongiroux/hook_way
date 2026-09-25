@@ -38,6 +38,14 @@ test("each AWS destination is told apart by its icon, not just its label", () =>
   expect(icons.size, "AWS destinations share a generic mark").toBe(aws.length);
 });
 
+test("the marquee states that Temporal workflow settings are not in standalone YAML", () => {
+  wrap();
+  const region = screen.getByRole("region", {
+    name: `Declare once in YAML. Publish to ${DEST_TYPES.length} destination types.`,
+  });
+  expect(region).toHaveTextContent(/Temporal workflow settings are not yet exposed in standalone YAML/);
+});
+
 test("the repeated track is hidden from assistive technology", () => {
   const { container } = wrap();
   const duplicate = container.querySelector('[aria-hidden="true"].hookway-marquee-group');

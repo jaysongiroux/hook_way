@@ -45,7 +45,7 @@ export function CodeBand() {
   return (
     <Section
       title="Define the flow in YAML"
-      lead="No SDK, no handler to deploy. Declare the flow, the verification, and where events land."
+      lead="Declare the flow, the verification, and where events land."
     >
       <Box
         style={{

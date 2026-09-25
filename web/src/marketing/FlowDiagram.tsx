@@ -27,7 +27,7 @@ export function FlowDiagram() {
   return (
     <Section
       title="Fan out without duplicate handlers"
-      lead="Put conditions on individual branches; one can stop without blocking delivery on the others."
+      lead="A condition can stop one branch without blocking delivery on the others."
     >
       {wide ? <DiagramSvg /> : <DiagramCards />}
     </Section>

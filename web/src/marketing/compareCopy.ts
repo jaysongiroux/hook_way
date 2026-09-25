@@ -100,7 +100,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   {
     id: "destinations",
     capability: "Native delivery destinations",
-    note: "What the product writes to after verification — not brokers used only as ingest sources.",
+    note: "What the product writes to after verification — not brokers used only as ingest sources. Temporal workflow settings are not yet exposed in standalone YAML.",
     values: {
       hookway: {
         level: "yes",

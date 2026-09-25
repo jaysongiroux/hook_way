@@ -28,8 +28,7 @@ export function Explore() {
             from a path, JSON body, or filtered header, then select a target such as{" "}
             <Text component="code" inherit c={DARK.text} style={{ fontFamily: MONO }}>
               {"{envName}-events"}
-            </Text>{" "}
-            so each environment reaches its own queue.
+            </Text>.
           </Text>
           <Anchor component={Link} to="/use-cases" fw={650} c={DARK.accent} underline="always">
             Explore use cases

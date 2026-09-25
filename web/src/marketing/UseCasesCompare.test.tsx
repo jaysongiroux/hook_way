@@ -95,3 +95,12 @@ test("compare page states Hookdeck Event Gateway destinations are HTTP-oriented"
   expect(main).toHaveTextContent(/HTTP, CLI \(local\), and Mock API only/);
   expect(main).toHaveTextContent(/Preserves arbitrary request bodies/);
 });
+
+test("the destinations row notes that Temporal workflow settings are not in standalone YAML", () => {
+  const row = COMPARE_ROWS.find((r) => r.id === "destinations");
+  expect(row?.note).toMatch(/Temporal workflow settings are not yet exposed in standalone YAML/);
+  wrap(<Compare />);
+  expect(screen.getByRole("main")).toHaveTextContent(
+    /Temporal workflow settings are not yet exposed in standalone YAML/,
+  );
+});

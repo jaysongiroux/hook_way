@@ -6,28 +6,28 @@ import { DARK } from "../tokens";
 const FEATURES: { span: 2 | 3 | 4 | 6; title: string; body: string }[] = [
   {
     span: 3,
-    title: "JSON, XML, multipart, and raw bodies",
-    body: "Choose the body format each flow expects. XML elements and multipart file metadata stay addressable in routing conditions; raw bytes stay forwardable.",
+    title: "Publish to 14 destination types",
+    body: "Queues, streams, databases, object storage, Temporal, webhook, and Lambda. `publish.payload: object` stores decoded file bytes on S3 and redis_kv. Named connections can hold shared destination credentials. Webhook, Kafka, and RabbitMQ retry with backoff; only webhook can dead-letter a failed publish.",
   },
   {
     span: 3,
+    title: "Verify 11 wire-format schemes",
+    body: "HMAC layouts, HTTP Basic, an exact header, and JWT algorithms HS256, RS256, and ES256. An unknown scheme fails closed.",
+  },
+  {
+    span: 2,
+    title: "JSON, XML, multipart, and raw bodies",
+    body: "XML elements and multipart file metadata stay addressable in routing conditions; raw bytes stay forwardable.",
+  },
+  {
+    span: 2,
     title: "Branch on request data",
     body: "Use filter to stop a path, if/else for two outcomes, or switch for the first matching labelled route.",
   },
   {
     span: 2,
-    title: "Verify before parsing",
-    body: "HMAC, static header, or JWT verification runs on the raw request and fails closed.",
-  },
-  {
-    span: 2,
-    title: "Transform or proxy",
-    body: "Field maps, changed-field diffs, XML pruning, sandboxed JavaScript, or a controlled HTTP request.",
-  },
-  {
-    span: 2,
-    title: "Publish to existing infrastructure",
-    body: "Each publish node names a configured destination and target. Webhook, Kafka, and RabbitMQ retry with backoff; webhook can dead-letter a failed publish.",
+    title: "Transform the payload",
+    body: "field_map, changed_fields, xml_prune, sandboxed JavaScript, or http_request.",
   },
 ];
 
@@ -35,7 +35,7 @@ export function Features() {
   return (
     <Section
       title="Configure the full request path"
-      lead="The YAML graph records verification, parsing, branches, transforms, and delivery in one place, so your services need no provider-specific webhook handlers."
+      lead="Publish into queues, streams, databases, object storage, Temporal, webhook, and Lambda. Verification fails closed on an unknown scheme."
     >
       <Bento>
         {FEATURES.map((f) => (

@@ -21,6 +21,9 @@ test("the hero states what Hookway does and offers both calls to action", () => 
   wrap();
   const heading = screen.getByRole("heading", { level: 1 });
   expect(heading).toHaveTextContent(/receive, verify, and route webhooks/i);
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/verify the request by wire format, then publish/i);
+  expect(main).toHaveTextContent(/the builder exports that YAML; it does not talk to a running process/i);
   expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute("href", "/");
   expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
 
@@ -31,12 +34,42 @@ test("the hero states what Hookway does and offers both calls to action", () => 
   expect(repoCta).toHaveAttribute("href", expect.stringContaining(GITHUB_REPO));
 });
 
-test("new payload and branching capabilities are marketable without duplicating the docs", () => {
+test("features lead with publish and verify, then bodies, branch, and transform", () => {
   wrap();
-  const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/JSON, XML, multipart, and raw/i);
-  expect(main).toHaveTextContent(/if\/else for two outcomes/i);
-  expect(main).toHaveTextContent(/switch for the first matching labelled route/i);
+  const section = screen.getByRole("heading", { level: 2, name: "Configure the full request path" }).closest("section");
+  expect(section).not.toBeNull();
+  const text = section!.textContent ?? "";
+  expect(text).toMatch(/verification fails closed on an unknown scheme/i);
+  const marks = [
+    "Publish to 14 destination types",
+    "Verify 11 wire-format schemes",
+    "JSON, XML, multipart, and raw bodies",
+    "Branch on request data",
+    "field_map",
+  ];
+  let at = -1;
+  for (const mark of marks) {
+    const next = text.indexOf(mark);
+    expect(next, mark).toBeGreaterThan(at);
+    at = next;
+  }
+  expect(text).toMatch(/HTTP Basic/);
+  expect(text).toMatch(/exact header/);
+  expect(text).toMatch(/publish\.payload: object/);
+  expect(text).toMatch(/named connections/i);
+  expect(text).toMatch(/if\/else for two outcomes/i);
+  expect(text).toMatch(/switch for the first matching labelled route/i);
+  expect(text).toMatch(/changed_fields/);
+  expect(text).toMatch(/xml_prune/);
+  expect(text).toMatch(/http_request/);
+  expect(text).not.toMatch(/HMAC, static header, or JWT/);
+});
+
+test("the destination marquee states the Temporal YAML limitation", () => {
+  wrap();
+  expect(screen.getByRole("main")).toHaveTextContent(
+    /Temporal workflow settings are not yet exposed in standalone YAML/,
+  );
 });
 
 test("the overview points to dynamic-routing use cases and the sourced comparison", () => {
@@ -107,6 +140,8 @@ test("the page does not restate the documentation it links to", () => {
   // took the page to ~5,450, i.e. 50 characters off the bound. Correcting the
   // retry/metrics/enablement claims made the honest copy longer still, so
   // redundant prose was trimmed to pay for it rather than raising the bound.
-  // It now sits at ~5,430. If you need more room, cut something.
+  // Leading with publish and verify, and stating the Temporal YAML limit on
+  // the marquee, was paid for the same way (shorter bodies, code-band, and
+  // production leads). It now sits at 5,459. If you need more room, cut something.
   expect(copy.length).toBeLessThan(5500);
 });

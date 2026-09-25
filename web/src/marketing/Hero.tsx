@@ -18,8 +18,9 @@ export function Hero() {
             Receive, verify, and route webhooks.
           </Title>
           <Text size="lg" c={DARK.muted} ta="center" maw={620}>
-            A self-hosted gateway for JSON, XML, multipart, and raw webhook payloads. Build a typed flow,
-            then deliver to the queues, streams, databases, and services you already run — from one YAML file.
+            Verify the request by wire format, then publish into the queues, streams, databases, and services
+            you already run — from one YAML file. The builder exports that YAML; it does not talk to a running
+            process.
           </Text>
           <Group gap="sm" mt="xs">
             <Button component={Link} to="/builder" size="md" color="brand">

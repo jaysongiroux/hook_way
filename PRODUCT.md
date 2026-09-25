@@ -12,11 +12,11 @@ Primary user: a platform / infrastructure engineer at a mid-size company. They o
 
 ## Product Purpose
 
-Hookway receives third-party webhook POST requests, verifies authentication, and publishes to destinations the company already runs (queues, streams, object storage, databases, Temporal, or another HTTP webhook). Default publishes are JSON envelopes; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`, and S3 preserves supplied filename / Content-Type metadata. Success is a verified event arriving at the right backend without glue code, a SaaS account, or a vendor-specific SDK.
+Hookway receives third-party webhook POST requests, verifies authentication, and publishes to destinations the company already runs (queues, streams, object storage, databases, Lambda, Temporal, or another HTTP webhook). Default publishes are JSON envelopes; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`, and S3 preserves supplied filename / Content-Type metadata. Success is a verified event arriving at the right backend without glue code, a SaaS account, or a vendor-specific SDK.
 
 ## Positioning
 
-One self-hosted binary, one YAML file. Verification is named by wire format (HMAC layout, JWT algorithm, static header), not by vendor. Destinations are declared once and referenced by publish nodes; shared credentials are declared once as a named connection and referenced by destinations. The builder generates that YAML; it does not talk to a running process.
+One self-hosted binary, one YAML file. Verification is named by wire format (HMAC layouts, HTTP Basic, exact header, JWT algorithms — 11 schemes), not by vendor. Destinations are declared once and referenced by publish nodes; shared credentials are declared once as a named connection and referenced by destinations. The builder generates that YAML; it does not talk to a running process.
 
 ## Operating Context
 
@@ -24,7 +24,7 @@ Local compose or a static binary in the company’s own environment. Config is v
 
 ## Capabilities and Constraints
 
-Confirmed: HMAC / JWT / header_exact / no_auth; JSON / XML / multipart / raw bodies; 14 destination types; `publish.payload: object` on S3 and redis_kv; typed graph edges; fail-closed unknown auth; process-local rate limits; optional in-memory replay guard; in-flight ceiling; webhook/Kafka/RabbitMQ retries then dead-letter; an optional replay service keeps the deliveries a destination missed after the sender already got its 2xx, for an operator to retry through an API (no UI, no automatic re-drive; 7-day default retention). The public site must not claim hot reload, RBAC, SSO, OpenTelemetry, Helm, encryption at rest, a replay UI, automatic re-drive, or exactly-once delivery.
+Confirmed: 11 verification schemes (HMAC layouts, HTTP Basic, exact header, JWT HS256/RS256/ES256, and no_auth on its own node); JSON / XML / multipart / raw bodies; filter, if/else, and switch; field_map, changed_fields, xml_prune, a sandboxed code node, and http_request; 14 destination types, including Lambda, into queues, streams, databases, object storage, Temporal, and webhook; `publish.payload: object` on S3 and redis_kv; named connections for shared destination credentials; typed graph edges; fail-closed unknown schemes; process-local rate limits; optional in-memory replay guard; in-flight ceiling; Webhook, Kafka, and RabbitMQ retry with backoff; only webhook honours a 429 or dead-letters a failed publish; an optional replay service keeps the deliveries a destination missed after the sender already got its 2xx, for an operator to retry through an API (no UI, no automatic re-drive; 7-day default retention). The public site must not claim hot reload, RBAC, SSO, OpenTelemetry, Helm, encryption at rest, a replay UI, automatic re-drive, or exactly-once delivery.
 
 ## Brand Commitments
 
