@@ -5,7 +5,7 @@
 // expanding a cell. Hookdeck Outpost is noted separately: it is an outbound
 // event delivery product, not an inbound webhook gateway.
 
-import { GITHUB_REPO } from "./links";
+import { GITHUB_REPO, repoBlob } from "./links";
 
 export type SupportLevel = "yes" | "partial" | "no" | "n/a";
 type CompetitorId = "hookway" | "hookdeck" | "convoy";
@@ -16,6 +16,8 @@ export interface Competitor {
   role: string;
   sourceHref: string;
   sourceLabel: string;
+  /** Short label when this column is the product the page is about. */
+  mark?: string;
 }
 
 export interface CompareRow {
@@ -27,7 +29,28 @@ export interface CompareRow {
 
 export const COMPARE_INTRO = {
   title: "How Hookway compares",
-  lead: "Feature and integration differences for inbound webhook gateways. Each claim cites public product documentation or this repository.",
+  lead: "Hookway is a self-hosted inbound gateway that verifies each webhook by wire format and publishes it into infrastructure you run. This comparison is features and integrations only; each claim cites public documentation or this repository.",
+} as const;
+
+export const COMPARE_DIFFERS = {
+  title: "Where Hookway differs",
+  points: [
+    {
+      title: "Native destinations",
+      detail:
+        "Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — 14 catalog types. Temporal workflow settings are not yet exposed in standalone YAML.",
+    },
+    {
+      title: "Object and file publish",
+      detail:
+        "S3 and redis_kv accept publish.payload: object, so multipart file bytes are stored in infrastructure you run.",
+    },
+    {
+      title: "Optional large-artifact replay API",
+      detail:
+        "An optional replay service lists, inspects, downloads, retries, and dismisses missed deliveries over HTTP, keeping payloads up to 16 MiB by default. No product UI and no automatic re-drive.",
+    },
+  ],
 } as const;
 
 export const COMPETITORS: Competitor[] = [
@@ -37,6 +60,7 @@ export const COMPETITORS: Competitor[] = [
     role: "Self-hosted inbound gateway: one binary, one YAML config, native publishes into your infrastructure.",
     sourceHref: GITHUB_REPO,
     sourceLabel: "hook_way repository",
+    mark: "This product",
   },
   {
     id: "hookdeck",
@@ -79,7 +103,8 @@ export const COMPARE_ROWS: CompareRow[] = [
     values: {
       hookway: {
         level: "yes",
-        detail: "Wire-format schemes (HMAC layouts, JWT, header exact); fails closed on unknown schemes",
+        detail:
+          "11 wire-format schemes (HMAC layouts, HTTP Basic, exact header, JWT HS256/RS256/ES256, and no_auth on its own node). Unknown schemes fail closed",
       },
       hookdeck: { level: "yes", detail: "Vendor source types and generic webhooks with verification" },
       convoy: { level: "yes", detail: "Provider verification on incoming HTTP sources" },
@@ -146,15 +171,44 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "replay",
-    capability: "Inspect and re-deliver",
+    capability: "Inspect, download, and re-deliver failures",
     values: {
       hookway: {
+        level: "yes",
+        detail:
+          "Optional replay service: list, inspect, download, retry one or a batch, or dismiss a delivery a destination missed after the sender got its 2xx, when neither an error path nor a dead letter handled it. Retains that payload up to the configured maximum (default 16 MiB); anything larger is metadata only and not retryable. Operator HTTP API, with no product UI and no automatic re-drive",
+      },
+      hookdeck: {
+        level: "yes",
+        detail:
+          "Dashboard event log: inspect attempts, automatic retries up to 50, and manual retries without that cap. Replay re-ingests the request and is distinct from retry. Default inbound payload is 10 MiB; a PAYLOAD_TOO_LARGE rejection does not store the body, so the payload cannot be replayed",
+      },
+      convoy: {
+        level: "yes",
+        detail:
+          "Event and delivery logs with delivery attempts, dashboard Retry and Force Retry, and automatic retries. Docs discourage large binary or documents in the webhook body",
+      },
+    },
+  },
+  {
+    id: "large-payloads",
+    capability: "Retain large / binary payloads for redelivery",
+    values: {
+      hookway: {
+        level: "yes",
+        detail:
+          "Replay keeps a retryable payload up to the configured maximum (default 16 MiB). Multipart file bytes can also be published as objects to S3 or redis_kv",
+      },
+      hookdeck: {
         level: "partial",
         detail:
-          "Optional replay service keeps events a destination missed after the sender got its 2xx; retry just that delivery from its API",
+          "Default inbound payload is 10 MiB. A PAYLOAD_TOO_LARGE rejection does not store the body, so the payload cannot be replayed. Dashboard search excludes bodies larger than 2.5 MB",
       },
-      hookdeck: { level: "yes", detail: "Persisted event log, issues, bulk retry in the product UI" },
-      convoy: { level: "yes", detail: "Delivery logs, retries, and dashboards" },
+      convoy: {
+        level: "partial",
+        detail:
+          "Docs advise keeping payloads concise (ideally under 1–5 MB) and passing a URL or reference for large files instead of embedding binary",
+      },
     },
   },
   {
@@ -178,11 +232,20 @@ export const COMPARE_OUTPOST_NOTE = {
 export const COMPARE_SOURCES = [
   { href: "https://hookdeck.com/docs/destinations", label: "Hookdeck Destinations" },
   { href: "https://hookdeck.com/docs/transformations", label: "Hookdeck Transformations" },
+  { href: "https://hookdeck.com/docs/limits", label: "Hookdeck Limits" },
+  { href: "https://hookdeck.com/docs/events", label: "Hookdeck Events" },
+  { href: "https://hookdeck.com/docs/retries", label: "Hookdeck Retries" },
+  { href: "https://hookdeck.com/docs/requests", label: "Hookdeck Requests" },
   { href: "https://hookdeck.com/event-gateway", label: "Hookdeck Event Gateway" },
   { href: "https://hookdeck.com/docs/outpost/overview", label: "Hookdeck Outpost" },
   { href: "https://www.getconvoy.io/docs/home/introduction", label: "Convoy introduction" },
   { href: "https://www.getconvoy.io/docs/product-manual/sources", label: "Convoy Sources" },
   { href: "https://www.getconvoy.io/docs/product-manual/functions", label: "Convoy Functions" },
   { href: "https://www.getconvoy.io/docs/product-manual/metrics", label: "Convoy Metrics" },
+  {
+    href: "https://www.getconvoy.io/docs/product-manual/events-and-event-deliveries",
+    label: "Convoy events and event deliveries",
+  },
+  { href: repoBlob("docs/replay-service.md"), label: "Hookway replay service" },
   { href: GITHUB_REPO, label: "Hookway repository" },
 ] as const;

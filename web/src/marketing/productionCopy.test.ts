@@ -83,17 +83,30 @@ test("the copy claims nothing the project does not implement", () => {
   }
 });
 
-// The replay service is optional and operator-driven: say so in plain words,
-// and never claim a UI, automatic re-drive, or exactly-once delivery.
+// The replay service is optional and operator-driven. Say that it is a full
+// service, and state the absences (no product UI, no automatic re-drive)
+// rather than marking the cell partial. Never claim exactly-once delivery.
 const overclaims = [/automatic/i, /\bUI\b/, /dashboard/i, /exactly/i, /guarantee/i];
 
-test("the replay comparison is partial and honest", () => {
+test("the replay comparison describes the full optional service", () => {
   const row = COMPARE_ROWS.find((r) => r.id === "replay")!;
   const hookway = row.values.hookway;
-  expect(hookway.level).toBe("partial");
+  expect(hookway.level).toBe("yes");
+  expect(hookway.level).not.toBe("partial");
+  expect(row.capability).toMatch(/inspect/i);
   expect(hookway.detail).toMatch(/optional replay service/i);
+  expect(hookway.detail).toMatch(/inspect/i);
+  expect(hookway.detail).toMatch(/download/i);
+  expect(hookway.detail).toMatch(/retry/i);
+  expect(hookway.detail).toMatch(/dismiss/i);
+  expect(hookway.detail).toMatch(/16 MiB/);
   expect(hookway.detail).toMatch(/\bAPI\b/);
-  for (const re of overclaims) expect(hookway.detail).not.toMatch(re);
+  expect(hookway.detail).toMatch(/no product UI/i);
+  expect(hookway.detail).toMatch(/no automatic re-drive/i);
+  const positive = hookway.detail
+    .replace(/no product UI/gi, "")
+    .replace(/no automatic re-drive/gi, "");
+  for (const re of overclaims) expect(positive).not.toMatch(re);
 });
 
 // The comparison cell once read "stores acknowledged failed deliveries",
@@ -103,9 +116,11 @@ test("replay copy speaks the reader's language, not the implementation's", () =>
     COMPARE_ROWS.find((r) => r.id === "replay")!.values.hookway.detail,
     ...PRODUCTION_CARDS.filter((c) => c.id === "replay").flatMap((c) => [c.title, c.valueLabel, c.line]),
   ].join(" ");
-  for (const jargon of [/acknowledged/i, /redrive|re-drive/i, /capture/i, /snapshot/i, /record/i]) {
+  for (const jargon of [/acknowledged/i, /\bcapture/i, /snapshot/i, /\brecord\b/i]) {
     expect(replayCopy).not.toMatch(jargon);
   }
+  // "re-drive" is allowed only when the sentence says the service does not do it.
+  expect(replayCopy.replace(/no automatic re-drive/gi, "")).not.toMatch(/redrive|re-drive/i);
 });
 
 test("the replay tile headlines the default retention and stays opt-in", () => {

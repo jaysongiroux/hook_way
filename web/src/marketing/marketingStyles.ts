@@ -1,4 +1,4 @@
-import { DARK } from "../tokens";
+import { DARK, EDGE } from "../tokens";
 
 export const LIFT_CLASS = "hookway-lift";
 export const BENTO_CLASS = "hookway-bento";
@@ -114,7 +114,35 @@ export const MARKETING_CSS = `
   to { opacity: 1; transform: translateY(0); }
 }
 .${COMPARE_TABLE_CLASS} table {
-  min-width: 720px;
+  min-width: 980px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.${COMPARE_TABLE_CLASS} :is(th, td):first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 210px;
+  max-width: 260px;
+  background: ${DARK.bg};
+  box-shadow: inset -1px 0 0 ${DARK.border};
+}
+.${COMPARE_TABLE_CLASS} thead :is(th, td):first-child {
+  z-index: 3;
+}
+.${COMPARE_TABLE_CLASS} :is(th, td):not(:first-child) {
+  min-width: 240px;
+}
+.${COMPARE_TABLE_CLASS} :is(th, td)[data-product="hookway"] {
+  background: #EEF3F8;
+  box-shadow: inset 3px 0 0 ${DARK.accent};
+}
+.${COMPARE_TABLE_CLASS} thead th[data-product="hookway"] {
+  background: #E4EDF6;
+}
+.${COMPARE_TABLE_CLASS}:focus-visible {
+  outline: 2px solid ${DARK.accent};
+  outline-offset: 2px;
 }
 .${COMPARE_TABLE_CLASS} tbody tr {
   transition: background-color 140ms ease;
@@ -122,10 +150,56 @@ export const MARKETING_CSS = `
 .${COMPARE_TABLE_CLASS} tbody tr:hover {
   background: ${DARK.bg};
 }
-.${COMPARE_LEVEL_CLASS}[data-level="yes"] { color: ${DARK.accent}; }
-.${COMPARE_LEVEL_CLASS}[data-level="partial"] { color: ${DARK.text}; }
+.${COMPARE_TABLE_CLASS} tbody tr:hover :is(th, td):first-child {
+  background: ${DARK.bg};
+}
+.${COMPARE_TABLE_CLASS} tbody tr:hover :is(th, td)[data-product="hookway"] {
+  background: #E4EDF6;
+}
+.${COMPARE_LEVEL_CLASS} {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid ${EDGE.line};
+  border-radius: 2px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.${COMPARE_LEVEL_CLASS}[data-level="yes"] {
+  color: ${DARK.accent};
+  background: #E7EEF5;
+}
+.${COMPARE_LEVEL_CLASS}[data-level="partial"] {
+  color: ${DARK.text};
+  background: ${DARK.recessed};
+}
 .${COMPARE_LEVEL_CLASS}[data-level="no"],
-.${COMPARE_LEVEL_CLASS}[data-level="n/a"] { color: ${DARK.muted}; }
+.${COMPARE_LEVEL_CLASS}[data-level="n/a"] {
+  color: ${DARK.muted};
+  background: ${DARK.bg};
+}
+.hookway-compare-product[data-product="hookway"] {
+  box-shadow: inset 3px 0 0 ${DARK.accent};
+}
+.hookway-compare-mark {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hookway-compare-differs {
+  background: ${DARK.surface};
+  border: 1px solid ${DARK.border};
+  border-radius: 4px;
+  padding: 20px 22px;
+  margin-bottom: 20px;
+}
+.hookway-compare-differs-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
 .${EXPLORE_GRID_CLASS} {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
@@ -150,6 +224,9 @@ export const MARKETING_CSS = `
     gap: 12px;
   }
   .hookway-compare-products {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hookway-compare-differs-list {
     grid-template-columns: minmax(0, 1fr);
   }
 }

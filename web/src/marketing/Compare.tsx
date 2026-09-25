@@ -2,6 +2,7 @@ import { Anchor, Box, Button, Container, Group, Stack, Table, Text, Title } from
 import { useDocumentTitle } from "@mantine/hooks";
 import { Link } from "react-router-dom";
 import {
+  COMPARE_DIFFERS,
   COMPARE_INTRO,
   COMPARE_OUTPOST_NOTE,
   COMPARE_ROWS,
@@ -84,6 +85,8 @@ export function Compare() {
           {COMPETITORS.map((c) => (
             <Box
               key={c.id}
+              className="hookway-compare-product"
+              data-product={c.id}
               style={{
                 background: DARK.surface,
                 border: `1px solid ${DARK.border}`,
@@ -92,6 +95,11 @@ export function Compare() {
               }}
             >
               <Stack gap={8}>
+                {c.mark && (
+                  <Text className="hookway-compare-mark" size="xs" fw={650} c={DARK.accent}>
+                    {c.mark}
+                  </Text>
+                )}
                 <Text fw={650} c={DARK.text}>
                   {c.name}
                 </Text>
@@ -112,6 +120,26 @@ export function Compare() {
         lead="Cells summarise public documentation. Re-check the linked sources before relying on a cell in a purchase decision."
         background={DARK.recessed}
       >
+        <Box component="aside" className="hookway-compare-differs" aria-labelledby="where-hookway-differs">
+          <Text id="where-hookway-differs" component="h3" fw={650} c={DARK.text} size="md" style={{ margin: 0 }}>
+            {COMPARE_DIFFERS.title}
+          </Text>
+          <Box component="ul" className="hookway-compare-differs-list">
+            {COMPARE_DIFFERS.points.map((point) => (
+              <Box component="li" key={point.title}>
+                <Text fw={650} c={DARK.text} size="sm">
+                  {point.title}
+                </Text>
+                <Text size="sm" c={DARK.muted} mt={4} style={{ lineHeight: 1.5 }}>
+                  {point.detail}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+        <Text size="xs" c={DARK.muted} mb={8}>
+          Scroll sideways to compare. The capability column stays in view.
+        </Text>
         <Box
           className={COMPARE_TABLE_CLASS}
           role="region"
@@ -126,7 +154,12 @@ export function Compare() {
             horizontalSpacing="md"
             verticalSpacing="md"
             styles={{
-              table: { background: DARK.surface, borderColor: DARK.border },
+              table: {
+                background: DARK.surface,
+                borderColor: DARK.border,
+                borderCollapse: "separate",
+                borderSpacing: 0,
+              },
               th: {
                 background: DARK.bg,
                 color: DARK.text,
@@ -141,7 +174,7 @@ export function Compare() {
               <Table.Tr>
                 <Table.Th scope="col">Capability</Table.Th>
                 {COMPETITORS.map((c) => (
-                  <Table.Th key={c.id} scope="col">
+                  <Table.Th key={c.id} scope="col" data-product={c.id}>
                     {c.name}
                   </Table.Th>
                 ))}
@@ -150,20 +183,20 @@ export function Compare() {
             <Table.Tbody>
               {COMPARE_ROWS.map((row) => (
                 <Table.Tr key={row.id}>
-                  <Table.Td>
+                  <Table.Th scope="row">
                     <Text fw={600} c={DARK.text} size="sm">
                       {row.capability}
                     </Text>
                     {row.note && (
-                      <Text size="xs" c={DARK.muted} mt={4}>
+                      <Text size="xs" c={DARK.muted} mt={4} fw={450}>
                         {row.note}
                       </Text>
                     )}
-                  </Table.Td>
+                  </Table.Th>
                   {COMPETITORS.map((c) => {
                     const cell = row.values[c.id];
                     return (
-                      <Table.Td key={c.id}>
+                      <Table.Td key={c.id} data-product={c.id}>
                         <Text
                           component="span"
                           className={COMPARE_LEVEL_CLASS}

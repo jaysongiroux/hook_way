@@ -10,6 +10,7 @@ import { Compare } from "./Compare";
 import { UseCases } from "./UseCases";
 import { USE_CASES } from "./useCasesCopy";
 import { COMPARE_ROWS, COMPETITORS } from "./compareCopy";
+import { repoBlob } from "./links";
 
 const repoRoot = resolve(__dirname, "../../..");
 
@@ -87,6 +88,19 @@ test("compare matrix covers every competitor column and cites sources", () => {
   expect(screen.getByRole("link", { name: /Convoy Sources/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Convoy Functions/i })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /Convoy Metrics/i })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Hookdeck Limits" })).toHaveAttribute("href", "https://hookdeck.com/docs/limits");
+  expect(screen.getByRole("link", { name: "Hookdeck Events" })).toHaveAttribute("href", "https://hookdeck.com/docs/events");
+  expect(screen.getByRole("link", { name: "Hookdeck Retries" })).toHaveAttribute("href", "https://hookdeck.com/docs/retries");
+  expect(screen.getByRole("link", { name: "Hookdeck Requests" })).toHaveAttribute("href", "https://hookdeck.com/docs/requests");
+  expect(screen.getByRole("link", { name: "Convoy events and event deliveries" })).toHaveAttribute(
+    "href",
+    "https://www.getconvoy.io/docs/product-manual/events-and-event-deliveries",
+  );
+  expect(screen.getByRole("link", { name: "Hookway replay service" })).toHaveAttribute(
+    "href",
+    repoBlob("docs/replay-service.md"),
+  );
+  expect(existsSync(resolve(repoRoot, "docs/replay-service.md"))).toBe(true);
 });
 
 test("compare page states Hookdeck Event Gateway destinations are HTTP-oriented", () => {
@@ -103,4 +117,60 @@ test("the destinations row notes that Temporal workflow settings are not in stan
   expect(screen.getByRole("main")).toHaveTextContent(
     /Temporal workflow settings are not yet exposed in standalone YAML/,
   );
+});
+
+test("Hookway replay is the full optional service, not a partial", () => {
+  const row = COMPARE_ROWS.find((r) => r.id === "replay")!;
+  expect(row.values.hookway.level).toBe("yes");
+  expect(row.values.hookway.level).not.toBe("partial");
+  expect(row.capability).toMatch(/Inspect, download, and re-deliver failures/);
+  expect(row.values.hookway.detail).toMatch(/optional replay service/i);
+  expect(row.values.hookway.detail).toMatch(/16 MiB/);
+  expect(row.values.hookway.detail).toMatch(/no product UI/i);
+  expect(row.values.hookway.detail).toMatch(/no automatic re-drive/i);
+  wrap(<Compare />);
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/optional replay service/i);
+  expect(main).toHaveTextContent(/no product UI/i);
+  expect(main).toHaveTextContent(/no automatic re-drive/i);
+  expect(screen.getByRole("rowheader", { name: /Inspect, download, and re-deliver failures/i })).toBeInTheDocument();
+});
+
+test("the matrix states large-payload retention with sourced limits", () => {
+  const row = COMPARE_ROWS.find((r) => r.id === "large-payloads")!;
+  expect(row.capability).toMatch(/Retain large \/ binary payloads for redelivery/);
+  expect(row.values.hookway.level).toBe("yes");
+  expect(row.values.hookway.detail).toMatch(/16 MiB/);
+  expect(row.values.hookway.detail).toMatch(/publish\.payload: object|objects to S3 or redis_kv/);
+  expect(row.values.hookdeck.level).toBe("partial");
+  expect(row.values.hookdeck.detail).toMatch(/10 MiB/);
+  expect(row.values.hookdeck.detail).toMatch(/PAYLOAD_TOO_LARGE/);
+  expect(row.values.hookdeck.detail).toMatch(/2\.5 MB/);
+  expect(row.values.convoy.level).toBe("partial");
+  expect(row.values.convoy.detail).toMatch(/1–5 MB/);
+  wrap(<Compare />);
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/Retain large \/ binary payloads for redelivery/);
+  expect(main).toHaveTextContent(/10 MiB/);
+  expect(main).toHaveTextContent(/2\.5 MB/);
+  expect(main).toHaveTextContent(/PAYLOAD_TOO_LARGE/);
+  expect(main).toHaveTextContent(/1–5 MB/);
+});
+
+test("the compare page leads with wire-format verification and where Hookway differs", () => {
+  wrap(<Compare />);
+  const main = screen.getByRole("main");
+  expect(main).toHaveTextContent(/self-hosted inbound gateway/i);
+  expect(main).toHaveTextContent(/wire format/i);
+  expect(main).toHaveTextContent(/11 wire-format schemes/);
+  expect(main).toHaveTextContent(/HTTP Basic/);
+  expect(main).toHaveTextContent(/HS256/);
+  expect(main).toHaveTextContent(/fail closed/i);
+  expect(screen.getByRole("heading", { name: /where hookway differs/i })).toBeInTheDocument();
+  expect(main).toHaveTextContent(/Native destinations/);
+  expect(main).toHaveTextContent(/Object and file publish/);
+  expect(main).toHaveTextContent(/Optional large-artifact replay API/);
+  expect(main).toHaveTextContent(/This product/);
+  const table = screen.getByRole("table", { name: /feature and integration comparison/i });
+  expect(within(table).getByRole("columnheader", { name: "Hookway" })).toHaveAttribute("data-product", "hookway");
 });
