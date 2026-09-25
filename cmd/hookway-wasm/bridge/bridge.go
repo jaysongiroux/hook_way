@@ -52,7 +52,12 @@ func NodeSchemas() (string, error) {
 // ReplayValidate validates replay.yaml without expanding environment
 // references against the browser or editor host.
 func ReplayValidate(yaml string) (string, error) {
-	return replayconfigapi.ValidateJSON([]byte(yaml))
+	resp := replayconfigapi.Validate([]byte(yaml))
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // ReplaySchema returns the replay service's on-disk YAML shape.

@@ -28,15 +28,15 @@ func TestValidateKeepsEnvironmentReferencesOpaque(t *testing.T) {
 
 func TestValidateRejectsUnknownFieldsAndShortLiteralTokens(t *testing.T) {
 	doc := strings.Replace(validReplay, `server: {addr: ":8080"}`, `server: {addr: ":8080", mystery: true}`, 1)
-	joined, _ := ValidateJSON([]byte(doc))
-	if !strings.Contains(joined, "field mystery not found") {
-		t.Fatalf("expected unknown-field issue, got %s", joined)
+	joined := Validate([]byte(doc))
+	if len(joined.Issues) == 0 || !strings.Contains(joined.Issues[0].Message, "field mystery not found") {
+		t.Fatalf("expected unknown-field issue, got %#v", joined.Issues)
 	}
 
 	doc = strings.Replace(validReplay, `"${REPLAY_CONTROL_TOKEN}"`, `"short"`, 1)
-	joined, _ = ValidateJSON([]byte(doc))
-	if !strings.Contains(joined, "at least 32") {
-		t.Fatalf("expected short-token issue, got %s", joined)
+	joined = Validate([]byte(doc))
+	if len(joined.Issues) == 0 || !strings.Contains(joined.Issues[0].Message, "at least 32") {
+		t.Fatalf("expected short-token issue, got %#v", joined.Issues)
 	}
 }
 

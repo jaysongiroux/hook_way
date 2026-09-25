@@ -3,8 +3,6 @@
 package configapi
 
 import (
-	"encoding/json"
-
 	coreapi "github.com/jaysongiroux/hook_way/internal/configapi"
 	replayconfig "github.com/jaysongiroux/hook_way/internal/replay/config"
 )
@@ -29,13 +27,4 @@ func Validate(data []byte) coreapi.ValidateResponse {
 // Schema returns the JSON Schema describing replay.yaml.
 func Schema() ([]byte, error) {
 	return replayconfig.SchemaJSON()
-}
-
-// ValidateJSON returns Validate's stable JSON wire representation for WASM.
-func ValidateJSON(data []byte) (string, error) {
-	b, err := json.Marshal(Validate(data))
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }

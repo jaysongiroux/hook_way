@@ -28,9 +28,22 @@ linters:
             - "!**/cmd/hookway-replay/**"
             - "!**/internal/redrivecontract/**"
             - "!**/internal/acceptance/**"
+            - "!**/internal/editor/**"
+            - "!**/cmd/hookway-wasm/bridge/**"
           deny:
             - pkg: "github.com/jaysongiroux/hook_way/internal/replay/"
               desc: "core must not depend on the replay service; share types through internal/replaywire"
+        # Config tooling may use replay's schema/validator, but not its runtime.
+        config_ui:
+          list-mode: lax
+          files:
+            - "**/internal/editor/**"
+            - "**/cmd/hookway-wasm/bridge/**"
+          allow:
+            - "github.com/jaysongiroux/hook_way/internal/replay/configapi$"
+          deny:
+            - pkg: "github.com/jaysongiroux/hook_way/internal/replay/"
+              desc: "config tooling may import replay/configapi only, not replay runtime"
         replay:
           files:
             - "**/internal/replay/**"

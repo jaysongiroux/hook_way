@@ -328,7 +328,7 @@ func (c Config) validate(is *issues, allowSecretRefs bool) {
 	if u, err := url.Parse(c.Core.ControlURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		is.errorf("core.control_url", "must be an absolute http or https URL")
 	}
-	if len(c.Core.ControlToken) < minTokenLen && !(allowSecretRefs && exactEnvReference.MatchString(c.Core.ControlToken)) {
+	if len(c.Core.ControlToken) < minTokenLen && (!allowSecretRefs || !exactEnvReference.MatchString(c.Core.ControlToken)) {
 		is.errorf("core.control_token", "is required and must be at least %d characters", minTokenLen)
 	}
 	r := c.Retention
@@ -392,7 +392,7 @@ func (c Config) validateKeys(is *issues, allowSecretRefs bool) {
 			names[k.Name] = i
 		}
 		switch j, dup := tokens[k.Token]; {
-		case len(k.Token) < minTokenLen && !(allowSecretRefs && exactEnvReference.MatchString(k.Token)):
+		case len(k.Token) < minTokenLen && (!allowSecretRefs || !exactEnvReference.MatchString(k.Token)):
 			is.errorf(prefix+".token", "must be at least %d characters", minTokenLen)
 		case dup:
 			is.errorf(prefix+".token", "is the same token as keys[%d].token", j)
