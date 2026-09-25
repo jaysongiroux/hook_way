@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ const (
 )
 
 var keyNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
+var exactEnvReference = regexp.MustCompile(`^\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
 
 type Config struct {
 	Server    ServerConfig
@@ -194,16 +196,38 @@ func LoadBytes(data []byte) (Config, []hookconfig.ValidationIssue) {
 		}
 		return Config{}, is
 	}
+	return decodeBytes([]byte(expanded), false)
+}
+
+// ValidateBytes validates browser-supplied replay YAML without expanding
+// environment references against the editor process. Exact ${NAME} secret
+// references are treated as opaque values; deployment-time LoadBytes still
+// expands them strictly and applies the same validation to the resolved value.
+func ValidateBytes(data []byte) (Config, []hookconfig.ValidationIssue) {
+	return decodeBytes(data, true)
+}
+
+func decodeBytes(data []byte, allowSecretRefs bool) (Config, []hookconfig.ValidationIssue) {
 	var raw rawConfig
-	dec := yaml.NewDecoder(strings.NewReader(expanded))
+	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, []hookconfig.ValidationIssue{{Field: "config", Message: err.Error()}}
 	}
 	var is issues
 	cfg := raw.resolve(&is)
-	cfg.validate(&is)
+	cfg.validate(&is, allowSecretRefs)
 	return cfg, is
+}
+
+// SchemaJSON returns the replay service's on-disk YAML shape for the config
+// editor. Runtime validation remains authoritative for required values and
+// coupled constraints.
+func SchemaJSON() ([]byte, error) {
+	r := hookconfig.NewSchemaReflector()
+	r.DoNotReference = true
+	schema := r.Reflect(&rawConfig{})
+	return json.MarshalIndent(schema, "", "  ")
 }
 
 func (raw rawConfig) resolve(is *issues) Config {
@@ -269,7 +293,7 @@ func reservedPath(path string) bool {
 	return path == "/" || path == "/healthz" || path == "/readyz" || path == "/v1" || strings.HasPrefix(path, "/v1/")
 }
 
-func (c Config) validate(is *issues) {
+func (c Config) validate(is *issues, allowSecretRefs bool) {
 	switch c.Logging.Level {
 	case "", "debug", "info", "warn", "error":
 	default:
@@ -298,7 +322,7 @@ func (c Config) validate(is *issues) {
 	if u, err := url.Parse(c.Core.ControlURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		is.errorf("core.control_url", "must be an absolute http or https URL")
 	}
-	if len(c.Core.ControlToken) < minTokenLen {
+	if len(c.Core.ControlToken) < minTokenLen && !(allowSecretRefs && exactEnvReference.MatchString(c.Core.ControlToken)) {
 		is.errorf("core.control_token", "is required and must be at least %d characters", minTokenLen)
 	}
 	r := c.Retention
@@ -338,10 +362,10 @@ func (c Config) validate(is *issues) {
 			is.warnf(tls.field, "certificate verification is disabled; set a ca_cert instead and do not use this in production")
 		}
 	}
-	c.validateKeys(is)
+	c.validateKeys(is, allowSecretRefs)
 }
 
-func (c Config) validateKeys(is *issues) {
+func (c Config) validateKeys(is *issues, allowSecretRefs bool) {
 	if len(c.Keys) == 0 {
 		is.errorf("keys", "at least one key is required")
 		return
@@ -362,7 +386,7 @@ func (c Config) validateKeys(is *issues) {
 			names[k.Name] = i
 		}
 		switch j, dup := tokens[k.Token]; {
-		case len(k.Token) < minTokenLen:
+		case len(k.Token) < minTokenLen && !(allowSecretRefs && exactEnvReference.MatchString(k.Token)):
 			is.errorf(prefix+".token", "must be at least %d characters", minTokenLen)
 		case dup:
 			is.errorf(prefix+".token", "is the same token as keys[%d].token", j)

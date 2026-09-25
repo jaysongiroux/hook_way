@@ -22,6 +22,7 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
   const destinations = pruneEmpty(doc.destinations);
   const server = Object.keys(doc.serverConfig).length > 0 ? pruneEmpty(doc.serverConfig) : { ...DEFAULT_SERVER };
   const config: Record<string, unknown> = { server };
+  if (doc.coreReplayConfig !== null) config.replay = pruneEmpty(doc.coreReplayConfig) ?? {};
   // Connections come before destinations, so the file reads in the order the
   // references resolve. Omitted entirely when empty, for the same
   // import/export fidelity reason as destinations below.

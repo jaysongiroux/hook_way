@@ -26,6 +26,10 @@ export interface GraphDocument {
   nodes: HookwayNode[];
   edges: Edge[];
   serverConfig: Record<string, unknown>;
+  /** Core's optional top-level replay: connection/control block. */
+  coreReplayConfig: Record<string, unknown> | null;
+  /** The separate hookway-replay document; null keeps replay opt-in. */
+  replayServiceConfig: Record<string, unknown> | null;
   configExtra: Record<string, unknown>;
   connections: Record<string, unknown>;
   destinations: Record<string, unknown>;
@@ -84,6 +88,8 @@ export function emptyDocument(): GraphDocument {
     nodes: [],
     edges: [],
     serverConfig: { ...DEFAULT_SERVER },
+    coreReplayConfig: null,
+    replayServiceConfig: null,
     configExtra: {},
     connections: {},
     destinations: {},

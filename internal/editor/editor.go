@@ -11,33 +11,39 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/apikey"
 	"github.com/jaysongiroux/hook_way/internal/configapi"
+	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
 )
 
-// maxValidateBytes caps the /validate request body. The editor does not load a
-// config, so it applies its own fixed ceiling rather than server.max_body_bytes.
+// maxValidateBytes caps both validation request bodies. The editor does not
+// load a config, so it applies its own fixed ceiling rather than
+// server.max_body_bytes.
 const maxValidateBytes = 5 << 20 // 5 MiB
 
 // Handler returns the routed handler for the config editor: the SPA at / (no
 // auth — the browser needs the HTML/JS before it can present a key) and the
-// config API (GET /schema, GET /node-schema, POST /validate) guarded by apiKey when non-empty.
+// config APIs (GET /schema, GET /node-schema, POST /validate,
+// GET /replay-schema, and POST /validate-replay) guarded by apiKey when
+// non-empty.
 // CORS is outermost so OPTIONS preflight is answered before auth runs.
 //
 // The API routes are dispatched through a nested mux reached via method-agnostic
-// top-level patterns ("/schema", "/node-schema", "/validate"). Registering "GET /schema" and
-// "POST /validate" directly alongside the "GET /" SPA catch-all would let the
-// catch-all silently absorb the "wrong" method for each API path (e.g. GET
-// /validate), since it is the only pattern matching that method — defeating
-// net/http's automatic 405 for a mismatched method on a known path.
+// top-level patterns. Registering method-specific API patterns directly
+// alongside the "GET /" SPA catch-all would let the catch-all silently absorb
+// a wrong method for a known API path, defeating net/http's automatic 405.
 func Handler(apiKey string) http.Handler {
 	api := http.NewServeMux()
 	api.Handle("GET /schema", apikey.Middleware(apiKey, http.HandlerFunc(handleSchema)))
 	api.Handle("GET /node-schema", apikey.Middleware(apiKey, http.HandlerFunc(handleNodeSchema)))
 	api.Handle("POST /validate", apikey.Middleware(apiKey, http.HandlerFunc(handleValidate)))
+	api.Handle("GET /replay-schema", apikey.Middleware(apiKey, http.HandlerFunc(handleReplaySchema)))
+	api.Handle("POST /validate-replay", apikey.Middleware(apiKey, http.HandlerFunc(handleValidateReplay)))
 
 	mux := http.NewServeMux()
 	mux.Handle("/schema", api)
 	mux.Handle("/node-schema", api)
 	mux.Handle("/validate", api)
+	mux.Handle("/replay-schema", api)
+	mux.Handle("/validate-replay", api)
 	mux.Handle("/", uiHandler())
 	return withCORS(mux)
 }
@@ -86,8 +92,28 @@ func handleValidate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// withCORS allows any origin. These endpoints expose no secrets: /schema is
-// public and /validate only echoes validation issues.
+func handleReplaySchema(w http.ResponseWriter, r *http.Request) {
+	data, err := replayconfigapi.Schema()
+	if err != nil {
+		http.Error(w, "replay schema generation failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/schema+json")
+	_, _ = w.Write(data)
+}
+
+func handleValidateReplay(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxValidateBytes))
+	if err != nil {
+		http.Error(w, "request body too large or unreadable", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, replayconfigapi.Validate(body))
+}
+
+// withCORS allows any origin. These endpoints expose no secrets: the schema
+// routes are public and the validation routes only return validation issues.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

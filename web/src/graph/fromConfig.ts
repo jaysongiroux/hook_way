@@ -4,7 +4,7 @@ import { DEFAULT_FLOW, DEFAULT_SERVER } from "./model";
 import { HANDLE_IN, HANDLE_OUT, edgePort } from "./connection";
 import { NODE_IDENTITY_KEYS } from "./nodeIdentity";
 
-const MANAGED_TOP = new Set(["server", "connections", "destinations", "flows"]);
+const MANAGED_TOP = new Set(["server", "replay", "connections", "destinations", "flows"]);
 const MANAGED_FLOW = new Set(["nodes", "edges", "delivery_failure_policy"]);
 
 export function fromConfig(config: Record<string, unknown>): GraphDocument {
@@ -32,12 +32,15 @@ export function fromConfig(config: Record<string, unknown>): GraphDocument {
     if (!MANAGED_TOP.has(k)) configExtra[k] = v;
   }
   const server = isObject(config.server) ? { ...config.server } : { ...DEFAULT_SERVER };
+  const coreReplayConfig = isObject(config.replay) ? { ...config.replay } : null;
   const connections = isObject(config.connections) ? { ...config.connections } : {};
   const destinations = isObject(config.destinations) ? { ...config.destinations } : {};
   return {
     nodes,
     edges,
     serverConfig: Object.keys(server).length > 0 ? server : { ...DEFAULT_SERVER },
+    coreReplayConfig,
+    replayServiceConfig: null,
     configExtra,
     connections,
     destinations,

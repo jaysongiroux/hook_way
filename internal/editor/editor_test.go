@@ -83,6 +83,53 @@ func TestValidateEndpointReturnsIssues(t *testing.T) {
 	}
 }
 
+func TestReplaySchemaAndValidateEndpoints(t *testing.T) {
+	srv := httptest.NewServer(Handler(""))
+	defer srv.Close()
+
+	resp := doRequest(t, http.MethodGet, srv.URL+"/replay-schema", "", nil)
+	var schema map[string]any
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&schema) != nil {
+		_ = resp.Body.Close()
+		t.Fatalf("replay schema response = %d", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	body := strings.NewReader("server: {unknown: true}\n")
+	resp = doRequest(t, http.MethodPost, srv.URL+"/validate-replay", "application/yaml", body)
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || len(out.Issues) == 0 {
+		t.Fatalf("replay validate response = %d, issues=%v", resp.StatusCode, out.Issues)
+	}
+}
+
+func TestReplayEditorEndpointsUseExistingAuthAndMethods(t *testing.T) {
+	srv := httptest.NewServer(Handler("s3cret"))
+	defer srv.Close()
+
+	resp := doRequest(t, http.MethodGet, srv.URL+"/replay-schema", "", nil)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET /replay-schema without key = %d, want 401", resp.StatusCode)
+	}
+	resp = doRequest(t, http.MethodPost, srv.URL+"/validate-replay", "application/yaml", strings.NewReader("{}"))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("POST /validate-replay without key = %d, want 401", resp.StatusCode)
+	}
+
+	open := httptest.NewServer(Handler(""))
+	defer open.Close()
+	resp = doRequest(t, http.MethodGet, open.URL+"/validate-replay", "", nil)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /validate-replay = %d, want 405", resp.StatusCode)
+	}
+}
+
 func TestValidateEndpointRejectsNonPOST(t *testing.T) {
 	srv := httptest.NewServer(Handler(""))
 	defer srv.Close()
@@ -112,11 +159,15 @@ func TestValidateRejectsOversizedBody(t *testing.T) {
 	srv := httptest.NewServer(Handler(""))
 	defer srv.Close()
 
-	body := strings.NewReader(strings.Repeat("a", 6<<20))
-	resp := doRequest(t, http.MethodPost, srv.URL+"/validate", "application/yaml", body)
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400 for oversized body, got %d", resp.StatusCode)
+	for _, path := range []string{"/validate", "/validate-replay"} {
+		t.Run(path, func(t *testing.T) {
+			body := strings.NewReader(strings.Repeat("a", 6<<20))
+			resp := doRequest(t, http.MethodPost, srv.URL+path, "application/yaml", body)
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected 400 for oversized body, got %d", resp.StatusCode)
+			}
+		})
 	}
 }
 

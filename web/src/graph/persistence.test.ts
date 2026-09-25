@@ -26,3 +26,14 @@ test("clearGraph removes the saved record", async () => {
   await clearGraph();
   expect(await loadGraph()).toBeNull();
 });
+
+test("loadGraph promotes a legacy replay block without changing the record key", async () => {
+  await saveGraph({
+    ...emptyDocument(),
+    coreReplayConfig: null,
+    configExtra: { replay: { url: "https://replay.internal", capture_token: "${REPLAY_CAPTURE_TOKEN}" }, logging: { level: "info" } },
+  });
+  const loaded = await loadGraph();
+  expect(loaded?.coreReplayConfig).toEqual({ url: "https://replay.internal", capture_token: "${REPLAY_CAPTURE_TOKEN}" });
+  expect(loaded?.configExtra).toEqual({ logging: { level: "info" } });
+});

@@ -30,3 +30,10 @@ test("loads the production starter when nothing is saved", async () => {
   await waitFor(() => expect(useGraphStore.getState().nodes).toHaveLength(starter.nodes.length));
   expect(useGraphStore.getState().activeFlow).toBe("github");
 });
+
+test("rehydrates a replay-only draft after core was cleared", async () => {
+  await saveGraph({ ...emptyDocument(), replayServiceConfig: { server: { addr: ":8080" } } });
+  render(<Harness />);
+  await waitFor(() => expect(useGraphStore.getState().replayServiceConfig).toEqual({ server: { addr: ":8080" } }));
+  expect(useGraphStore.getState().nodes).toHaveLength(0);
+});

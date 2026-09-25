@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ActionIcon, Button, Fieldset, Group, NumberInput, Select, Stack, Switch, Text, Textarea, TextInput } from "@mantine/core";
+import { ActionIcon, Button, Fieldset, Group, NumberInput, PasswordInput, Select, Stack, Switch, Text, Textarea, TextInput } from "@mantine/core";
 import {
   defaultForSchema,
   humanLabel,
@@ -21,6 +21,7 @@ export function SchemaForm({
   fieldHelp,
   groupObjects = false,
   hideFields,
+  secretFields,
 }: {
   schema: JSONSchema | undefined;
   value: unknown;
@@ -44,6 +45,8 @@ export function SchemaForm({
    * them rather than letting you author config that cannot load.
    */
   hideFields?: string[];
+  /** Field names rendered as revealable password inputs. */
+  secretFields?: string[];
 }) {
   if (!isSchemaObject(schema)) {
     return (
@@ -90,6 +93,7 @@ export function SchemaForm({
           enumOverride={enums?.[key]}
           onBlurValidate={onBlurValidate}
           fieldHelp={fieldHelp}
+          masked={secretFields?.includes(key) ?? false}
           onChange={(v) => onChange({ ...obj, [key]: v })}
         />
       ))}
@@ -118,6 +122,7 @@ export function SchemaForm({
                     onChange={(v) => onChange({ ...obj, [key]: v })}
                     onBlurValidate={onBlurValidate}
                     fieldHelp={(child) => fieldHelp?.(`${key}.${child}`) ?? fieldHelp?.(child)}
+                    secretFields={secretFields}
                   />
                 </Stack>
               ),
@@ -148,6 +153,7 @@ function SchemaField({
   enumOverride,
   onBlurValidate,
   fieldHelp,
+  masked,
 }: {
   name: string;
   schema: JSONSchema;
@@ -157,6 +163,7 @@ function SchemaField({
   enumOverride?: string[];
   onBlurValidate: boolean;
   fieldHelp?: (name: string) => string | undefined;
+  masked: boolean;
 }) {
   const [error, setError] = useState("");
   const label = humanLabel(name);
@@ -290,6 +297,21 @@ function SchemaField({
         description={hint}
         autosize
         minRows={4}
+        onBlur={validate}
+        onChange={(e) => onChange(e.currentTarget.value)}
+      />
+    );
+  }
+  if (masked) {
+    return (
+      <PasswordInput
+        label={label}
+        aria-label={label}
+        description={hint}
+        value={stringify(value)}
+        required={required}
+        error={error || undefined}
+        placeholder={placeholder(schema)}
         onBlur={validate}
         onChange={(e) => onChange(e.currentTarget.value)}
       />

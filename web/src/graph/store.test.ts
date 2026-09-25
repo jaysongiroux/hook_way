@@ -59,6 +59,8 @@ test("setGraph replaces the document and clears selection", () => {
     nodes: [n],
     edges: [],
     serverConfig: { addr: ":8080" },
+    coreReplayConfig: null,
+    replayServiceConfig: null,
     configExtra: {},
     connections: {},
     destinations: {},
@@ -185,4 +187,18 @@ test("loading or clearing a document drops the previous flow's unmodelled fields
   s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false } });
   s.clear();
   expect(useGraphStore.getState().flowExtra).toBeUndefined();
+});
+
+test("replay setup, partial clear, and removal keep document boundaries explicit", () => {
+  useGraphStore.getState().clear();
+  useGraphStore.getState().addReplayConfiguration();
+  expect(useGraphStore.getState().coreReplayConfig).toMatchObject({ url: "http://replay:8080" });
+  expect(useGraphStore.getState().replayServiceConfig).toMatchObject({ retention: { ttl: "168h" } });
+
+  useGraphStore.getState().clearCore();
+  expect(useGraphStore.getState().coreReplayConfig).toBeNull();
+  expect(useGraphStore.getState().replayServiceConfig).not.toBeNull();
+
+  useGraphStore.getState().removeReplayConfiguration();
+  expect(useGraphStore.getState().replayServiceConfig).toBeNull();
 });

@@ -16,6 +16,7 @@ export function BuilderHeader({
   onConnections,
   onEnv,
   onServer,
+  onReplay,
   onLoadExample,
   onClear,
 }: {
@@ -29,6 +30,7 @@ export function BuilderHeader({
   onConnections: () => void;
   onEnv: () => void;
   onServer: () => void;
+  onReplay: () => void;
   onLoadExample: () => void;
   onClear: () => void;
 }) {
@@ -85,7 +87,8 @@ export function BuilderHeader({
               <Menu.Item onClick={onConnections}>Connections</Menu.Item>
               <Menu.Item onClick={onDestinations}>Destinations</Menu.Item>
               <Menu.Item onClick={onEnv}>Environment</Menu.Item>
-              <Menu.Item onClick={onServer}>Server</Menu.Item>
+              <Menu.Item onClick={onServer}>Core server</Menu.Item>
+              <Menu.Item onClick={onReplay}>Replay service</Menu.Item>
             </Menu.Dropdown>
           </Menu>
           <Button size="xs" variant="subtle" color="red" onClick={onClear}>

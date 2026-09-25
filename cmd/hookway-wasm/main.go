@@ -47,9 +47,30 @@ func nodeSchemas(_ js.Value, _ []js.Value) any {
 	return out
 }
 
+func replayValidate(_ js.Value, args []js.Value) any {
+	if len(args) < 1 || args[0].Type() != js.TypeString {
+		return errJSON("hookwayReplayValidate: expected 1 string argument (yaml)")
+	}
+	out, err := bridge.ReplayValidate(args[0].String())
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
+}
+
+func replaySchema(_ js.Value, _ []js.Value) any {
+	out, err := bridge.ReplaySchema()
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
+}
+
 func main() {
 	js.Global().Set("hookwayValidate", js.FuncOf(validate))
 	js.Global().Set("hookwaySchema", js.FuncOf(schema))
 	js.Global().Set("hookwayNodeSchemas", js.FuncOf(nodeSchemas))
+	js.Global().Set("hookwayReplayValidate", js.FuncOf(replayValidate))
+	js.Global().Set("hookwayReplaySchema", js.FuncOf(replaySchema))
 	select {} // block forever so the exported functions stay callable
 }

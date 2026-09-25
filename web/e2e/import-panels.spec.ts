@@ -120,7 +120,7 @@ for (const fixture of exampleFixtures()) {
     }
     await builder.closeDialog();
 
-    const serverDialog = await builder.openConfigItem("Server");
+    const serverDialog = await builder.openConfigItem("Core server");
     const server = serverConfig(fixture.config);
     for (const [key, value] of Object.entries(server)) {
       const label = SERVER_LABELS[key];

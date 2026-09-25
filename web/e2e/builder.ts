@@ -40,10 +40,22 @@ export class BuilderPage {
     await this.closeInspector();
     await this.page.getByRole("button", { name: "Config" }).click();
     await this.page.getByRole("menuitem", { name: "Import YAML" }).click();
-    const dialog = this.page.getByRole("dialog", { name: "Import config" });
+    const dialog = this.page.getByRole("dialog", { name: "Import configs" });
     await expect(dialog).toBeVisible();
-    await dialog.getByLabel("Config YAML").fill(yaml);
-    await dialog.getByRole("button", { name: "Import" }).click();
+    await dialog.getByPlaceholder("Paste core.yaml here").fill(yaml);
+    await dialog.getByRole("button", { name: "Import core YAML" }).click();
+    await expect(dialog).toBeHidden();
+  }
+
+  async importReplayYaml(yaml: string): Promise<void> {
+    await this.closeInspector();
+    await this.page.getByRole("button", { name: "Config" }).click();
+    await this.page.getByRole("menuitem", { name: "Import YAML" }).click();
+    const dialog = this.page.getByRole("dialog", { name: "Import configs" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("tab", { name: "Replay YAML" }).click();
+    await dialog.getByPlaceholder("Paste replay.yaml here").fill(yaml);
+    await dialog.getByRole("button", { name: "Import replay YAML" }).click();
     await expect(dialog).toBeHidden();
   }
 
