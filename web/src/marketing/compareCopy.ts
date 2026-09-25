@@ -29,7 +29,7 @@ export interface CompareRow {
 
 export const COMPARE_INTRO = {
   title: "How Hookway compares",
-  lead: "Hookway is a self-hosted inbound gateway that verifies each webhook by wire format and publishes it into infrastructure you run. This comparison is features and integrations only; each claim cites public documentation or this repository.",
+  lead: "Feature and integration differences for inbound webhook gateways that receive third-party traffic. Hookway’s wedge on this page is native publish into your queues, streams, databases, and object storage — plus an optional API to inspect and retry deliveries a destination missed after the sender already got its 2xx. Each claim cites public product docs or this repository.",
 } as const;
 
 export const COMPARE_DIFFERS = {
@@ -46,9 +46,9 @@ export const COMPARE_DIFFERS = {
         "S3 and redis_kv accept publish.payload: object, so multipart file bytes are stored in infrastructure you run.",
     },
     {
-      title: "Optional large-artifact replay API",
+      title: "Optional hookway-replay",
       detail:
-        "An optional replay service lists, inspects, downloads, retries, and dismisses missed deliveries over HTTP, keeping payloads up to 16 MiB by default. No product UI and no automatic re-drive.",
+        "List, inspect, download, retry, and dismiss missed deliveries over HTTP, then resume at the failed node. API-only — no product UI and no automatic re-drive. Default max_record_bytes is 16 MiB.",
     },
   ],
 } as const;
@@ -141,14 +141,21 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "object-store",
-    capability: "Store decoded file bytes in object storage",
+    capability: "Multipart / decoded file → object storage",
     values: {
       hookway: {
         level: "yes",
-        detail: "publish.payload: object on S3 (and redis_kv) after multipart parse",
+        detail: "publish.payload: object writes decoded multipart file bytes to S3 or redis_kv",
       },
-      hookdeck: { level: "no", detail: "Event Gateway destinations do not include S3" },
-      convoy: { level: "no", detail: "Delivery targets are HTTP endpoints" },
+      hookdeck: {
+        level: "no",
+        detail: "Event Gateway destinations are HTTP, CLI, and Mock API only. Outpost is a separate product",
+      },
+      convoy: {
+        level: "no",
+        detail:
+          "Delivery targets are HTTP endpoints. An S3 retention archive is not inbound object publish of decoded file bytes",
+      },
     },
   },
   {
@@ -171,43 +178,43 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "replay",
-    capability: "Inspect, download, and re-deliver failures",
+    capability: "Inspect and retry failed deliveries",
     values: {
       hookway: {
         level: "yes",
         detail:
-          "Optional replay service: list, inspect, download, retry one or a batch, or dismiss a delivery a destination missed after the sender got its 2xx, when neither an error path nor a dead letter handled it. Retains that payload up to the configured maximum (default 16 MiB); anything larger is metadata only and not retryable. Operator HTTP API, with no product UI and no automatic re-drive",
+          "Optional hookway-replay: list/inspect, download payload, retry (single or batch), dismiss via HTTP API; captures destination misses after the sender already got its 2xx when no error path or dead letter handled them; resumes at the failed node (an async webhook re-sends the prepared message). API-only — no product UI, no automatic re-drive. Default max_record_bytes 16 MiB (oversize → metadata-only, not retryable)",
       },
       hookdeck: {
         level: "yes",
         detail:
-          "Dashboard event log: inspect attempts, automatic retries up to 50, and manual retries without that cap. Replay re-ingests the request and is distinct from retry. Default inbound payload is 10 MiB; a PAYLOAD_TOO_LARGE rejection does not store the body, so the payload cannot be replayed",
+          "Persisted requests/events with dashboard and API retry/replay (incl. bulk replay of requests); automatic retries up to 50. Default inbound payload 10 MiB — oversize returns 413 and the body is not stored, so that request cannot be meaningfully replayed",
       },
       convoy: {
         level: "yes",
         detail:
-          "Event and delivery logs with delivery attempts, dashboard Retry and Force Retry, and automatic retries. Docs discourage large binary or documents in the webhook body",
+          "Event and delivery logs with dashboard and API manual retry (resend delivery); configurable automatic retries (linear or exponential). Delivery targets remain HTTP endpoints. Docs advise keeping webhook payloads small (ideally ~1–5 MB) and avoiding large binary in the payload",
       },
     },
   },
   {
-    id: "large-payloads",
-    capability: "Retain large / binary payloads for redelivery",
+    id: "payload-retention",
+    capability: "Payload size retained for inspect/replay",
     values: {
       hookway: {
         level: "yes",
         detail:
-          "Replay keeps a retryable payload up to the configured maximum (default 16 MiB). Multipart file bytes can also be published as objects to S3 or redis_kv",
+          "Default max_record_bytes is 16 MiB and is configurable. Over that limit the artifact is metadata-only and not retryable",
       },
       hookdeck: {
         level: "partial",
         detail:
-          "Default inbound payload is 10 MiB. A PAYLOAD_TOO_LARGE rejection does not store the body, so the payload cannot be replayed. Dashboard search excludes bodies larger than 2.5 MB",
+          "Default inbound ingest is 10 MiB. An oversize body is not stored. Dashboard search stops at 2.5 MB",
       },
       convoy: {
         level: "partial",
         detail:
-          "Docs advise keeping payloads concise (ideally under 1–5 MB) and passing a URL or reference for large files instead of embedding binary",
+          "Docs advise keeping payloads small (ideally ~1–5 MB) and avoiding large files embedded in the body",
       },
     },
   },
@@ -245,6 +252,15 @@ export const COMPARE_SOURCES = [
   {
     href: "https://www.getconvoy.io/docs/product-manual/events-and-event-deliveries",
     label: "Convoy events and event deliveries",
+  },
+  {
+    href: "https://www.getconvoy.io/docs/api-reference/event-deliveries/retry-event-delivery",
+    label: "Convoy retry event delivery",
+  },
+  { href: "https://www.getconvoy.io/docs/glossary/retry-schedule", label: "Convoy retry schedule" },
+  {
+    href: "https://www.getconvoy.io/docs/product-manual/retention-policy",
+    label: "Convoy retention policy",
   },
   { href: repoBlob("docs/replay-service.md"), label: "Hookway replay service" },
   { href: GITHUB_REPO, label: "Hookway repository" },

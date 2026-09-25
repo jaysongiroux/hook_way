@@ -93,13 +93,14 @@ test("the replay comparison describes the full optional service", () => {
   const hookway = row.values.hookway;
   expect(hookway.level).toBe("yes");
   expect(hookway.level).not.toBe("partial");
-  expect(row.capability).toMatch(/inspect/i);
-  expect(hookway.detail).toMatch(/optional replay service/i);
+  expect(row.capability).toMatch(/Inspect and retry failed deliveries/);
+  expect(hookway.detail).toMatch(/optional hookway-replay/i);
   expect(hookway.detail).toMatch(/inspect/i);
   expect(hookway.detail).toMatch(/download/i);
   expect(hookway.detail).toMatch(/retry/i);
   expect(hookway.detail).toMatch(/dismiss/i);
-  expect(hookway.detail).toMatch(/16 MiB/);
+  expect(hookway.detail).toMatch(/max_record_bytes 16 MiB/);
+  expect(hookway.detail).toMatch(/resumes at the failed node/i);
   expect(hookway.detail).toMatch(/\bAPI\b/);
   expect(hookway.detail).toMatch(/no product UI/i);
   expect(hookway.detail).toMatch(/no automatic re-drive/i);
@@ -116,9 +117,11 @@ test("replay copy speaks the reader's language, not the implementation's", () =>
     COMPARE_ROWS.find((r) => r.id === "replay")!.values.hookway.detail,
     ...PRODUCTION_CARDS.filter((c) => c.id === "replay").flatMap((c) => [c.title, c.valueLabel, c.line]),
   ].join(" ");
-  for (const jargon of [/acknowledged/i, /\bcapture/i, /snapshot/i, /\brecord\b/i]) {
+  for (const jargon of [/acknowledged/i, /snapshot/i, /\brecord\b/i]) {
     expect(replayCopy).not.toMatch(jargon);
   }
+  // The brief names the capture: a destination miss after the sender's 2xx.
+  expect(replayCopy.replace(/captures destination misses/gi, "")).not.toMatch(/\bcapture/i);
   // "re-drive" is allowed only when the sentence says the service does not do it.
   expect(replayCopy.replace(/no automatic re-drive/gi, "")).not.toMatch(/redrive|re-drive/i);
 });

@@ -96,6 +96,10 @@ test("compare matrix covers every competitor column and cites sources", () => {
     "href",
     "https://www.getconvoy.io/docs/product-manual/events-and-event-deliveries",
   );
+  expect(screen.getByRole("link", { name: "Convoy retry event delivery" })).toHaveAttribute(
+    "href",
+    "https://www.getconvoy.io/docs/api-reference/event-deliveries/retry-event-delivery",
+  );
   expect(screen.getByRole("link", { name: "Hookway replay service" })).toHaveAttribute(
     "href",
     repoBlob("docs/replay-service.md"),
@@ -123,45 +127,61 @@ test("Hookway replay is the full optional service, not a partial", () => {
   const row = COMPARE_ROWS.find((r) => r.id === "replay")!;
   expect(row.values.hookway.level).toBe("yes");
   expect(row.values.hookway.level).not.toBe("partial");
-  expect(row.capability).toMatch(/Inspect, download, and re-deliver failures/);
-  expect(row.values.hookway.detail).toMatch(/optional replay service/i);
-  expect(row.values.hookway.detail).toMatch(/16 MiB/);
+  expect(row.capability).toBe("Inspect and retry failed deliveries");
+  expect(row.values.hookway.detail).toMatch(/optional hookway-replay/i);
+  expect(row.values.hookway.detail).toMatch(/max_record_bytes 16 MiB/);
+  expect(row.values.hookway.detail).toMatch(/resumes at the failed node/i);
   expect(row.values.hookway.detail).toMatch(/no product UI/i);
   expect(row.values.hookway.detail).toMatch(/no automatic re-drive/i);
+  expect(row.values.hookdeck.level).toBe("yes");
+  expect(row.values.hookdeck.detail).toMatch(/413/);
+  expect(row.values.hookdeck.detail).toMatch(/bulk replay of requests/);
+  expect(row.values.convoy.level).toBe("yes");
+  expect(row.values.convoy.detail).toMatch(/linear or exponential/);
   wrap(<Compare />);
   const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/optional replay service/i);
+  expect(main).toHaveTextContent(/optional hookway-replay/i);
   expect(main).toHaveTextContent(/no product UI/i);
   expect(main).toHaveTextContent(/no automatic re-drive/i);
-  expect(screen.getByRole("rowheader", { name: /Inspect, download, and re-deliver failures/i })).toBeInTheDocument();
+  expect(screen.getByRole("rowheader", { name: "Inspect and retry failed deliveries" })).toBeInTheDocument();
 });
 
-test("the matrix states large-payload retention with sourced limits", () => {
-  const row = COMPARE_ROWS.find((r) => r.id === "large-payloads")!;
-  expect(row.capability).toMatch(/Retain large \/ binary payloads for redelivery/);
-  expect(row.values.hookway.level).toBe("yes");
-  expect(row.values.hookway.detail).toMatch(/16 MiB/);
-  expect(row.values.hookway.detail).toMatch(/publish\.payload: object|objects to S3 or redis_kv/);
-  expect(row.values.hookdeck.level).toBe("partial");
-  expect(row.values.hookdeck.detail).toMatch(/10 MiB/);
-  expect(row.values.hookdeck.detail).toMatch(/PAYLOAD_TOO_LARGE/);
-  expect(row.values.hookdeck.detail).toMatch(/2\.5 MB/);
-  expect(row.values.convoy.level).toBe("partial");
-  expect(row.values.convoy.detail).toMatch(/1–5 MB/);
+test("the matrix separates payload retention from object publish", () => {
+  const retained = COMPARE_ROWS.find((r) => r.id === "payload-retention")!;
+  expect(retained.capability).toBe("Payload size retained for inspect/replay");
+  expect(retained.values.hookway.level).toBe("yes");
+  expect(retained.values.hookway.detail).toMatch(/16 MiB/);
+  expect(retained.values.hookdeck.level).toBe("partial");
+  expect(retained.values.hookdeck.detail).toMatch(/10 MiB/);
+  expect(retained.values.hookdeck.detail).toMatch(/2\.5 MB/);
+  expect(retained.values.convoy.level).toBe("partial");
+  expect(retained.values.convoy.detail).toMatch(/1–5 MB/);
+
+  const files = COMPARE_ROWS.find((r) => r.id === "object-store")!;
+  expect(files.capability).toBe("Multipart / decoded file → object storage");
+  expect(files.values.hookway.level).toBe("yes");
+  expect(files.values.hookway.detail).toMatch(/publish\.payload: object/);
+  expect(files.values.hookway.detail).toMatch(/S3 or redis_kv/);
+  expect(files.values.hookdeck.level).toBe("no");
+  expect(files.values.hookdeck.detail).toMatch(/Outpost is a separate product/);
+  expect(files.values.convoy.level).toBe("no");
+  expect(files.values.convoy.detail).toMatch(/S3 retention archive/);
+
   wrap(<Compare />);
   const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/Retain large \/ binary payloads for redelivery/);
+  expect(main).toHaveTextContent(/Payload size retained for inspect\/replay/);
+  expect(main).toHaveTextContent(/Multipart \/ decoded file → object storage/);
   expect(main).toHaveTextContent(/10 MiB/);
   expect(main).toHaveTextContent(/2\.5 MB/);
-  expect(main).toHaveTextContent(/PAYLOAD_TOO_LARGE/);
   expect(main).toHaveTextContent(/1–5 MB/);
+  expect(COMPARE_ROWS.some((r) => /operator surface/i.test(r.capability))).toBe(false);
 });
 
-test("the compare page leads with wire-format verification and where Hookway differs", () => {
+test("the compare page leads with the publish wedge and where Hookway differs", () => {
   wrap(<Compare />);
   const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/self-hosted inbound gateway/i);
-  expect(main).toHaveTextContent(/wire format/i);
+  expect(main).toHaveTextContent(/inbound webhook gateways that receive third-party traffic/i);
+  expect(main).toHaveTextContent(/native publish into your queues, streams, databases, and object storage/i);
   expect(main).toHaveTextContent(/11 wire-format schemes/);
   expect(main).toHaveTextContent(/HTTP Basic/);
   expect(main).toHaveTextContent(/HS256/);
@@ -169,7 +189,7 @@ test("the compare page leads with wire-format verification and where Hookway dif
   expect(screen.getByRole("heading", { name: /where hookway differs/i })).toBeInTheDocument();
   expect(main).toHaveTextContent(/Native destinations/);
   expect(main).toHaveTextContent(/Object and file publish/);
-  expect(main).toHaveTextContent(/Optional large-artifact replay API/);
+  expect(main).toHaveTextContent(/Optional hookway-replay/);
   expect(main).toHaveTextContent(/This product/);
   const table = screen.getByRole("table", { name: /feature and integration comparison/i });
   expect(within(table).getByRole("columnheader", { name: "Hookway" })).toHaveAttribute("data-product", "hookway");
