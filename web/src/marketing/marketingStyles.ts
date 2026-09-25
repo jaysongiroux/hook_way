@@ -118,6 +118,10 @@ export const MARKETING_CSS = `
   border-collapse: separate;
   border-spacing: 0;
 }
+.${COMPARE_TABLE_CLASS} thead th,
+.${COMPARE_TABLE_CLASS} tbody th {
+  background: ${DARK.bg};
+}
 .${COMPARE_TABLE_CLASS} :is(th, td):first-child {
   position: sticky;
   left: 0;

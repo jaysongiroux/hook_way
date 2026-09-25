@@ -161,7 +161,6 @@ export function Compare() {
                 borderSpacing: 0,
               },
               th: {
-                background: DARK.bg,
                 color: DARK.text,
                 fontWeight: 650,
                 fontSize: 13,
