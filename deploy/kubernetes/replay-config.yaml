@@ -1,0 +1,41 @@
+# Apply this ConfigMap before creating the migration Job. The replay Deployment
+# is kept in replay.yaml so new service pods start only after migration passes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hookway-replay
+data:
+  replay.yaml: |
+    server:
+      addr: ":8080"
+    metrics:
+      enabled: true
+      path: /metrics
+      addr: ":9091"
+    database:
+      url: "${REPLAY_DATABASE_URL}"
+      max_conns: 10
+    core:
+      control_url: "http://hookway-core-control:9092"
+      control_token: "${REPLAY_CONTROL_TOKEN}"
+    retention:
+      ttl: 168h
+      max_records: 1000000
+      max_bytes: 107374182400
+      max_record_bytes: 16777216
+      gc_interval: 15m
+    workers:
+      concurrency: 4
+      execution_timeout: 30s
+      lease: 60s
+    keys:
+      - name: core
+        token: "${REPLAY_CAPTURE_TOKEN}"
+        scopes: [capture]
+      - name: operator
+        token: "${REPLAY_OPERATOR_TOKEN}"
+        scopes: [read, payload, retry]
+      # Prometheus scrapes with its own key, which can do nothing else.
+      - name: prometheus
+        token: "${REPLAY_METRICS_TOKEN}"
+        scopes: [metrics]

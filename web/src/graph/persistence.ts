@@ -40,7 +40,7 @@ export async function loadGraph(): Promise<GraphDocument | null> {
         rec.coreReplayConfig ??
         (isRecord(rec.configExtra?.replay) ? { ...(rec.configExtra.replay as Record<string, unknown>) } : null),
       replayServiceConfig: rec.replayServiceConfig ?? null,
-      configExtra: withoutLegacyReplay(rec.configExtra),
+      configExtra: isRecord(rec.configExtra?.replay) ? withoutLegacyReplay(rec.configExtra) : { ...(rec.configExtra ?? {}) },
       connections: rec.connections ?? {},
       destinations: rec.destinations ?? {},
       activeFlow: rec.activeFlow ?? base.activeFlow,

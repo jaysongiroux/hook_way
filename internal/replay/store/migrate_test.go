@@ -79,3 +79,20 @@ func TestConcurrentMigrateIsSafe(t *testing.T) {
 		t.Fatalf("SchemaVersion = %d, %v", v, err)
 	}
 }
+
+func TestSchemaVersionIgnoresRolledBackMigrations(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t, replaytest.Database(t), defaultLimits())
+	if _, err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.migrations.Down(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.SchemaVersion(ctx); err != nil || got != 0 {
+		t.Fatalf("SchemaVersion after rollback = %d, %v; want 0", got, err)
+	}
+	if err := s.Ready(ctx); err == nil {
+		t.Fatal("Ready accepted a database whose migration was rolled back")
+	}
+}

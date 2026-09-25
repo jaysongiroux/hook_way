@@ -214,6 +214,12 @@ func decodeBytes(data []byte, allowSecretRefs bool) (Config, []hookconfig.Valida
 	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, []hookconfig.ValidationIssue{{Field: "config", Message: err.Error()}}
 	}
+	var trailing yaml.Node
+	if err := dec.Decode(&trailing); err == nil {
+		return Config{}, []hookconfig.ValidationIssue{{Field: "config", Message: "multiple YAML documents are not supported"}}
+	} else if !errors.Is(err, io.EOF) {
+		return Config{}, []hookconfig.ValidationIssue{{Field: "config", Message: err.Error()}}
+	}
 	var is issues
 	cfg := raw.resolve(&is)
 	cfg.validate(&is, allowSecretRefs)

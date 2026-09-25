@@ -119,6 +119,21 @@ func TestLoadBytesRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestRejectsMultipleYAMLDocuments(t *testing.T) {
+	data := []byte(minimalYAML + "---\nserver: {addr: ':9999'}\n")
+	for name, validate := range map[string]func([]byte) (Config, []hookconfig.ValidationIssue){
+		"runtime": LoadBytes,
+		"browser": ValidateBytes,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, issues := validate(data)
+			if len(issues) != 1 || issues[0].Field != "config" || !strings.Contains(issues[0].Message, "multiple YAML documents") {
+				t.Fatalf("issues = %+v", issues)
+			}
+		})
+	}
+}
+
 func TestLoadBytesAllowsDisablingTheGCLoop(t *testing.T) {
 	cfg, issues := LoadBytes([]byte(minimalYAML + "retention: {gc_interval: 0}\n"))
 	if len(issues) != 0 || cfg.Retention.GCInterval != 0 {
@@ -230,9 +245,9 @@ func TestTheReplayExamplesValidate(t *testing.T) {
 	}
 }
 
-// deploy/kubernetes/replay.yaml embeds the replay config in a ConfigMap.
+// deploy/kubernetes/replay-config.yaml embeds the replay config in a ConfigMap.
 func TestTheKubernetesReplayConfigValidates(t *testing.T) {
-	raw, err := os.ReadFile("../../../deploy/kubernetes/replay.yaml")
+	raw, err := os.ReadFile("../../../deploy/kubernetes/replay-config.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

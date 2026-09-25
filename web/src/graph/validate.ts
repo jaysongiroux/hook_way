@@ -66,7 +66,7 @@ export async function validateReplayYaml(yaml: string): Promise<ValidationIssue[
     try {
       return parseIssues(window.hookwayReplayValidate(yaml));
     } catch {
-      return null;
+      // A stale or broken WASM bridge should still allow the editor API path.
     }
   }
   try {
@@ -88,7 +88,7 @@ export async function loadReplaySchema(): Promise<Record<string, unknown> | null
     try {
       return JSON.parse(window.hookwayReplaySchema()) as Record<string, unknown>;
     } catch {
-      return null;
+      // A stale or broken WASM bridge should still allow the editor API path.
     }
   }
   try {

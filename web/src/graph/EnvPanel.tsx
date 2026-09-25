@@ -28,6 +28,10 @@ export function EnvPanel({ opened, onClose }: { opened: boolean; onClose: () => 
       activeFlow, otherFlows, deliveryFailurePolicy, flowExtra,
     };
     coreVars = scanEnvVars(toYaml(toConfig(doc).config));
+  } catch {
+    // A core export error does not hide environment references in replay.yaml.
+  }
+  try {
     if (replayServiceConfig) replayVars = scanEnvVars(toReplayYaml(replayServiceConfig));
   } catch {
     // Export surfaces explain serialization failures; this inventory remains best effort.

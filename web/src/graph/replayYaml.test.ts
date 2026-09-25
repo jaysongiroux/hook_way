@@ -22,4 +22,6 @@ test.each(["dev/replay.yaml", "replay/replay.yaml"])("round-trips %s without fie
 
 test("rejects a non-mapping replay document", () => {
   expect(() => fromReplayYaml("- not\n- a\n- config\n")).toThrow(/must be a YAML mapping/);
+  expect(() => fromReplayYaml("# comments only\n")).toThrow(/must be a YAML mapping/);
+  expect(() => fromReplayYaml("null\n")).toThrow(/must be a YAML mapping/);
 });

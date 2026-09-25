@@ -1,11 +1,10 @@
-# Apply the replay schema before (re)deploying the replay service. Migrations
-# are versioned and idempotent. A Job's template cannot change, so the
-# finished Job is deleted after 10 minutes; re-apply this file (with the new
-# image) on every upgrade.
+# Create this Job before each replay-service upgrade. Migrations are versioned
+# and idempotent. generateName makes every `kubectl create` a fresh run, even
+# when an earlier Job has not yet been removed by its TTL controller.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: hookway-replay-migrate
+  generateName: hookway-replay-migrate-
 spec:
   backoffLimit: 3
   ttlSecondsAfterFinished: 600

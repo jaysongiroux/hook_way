@@ -80,7 +80,12 @@ func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 		return 0, nil
 	}
 	var version int64
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version`).Scan(&version); err != nil {
+	// Goose appends both up and down events. Only the newest event for each
+	// version says whether that migration is currently applied.
+	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM (
+		SELECT DISTINCT ON (version_id) version_id, is_applied
+		FROM goose_db_version ORDER BY version_id, id DESC
+	) current_versions WHERE is_applied`).Scan(&version); err != nil {
 		return 0, fmt.Errorf("store: schema version: %w", err)
 	}
 	return version, nil

@@ -110,14 +110,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     for (const [k, v] of Object.entries(merged)) if (v !== "" && v !== null && v !== undefined) pruned[k] = v;
     set({ serverConfig: pruned });
   },
-  setCoreReplayConfig: (coreReplayConfig) => set({ coreReplayConfig }),
+  setCoreReplayConfig: (coreReplayConfig) => set({ coreReplayConfig, configExtra: withoutReplay(get().configExtra) }),
   setReplayServiceConfig: (replayServiceConfig) => set({ replayServiceConfig }),
   addReplayConfiguration: () =>
     set({
       coreReplayConfig: get().coreReplayConfig ?? defaultCoreReplayConfig(),
       replayServiceConfig: get().replayServiceConfig ?? defaultReplayServiceConfig(),
+      configExtra: withoutReplay(get().configExtra),
     }),
-  removeReplayConfiguration: () => set({ coreReplayConfig: null, replayServiceConfig: null }),
+  removeReplayConfiguration: () => set({ coreReplayConfig: null, replayServiceConfig: null, configExtra: withoutReplay(get().configExtra) }),
   setConnections: (connections) => set({ connections }),
   setDestinations: (destinations) => set({ destinations }),
   setDeliveryFailurePolicy: (value) => set({ deliveryFailurePolicy: value || undefined }),
@@ -126,7 +127,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   setGraph: (doc) => {
     const configExtra = { ...(doc.configExtra ?? {}) };
     const legacyReplay = isRecord(configExtra.replay) ? { ...configExtra.replay } : null;
-    delete configExtra.replay;
+    if (legacyReplay || doc.coreReplayConfig !== null) delete configExtra.replay;
     seedCounters(doc.nodes);
     const otherFlows: Record<string, FlowSnapshot> = {};
     for (const [name, snap] of Object.entries(doc.otherFlows ?? {})) {
@@ -218,4 +219,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function withoutReplay(extra: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...extra };
+  delete next.replay;
+  return next;
 }

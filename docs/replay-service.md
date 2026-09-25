@@ -97,6 +97,24 @@ PostgreSQL, a one-shot migration) and [`deploy/kubernetes/`](../deploy/kubernete
 (Deployments, Services, a migrate Job, NetworkPolicies, a Secret). Replicas are
 stateless and share one PostgreSQL database; any number can run.
 
+For the Kubernetes example, replace the Secret placeholders and image names,
+then deploy in this order. Run the Job step on every upgrade: `generateName`
+creates a new Job even when the previous run still exists.
+
+```bash
+kubectl apply -f deploy/kubernetes/secrets.yaml &&
+kubectl apply -f deploy/kubernetes/network-policies.yaml &&
+kubectl apply -f deploy/kubernetes/replay-config.yaml &&
+job="$(kubectl create -f deploy/kubernetes/migrate-job.yaml -o name)" &&
+kubectl wait --for=condition=complete "$job" --timeout=10m &&
+kubectl apply -f deploy/kubernetes/replay.yaml &&
+kubectl apply -f deploy/kubernetes/core.yaml
+```
+
+If the Job fails, inspect its logs and stop the upgrade before applying the
+Deployments. The Job has a ten-minute TTL for cleanup, not for scheduling a
+future migration run.
+
 ## Configuration
 
 Strict decoding and `${VAR}` expansion, like core. Defaults in parentheses.

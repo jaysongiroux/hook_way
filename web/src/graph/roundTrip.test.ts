@@ -88,3 +88,10 @@ test("flow-level fields the builder does not model survive a round trip", () => 
   expect(flows.second.delivery_failure_policy).toBe("skip_failed");
   expect(config.replay).toEqual(src.replay);
 });
+
+test("preserves an invalid core replay block until it is replaced", () => {
+  const src = { server: { addr: ":8080" }, replay: "invalid", flows: { main: { nodes: [], edges: [] } } };
+  const doc = fromConfig(src);
+  expect(doc.coreReplayConfig).toBeNull();
+  expect(toConfig(doc).config.replay).toBe("invalid");
+});

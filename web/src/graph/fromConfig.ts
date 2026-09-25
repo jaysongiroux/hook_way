@@ -31,6 +31,9 @@ export function fromConfig(config: Record<string, unknown>): GraphDocument {
   for (const [k, v] of Object.entries(config)) {
     if (!MANAGED_TOP.has(k)) configExtra[k] = v;
   }
+  // A malformed replay block is still part of the imported document. Keep it
+  // visible in export until the operator replaces it with structured settings.
+  if (Object.prototype.hasOwnProperty.call(config, "replay") && !isObject(config.replay)) configExtra.replay = config.replay;
   const server = isObject(config.server) ? { ...config.server } : { ...DEFAULT_SERVER };
   const coreReplayConfig = isObject(config.replay) ? { ...config.replay } : null;
   const connections = isObject(config.connections) ? { ...config.connections } : {};

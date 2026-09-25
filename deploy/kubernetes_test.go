@@ -77,6 +77,17 @@ func find(t *testing.T, objs []object, kind, name string) object {
 	return nil
 }
 
+func findGenerated(t *testing.T, objs []object, kind, prefix string) object {
+	t.Helper()
+	for _, o := range objs {
+		if o["kind"] == kind && dig(o, "metadata", "generateName") == prefix {
+			return o
+		}
+	}
+	t.Fatalf("no %s with generateName %s", kind, prefix)
+	return nil
+}
+
 func containerPorts(c any) map[string]int {
 	out := map[string]int{}
 	ports, _ := dig(c, "ports").([]any)
@@ -167,7 +178,7 @@ func TestKubernetesManifests(t *testing.T) {
 		}
 	}
 
-	job := find(t, objs, "Job", "hookway-replay-migrate")
+	job := findGenerated(t, objs, "Job", "hookway-replay-migrate-")
 	if dig(job, "spec", "template", "spec", "containers", 0, "args", 0) != "migrate" {
 		t.Errorf("migrate job args = %v", dig(job, "spec", "template", "spec", "containers", 0, "args"))
 	}
@@ -236,8 +247,9 @@ func TestKubernetesManifests(t *testing.T) {
 }
 
 // Every secretKeyRef names a Secret and key the manifests ship, and the
-// migrate Job can be re-applied with a new image once it finished.
-func TestKubernetesSecretsResolveAndTheJobCanBeReapplied(t *testing.T) {
+// every migrate Job creation receives a fresh name, even while an older run
+// is still waiting for TTL cleanup.
+func TestKubernetesSecretsResolveAndMigrationJobCanBeRecreated(t *testing.T) {
 	objs := k8sObjects(t)
 	shipped := map[string]bool{}
 	for _, o := range objs {
@@ -270,8 +282,11 @@ func TestKubernetesSecretsResolveAndTheJobCanBeReapplied(t *testing.T) {
 	for _, o := range objs {
 		walk(o)
 	}
-	job := find(t, objs, "Job", "hookway-replay-migrate")
+	job := findGenerated(t, objs, "Job", "hookway-replay-migrate-")
 	if dig(job, "spec", "ttlSecondsAfterFinished") == nil {
-		t.Error("the migrate Job has no ttlSecondsAfterFinished; re-applying it after an upgrade fails on its immutable template")
+		t.Error("the migrate Job has no ttlSecondsAfterFinished to clean up old runs")
+	}
+	if dig(job, "metadata", "name") != nil {
+		t.Error("the migrate Job has a fixed name; a second create would fail before TTL cleanup")
 	}
 }

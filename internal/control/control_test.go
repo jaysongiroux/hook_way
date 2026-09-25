@@ -427,12 +427,12 @@ func TestDeliverBoundsTheResponse(t *testing.T) {
 	for i := range replaywire.MaxChildren + 6 {
 		many = append(many, childRecord(i, []byte("s"), []byte("p")))
 	}
-	t.Run("at most MaxChildren", func(t *testing.T) {
-		rec := serve(newTestServer(&fakeRedriver{result: deliveredResult(many...)}, &fakeMetrics{runs: map[string]int{}}),
+	t.Run("too many children cannot falsely resolve the parent", func(t *testing.T) {
+		m := &fakeMetrics{runs: map[string]int{}}
+		rec := serve(newTestServer(&fakeRedriver{result: deliveredResult(many...)}, m),
 			deliverRequest(t, validRequest(snap), snap))
-		result, _ := readResponse(t, rec)
-		if len(result.Children) != replaywire.MaxChildren {
-			t.Fatalf("%d children, want %d", len(result.Children), replaywire.MaxChildren)
+		if rec.Code != http.StatusInternalServerError || problemCode(t, rec) != "internal" || m.get("orders/error") != 1 {
+			t.Fatalf("status %d, body %q, runs %v; an incomplete result must not resolve the parent", rec.Code, rec.Body.String(), m.runs)
 		}
 	})
 	t.Run("an artifact over replay's limit is metadata-only", func(t *testing.T) {

@@ -161,7 +161,15 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 		}
 	}()
 	start := time.Now()
-	out := w.execute(ctx, run)
+	// Snapshot retrieval is part of the run's lease budget. If it stalls,
+	// never start a delivery after another replica has expired the lease.
+	deliveryCtx := ctx
+	if leaseEnd := run.Run.LeaseExpiresAt; leaseEnd != nil {
+		var cancel context.CancelFunc
+		deliveryCtx, cancel = context.WithDeadline(ctx, leaseEnd.Add(-finalizeTimeout))
+		defer cancel()
+	}
+	out := w.execute(deliveryCtx, run)
 	result, err := json.Marshal(runResult{Reason: out.Reason, Detail: out.Detail, Deliver: out.Result})
 	if err != nil {
 		result = []byte(`{}`)
@@ -191,6 +199,9 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 func (w *Worker) execute(ctx context.Context, run store.ClaimedRun) Outcome {
 	snapshot, err := w.o.Store.Snapshot(ctx, run.Failure.ID)
 	if err != nil {
+		return Outcome{Status: store.RunFailed, Reason: ReasonSnapshotUnavailable, Detail: detail(err.Error())}
+	}
+	if err := ctx.Err(); err != nil {
 		return Outcome{Status: store.RunFailed, Reason: ReasonSnapshotUnavailable, Detail: detail(err.Error())}
 	}
 	return w.o.Deliverer.Deliver(ctx, run, snapshot)

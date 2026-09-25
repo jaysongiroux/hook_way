@@ -85,6 +85,15 @@ func (d deliverFunc) Deliver(ctx context.Context, run store.ClaimedRun, snapshot
 	return d(ctx, run, snapshot)
 }
 
+type delayedSnapshotStore struct{ *fakeStore }
+
+func (s *delayedSnapshotStore) Snapshot(ctx context.Context, _ string) ([]byte, error) {
+	<-ctx.Done()
+	// Even if a dependency returns bytes alongside a canceled context,
+	// the worker must not dispatch a run after its lease budget is spent.
+	return testSnapshot, nil
+}
+
 func runsFor(n int) ([]store.ClaimedRun, map[string][]byte) {
 	var runs []store.ClaimedRun
 	snaps := map[string][]byte{}
@@ -244,6 +253,26 @@ func TestWorkerFailsARunWhoseSnapshotIsUnavailable(t *testing.T) {
 	waitFor(t, "finalize", func() bool { return fs.finalizedCount() == 1 })
 	if o := fs.finalized[0]; called.Load() || o.Status != store.RunFailed || !strings.Contains(string(o.Result), ReasonSnapshotUnavailable) {
 		t.Fatalf("delivered %v; finalized %+v (%s)", called.Load(), o, o.Result)
+	}
+}
+
+func TestWorkerDoesNotDeliverAfterLeaseBudgetIsSpent(t *testing.T) {
+	run := testRun()
+	leaseEnd := time.Now().Add(finalizeTimeout + 25*time.Millisecond)
+	run.Run.LeaseExpiresAt = &leaseEnd
+	fs := &fakeStore{}
+	var called atomic.Bool
+	w := New(Options{
+		Store: &delayedSnapshotStore{fs},
+		Deliverer: deliverFunc(func(context.Context, store.ClaimedRun, []byte) Outcome {
+			called.Store(true)
+			return Outcome{Status: store.RunSucceeded}
+		}),
+		Metrics: metrics.New(), Logger: slog.New(slog.DiscardHandler), ID: "w1", Lease: time.Minute,
+	})
+	w.process(context.Background(), run)
+	if called.Load() || fs.finalizedCount() != 1 || fs.finalized[0].Status != store.RunFailed {
+		t.Fatalf("delivered %v; finalized %+v", called.Load(), fs.finalized)
 	}
 }
 

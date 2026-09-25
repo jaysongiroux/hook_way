@@ -13,16 +13,14 @@ import (
 
 // encode builds the 200 multipart response: the result part, then each
 // child's snapshot and payload. It enforces replay's limits so a real outcome
-// is never lost to an oversized answer: at most MaxChildren children, child
-// artifacts over replay's max_record_bytes or past the response budget sent
-// metadata-only, and a result part within MaxResultBytes. It returns the
-// resume node's outcome.
+// is never falsely reported as complete: more than MaxChildren children or a
+// result part over MaxResultBytes fails the response (replay marks the run
+// unknown). Child artifacts over replay's max_record_bytes or past the
+// response budget are sent metadata-only. It returns the resume node's outcome.
 func (s *Server) encode(req replaywire.DeliverRequest, res Result) ([]byte, string, string, error) {
 	kids := res.Children
 	if len(kids) > replaywire.MaxChildren {
-		s.opts.Logger.Warn("replay redrive had more downstream failures than one response carries; the rest are not reported",
-			"run_id", req.RunID, "failures", len(kids), "reported", replaywire.MaxChildren)
-		kids = kids[:replaywire.MaxChildren]
+		return nil, "", "", fmt.Errorf("redrive produced %d child failures, over the %d-child response limit", len(kids), replaywire.MaxChildren)
 	}
 	kept := make([]capture.Record, 0, len(kids))
 	budget := s.budget
@@ -38,34 +36,27 @@ func (s *Server) encode(req replaywire.DeliverRequest, res Result) ([]byte, stri
 		}
 		kept = append(kept, rec)
 	}
-	for {
-		result := replaywire.DeliverResult{
-			Nodes: res.Nodes, Children: make([]replaywire.FailureMetadata, 0, len(kept)),
-			NodeConfigHash: res.NodeConfigHash, DestinationHash: res.DestinationHash,
-			CoreVersion: s.opts.CoreVersion, CoreInstance: s.opts.CoreInstance,
-		}
-		for _, rec := range kept {
-			result.Children = append(result.Children, rec.Metadata)
-		}
-		if err := result.Validate(req.NodeID); err != nil {
-			return nil, "", "", err
-		}
-		raw, err := json.Marshal(result)
-		if err != nil {
-			return nil, "", "", err
-		}
-		if len(raw) <= replaywire.MaxResultBytes {
-			resume, _ := result.ResumeOutcome(req.NodeID)
-			body, contentType, err := writeParts(raw, kept)
-			return body, contentType, resume.Outcome, err
-		}
-		if len(kept) == 0 {
-			return nil, "", "", fmt.Errorf("the result is %d bytes, over the %d-byte limit", len(raw), replaywire.MaxResultBytes)
-		}
-		s.opts.Logger.Warn("replay redrive result is too large; dropping a downstream failure from it",
-			"run_id", req.RunID, "failure_id", kept[len(kept)-1].Metadata.ID)
-		kept = kept[:len(kept)-1]
+	result := replaywire.DeliverResult{
+		Nodes: res.Nodes, Children: make([]replaywire.FailureMetadata, 0, len(kept)),
+		NodeConfigHash: res.NodeConfigHash, DestinationHash: res.DestinationHash,
+		CoreVersion: s.opts.CoreVersion, CoreInstance: s.opts.CoreInstance,
 	}
+	for _, rec := range kept {
+		result.Children = append(result.Children, rec.Metadata)
+	}
+	if err := result.Validate(req.NodeID); err != nil {
+		return nil, "", "", err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if len(raw) > replaywire.MaxResultBytes {
+		return nil, "", "", fmt.Errorf("the result is %d bytes, over the %d-byte limit", len(raw), replaywire.MaxResultBytes)
+	}
+	resume, _ := result.ResumeOutcome(req.NodeID)
+	body, contentType, err := writeParts(raw, kept)
+	return body, contentType, resume.Outcome, err
 }
 
 func writeParts(result []byte, kids []capture.Record) ([]byte, string, error) {

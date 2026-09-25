@@ -37,3 +37,10 @@ test("rehydrates a replay-only draft after core was cleared", async () => {
   await waitFor(() => expect(useGraphStore.getState().replayServiceConfig).toEqual({ server: { addr: ":8080" } }));
   expect(useGraphStore.getState().nodes).toHaveLength(0);
 });
+
+test("rehydrates a core draft with server settings but no graph nodes", async () => {
+  await saveGraph({ ...emptyDocument(), serverConfig: { addr: ":9090" }, nodes: [], edges: [] });
+  render(<Harness />);
+  await waitFor(() => expect(useGraphStore.getState().serverConfig).toEqual({ addr: ":9090" }));
+  expect(useGraphStore.getState().nodes).toHaveLength(0);
+});

@@ -33,7 +33,9 @@ export function toConfig(doc: GraphDocument): { config: Record<string, unknown> 
   // block is omitted rather than emitted empty. fromConfig already treats a
   // missing key as {}.
   if (destinations) config.destinations = destinations;
-  Object.assign(config, pruneEmpty(doc.configExtra), { flows });
+  const extra = pruneEmpty(doc.configExtra);
+  if (extra && doc.coreReplayConfig !== null) delete extra.replay;
+  Object.assign(config, extra, { flows });
   return { config };
 }
 

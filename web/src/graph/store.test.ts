@@ -202,3 +202,11 @@ test("replay setup, partial clear, and removal keep document boundaries explicit
   useGraphStore.getState().removeReplayConfiguration();
   expect(useGraphStore.getState().replayServiceConfig).toBeNull();
 });
+
+test("replacing an invalid imported replay block removes its raw value", () => {
+  useGraphStore.getState().setGraph({ ...emptyDocument(), configExtra: { replay: "invalid" } });
+  expect(useGraphStore.getState().configExtra.replay).toBe("invalid");
+  useGraphStore.getState().addReplayConfiguration();
+  expect(useGraphStore.getState().configExtra).not.toHaveProperty("replay");
+  expect(useGraphStore.getState().coreReplayConfig).toMatchObject({ url: "http://replay:8080" });
+});

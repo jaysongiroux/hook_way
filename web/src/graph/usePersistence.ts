@@ -12,14 +12,7 @@ export function usePersistence(): void {
     let cancelled = false;
     loadGraph().then((g) => {
       if (cancelled) return;
-      if (
-        g &&
-        (g.nodes.length > 0 ||
-          g.edges.length > 0 ||
-          Object.keys(g.otherFlows).length > 0 ||
-          g.coreReplayConfig !== null ||
-          g.replayServiceConfig !== null)
-      ) {
+      if (g) {
         setGraph(g);
         return;
       }
