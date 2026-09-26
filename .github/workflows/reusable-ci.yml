@@ -310,7 +310,9 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
 
       - name: Install Playwright browsers
-        run: cd web && npx playwright install --with-deps chromium
+        # OS libraries are provisioned on the self-hosted runner. --with-deps
+        # invokes sudo, which is intentionally unavailable to CI jobs.
+        run: cd web && npx playwright install chromium
 
       - name: Playwright builder tests
         run: make web-e2e
