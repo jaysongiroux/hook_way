@@ -35,7 +35,7 @@ test("the WASM validator is served and instantiated", async ({ page }) => {
     .toBe("function");
 });
 
-test("a config that only warns still reports as passing", async ({ page }) => {
+test("a config that only warns reports valid with warnings", async ({ page }) => {
   const builder = new BuilderPage(page);
   await builder.gotoReady();
   // production.yaml validates with exactly one issue: a no_auth warning on the
@@ -43,7 +43,10 @@ test("a config that only warns still reports as passing", async ({ page }) => {
   // rather than merely "no errors".
   await builder.importYaml(exampleYaml("showcase/production.yaml"));
   const dialog = await builder.openConfigItem("Export YAML");
-  await expect(dialog.getByTestId("validation-ok")).toBeVisible({ timeout: 15_000 });
+  await expect(dialog.getByTestId("validation-warnings")).toContainText(
+    'flow "trusted" has a no_auth node',
+    { timeout: 15_000 },
+  );
   await expect(dialog.getByTestId("validation-errors")).toHaveCount(0);
 });
 
