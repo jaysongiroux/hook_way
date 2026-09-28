@@ -1,4 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "bash ../scripts/vercel-build.sh"
+  "buildCommand": "bash ../scripts/vercel-build.sh",
+  "rewrites": [
+    { "source": "/builder", "destination": "/index.html" },
+    { "source": "/use-cases", "destination": "/index.html" },
+    { "source": "/compare", "destination": "/index.html" }
+  ]
 }
