@@ -38,7 +38,7 @@ export const DOC_LINKS: DocLink[] = [
   doc("docs/configuration.md", "Configuration reference", "Every block, field, and default, with worked samples."),
   doc("docs/cli.md", "CLI reference", "Every command and flag of hookway and hookway-replay."),
   doc("docs/security.md", "Security model", "Signature verification, auth, and the threat model."),
-  doc("docs/production-readiness.md", "Production readiness", "Limits, metrics, and failure modes in production."),
+  doc("docs/replay-service.md", "Replay operations", "Capture, inspect, and retry failed deliveries with the optional replay service."),
   doc("docs/local-development.md", "Local development", "Run the stack, stop a destination, and replay what it missed."),
 ];
 

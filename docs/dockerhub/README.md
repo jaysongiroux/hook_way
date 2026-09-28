@@ -1,6 +1,6 @@
 # Hookway
 
-Hookway is a small webhook intake service for forwarding verified third-party webhook events to a message destination (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or Webhook).
+Hookway is a webhook intake service that forwards verified third-party events to RabbitMQ, AWS SQS, AWS SNS, AWS S3, AWS Lambda, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or another HTTP webhook.
 
 It is designed for production webhook ingress where the receiving service should validate signatures, normalize event envelopes (JSON, XML, multipart, or raw), and hand work off to consumers through a queue, topic, object store, or HTTP webhook. Configuration is YAML: `flows` of typed nodes wired by `edges`.
 
@@ -19,7 +19,9 @@ It is designed for production webhook ingress where the receiving service should
   - Kafka: one message per event to a topic, with optional SASL/TLS and topic creation. YAML does not set a partition key
   - Temporal: one workflow execution per event; `target` is the task queue. YAML cannot set `workflow_type` / `workflow_id`
   - Webhook: async store-and-forward outbound delivery to an HTTP/HTTPS URL; none, API-key, HMAC-signed, or proxy (passthrough) auth; retries with backoff; graceful drain on shutdown
+- AWS Lambda: invokes each configured function with the JSON event envelope; `Event` is the default invocation type and `RequestResponse` is also supported
 - Optional auto-provisioning of queues/topics/streams, with a configurable policy for reconciling pre-existing SQS/SNS resources
+- Optional replay service: captures acknowledged failed deliveries in PostgreSQL so an operator can inspect, retry, or dismiss the failed destination
 - RabbitMQ optional dead-letter exchange and queue setup
 - Request size limits, IP allowlists, replay protection, and rate limiting
 - Health, readiness, and Prometheus metrics endpoints
@@ -35,7 +37,12 @@ It is designed for production webhook ingress where the receiving service should
 
 Hookway reads YAML configuration from a file path supplied by the HOOKWAY_CONFIG environment variable or the --config flag.
 
-The container entrypoint is /usr/local/bin/hookway. The image includes a built-in healthcheck command, so the runtime image does not need shell utilities.
+The core container entrypoint is /usr/local/bin/hookway. Published images contain
+only the deployable runtime and do not require Node.js or the optional config
+builder. The image includes a built-in healthcheck command, so the runtime image
+does not need shell utilities.
+
+The matching `<image>-replay` image runs the optional `hookway-replay` service. It uses PostgreSQL for captured failed deliveries; run `hookway-replay migrate --config replay.yaml` before starting or upgrading it. See the [replay service guide](https://github.com/jaysongiroux/hook_way/blob/main/docs/replay-service.md).
 
 ## Links
 

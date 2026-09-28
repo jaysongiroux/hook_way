@@ -22,7 +22,7 @@
 | **P2-1** unvalidated `X-Trace-ID` | **Closed.** `traceIDFromRequest` now gates the `X-Trace-ID` fallback through `isValidTraceID` (length 32, hex, not all-zeros) — stricter than this document's own proposed fix. The §5 repro no longer reproduces. |
 | **P2-9** no Prometheus alert rules | **Closed.** `deploy/alerts.yaml` ships 15 alerts with `deploy/alerts_test.go`, promtool-validated in the required **Observability** CI job. |
 | **P2-7b** no coverage gate | **Closed.** A statement-coverage floor is enforced by `make coverage` in the required **Coverage** job. (The fuzzing half of P2-7 is still open.) |
-| **P0-1** no LICENSE | **Partially closed.** A repo-root `LICENSE` (MIT) now ships. `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, and `CHANGELOG.md` are still absent. Note the original recommendation was Apache-2.0 for its patent grant; MIT has none. |
+| **P0-1** no LICENSE | **Partially closed.** A repo-root `LICENSE` (MIT) and `CONTRIBUTING.md` now ship. `SECURITY.md`, `CODEOWNERS`, and `CHANGELOG.md` are still absent. Note the original recommendation was Apache-2.0 for its patent grant; MIT has none. |
 | **P0-3** async webhook in-memory queue | **Still open** (documented in configuration.md). |
 | **P0-4** one static API key | **Still open.** |
 | **P1-1** no SIGTERM drain | **Still open.** The symbol moved (`cmd/hookway/shutdown.go`), the finding did not. |
@@ -69,15 +69,16 @@ constant-time secret comparison, bounded shutdown waits with carefully-ordered
 **It is not, however, production-ready for an enterprise environment yet.** The gaps
 are not code-quality gaps — they are *platform* gaps. In rough order of severity:
 
-1. **Legal/governance:** a repo-root `LICENSE` (MIT) now ships, clearing the hard blocker. `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, and `CHANGELOG.md` are still missing.
+1. **Legal/governance:** a repo-root `LICENSE` (MIT) now ships, clearing the hard blocker. `SECURITY.md`, `CODEOWNERS`, and `CHANGELOG.md` are still missing.
 2. **Durability:** Hookway can lose events. There is no local spool, and the one
    failure mode where replay would save you (total broker outage) is precisely the
    case the replay store cannot cover.
 3. **Admin-plane security:** a single static API key guards metrics, config, *and* the
    ability to re-inject arbitrary captured production traffic. No RBAC, no rotation,
    no audit.
-4. **Operability:** no config hot reload, no zero-downtime secret rotation, no
-   readiness drain on `SIGTERM`, no deployment artifacts (Helm/k8s), no migrations.
+4. **Operability:** no config hot reload, no zero-downtime secret rotation, and no
+   readiness drain on `SIGTERM`. Kubernetes manifests and versioned replay-store
+   migrations now ship; see P1-4 and P1-8.
 5. **Supply chain:** no SBOM, no image signing, no dependency scanning of `go.mod`,
    single-arch images. *(The original finding here — "`go vet` is the entire lint
    gate; no govulncheck" — is **closed**: golangci-lint with 12 linters and
@@ -98,7 +99,7 @@ sound enough that nearly every item below is additive — very little needs rewo
 | Security (data plane) | **A−** | Auth, redaction, loop/replay/rate controls all solid |
 | Security (admin plane) | **D** | One shared static key for read *and* replay-injection |
 | Durability / DR | **D** | No spool; unreplayable total-outage path; async engine loses queue |
-| Operability | **C−** | No reload, no drain, no migrations, no deploy artifacts |
+| Operability | **C−** | No reload or drain; replay migrations and Kubernetes manifests now ship |
 | Supply chain / release | **C** | Trivy + govulncheck + golangci-lint now gate; still no SBOM/signing/multi-arch |
 | Governance / legal | **D** | LICENSE (MIT) now ships; still no SECURITY.md, CODEOWNERS, or CHANGELOG |
 
@@ -142,7 +143,7 @@ there is no combined unit+integration coverage report to prove otherwise.
 > Apache-2.0 specifically for its patent grant, which MIT does not provide; if a
 > reviewer's checklist asks for one, that is a deliberate open decision now, not
 > an omission. Still absent: `SECURITY.md` (vulnerability disclosure contact and
-> SLA), `CONTRIBUTING.md`, `CODEOWNERS`, `CHANGELOG.md`.
+> SLA), `CODEOWNERS`, and `CHANGELOG.md`.
 
 The repository shipped no license, so by default it was "all rights reserved." No
 enterprise legal or OSS-review process will approve deployment of a dependency in
@@ -359,28 +360,13 @@ remains the natural authentication mechanism for the admin/replay listeners.
 **Fix (remaining):** add `server.tls: {cert_file, key_file, client_ca_file, min_version}`
 and the same for the metrics/replay listeners.
 
-### P1-4. Replay store has no versioned migrations
+### P1-4. Replay-store migrations — **CLOSED**
 
-> Superseded: the embedded replay store was removed.
-
-`internal/replaystore/store.go:84,148-186` runs `CREATE TABLE / CREATE INDEX IF NOT
-EXISTS` on every process start. Three consequences:
-
-- **The application requires permanent DDL privileges on the production database.**
-  Most enterprise DBA teams will refuse to grant that to a service account, full stop.
-- **There is no schema version.** During a rolling deploy two binary versions talk to
-  one database with no compatibility check, and there is no way to gate startup on a
-  schema the binary understands.
-- **`IF NOT EXISTS` cannot retrofit constraints** — the code says so itself at
-  `store.go:173-177` and `store.go:277`. Any deployment created before the `outcome`
-  CHECK was introduced is still running without it, silently, forever. Today a Go-level
-  guard covers it; the next constraint might not get one.
-
-**Fix:** adopt a migration tool (goose, golang-migrate, or Atlas), add a
-`schema_migrations` table, and split migration into an explicit `hookway migrate`
-subcommand (runnable as a k8s Job/init container with elevated credentials) so the
-serving process can run with `SELECT/INSERT/UPDATE/DELETE` only. Fail startup with a
-clear error if the schema version doesn't match the binary.
+The old embedded replay store was removed. The optional replay service now has
+versioned migrations: run `hookway-replay migrate --config replay.yaml` before
+each deployment or upgrade. `serve` refuses to start against an older schema.
+The repository includes `deploy/kubernetes/migrate-job.yaml` for running that
+step as a Kubernetes Job. See [replay-service.md](replay-service.md).
 
 ### P1-5. Webhook payloads are stored in plaintext, with no redaction or erasure path
 
@@ -468,24 +454,16 @@ signing and `actions/attest-build-provenance`; build `linux/amd64,linux/arm64`; 
 base images by digest; add a `goreleaser` job for binaries + checksums; split the test
 matrix.
 
-### P1-8. No deployment artifacts
+### P1-8. Deployment artifacts — **PARTIALLY CLOSED**
 
-There is no Helm chart, Kustomize base, or plain Kubernetes manifest anywhere in the
-repository (verified by find). The only orchestration file,
-`examples/docker-compose.yaml`, is explicitly dev-only and ships
-`PADDLE_WEBHOOK_SECRET: change-me` with `guest`/`guest` RabbitMQ.
+The repository now ships plain Kubernetes manifests for core and replay,
+NetworkPolicies, a Secret template, and a replay migration Job under
+`deploy/kubernetes/`. The development compose file remains development-only.
 
-Every enterprise team adopting Hookway therefore has to independently rediscover:
-liveness → `/healthz` (never `/ready`, and the docs are good about explaining why),
-readiness → `/ready`, `terminationGracePeriodSeconds` aligned to `shutdown_timeout`,
-the preStop drain hook, resource requests/limits, `metrics.addr` on a separate port
-with a `NetworkPolicy` keeping it off the ingress path, `replay.addr` similarly
-isolated, and a PodDisruptionBudget honouring the "at least two replicas" guidance in
-[security.md § Production Hardening](security.md#production-hardening). Every team will get some of this wrong.
-
-**Fix:** ship a Helm chart with sane, secure defaults encoding all of the above, plus
-a `NetworkPolicy` template, a `ServiceMonitor` for Prometheus Operator, and a
-`PrometheusRule` (see P2-9). This is the single highest-leverage artifact for adoption.
+The original adoption concern remains for teams that need a packaged deployment:
+there is still no Helm chart or Kustomize base, and the manifests should be
+reviewed for each environment's resources, ingress, observability, and
+termination policy.
 
 ---
 
@@ -701,8 +679,7 @@ exits before Prometheus can scrape that counter.
 > tracer provider, which Hookway never sets — so with no provider registered
 > they are no-ops. **No exporter ships**: no OTLP config, no
 > `otel.SetTracerProvider`, no collector wiring. Register your own provider to
-> get anything out. Per `PRODUCT.md`, Hookway must not *claim* OpenTelemetry
-> support, and this does not change that. Documented factually in
+> get anything out. This does not provide an OpenTelemetry exporter. Documented factually in
 > [configuration.md § OpenTelemetry spans](configuration.md#opentelemetry-spans).
 
 Hookway is therefore still, by default, a black box in the middle of a
@@ -739,54 +716,10 @@ endpoint.
 
 ---
 
-## 7. Prioritized roadmap
+## 7. What is already right
 
-Sequenced so that each phase leaves the system in a shippable state.
-
-Items struck through are **done**; see the status table and the per-item CLOSED
-markers above.
-
-### Phase 1 — Unblock adoption *(~1 week)*
-1. ~~`LICENSE`~~ **done (MIT)**; `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`, `CHANGELOG.md` — P0-1
-2. ~~Fix the `X-Trace-ID` traceparent bug — P2-1~~ **Done.**
-3. ~~Fix the `no_auth` idempotency key — P2-2~~ **Withdrawn**: the contract is
-   dedup on `id`; no `idempotency_header` field exists to configure.
-4. ~~`ReadHeaderTimeout` on all four servers — part of P1-3~~ **Done** (P1-3a).
-5. ~~Add `govulncheck` + `golangci-lint`~~ **Done**; Dependabot still outstanding — P1-6
-
-### Phase 2 — Make deploys safe *(~2 weeks)*
-6. Readiness drain on `SIGTERM` — P1-1
-7. Helm chart with correct probes, PDB, NetworkPolicy, ServiceMonitor — P1-8
-8. ~~Prometheus alert rules — P2-9~~ **Done** (15 alerts in `deploy/alerts.yaml`).
-9. Supply chain: SHA-pin actions, SBOM, cosign, multi-arch, digest-pinned bases — P1-7
-
-### Phase 3 — Close the durability hole *(~3 weeks)*
-10. ~~Record intended destinations at capture so `pending` events are replayable — P0-2.1~~ **Done.**
-11. ~~Automatic re-drive worker from the replay store — P0-2.2~~ **Replaced** by operator-initiated retries in the replay service ([replay-service.md](replay-service.md)).
-12. Durable or explicitly-contracted async webhook queue — P0-3
-13. ~~Versioned migrations + `hookway migrate` subcommand — P1-4~~ **Done** (`hookway-replay migrate`).
-
-### Phase 4 — Enterprise security & operability *(~4 weeks)*
-14. Split admin API keys, key lists for rotation, replay audit log — P0-4
-15. `secret_file:` + multi-secret + `SIGHUP` reload — P0-5
-16. Shared (Redis) rate-limit and replay-protection stores — P1-2
-17. Replay payload redaction, encryption, and filtered purge — P1-5
-18. Optional in-process TLS/mTLS — P1-3b
-
-### Phase 5 — Scale & polish *(ongoing)*
-19. OTel export — P2-10
-20. Load/soak harness and published capacity numbers — P2-8
-21. Fuzzing — P2-7 (the ~~coverage gate~~ half is **done**)
-22. `key_by` expansion, per-destination readiness criticality, editor CORS/CSP —
-    P2-5, P2-6, P2-3
-23. Runbook, published envelope JSON Schema, docs split — P3
-
----
-
-## 8. What is already right
-
-Worth recording explicitly, because these are the things that make the roadmap above
-achievable rather than a rewrite:
+Worth recording explicitly, because these are the things that keep the remaining
+work additive rather than a rewrite:
 
 - **Fail-closed everywhere.** Unknown auth scheme → `RejectAll` (`server.go:105-108`).
   Uncompilable filter chain → `MatchNothing` (`server.go:155-170`). Malformed hop

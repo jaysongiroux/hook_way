@@ -59,22 +59,28 @@ id_rsa*
 # Editor/IDE
 .idea/
 .vscode/
+# Private product planning documents kept at the repository root.
+/PRODUCT.md
+/DESIGN.md
+/VISION.md
+/MONETIZATION.md
 docs/superpowers/
 docs/scratch/
 *.log
 !**/testdata/**
 .superpowers/brainstorm/
 
-# Agent tooling: shared settings are committed, per-machine overrides are not.
-.claude/settings.local.json
+# Per-machine agent instructions and settings stay out of this repository.
+.claude/
+.codex/
+.cursor/
+CLAUDE.md
+AGENTS.md
+.cursorrules
 
-# Impeccable: live/config.json is shared project config and IS tracked.
-# Everything else under .impeccable/ is per-machine session state.
-.impeccable/*
-!.impeccable/live/
-.impeccable/live/*
-!.impeccable/live/config.json
-**/.impeccable/hook.*.json
+# Impeccable is local design-tool state, not project source.
+.impeccable/
+**/.impeccable/
 
 # Generated config-UI WASM/build assets (produced by `make wasm` / `make ui`)
 internal/editor/assets/*

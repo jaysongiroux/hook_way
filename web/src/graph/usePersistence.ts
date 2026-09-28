@@ -2,53 +2,53 @@ import { useEffect } from "react";
 import { useGraphStore } from "./store";
 import { loadGraph, saveGraph } from "./persistence";
 import { starterDocument } from "./starter";
+import type { GraphDocument } from "./model";
 
 const DEBOUNCE_MS = 400;
+const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
+  "nodes", "edges", "serverConfig", "coreReplayConfig", "replayServiceConfig",
+  "configExtra", "connections", "destinations", "activeFlow", "otherFlows",
+  "deliveryFailurePolicy", "flowExtra",
+];
 
 export function usePersistence(): void {
   const setGraph = useGraphStore((s) => s.setGraph);
 
   useEffect(() => {
     let cancelled = false;
-    loadGraph().then((g) => {
-      if (cancelled) return;
-      if (g) {
-        setGraph(g);
-        return;
-      }
-      setGraph(starterDocument());
+    let hydrated = false;
+    let changedDuringLoad = false;
+    let previousDocument = useGraphStore.getState().document();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleSave = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void saveGraph(useGraphStore.getState().document()), DEBOUNCE_MS);
+    };
+
+    const unsub = useGraphStore.subscribe((state) => {
+      const document = state.document();
+      const changed = DOCUMENT_FIELDS.some((field) => document[field] !== previousDocument[field]);
+      previousDocument = document;
+      if (!changed) return;
+      if (!hydrated) changedDuringLoad = true;
+      else scheduleSave();
     });
+
+    void loadGraph().then((graph) => {
+      if (cancelled) return;
+      hydrated = true;
+      if (changedDuringLoad) {
+        scheduleSave();
+      } else {
+        setGraph(graph ?? starterDocument());
+      }
+    });
+
     return () => {
       cancelled = true;
-    };
-  }, [setGraph]);
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsub = useGraphStore.subscribe((state) => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(
-        () =>
-          void saveGraph({
-            nodes: state.nodes,
-            edges: state.edges,
-            serverConfig: state.serverConfig,
-            coreReplayConfig: state.coreReplayConfig,
-            replayServiceConfig: state.replayServiceConfig,
-            configExtra: state.configExtra,
-            connections: state.connections,
-            destinations: state.destinations,
-            activeFlow: state.activeFlow,
-            otherFlows: state.otherFlows,
-            deliveryFailurePolicy: state.deliveryFailurePolicy,
-            flowExtra: state.flowExtra,
-          }),
-        DEBOUNCE_MS,
-      );
-    });
-    return () => {
       if (timer) clearTimeout(timer);
       unsub();
     };
-  }, []);
+  }, [setGraph]);
 }

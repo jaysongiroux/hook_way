@@ -1,0 +1,14 @@
+# Runtime images contain the Go services only. Build and host the config builder
+# separately with `make ui` or the Vercel preview; generated UI files must not
+# enter a Docker build even when they exist in the local checkout.
+.git
+.impeccable
+web/node_modules
+web/dist
+web/.vite
+web/public/hookway.wasm
+web/public/wasm_exec.js
+internal/editor/assets/*
+!internal/editor/assets/.gitkeep
+internal/editor/webui/*
+!internal/editor/webui/.gitkeep

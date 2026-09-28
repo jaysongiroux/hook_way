@@ -1,3 +1,5 @@
+// promrule2groups extracts PrometheusRule spec.groups for promtool.
+// Invocation: go run ./scripts/promrule2groups <prometheusrule.yaml>
 package main
 
 import (

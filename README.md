@@ -1,8 +1,23 @@
 # Hookway
 
-Hookway receives third-party webhook POST requests, verifies authentication (HMAC signatures, static header match, HTTP Basic, or JWT Bearer tokens — 11 schemes, named by wire format rather than by vendor; see [Security § Auth Schemes](docs/security.md#auth-schemes)), and publishes to configured destinations (RabbitMQ, AWS SQS, AWS SNS, AWS S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal workflows, or another HTTP webhook). Bodies may be JSON, XML, multipart, or raw; `s3` and `redis_kv` can store decoded file bytes with `publish.payload: object`.
+Hookway receives third-party webhook POST requests, verifies them before work begins, and sends a consistent event envelope to the queue, database, object store, workflow, Lambda, or webhook your consumers already use. It keeps webhook-specific concerns—signature checks, retries, rate limits, replay protection, multipart uploads, and destination fan-out—in one configured service.
 
-Config is named `flows` of typed nodes (`http_trigger`, gates, `auth` / `no_auth`, `envelope`, `publish` / `respond`) wired by `edges`. There is no config version field: `hookway validate` rejects any unknown top-level key. See [Configuration](docs/configuration.md).
+Configuration is YAML: named `flows` of typed nodes (`http_trigger`, gates, `auth` / `no_auth`, `envelope`, `publish` / `respond`) wired by `edges`. There is no config version field: `hookway validate` rejects any unknown top-level key. See [Configuration](docs/configuration.md).
+
+```mermaid
+flowchart LR
+  Sender[Webhook sender] --> Core[Hookway core]
+  Builder[Optional config builder] -. creates .-> Config[core.yaml]
+  Config -. configures .-> Core
+  Core --> Destinations[Queues, stores, databases, Lambda, workflows, or HTTP webhooks]
+  Core -. failed acknowledged deliveries .-> Replay[Optional replay service]
+  Replay <--> Postgres[(PostgreSQL)]
+  Replay -. retries the failed destination .-> Core
+```
+
+You do not need to host the builder to run Hookway. Write the YAML directly or
+use the builder wherever convenient, then deploy core with that file. The
+replay service is a separate optional deployment.
 
 ## Architecture: the typed-port node graph
 
@@ -208,23 +223,16 @@ The palette's **Templates** group drops in production-shaped patterns (Stripe an
 
 ```bash
 make web-install   # REQUIRED FIRST on a clean clone — installs web/node_modules
-make wasm          # build the Go validator to WebAssembly into web/public/
 make node-schema   # regenerate web/src/graph/{node,destination}Schema.json
 make web-dev       # Vite app on the local web port
 go run ./cmd/hookway editor --addr :8090
 ```
 
-`make web-install` is not a prerequisite of any other target, so on a fresh
-checkout `make web-dev`, `make ui`, and `make docker-build` all fail with
-`vite: not found` until you run it. CI runs it first in every web-touching job.
-
-`make wasm` matters too: the builder's live validation runs the real Go
-validator compiled to WebAssembly and served from `web/public/hookway.wasm`,
-which is generated and gitignored. Without it `make web-dev` serves a 404 for
-that file and in-browser validation is **silently** dead — the page still
-loads and still looks like it validated. (`make ui` and `make web-e2e` both
-depend on `wasm`; `make web-dev` does not.) See
-[CLI § hookway-wasm](docs/cli.md#hookway-wasm).
+Run `make web-install` once before a web command on a clean clone. `make
+web-dev`, `make ui`, and `make web-e2e` build the generated WebAssembly
+validator first; Vite then serves it from `web/public/` for in-browser
+validation. Run `make wasm` directly only when working on the validator or its
+standalone harness. See [CLI § hookway-wasm](docs/cli.md#hookway-wasm).
 
 See [CLI § hookway editor](docs/cli.md#hookway-editor).
 
@@ -249,7 +257,7 @@ make compose-e2e-test        # deploy the make dev-up stack in Docker; record an
 make bench-replay          # capture overhead and replay ingest benchmarks
 make test-all              # go test ./... -count=1 — unit plus every container suite
 make lint
-make web-install && make docker-build   # docker-build depends on `make ui`, which needs node_modules
+make docker-build                         # builds the deployable core and replay images
 make vuln-scan
 ```
 
@@ -259,17 +267,15 @@ RabbitMQ, AWS (LocalStack), Redis, Postgres, MongoDB, Kafka, Webhook,
 and Temporal. Those suites self-skip when Docker is
 unavailable.
 
-`make test-examples` walks `examples/`, so a new file there is picked up
-automatically. `make validate-examples` does **not**: its loop hand-enumerates
-the eight top-level example files (plus the `destinations/`, `auth/`,
-`templates/`, and `showcase/` globs). Add a new *top-level* example and it is
-silently skipped by `validate-examples` — add it to that list in the Makefile
-too, or put it in one of the globbed subdirectories.
+`make test-examples` walks `examples/` and boots each valid flow. `make
+validate-examples` discovers top-level YAML files (except the Compose file),
+then validates the `destinations/`, `auth/`, `templates/`, and valid
+`showcase/` files by glob. It also checks the named `core.yaml` and
+`replay.yaml` files under `dev/` and `replay/`.
 
 Every `*-integration-test` target above and `make test-all` use testcontainers
-and require Docker. `make docker-build` also requires Docker, and depends on
-`make ui` (WASM + Vite build), so run `make web-install` first on a clean
-clone or it fails with `vite: not found`.
+and require Docker. `make docker-build` builds the core and replay runtime
+images without Node.js or the optional builder bundle.
 
 ## CI/CD
 
@@ -278,7 +284,7 @@ GitHub Actions is split across **four** workflow files. Three are entrypoints; t
 - **Reusable CI** (`.github/workflows/reusable-ci.yml`) — the gate itself, called by both CI and Release via `workflow_call`. Its jobs run in three stages, and each stage starts only after every job in the one before has passed:
   1. **Lint** — **Formatting** (gofmt + `git diff --check`), **golangci-lint**, **govulncheck**, **Static checks** (vet, `go mod tidy -diff`, deadcode), and **Web lint** (node-schema drift, knip).
   2. **Test** — **Go** (unit + invariant conformance), **Go race**, **Examples**, **Web** (vitest), **Coverage**, and **Observability** (Grafana dashboard tests + promtool on `deploy/alerts.yaml`).
-  3. **Deploy** — **Web e2e** (Playwright), **Image** (docker build of the core and replay images, a smoke run, `ui-check`, and Trivy on both), and an 11-way **integration** matrix: RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, Webhook, Temporal, Replay, Replay acceptance, and **Compose end-to-end** (the default `examples/docker-compose.yaml` stack, driven with signed webhooks through a capture and a replay).
+  3. **Deploy** — **Web e2e** (Playwright), **Image** (docker build of the core and replay images, a smoke run, and Trivy on both), and an 11-way **integration** matrix: RabbitMQ, AWS, Redis, Postgres, MongoDB, Kafka, Webhook, Temporal, Replay, Replay acceptance, and **Compose end-to-end** (the default `examples/docker-compose.yaml` stack, driven with signed webhooks through a capture and a replay).
 
   A lint failure skips the tests, and a test failure skips the containers, so a typo costs a few minutes instead of a full integration run. **All checks passed** is the single required status; it `needs:` every job and treats a skipped job as a failure.
 - **CI** (`.github/workflows/ci.yml`) — pull requests and pushes to `main`. A thin caller of Reusable CI; nothing is published. The **Examples** job validates the enumerated configs under `examples/` and then boots each one, POSTing a signed request to every flow so the files we document cannot drift from what the server actually runs.
@@ -306,4 +312,4 @@ See:
 - [Security](docs/security.md)
 - [Request-pipeline invariants](docs/invariants.md)
 - [Local Development](docs/local-development.md)
-- [Design system](docs/design-system.md) — the `web/` palette, type, and chrome rules (moved from the repo-root `DESIGN.md`)
+- [Design system](docs/design-system.md) — the `web/` palette, type, and chrome rules

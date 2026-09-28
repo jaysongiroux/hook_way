@@ -388,15 +388,6 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install web deps
-        run: make web-install
-
       - name: Docker build
         run: make docker-build
 
@@ -404,9 +395,6 @@ jobs:
         run: |
           docker run --rm hookway:local version
           docker run --rm hookway-replay:local version
-
-      - name: Check UI is staged
-        run: make ui-check
 
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@0.35.0

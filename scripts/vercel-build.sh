@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Build the browser validator for Vercel with the Go version pinned by go.mod.
+# Invocation: bash scripts/vercel-build.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

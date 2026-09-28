@@ -86,23 +86,6 @@ jobs:
           go-version: "1.26.x"
           cache: true
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install web deps
-        run: make web-install
-
-      # Dockerfile COPYs the staged embed bundle; without this the published
-      # image's editor is the placeholder page.
-      - name: Build UI (WASM + SPA)
-        run: make ui
-
-      - name: Check UI is staged
-        run: make ui-check
-
       - name: Check Docker Hub publishing config
         run: |
           test -n "$DOCKERHUB_USERNAME" || (echo "Missing GitHub Actions secret DOCKERHUB_USERNAME" && exit 1)

@@ -242,10 +242,11 @@ With a config that sets `security.api_key`, `GET /schema`,
 `Authorization: Bearer <key>`. `OPTIONS` preflight is always allowed, so
 browser CORS works. A config given but invalid exits `1`.
 
-The builder UI is embedded only when the bundle was staged with `make ui`
-(run `make web-install` first on a clean clone, or the Vite build fails with
-`vite: not found`). Without it, `/` and `/builder` explain that the UI was
-not built; the API works either way.
+The builder UI is embedded only in a locally built binary after `make ui`
+(run `make web-install` first on a clean clone). Published core and replay
+images are runtime-only and do not include the builder bundle. Without the
+bundle, `/` and `/builder` explain that the UI was not built; the API works
+either way.
 
 ```bash
 hookway editor                                    # http://localhost:8090/builder

@@ -47,9 +47,8 @@ node-schema-check: node-schema
 web-install:
 	cd web && npm install
 
-# Depends on wasm because the dev server otherwise 404s hookway.wasm, and
-# validate.ts then silently falls back to a dead /validate fetch -- every
-# in-browser validation assertion passes vacuously instead of failing.
+# The builder validates with Go/WASM, so its dev server needs the generated
+# validator assets before starting.
 web-dev: wasm
 	cd web && npm run dev
 
@@ -61,11 +60,7 @@ web-test:
 web-knip:
 	cd web && npx --yes knip@6.36.0
 
-# web-e2e depends on wasm because the builder's live validation runs the real
-# Go validator compiled to WebAssembly, served from web/public. That file is
-# generated and gitignored, so without this prerequisite the dev server 404s
-# it, validate.ts silently falls back to a dead /validate fetch, and every
-# validation assertion passes vacuously.
+# Browser tests exercise the real Go validator compiled to WebAssembly.
 web-e2e: wasm
 	cd web && npm run test:e2e
 
@@ -80,8 +75,8 @@ ui: wasm web-build
 	cp -R web/dist/. internal/editor/webui/
 	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js internal/editor/webui/
 
-# ui-check fails unless a real bundle is staged for go:embed, guarding against
-# shipping a release binary whose editor only serves the placeholder page.
+# ui-check verifies an opt-in local editor bundle before building a binary
+# that serves it; runtime Docker images intentionally omit this bundle.
 ui-check:
 	@if [ ! -f internal/editor/webui/index.html ] || [ ! -d internal/editor/webui/assets ]; then \
 		echo "error: config UI not staged — run 'make ui' before building a release"; exit 1; \
@@ -316,7 +311,9 @@ test-examples:
 run:
 	HOOKWAY_CONFIG=$(CONFIG) $(GO) run ./cmd/hookway
 
-docker-build: ui
+# The deployable core and replay images need only Go. .dockerignore excludes
+# generated editor assets even when `make ui` ran in the local checkout.
+docker-build:
 	docker build --target core --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 	docker build --target replay --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(REPLAY_IMAGE) .
 
@@ -326,7 +323,7 @@ vuln-scan:
 
 # Mirrors the required CI gate (.github/workflows/reusable-ci.yml `success`).
 # Keep these two lists in sync: a green release-check should predict a green CI.
-release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test lint golangci-lint govulncheck coverage fmt-check deadcode conformance observability-check ui-check docker-build vuln-scan
+release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test lint golangci-lint govulncheck coverage fmt-check deadcode conformance observability-check docker-build vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build
