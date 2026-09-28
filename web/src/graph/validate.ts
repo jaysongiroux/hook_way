@@ -20,7 +20,7 @@ let loading: Promise<void> | null = null;
 export function loadValidator(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
   if (window.hookwayValidate) return Promise.resolve();
-  if (!loading) loading = instantiateWasm().catch(() => undefined);
+  if (!loading) loading = instantiateWasm().catch(() => { loading = null; });
   return loading;
 }
 
@@ -48,7 +48,7 @@ export async function validateYaml(yaml: string): Promise<ValidationIssue[] | nu
     try {
       return parseIssues(window.hookwayValidate(yaml));
     } catch {
-      return null;
+      // A stale or broken WASM bridge should still allow the editor API path.
     }
   }
   try {

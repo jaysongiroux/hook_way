@@ -58,4 +58,3 @@ test("a double click selects a node and announces the activation", () => {
   expect(useGraphStore.getState().selectedId).toBe("publish_1");
   expect(onNodeActivate).toHaveBeenCalledTimes(1);
 });
-

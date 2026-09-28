@@ -1,4 +1,4 @@
-import { expect, test, beforeEach } from "vitest";
+import { expect, test, beforeEach, afterEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
@@ -10,6 +10,11 @@ beforeEach(() => {
   resetIdCounters();
   const trigger = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({ ...emptyDocument(), nodes: [trigger], selectedId: null, selectedEdgeId: null });
+});
+
+afterEach(() => {
+  delete window.hookwayValidate;
+  vi.unstubAllGlobals();
 });
 
 test("renders exported YAML for the current graph", () => {
@@ -31,4 +36,13 @@ test("exports replay.yaml independently when present", () => {
   fireEvent.click(screen.getByRole("tab", { name: "Replay YAML" }));
   expect(screen.getByText(/REPLAY_DATABASE_URL/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Download replay.yaml" })).toBeInTheDocument();
+});
+
+test("shows when a document could not be validated", async () => {
+  window.hookwayValidate = () => { throw new Error("bridge failed"); };
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+  render(<MantineProvider theme={theme}><ExportModal opened onClose={() => {}} /></MantineProvider>);
+
+  expect(await screen.findByTestId("validation-unavailable")).toBeInTheDocument();
+  expect(screen.queryByTestId("validation-ok")).not.toBeInTheDocument();
 });

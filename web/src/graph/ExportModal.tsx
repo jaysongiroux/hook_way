@@ -93,14 +93,23 @@ function DocumentExport({ opened, yaml, error, filename, command, validate }: {
   validate: (yaml: string) => Promise<ValidationIssue[] | null>;
 }) {
   const [issues, setIssues] = useState<ValidationIssue[] | null>(null);
+  const [validationUnavailable, setValidationUnavailable] = useState(false);
   useEffect(() => {
     if (!opened || error || !yaml) {
       setIssues(null);
+      setValidationUnavailable(false);
       return;
     }
     let cancelled = false;
+    setIssues(null);
+    setValidationUnavailable(false);
     void validate(yaml).then((result) => {
-      if (!cancelled) setIssues(result);
+      if (!cancelled) {
+        setIssues(result);
+        setValidationUnavailable(result === null);
+      }
+    }).catch(() => {
+      if (!cancelled) setValidationUnavailable(true);
     });
     return () => {
       cancelled = true;
@@ -125,6 +134,11 @@ function DocumentExport({ opened, yaml, error, filename, command, validate }: {
   if (error) return <Alert color="red" title="Cannot export">{error}</Alert>;
   return (
     <Stack gap="sm">
+      {validationUnavailable && (
+        <Alert color="red" title="Validation unavailable" data-testid="validation-unavailable">
+          The browser validator and editor API could not check this document. Run <Text span ff="monospace">{command}</Text> before using it.
+        </Alert>
+      )}
       {issues && blocking.length > 0 && <IssueAlert color="red" title="Validation errors" issues={blocking} testId="validation-errors" />}
       {issues && blocking.length === 0 && warnings.length > 0 && <IssueAlert color="yellow" title="Valid with warnings" issues={warnings} testId="validation-warnings" />}
       {issues && blocking.length === 0 && warnings.length === 0 && (
