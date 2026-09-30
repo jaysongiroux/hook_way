@@ -255,13 +255,15 @@ the path *and* the host. Three protections keep that boundary real.
   `url` has a `{variable}` in its *authority*, the destination is influenced by
   request data, which is an SSRF primitive. Hookway requires such a host to end
   in a literal dotted domain suffix (`{envName}-api.example.com`, never
-  `{host}`), vets the rendered target against a private-network block list
+  `{host}`), restricts authority variable values to single DNS labels even
+  when private targets are allowed, and vets the rendered target against a private-network block list
   (loopback, link-local including `169.254.169.254`, RFC1918, CGNAT, ULA,
   multicast, cloud metadata addresses, plus `localhost` and the `.internal` /
   `.local` / `.localhost` / `.localdomain` / `.home.arpa` suffixes), refuses
   ambiguous numeric host spellings rather than trying to interpret them, and
   re-checks every resolved IP in the dialer so DNS rebinding cannot swap the
-  address between check and connect. Redirects are not followed. A **literal**
+  address between check and connect. Guarded requests use a separate connection
+  pool from unguarded requests. Redirects are not followed. A **literal**
   host is exempt: it is the operator's own explicit choice, and proxying to an
   internal service is a legitimate configuration. The per-node opt-out for a
   templated host is `allow_private_targets: true`; it defaults to `false` and

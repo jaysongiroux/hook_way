@@ -1109,7 +1109,11 @@ arbitrary host
 So `https://{envName}-api.example.com/v1` is accepted and
 `https://{host}/v1` is not.
 
-**2. Render time: the rendered host is vetted before any connection.** With
+**2. Render time: the rendered host is vetted before any connection.** Each
+authority variable must be a single DNS label: 1–63 ASCII letters, digits, or
+hyphens, with no leading or trailing hyphen. Dots, slashes, URL delimiters, and
+encoded delimiters are rejected with `400`, including when
+`allow_private_targets: true`. Path variables may still contain slashes. With
 the policy on, the target is classified after variable substitution and
 refused if it addresses the gateway's own host or a private network. Denied by
 address: loopback (`127.0.0.0/8`, `::1`), unspecified (`0.0.0.0/8`, `::`),
@@ -1136,7 +1140,9 @@ above can still resolve to `169.254.169.254`, and a second lookup between the
 check and the connect can return a different answer than the first. When the
 guard is on, the dialer resolves the host itself, classifies **every**
 candidate address, and dials a specific vetted IP — so the address that was
-checked is the address that is connected to. Redirects are never followed
+checked is the address that is connected to. Guarded and unguarded nodes use
+separate connection pools, so a guarded request cannot reuse a connection
+opened without this check. Redirects are never followed
 (`http_request` returns the redirect response as-is), so an upstream cannot
 bounce the request somewhere else either.
 

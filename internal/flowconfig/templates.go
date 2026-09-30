@@ -106,6 +106,25 @@ func urlAuthorityIsTemplated(raw string) bool {
 	return authTpl.HasPlaceholders()
 }
 
+// validateAuthorityVariables confines request-derived authority substitutions
+// to single DNS labels. In particular, URL delimiters must not turn the fixed
+// domain suffix into a path, query, fragment, or userinfo component. This also
+// applies when private targets are explicitly allowed.
+func validateAuthorityVariables(tpl vars.Template, values map[string]string) error {
+	for _, name := range tpl.Names() {
+		value := values[name]
+		valid := len(value) > 0 && len(value) <= 63 && value[0] != '-' && value[len(value)-1] != '-'
+		for i := 0; valid && i < len(value); i++ {
+			c := value[i]
+			valid = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-'
+		}
+		if !valid {
+			return fmt.Errorf("URL authority variable %q must be a DNS label", name)
+		}
+	}
+	return nil
+}
+
 // urlAuthority returns the authority (host[:port]) of a raw, possibly
 // templated URL without parsing it, so placeholders survive intact.
 func urlAuthority(rawURL string) string {
@@ -113,8 +132,8 @@ func urlAuthority(rawURL string) string {
 	if i := strings.Index(rawURL, "://"); i >= 0 {
 		rest = rawURL[i+3:]
 	}
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		rest = rest[:slash]
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		rest = rest[:end]
 	}
 	return rest
 }

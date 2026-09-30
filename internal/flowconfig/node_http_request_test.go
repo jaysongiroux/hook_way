@@ -135,8 +135,8 @@ func asNodeError(err error, ne *graph.NodeError) bool {
 	return errors.As(err, ne)
 }
 
-func TestCollapseDoubleSlashInPath(t *testing.T) {
-	got := collapseDoubleSlashInPath("http://example.test//api/v1/thing")
+func TestCleanOutboundPathCollapsesDoubleSlashes(t *testing.T) {
+	got := cleanOutboundPath("http://example.test//api/v1/thing")
 	if got != "http://example.test/api/v1/thing" {
 		t.Fatalf("got %q", got)
 	}

@@ -44,11 +44,17 @@ func useRecordingDialer(t *testing.T) *recordingDialer {
 	d := &recordingDialer{}
 	transport := &http.Transport{DialContext: d.dial}
 	saved := proxyHTTPClient
+	savedGuarded := guardedProxyHTTPClient
 	proxyHTTPClient = &http.Client{
 		Transport:     transport,
 		CheckRedirect: saved.CheckRedirect,
 	}
-	t.Cleanup(func() { proxyHTTPClient = saved })
+	guardedProxyHTTPClient = proxyHTTPClient
+	t.Cleanup(func() {
+		proxyHTTPClient = saved
+		guardedProxyHTTPClient = savedGuarded
+		transport.CloseIdleConnections()
+	})
 	return d
 }
 
@@ -98,6 +104,9 @@ func TestHTTPRequestRejectsInternalTargets(t *testing.T) {
 	}
 	for _, target := range blocked {
 		t.Run("blocked/"+target, func(t *testing.T) {
+			if err := validateEgressURL("http://"+target+"/x", true); err == nil {
+				t.Fatalf("private target %q passed the URL policy", target)
+			}
 			dialer := useRecordingDialer(t)
 			_, err := node.Run(context.Background(), ssrfEnvelope(target))
 			if err == nil {
@@ -114,8 +123,8 @@ func TestHTTPRequestRejectsInternalTargets(t *testing.T) {
 	}
 
 	allowed := []string{
-		"api.example.com",
-		"tenant-1.example.com:8443",
+		"api",
+		"tenant-1",
 	}
 	for _, target := range allowed {
 		t.Run("allowed/"+target, func(t *testing.T) {
@@ -136,14 +145,14 @@ func TestHTTPRequestRejectsInternalTargets(t *testing.T) {
 // say so, and it must be an explicit opt-in (default deny).
 func TestHTTPRequestAllowsInternalTargetsWhenOptedIn(t *testing.T) {
 	node, err := newHTTPRequestNode("up", HTTPRequestOptions{
-		URL:                 "http://{target}/x",
+		URL:                 "http://{target}.internal/x",
 		AllowPrivateTargets: true,
 	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dialer := useRecordingDialer(t)
-	_, _ = node.Run(context.Background(), ssrfEnvelope("10.0.0.5"))
+	_, _ = node.Run(context.Background(), ssrfEnvelope("api"))
 	if got := dialer.dialed(); len(got) == 0 {
 		t.Fatal("allow_private_targets: true did not permit an internal target")
 	}

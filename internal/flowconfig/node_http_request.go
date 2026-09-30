@@ -25,24 +25,27 @@ import (
 const defaultHTTPRequestTimeout = 10 * time.Second
 const maxUpstreamBodyBytes = 10 << 20
 
-// proxyHTTPClient is shared across requests so a proxy under load reuses
-// connections instead of opening a socket per event.
-var proxyHTTPClient = &http.Client{
-	Transport: func() http.RoundTripper {
-		t := http.DefaultTransport.(*http.Transport).Clone()
-		t.MaxIdleConns = 100
-		t.MaxIdleConnsPerHost = 8
-		t.DialContext = egressDialContext
-		return t
-	}(),
-	CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	},
+// Keep separate pools for each egress policy: a guarded request must never
+// reuse a connection opened without validating the resolved address.
+var proxyHTTPClient = newProxyHTTPClient(false)
+var guardedProxyHTTPClient = newProxyHTTPClient(true)
+
+func newProxyHTTPClient(enforce bool) *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = 100
+	t.MaxIdleConnsPerHost = 8
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return egressDialContext(withEgressGuard(ctx, enforce), network, addr)
+	}
+	return &http.Client{
+		Transport: t,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
-// egressGuardKey carries the per-request egress decision to the dialer.
-// http.Transport hands DialContext the request's context, which is the only
-// channel available: the transport is shared, but the policy is per node.
+// egressGuardKey carries the transport's fixed policy to the dialer.
 type egressGuardKey struct{}
 
 func withEgressGuard(ctx context.Context, enforce bool) context.Context {
@@ -90,9 +93,10 @@ func egressDialContext(ctx context.Context, network, addr string) (net.Conn, err
 }
 
 type httpRequestNode struct {
-	id       string
-	opts     HTTPRequestOptions
-	template vars.Template
+	id                string
+	opts              HTTPRequestOptions
+	template          vars.Template
+	authorityTemplate vars.Template
 	// hostTemplated records that the URL authority contains a placeholder,
 	// so the destination host is request-derived rather than operator-chosen.
 	// That is what turns the egress policy on; see validateEgressURL.
@@ -114,6 +118,10 @@ func (n httpRequestNode) enforceEgressPolicy() bool {
 
 func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist []string) (graph.Node, error) {
 	tpl, err := vars.Parse(opts.URL)
+	if err != nil {
+		return nil, err
+	}
+	authorityTemplate, err := vars.Parse(urlAuthority(opts.URL))
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +163,7 @@ func newHTTPRequestNode(id string, opts HTTPRequestOptions, allowlist, denylist 
 		deny[http.CanonicalHeaderKey(name)] = true
 	}
 	return httpRequestNode{
-		id: id, opts: opts, template: tpl, hostTemplated: urlAuthorityIsTemplated(opts.URL),
+		id: id, opts: opts, template: tpl, authorityTemplate: authorityTemplate, hostTemplated: urlAuthorityIsTemplated(opts.URL),
 		timeout: timeout, retry: policy,
 		forward: forward, allowlist: allow, denylist: deny, explicitAuth: explicitAuth,
 	}, nil
@@ -173,10 +181,13 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
+	if err := validateAuthorityVariables(n.authorityTemplate, env.Vars); err != nil {
+		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+	}
 	if err := validateEgressURL(target, n.enforceEgressPolicy()); err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: fmt.Errorf("http_request %q: %w", n.id, err)}
 	}
-	target = cleanOutboundPath(collapseDoubleSlashInPath(target))
+	target = cleanOutboundPath(target)
 	method := http.MethodPost
 	if n.opts.ForwardMethod && env.V.Raw.Head.Method != "" {
 		method = env.V.Raw.Head.Method
@@ -242,7 +253,7 @@ type attemptResult struct {
 // body is an io.Reader, so reusing a request across attempts would send an
 // empty body on the second one.
 func (n httpRequestNode) send(ctx context.Context, method, target string, body []byte, contentType string, env graph.Envelope) attemptResult {
-	nctx, cancel := context.WithTimeout(withEgressGuard(ctx, n.enforceEgressPolicy()), n.timeout)
+	nctx, cancel := context.WithTimeout(ctx, n.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(nctx, method, target, bytes.NewReader(body))
 	if err != nil {
@@ -260,7 +271,11 @@ func (n httpRequestNode) send(ctx context.Context, method, target string, body [
 	}
 	req.Header.Set(config.LoopHopsHeader, strconv.Itoa(env.V.Raw.Head.Hops+1))
 
-	resp, err := proxyHTTPClient.Do(req)
+	client := proxyHTTPClient
+	if n.enforceEgressPolicy() {
+		client = guardedProxyHTTPClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		status := http.StatusBadGateway
 		if isTimeout(nctx, err) {
@@ -415,25 +430,6 @@ func cleanOutboundPath(rawURL string) string {
 	u.Path = decoded
 	u.RawPath = cleaned
 	return u.String()
-}
-
-func collapseDoubleSlashInPath(rawURL string) string {
-	scheme, rest, ok := strings.Cut(rawURL, "://")
-	if !ok {
-		return rawURL
-	}
-	host, path, found := strings.Cut(rest, "/")
-	if !found {
-		return rawURL
-	}
-	path = strings.TrimLeft(path, "/")
-	for strings.Contains(path, "//") {
-		path = strings.ReplaceAll(path, "//", "/")
-	}
-	if path == "" {
-		return scheme + "://" + host
-	}
-	return scheme + "://" + host + "/" + path
 }
 
 func matchErrorOnStatus(code int, patterns []string) bool {
