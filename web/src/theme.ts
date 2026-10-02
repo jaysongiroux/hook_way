@@ -1,4 +1,10 @@
-import { createTheme, type MantineColorsTuple } from "@mantine/core";
+import {
+  createTheme,
+  type MantineColorsTuple,
+  type MantineTheme,
+  type CSSVariablesResolver,
+  type AlertProps,
+} from "@mantine/core";
 import { DARK } from "./tokens";
 
 const brand: MantineColorsTuple = [
@@ -37,10 +43,38 @@ export const theme = createTheme({
   fontFamily: '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
   fontFamilyMonospace: '"Source Code Pro", ui-monospace, Menlo, monospace',
   headings: {
-    fontFamily: '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
+    fontFamily:
+      '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif',
     fontWeight: "650",
   },
   components: {
+    Input: {
+      styles: {
+        input: { "--input-placeholder-color": DARK.muted },
+      },
+    },
+    InputWrapper: {
+      styles: {
+        description: { color: DARK.muted },
+        error: { color: "#c92a2a" },
+        required: { color: "#c92a2a" },
+      },
+    },
+    Alert: {
+      styles: (_theme: MantineTheme, props: AlertProps) => ({
+        title: {
+          color:
+            props.color === "red"
+              ? "#c92a2a"
+              : props.color === "yellow"
+                ? "#7d4b00"
+                : undefined,
+        },
+      }),
+    },
+    NumberInput: {
+      defaultProps: { hideControls: true },
+    },
     Button: {
       defaultProps: { fw: 600, radius: "sm" },
     },
@@ -58,4 +92,15 @@ export const theme = createTheme({
       defaultProps: { withinPortal: true, zIndex: 400, radius: "sm" },
     },
   },
+});
+
+// Mantine applies c="dimmed" as an inline variable, so component styles cannot
+// override it. Set the shared light-scheme variable at its source.
+export const cssVariablesResolver: CSSVariablesResolver = () => ({
+  variables: {},
+  light: {
+    "--mantine-color-dimmed": DARK.muted,
+    "--mantine-color-red-text": "#c92a2a",
+  },
+  dark: {},
 });

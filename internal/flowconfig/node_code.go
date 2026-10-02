@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/codenode"
@@ -25,6 +28,7 @@ type codeNode struct {
 	id                  string
 	rt                  *codenode.Runtime
 	allowlist, denylist []string
+	queryDenylist       []string
 }
 
 func newCodeNode(id string, opts CodeOptions) (graph.Node, error) {
@@ -97,6 +101,10 @@ func (n codeNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, err
 		"body":    body,
 		"vars":    maps.Clone(env.Vars),
 		"headers": scriptHeaders(env.V.Raw.Head.Header, n.allowlist, n.denylist),
+		"request": map[string]any{"method": env.V.Raw.Head.Method, "path": env.V.Raw.Head.Path, "query": scriptQuery(env.V.Raw.Head.Query, n.queryDenylist)},
+	}
+	if env.Upstream != nil {
+		input["upstream"] = map[string]any{"status": env.Upstream.Status, "values": maps.Clone(env.Upstream.Values), "selection_error": env.Upstream.SelectionError}
 	}
 	out, err := n.rt.Run(ctx, input)
 	if err != nil {
@@ -177,4 +185,21 @@ func asStringMap(v any) (map[string]string, error) {
 	default:
 		return nil, fmt.Errorf("vars must be an object, got %T", v)
 	}
+}
+
+// scriptQuery is an isolated, redacted view; native forwarding uses the original.
+func scriptQuery(q url.Values, denylist []string) map[string][]string {
+	out := make(map[string][]string, len(q))
+	for k, v := range q {
+		denied := sensitiveResponseField(k)
+		for _, name := range denylist {
+			denied = denied || strings.EqualFold(k, name)
+		}
+		if denied {
+			out[k] = []string{"redacted"}
+		} else {
+			out[k] = slices.Clone(v)
+		}
+	}
+	return out
 }

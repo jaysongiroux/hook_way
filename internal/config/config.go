@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jaysongiroux/hook_way/internal/routing"
 )
 
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
@@ -59,7 +61,12 @@ type ServerConfig struct {
 	PublishTimeout      time.Duration
 	MaxBodyBytes        int64
 	MaxInflightRequests int
-	FanoutConcurrency   int
+	// MaxPendingRequests bounds HTTP handlers waiting for an execution slot.
+	// Both this and AdmissionWaitTimeout must be positive to enable waiting.
+	// Bodies are read only after admission; zero retains immediate overload rejection.
+	MaxPendingRequests   int
+	AdmissionWaitTimeout time.Duration
+	FanoutConcurrency    int
 	// ReadinessInterval is how often the background readiness prober re-checks
 	// every destination. Defaults to 10s when omitted; an explicitly-set
 	// non-positive value is rejected at load time.
@@ -184,6 +191,7 @@ type ReplayControlConfig struct {
 }
 
 type rawConfig struct {
+	Routing      routing.Config                  `yaml:"routing,omitempty"`
 	Server       rawServerConfig                 `yaml:"server"`
 	Security     SecurityConfig                  `yaml:"security"`
 	RateLimit    RateLimitConfig                 `yaml:"rate_limit"`

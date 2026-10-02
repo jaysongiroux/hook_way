@@ -2,20 +2,23 @@
 
 Hookway verifies webhook authentication before publishing to its destinations (RabbitMQ, SQS, SNS, S3, Redis / Valkey, Postgres, MongoDB, Kafka, Temporal, or outbound webhook).
 
-An `auth` node is configured by **`scheme`**, and only by `scheme`. There is no "family" field: `AuthOptions` carries a scheme and nothing else, and the family names (`hmac_sha256`, `header_exact`, `jwt`) appear below only as a grouping for readers. Writing `scheme: hmac_sha256` or `scheme: jwt` is a configuration error, not a shorthand — those strings are not registered schemes, so `NewVerifier` returns `unknown signature scheme`, the node's verifier becomes `auth.RejectAll{}`, and the flow rejects **100% of traffic** with `401`. Of those three family names only `header_exact` is accepted, as an alias for the `exact` scheme. Always name a concrete scheme from the table below.
+An `auth` node is configured by **`scheme`**, and only by `scheme`. There is no "family" field: `AuthOptions` selects a concrete scheme, and the family names (`hmac_sha256`, `header_exact`, `jwt`) appear below only as a grouping for readers. Writing `scheme: hmac_sha256` or `scheme: jwt` is a configuration error, not a shorthand — those strings are not registered schemes, so validation rejects them and the standalone server refuses to start. Of those three family names only `header_exact` is accepted, as an alias for the `exact` scheme. Always name a concrete scheme from the table below.
 
 Unverified traffic uses a separate `no_auth` node — `auth.scheme: no_auth` is rejected. Scheme names describe the mechanism (digest, encoding, signed-timestamp), not any provider. Additional providers are added by registering a scheme in `internal/auth` rather than branching in the request path. The same list, with config detail, is in [Configuration](configuration.md#auth).
 
 ## Auth Schemes
 
-Each `auth` node requires an explicit `scheme`. Inline secrets build a verifier at startup; `secret_ref` uses the cached current/overlap values. An unknown scheme fails closed — the flow rejects every request rather than accepting unverified traffic.
+Each `auth` node requires an explicit `scheme`. Inline secrets build a verifier at startup; `secret_ref` uses the cached current/overlap values. An unknown scheme fails closed: validation and standalone startup reject it; verification errors never accept unverified traffic.
 
-Eleven schemes are registered (`internal/auth/registry.go`). All of them:
+Fourteen schemes are registered (`internal/auth/registry.go`). All of them:
 
 | Scheme | Family | Verifies | Notes |
 |---|---|---|---|
 | `hmac_sha256_ts_colon` | `hmac_sha256` | timestamp + raw body | signed timestamp; see below |
 | `hmac_sha256_ts_dot` | `hmac_sha256` | timestamp + raw body | signed timestamp; see below |
+| `hmac_sha256_headers_dot` | `hmac_sha256` | separate timestamp header + body | explicit raw or original JavaScript JSON representation |
+| `hmac_sha256_ts_dot_multi` | `hmac_sha256` | timestamp + body, multiple signatures | accepts any matching configured signature label |
+| `ecdsa_p256_sha256_headers` | `ecdsa` | separate timestamp header concatenated with raw body | P-256/SHA-256, base64 ASN.1 DER signature |
 | `hmac_sha256_hex` | `hmac_sha256` | raw body | see below |
 | `hmac_sha256_base64` | `hmac_sha256` | raw body | see below |
 | **`hmac_sha1_hex`** | `hmac_sha256` | raw body | **SHA-1** — see the warning below |
@@ -74,7 +77,7 @@ Set `remove_bearer: true` when the provider sends a `Bearer` or `bearer` prefix 
 
 Because the header value is identical on every request, use a `replay_guard` key derived from the raw body (or a provider delivery id) rather than the static auth header.
 
-For HMAC schemes the body is not parsed, trimmed, normalized, or re-serialized before verification, and the endpoint secret is used as a raw string (not base64-decoded).
+HMAC schemes use exact raw bytes by default. The explicit `body_representation: json_js` option on request-signature schemes uses JavaScript JSON parsing/stringification of the original body before any transforms. See [Ingress adapters](ingress-adapters.md#request-signatures). Otherwise the body is not parsed, trimmed, normalized, or re-serialized before verification, and the endpoint secret is used as a raw string (not base64-decoded).
 
 ## Where the credential is read from (`auth.source`)
 
@@ -109,7 +112,7 @@ Destination credentials belong in a named [connection](configuration.md#connecti
 ## Request Handling
 
 - Only configured flow paths are accepted for ingress.
-- Empty bodies are rejected.
+- Empty bodies are rejected unless `read_body.allow_empty: true`; downstream authentication and parsing must support empty input too.
 - Body size is capped by each `read_body.max_bytes`; `server.max_body_bytes` is a lint reference, not an inherited cap. Keep `read_body.max_bytes` tight per flow.
 - Inbound `X-Hookway-Hops` is enforced by a `loop_guard` node, not `security.loop_protection`. See [Configuration § Loop protection](configuration.md#loop-protection).
 - Server timeouts are configured from YAML.
@@ -150,9 +153,9 @@ Request logs are separate and fail-closed: set `logging.header_allowlist` to nam
 
 ## Idempotency
 
-Each published envelope has a unique `id` (UUIDv7) so consumers can deduplicate at-least-once deliveries. Hookway does not populate `idempotency_key` on the envelope (there is no `idempotency_header` on `auth` / `no_auth`). Dedupe on `id`.
+Each accepted request gets a unique `id` (UUIDv7), shared by its fan-out deliveries and retained by an internal retry or snapshot redrive. A new sender request, including a sender retry, gets a new ID. Hookway does not populate `idempotency_key` on the envelope (there is no `idempotency_header` on `auth` / `no_auth`). Use `id` for duplicate deliveries of one Hookway request; use a stable sender event ID for duplicates across sender retries. Configure explicit broker deduplication IDs when that contract is available.
 
-For fan-out flows, delivery is not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With the default `delivery_failure_policy: stop_on_failure`, Hookway publishes sequentially; if an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations can see the same event again and must dedupe by `id`. With `delivery_failure_policy: skip_failed`, Hookway attempts every publish and acknowledges partial success with `202` when at least one destination succeeds; that partial-success `202` also releases the replay reservation (see below), so an identical sender retry is accepted again rather than rejected, and can redeliver to the destinations that failed the first time. That retry re-delivers to the destinations that already succeeded too; consumers dedupe that duplicate on `id`, identical to the retry contract `stop_on_failure` already relies on.
+For fan-out flows, delivery is not atomic across destinations. Confirmed broker messages cannot be canceled or recalled. With the default `delivery_failure_policy: stop_on_failure`, Hookway publishes sequentially; if an earlier destination accepts a publish and a later destination fails, Hookway returns `503` so the provider retries. Earlier destinations can see the same sender event again under a new Hookway `id`; consumers need a stable sender event ID. With `delivery_failure_policy: skip_failed`, Hookway attempts every publish and acknowledges partial success with `202` when at least one destination succeeds; that partial-success `202` also releases the replay reservation (see below), so an identical sender retry is accepted again rather than rejected, and can redeliver to the destinations that failed the first time. That retry can also redeliver to destinations that already succeeded; deduplicate by a stable sender event ID. FIFO deduplication is bounded by the broker window and does not make delivery exactly once.
 
 ## Availability Model
 
@@ -215,6 +218,8 @@ scrape_configs:
 
 ## Sync proxy (`http_request` / `respond`)
 
+Managed outbound credential profiles use exact origin allowlists, secret references and bounded native token acquisition. They cannot override transport headers or `X-Hookway-Hops`; resolved credentials never enter JavaScript or delivery snapshots. Creation and caller-key flows produce metadata-only failure records to avoid an unsafe automatic replay. See [Ingress adapters](ingress-adapters.md#managed-outbound-credentials).
+
 A proxy flow confines callers to whatever URL its `url` template builds — both
 the path *and* the host. Three protections keep that boundary real.
 
@@ -263,7 +268,7 @@ the path *and* the host. Three protections keep that boundary real.
   ambiguous numeric host spellings rather than trying to interpret them, and
   re-checks every resolved IP in the dialer so DNS rebinding cannot swap the
   address between check and connect. Guarded requests use a separate connection
-  pool from unguarded requests. Redirects are not followed. A **literal**
+  pool from unguarded requests. Redirects are not followed by default; explicit redirect policies are bounded and constrained. Managed credential requests do not follow redirects. A **literal**
   host is exempt: it is the operator's own explicit choice, and proxying to an
   internal service is a legitimate configuration. The per-node opt-out for a
   templated host is `allow_private_targets: true`; it defaults to `false` and

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"unicode/utf8"
 
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
 	"github.com/jaysongiroux/hook_way/internal/deliverysnapshot"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
@@ -21,6 +22,7 @@ func SnapshotFromEnvelope(env graph.Envelope) (deliverysnapshot.Envelope, error)
 		return deliverysnapshot.Envelope{}, fmt.Errorf("body: %w", err)
 	}
 	out := deliverysnapshot.Envelope{
+		Publish: publishToSnapshot(env.Publish),
 		Verified: deliverysnapshot.Verified{
 			Raw:      deliverysnapshot.RawRequest{Head: headToSnapshot(env.V.Raw.Head), Body: env.V.Raw.Body},
 			Identity: env.V.Identity,
@@ -33,7 +35,7 @@ func SnapshotFromEnvelope(env graph.Envelope) (deliverysnapshot.Envelope, error)
 		PayloadMode:       env.PayloadMode,
 	}
 	if env.Upstream != nil {
-		out.Upstream = &deliverysnapshot.Upstream{Status: env.Upstream.Status, Header: env.Upstream.Header, Body: env.Upstream.Body}
+		out.Upstream = &deliverysnapshot.Upstream{Status: env.Upstream.Status, Header: env.Upstream.Header, Body: env.Upstream.Body, Values: env.Upstream.Values, SelectionError: env.Upstream.SelectionError}
 	}
 	switch extra := env.Extra.(type) {
 	case nil:
@@ -59,6 +61,7 @@ func EnvelopeFromSnapshot(s deliverysnapshot.Envelope) (graph.Envelope, error) {
 		return graph.Envelope{}, fmt.Errorf("body: %w", err)
 	}
 	out := graph.Envelope{
+		Publish: publishFromSnapshot(s.Publish),
 		V: graph.Verified{
 			Raw:      graph.RawRequest{Head: headFromSnapshot(s.Verified.Raw.Head), Body: s.Verified.Raw.Body},
 			Identity: s.Verified.Identity,
@@ -71,7 +74,7 @@ func EnvelopeFromSnapshot(s deliverysnapshot.Envelope) (graph.Envelope, error) {
 		PayloadMode:       s.PayloadMode,
 	}
 	if s.Upstream != nil {
-		out.Upstream = &graph.UpstreamResponse{Status: s.Upstream.Status, Header: s.Upstream.Header, Body: s.Upstream.Body}
+		out.Upstream = &graph.UpstreamResponse{Status: s.Upstream.Status, Header: s.Upstream.Header, Body: s.Upstream.Body, Values: s.Upstream.Values, SelectionError: s.Upstream.SelectionError}
 	}
 	if s.CapturedEvent != nil {
 		event, err := webhookFromSnapshot(s.CapturedEvent.Event)
@@ -98,6 +101,7 @@ func SnapshotFromMessage(msg queue.Message) (deliverysnapshot.Message, error) {
 		return deliverysnapshot.Message{}, err
 	}
 	out := deliverysnapshot.Message{
+		Publish:       publishToSnapshot(msg.Publish),
 		SchemaVersion: msg.SchemaVersion, ID: msg.ID, IdempotencyKey: msg.IdempotencyKey,
 		RequestID: msg.RequestID, TraceID: msg.TraceID, Traceparent: msg.Traceparent,
 		Endpoint: msg.Endpoint, DestinationQueueID: msg.DestinationQueueID, Queue: msg.Queue,
@@ -175,6 +179,7 @@ func MessageFromSnapshot(s deliverysnapshot.Message) (queue.Message, error) {
 		return queue.Message{}, fmt.Errorf("body: %w", err)
 	}
 	out := queue.Message{
+		Publish:       publishFromSnapshot(s.Publish),
 		SchemaVersion: s.SchemaVersion, ID: s.ID, IdempotencyKey: s.IdempotencyKey,
 		RequestID: s.RequestID, TraceID: s.TraceID, Traceparent: s.Traceparent,
 		Endpoint: s.Endpoint, DestinationQueueID: s.DestinationQueueID, Queue: s.Queue,
@@ -318,6 +323,33 @@ func queueAttrsFromSnapshot(in map[string]deliverysnapshot.MessageAttribute) map
 	out := make(map[string]queue.MessageAttribute, len(in))
 	for k, a := range in {
 		out[k] = queue.MessageAttribute{DataType: a.DataType, StringValue: a.Value}
+	}
+	return out
+}
+
+func publishToSnapshot(p *deliverymeta.Publish) *deliverysnapshot.Publish {
+	if p == nil {
+		return nil
+	}
+	out := &deliverysnapshot.Publish{NodeID: p.NodeID, Destination: p.Destination, Target: p.Target, WireBody: p.WireBody, Body: p.Body, GroupID: p.GroupID, DelaySeconds: p.DelaySeconds, Subject: p.Subject, MessageStructure: p.MessageStructure}
+	if p.FIFO != nil {
+		out.FIFO = &deliverysnapshot.FIFO{GroupID: p.FIFO.GroupID, DeduplicationID: p.FIFO.DeduplicationID, ContentBased: p.FIFO.ContentBased}
+	}
+	if p.Retry != nil {
+		out.Retry = &deliverysnapshot.Retry{MaxAttempts: p.Retry.MaxAttempts, InitialBackoff: p.Retry.InitialBackoff, MaxBackoff: p.Retry.MaxBackoff}
+	}
+	return out
+}
+func publishFromSnapshot(p *deliverysnapshot.Publish) *deliverymeta.Publish {
+	if p == nil {
+		return nil
+	}
+	out := &deliverymeta.Publish{NodeID: p.NodeID, Destination: p.Destination, Target: p.Target, WireBody: p.WireBody, Body: p.Body, GroupID: p.GroupID, DelaySeconds: p.DelaySeconds, Subject: p.Subject, MessageStructure: p.MessageStructure}
+	if p.FIFO != nil {
+		out.FIFO = &deliverymeta.FIFO{GroupID: p.FIFO.GroupID, DeduplicationID: p.FIFO.DeduplicationID, ContentBased: p.FIFO.ContentBased}
+	}
+	if p.Retry != nil {
+		out.Retry = &deliverymeta.Retry{MaxAttempts: p.Retry.MaxAttempts, InitialBackoff: p.Retry.InitialBackoff, MaxBackoff: p.Retry.MaxBackoff}
 	}
 	return out
 }

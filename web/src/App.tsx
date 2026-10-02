@@ -19,6 +19,18 @@ import { useGraphStore } from "./graph/store";
 import { clearGraph } from "./graph/persistence";
 import { loadValidator } from "./graph/validate";
 import { starterDocument } from "./graph/starter";
+import { RoutingPanel } from "./graph/RoutingPanel";
+import { CredentialsPanel } from "./graph/CredentialsPanel";
+import {
+  WorkspaceActions,
+  type WorkspacePanel,
+} from "./graph/FormPresentation";
+import {
+  BuilderValidationProvider,
+  locateIssue,
+} from "./graph/BuilderValidation";
+import { createNode } from "./graph/model";
+import { templateSubgraph } from "./graph/templates";
 import { DARK } from "./tokens";
 
 export default function App() {
@@ -27,18 +39,30 @@ export default function App() {
   useEffect(() => {
     void loadValidator();
   }, []);
-  const [importOpen, { open: openImport, close: closeImport }] = useDisclosure(false);
-  const [exportOpen, { open: openExport, close: closeExport }] = useDisclosure(false);
+  const [importOpen, { open: openImport, close: closeImport }] =
+    useDisclosure(false);
+  const [exportOpen, { open: openExport, close: closeExport }] =
+    useDisclosure(false);
   const [envOpen, { open: openEnv, close: closeEnv }] = useDisclosure(false);
-  const [serverOpen, { open: openServer, close: closeServer }] = useDisclosure(false);
-  const [replayOpen, { open: openReplay, close: closeReplay }] = useDisclosure(false);
+  const [serverOpen, { open: openServer, close: closeServer }] =
+    useDisclosure(false);
+  const [replayOpen, { open: openReplay, close: closeReplay }] =
+    useDisclosure(false);
   const [destOpen, { open: openDest, close: closeDest }] = useDisclosure(false);
+  const [routingOpen, { open: openRouting, close: closeRouting }] =
+    useDisclosure(false);
+  const [credentialsOpen, { open: openCredentials, close: closeCredentials }] =
+    useDisclosure(false);
   const [connOpen, { open: openConn, close: closeConn }] = useDisclosure(false);
-  const [clearOpen, { open: openClear, close: closeClear }] = useDisclosure(false);
-  const [inspectorOpen, { open: openInspector, close: closeInspector }] = useDisclosure(false);
+  const [clearOpen, { open: openClear, close: closeClear }] =
+    useDisclosure(false);
+  const [inspectorOpen, { open: openInspector, close: closeInspector }] =
+    useDisclosure(false);
   const compact = useMediaQuery("(max-width: 64em)") ?? false;
   const compactRef = useRef(compact);
   const [paletteOpen, setPaletteOpen] = useState(true);
+  const [returnToInspector, setReturnToInspector] = useState(false);
+  const [focusPath, setFocusPath] = useState<string>();
   const [paletteTab, setPaletteTab] = useState<PaletteTab>("nodes");
   const { bodyRef, paletteWidth, setPalette } = usePanelWidths();
 
@@ -65,84 +89,221 @@ export default function App() {
     closeClear();
   };
 
+  const openWorkspace = (panel: WorkspacePanel) => {
+    setReturnToInspector(true);
+    closeInspector();
+    ({
+      routing: openRouting,
+      credentials: openCredentials,
+      destinations: openDest,
+    })[panel]();
+  };
+  const closeWorkspace = (close: () => void) => {
+    close();
+    if (returnToInspector) openInspector();
+    setReturnToInspector(false);
+  };
   return (
-    <Box
-      className="hookway-builder-root"
-      style={{ height: "100vh", display: "flex", flexDirection: "column", minHeight: 0, background: DARK.bg }}
-    >
-      <style>{BUILDER_CSS}</style>
-      <BuilderHeader
-        paletteOpen={paletteOpen}
-        onTogglePalette={() => setPaletteOpen((open) => !open)}
-        onInspector={openInspector}
-        onFlowSettings={() => {
-          // The inspector's flow view is what shows with nothing selected, so
-          // reaching it means dropping the current selection.
-          useGraphStore.getState().setSelected(null);
-          openInspector();
-        }}
-        onImport={openImport}
-        onExport={openExport}
-        onDestinations={openDest}
-        onConnections={openConn}
-        onEnv={openEnv}
-        onServer={openServer}
-        onReplay={openReplay}
-        onLoadExample={() => useGraphStore.getState().setGraph(starterDocument())}
-        onClear={openClear}
-      />
-
-      <Box ref={bodyRef} style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
-        {compact && paletteOpen && (
-          <Box
-            aria-hidden
-            onClick={() => setPaletteOpen(false)}
-            style={{ position: "absolute", inset: 0, zIndex: 25, background: "rgba(20, 24, 31, 0.28)" }}
-          />
-        )}
-        <SidePanel
-          title="Nodes"
-          open={paletteOpen}
-          overlay={compact}
-          width={paletteWidth}
-          scrollKey={paletteTab}
-          onResize={setPalette}
-          onClose={() => setPaletteOpen(false)}
-          headerContent={<PaletteTabs value={paletteTab} onChange={setPaletteTab} />}
+    <BuilderValidationProvider>
+      <WorkspaceActions.Provider value={openWorkspace}>
+        <Box
+          className="hookway-builder-root"
+          style={{
+            height: "100vh",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            background: DARK.bg,
+          }}
         >
-          <Palette tab={paletteTab} />
-        </SidePanel>
-        <Box style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-          <Canvas onNodeActivate={openInspector} />
-        </Box>
-      </Box>
+          <style>{BUILDER_CSS}</style>
+          <BuilderHeader
+            paletteOpen={paletteOpen}
+            onTogglePalette={() => setPaletteOpen((open) => !open)}
+            onInspector={openInspector}
+            onFlowSettings={() => {
+              // The inspector's flow view is what shows with nothing selected, so
+              // reaching it means dropping the current selection.
+              useGraphStore.getState().setSelected(null);
+              openInspector();
+            }}
+            onImport={openImport}
+            onExport={openExport}
+            onDestinations={openDest}
+            onConnections={openConn}
+            onRouting={openRouting}
+            onCredentials={openCredentials}
+            onEnv={openEnv}
+            onServer={openServer}
+            onReplay={openReplay}
+            onLoadExample={() =>
+              useGraphStore.getState().setGraph(starterDocument())
+            }
+            onClear={openClear}
+          />
 
-      <InspectorModal opened={inspectorOpen} onClose={closeInspector} />
-      <ImportModal opened={importOpen} onClose={closeImport} />
-      <ExportModal opened={exportOpen} onClose={closeExport} />
-      <EnvPanel opened={envOpen} onClose={closeEnv} />
-      <ServerPanel opened={serverOpen} onClose={closeServer} />
-      <ReplaySettingsPanel opened={replayOpen} onClose={closeReplay} />
-      <DestinationsPanel opened={destOpen} onClose={closeDest} />
-      <ConnectionsPanel opened={connOpen} onClose={closeConn} />
-      <Modal opened={clearOpen} onClose={closeClear} title="Clear configuration?" size="sm" transitionProps={{ duration: 0 }}>
-        <Stack gap="md">
-          <Text size="sm" c="dimmed">Choose the document boundary deliberately. These actions cannot be undone unless you exported a copy.</Text>
-          <Stack gap={4}>
-            <Button color="red" variant="light" justify="space-between" onClick={clearCore}>Clear core configuration</Button>
-            <Text size="xs" c="dimmed">Reset flows, destinations, connections, core server settings, and core&apos;s replay connection. Keep replay.yaml.</Text>
-          </Stack>
-          <Stack gap={4}>
-            <Button color="red" variant="light" justify="space-between" onClick={removeReplay}>Remove replay configuration</Button>
-            <Text size="xs" c="dimmed">Delete replay.yaml and remove core&apos;s replay integration block.</Text>
-          </Stack>
-          <Stack gap={4}>
-            <Button color="red" onClick={clearWorkspace}>Clear entire workspace</Button>
-            <Text size="xs" c="dimmed">Reset both YAML documents and remove the saved draft.</Text>
-          </Stack>
-          <Group justify="flex-end"><Button variant="default" onClick={closeClear}>Cancel</Button></Group>
-        </Stack>
-      </Modal>
-    </Box>
+          <Box
+            ref={bodyRef}
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              position: "relative",
+            }}
+          >
+            {compact && paletteOpen && (
+              <Box
+                aria-hidden
+                onClick={() => setPaletteOpen(false)}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  zIndex: 25,
+                  background: "rgba(20, 24, 31, 0.28)",
+                }}
+              />
+            )}
+            <SidePanel
+              title="Nodes"
+              open={paletteOpen}
+              overlay={compact}
+              width={paletteWidth}
+              scrollKey={paletteTab}
+              onResize={setPalette}
+              onClose={() => setPaletteOpen(false)}
+              headerContent={
+                <PaletteTabs value={paletteTab} onChange={setPaletteTab} />
+              }
+            >
+              <Palette
+                tab={paletteTab}
+                onAddNode={(type) => {
+                  const store = useGraphStore.getState();
+                  const node = createNode(type, {
+                    x: 80,
+                    y: 80 + store.nodes.length * 40,
+                  });
+                  store.addNode(node);
+                  store.setSelected(node.id);
+                  if (compact) setPaletteOpen(false);
+                  openInspector();
+                }}
+                onAddTemplate={(id) => {
+                  const sub = templateSubgraph(id);
+                  if (sub) {
+                    const store = useGraphStore.getState();
+                    store.insertSubgraph(sub, {
+                      x: 80,
+                      y: 80 + store.nodes.length * 40,
+                    });
+                    store.arrangeNodes();
+                    if (compact) setPaletteOpen(false);
+                  }
+                }}
+              />
+            </SidePanel>
+            <Box style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+              <Canvas onNodeActivate={openInspector} />
+            </Box>
+          </Box>
+
+          <RoutingPanel
+            opened={routingOpen}
+            onClose={() => closeWorkspace(closeRouting)}
+          />
+          <CredentialsPanel
+            opened={credentialsOpen}
+            onClose={() => closeWorkspace(closeCredentials)}
+          />
+          <InspectorModal
+            opened={inspectorOpen}
+            onClose={() => {
+              setFocusPath(undefined);
+              closeInspector();
+            }}
+            focusPath={focusPath}
+          />
+          <ImportModal opened={importOpen} onClose={closeImport} />
+          <ExportModal
+            opened={exportOpen}
+            onClose={closeExport}
+            onIssue={(field) => {
+              const store = useGraphStore.getState();
+              const location = locateIssue(field, store);
+              if (!location) return;
+              if (location.flowId !== store.activeFlow)
+                store.setActiveFlow(location.flowId);
+              store.setSelected(location.nodeId ?? null);
+              setFocusPath(location.path ?? "");
+              closeExport();
+              openInspector();
+            }}
+          />
+          <EnvPanel opened={envOpen} onClose={closeEnv} />
+          <ServerPanel opened={serverOpen} onClose={closeServer} />
+          <ReplaySettingsPanel opened={replayOpen} onClose={closeReplay} />
+          <DestinationsPanel
+            opened={destOpen}
+            onClose={() => closeWorkspace(closeDest)}
+          />
+          <ConnectionsPanel opened={connOpen} onClose={closeConn} />
+          <Modal
+            opened={clearOpen}
+            onClose={closeClear}
+            title="Clear configuration?"
+            size="sm"
+            transitionProps={{ duration: 0 }}
+          >
+            <Stack gap="md">
+              <Text size="sm" c="dimmed">
+                Choose the document boundary deliberately. These actions cannot
+                be undone unless you exported a copy.
+              </Text>
+              <Stack gap={4}>
+                <Button
+                  color="red"
+                  variant="light"
+                  justify="space-between"
+                  onClick={clearCore}
+                >
+                  Clear core configuration
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Reset flows, destinations, connections, core server settings,
+                  and core&apos;s replay connection. Keep replay.yaml.
+                </Text>
+              </Stack>
+              <Stack gap={4}>
+                <Button
+                  color="red"
+                  variant="light"
+                  justify="space-between"
+                  onClick={removeReplay}
+                >
+                  Remove replay configuration
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Delete replay.yaml and remove core&apos;s replay integration
+                  block.
+                </Text>
+              </Stack>
+              <Stack gap={4}>
+                <Button color="red" onClick={clearWorkspace}>
+                  Clear entire workspace
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Reset both YAML documents and remove the saved draft.
+                </Text>
+              </Stack>
+              <Group justify="flex-end">
+                <Button variant="default" onClick={closeClear}>
+                  Cancel
+                </Button>
+              </Group>
+            </Stack>
+          </Modal>
+        </Box>
+      </WorkspaceActions.Provider>
+    </BuilderValidationProvider>
   );
 }

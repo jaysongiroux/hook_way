@@ -15,7 +15,7 @@ import (
 
 func mustEnvelopeNode(t *testing.T, body string) graph.Node {
 	t.Helper()
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -33,14 +33,19 @@ export async function loadGraph(): Promise<GraphDocument | null> {
     const base = emptyDocument();
     return {
       ...base,
+      formDrafts: rec.formDrafts ?? {},
       nodes: rec.nodes ?? [],
       edges: rec.edges ?? [],
       serverConfig: rec.serverConfig ?? base.serverConfig,
       coreReplayConfig:
         rec.coreReplayConfig ??
-        (isRecord(rec.configExtra?.replay) ? { ...(rec.configExtra.replay as Record<string, unknown>) } : null),
+        (isRecord(rec.configExtra?.replay)
+          ? { ...(rec.configExtra.replay as Record<string, unknown>) }
+          : null),
       replayServiceConfig: rec.replayServiceConfig ?? null,
-      configExtra: isRecord(rec.configExtra?.replay) ? withoutLegacyReplay(rec.configExtra) : { ...(rec.configExtra ?? {}) },
+      configExtra: isRecord(rec.configExtra?.replay)
+        ? withoutLegacyReplay(rec.configExtra)
+        : { ...(rec.configExtra ?? {}) },
       connections: rec.connections ?? {},
       destinations: rec.destinations ?? {},
       activeFlow: rec.activeFlow ?? base.activeFlow,
@@ -57,7 +62,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function withoutLegacyReplay(extra: Record<string, unknown> | undefined): Record<string, unknown> {
+function withoutLegacyReplay(
+  extra: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   const next = { ...(extra ?? {}) };
   delete next.replay;
   return next;

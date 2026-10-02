@@ -1,6 +1,7 @@
 package flowconfig
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -16,7 +17,7 @@ import (
 const (
 	maxMessageAttributes            = 10
 	maxMessageAttributeNameBytes    = 256
-	maxMessageAttributeValueBytes   = 256 * 1024
+	maxMessageAttributeValueBytes   = 1048576
 	messageAttributeTypeString      = "String"
 	messageAttributeTypeNumber      = "Number"
 	messageAttributeTypeStringArray = "String.Array"
@@ -38,8 +39,21 @@ func renderMessageAttributes(raw map[string]any, values map[string]string) (map[
 		if err != nil {
 			return nil, err
 		}
-		if len(attr.Value) > maxMessageAttributeValueBytes {
+		size := len(attr.Value)
+		base, _, _ := strings.Cut(attr.DataType, ".")
+		if base == "Binary" {
+			decoded, _ := base64.StdEncoding.Strict().DecodeString(attr.Value)
+			size = len(decoded)
+		}
+		if size > maxMessageAttributeValueBytes {
 			return nil, fmt.Errorf("message_attributes.%s: value is %d bytes, AWS limit is %d", name, len(attr.Value), maxMessageAttributeValueBytes)
+		}
+		if options, ok := value.(map[string]any); ok && options["omit_if_empty"] == true {
+			var items []any
+			_ = json.Unmarshal([]byte(attr.Value), &items)
+			if len(items) == 0 {
+				continue
+			}
 		}
 		out[name] = attr
 	}
@@ -98,28 +112,49 @@ func renderOneAttribute(name string, raw any, values map[string]string) (graph.M
 }
 
 func renderTypedAttribute(name string, m map[string]any, values map[string]string) (graph.MessageAttribute, error) {
+	for key := range m {
+		switch key {
+		case "data_type", "DataType", "value", "Value", "omit_if_empty":
+		default:
+			return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: unknown typed attribute option", name)
+		}
+	}
 	dt := stringField(m, "data_type", "DataType")
+	if flag, set := m["omit_if_empty"]; set {
+		if _, ok := flag.(bool); !ok || dt != messageAttributeTypeStringArray {
+			return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: omit_if_empty requires String.Array and a boolean", name)
+		}
+	}
 	raw, ok := mapField(m, "value", "Value")
 	if dt == "" || !ok {
 		return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: typed attributes need data_type and value", name)
 	}
-	switch dt {
-	case messageAttributeTypeString, messageAttributeTypeNumber, messageAttributeTypeStringArray:
+	if len(dt) > 256 || strings.HasSuffix(dt, ".") {
+		return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: invalid data type", name)
+	}
+	base, _, _ := strings.Cut(dt, ".")
+	switch base {
+	case "String", "Number", "Binary":
 	default:
-		return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: unsupported data_type %q (use String, Number, or String.Array)", name, dt)
+		return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: unsupported data_type %q (use String, Number, Binary, or String.Array)", name, dt)
 	}
 	s, err := coerceAttrString(raw, values)
 	if err != nil {
 		return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: %w", name, err)
 	}
-	switch dt {
-	case messageAttributeTypeNumber:
-		if _, err := strconv.ParseFloat(s, 64); err != nil {
+	switch {
+	case base == "Binary":
+		decoded, err := base64.StdEncoding.Strict().DecodeString(s)
+		if err != nil || len(decoded) == 0 {
+			return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: Binary value must be nonempty base64", name)
+		}
+	case base == messageAttributeTypeNumber:
+		if n, err := strconv.ParseFloat(s, 64); err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 			return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: Number value %q is not numeric", name, s)
 		}
-	case messageAttributeTypeStringArray:
+	case dt == messageAttributeTypeStringArray:
 		var arr []any
-		if err := json.Unmarshal([]byte(s), &arr); err != nil {
+		if err := json.Unmarshal([]byte(s), &arr); err != nil || arr == nil {
 			return graph.MessageAttribute{}, fmt.Errorf("message_attributes.%s: String.Array value must be a JSON array, got %q", name, s)
 		}
 	}

@@ -52,6 +52,8 @@ func redactValue(v any) any {
 		out := make(map[string]any, len(t))
 		for k, val := range t {
 			switch {
+			case strings.EqualFold(k, "credential"):
+				out[k] = redactValue(val) // This block contains profile references, never resolved values.
 			case secretField.MatchString(k):
 				out[k] = ""
 			case strings.EqualFold(k, "headers"):

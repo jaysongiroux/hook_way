@@ -1,7 +1,11 @@
 # Examples
 
 This directory contains complete, valid Hookway configurations organized by concern.
-Every `.yaml` file is a self-contained flow config that passes `go run ./cmd/hookway validate`.
+Core YAML files are complete configurations checked by `hookway validate`.
+`replay.yaml` files configure the optional replay service; `docker-compose.yaml`
+files start the local demonstrations. Runtime configs stay beside their Compose
+examples under this directory. File headers explain each demonstration;
+`showcase/invalid-*` files intentionally fail validation.
 
 ## Canonical config
 
@@ -23,7 +27,8 @@ Each file showcases one destination type with all available options documented v
 | File | Description |
 |------|-------------|
 | `destinations/rabbitmq.yaml` | Full RabbitMQ option surface: exchange, dead-letter exchange/queue, queue_defaults, TLS, publisher_channels, and a flow that fans out to two publish nodes. |
-| `destinations/sqs.yaml` | AWS SQS destination: two standard queues. `fifo` / `sqs_options` are not publish-node fields. |
+| `destinations/sqs.yaml` | Two standard SQS queues, per-message delay, fair-queue grouping and provisioned queue attributes. |
+| `destinations/fifo-sqs.yaml` | SQS FIFO publication using original JSON representation, digest-based identities, bounded retries and explicit responses. |
 | `destinations/sns.yaml` | AWS SNS destination: single topic auto-created at startup. |
 | `destinations/lambda.yaml` | AWS Lambda destination: Event (default) or RequestResponse invoke; `target` is the function name / ARN. `create: true` is rejected. For file uploads, see `multipart-s3-lambda.yaml` (S3 object + Lambda notify). |
 | `destinations/s3.yaml` | AWS S3 destination: one JSON Message per event under a date-partitioned key prefix, with SSE options and auto-bucket creation. `publish.payload: object` stores decoded file bytes instead (see `multipart-split.yaml`). |
@@ -47,6 +52,29 @@ Each file demonstrates one auth type with the exact fields required by that type
 | `auth/header_exact.yaml` | Header exact match auth: `exact` scheme (static Bearer token, `remove_bearer: true`). |
 | `auth/jwt.yaml` | JWT auth: RS256 scheme with `expected_issuer`, `expected_audience`, and `body_hash_claim`. |
 | `auth/no_auth.yaml` | No-auth passthrough: a `no_auth` node disables verification entirely. |
+| `auth/request-signatures.yaml` | Timestamped separate-header HMAC, multiple-signature HMAC and P-256 ECDSA over explicit body representations. |
+
+## Ingress adapters
+
+These use neutral resource names and explicit admission. For the complete field
+contracts and deployment boundaries, see [Ingress adapters](../docs/ingress-adapters.md).
+
+| File | What it demonstrates |
+|---|---|
+| `routing/shared.yaml` | Consistent DynamoDB lookup, environment admission and a resolved broker target. |
+| `routing/admission.yaml` | Shared and dedicated routing profiles that reject unadmitted environments. |
+| `routing/registration.yaml` | Register a route after a successful upstream creation; keep the upstream response when registration needs recovery. |
+| `proxy/admitted.yaml` | Relay to an admitted upstream with rate, loop and replay guards. |
+| `proxy/request-contract.yaml` | Byte-exact file relay with method/path/query/header forwarding and GET/HEAD network retries. |
+| `credentials/static.yaml` | Origin-restricted upstream headers from secret references. |
+| `credentials/oauth.yaml` | Cached OAuth client-credentials acquisition and one bounded invalid-session refresh. |
+| `credentials/token-exchange.yaml` | Per-request token exchange before an XML relay. |
+| `adapters/batch-shared.yaml` | Sequential child processing with per-child environment admission and independent outcomes. |
+| `adapters/batch-dedicated.yaml` | Bounded concurrent children using a dedicated routing profile. |
+| `adapters/changed-fields-sns.yaml` | Changed-field projection and SNS attributes. |
+| `adapters/event-filter.yaml` | Accept allowed event types and acknowledge filtered events. |
+| `adapters/json-projection.yaml` | Validate a JSON schema, coerce an explicitly selected field type and strip document content. |
+| `adapters/xml-ordered.yaml` | Preserve ordered XML elements while pruning selected content. |
 
 ## Builder / showcase fixtures (`showcase/`)
 
@@ -110,7 +138,7 @@ make test-examples
 
 `make test-examples` is what CI's Examples job runs after `validate-examples`. It uses a fake publisher (no Docker) and a loopback HTTP server for env-driven `http_request` URLs. `invalid-*` files must fail validation.
 
-**The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically (except files named `replay.yaml`, which configure the replay service, not core). `make validate-examples` validates every top-level `*.yaml` (except `docker-compose.yaml`), globs `destinations/`, `auth/`, `templates/`, and `showcase/` (skipping `invalid-*`), and names the `dev/` and `replay/` files explicitly — each directory's `core.yaml` with `hookway validate`, its `replay.yaml` with `hookway-replay validate`.
+**The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically (except files named `replay.yaml`, which configure the replay service, not core). `make validate-examples` validates every top-level `*.yaml` (except `docker-compose.yaml`), globs `destinations/`, `auth/`, `routing/`, `proxy/`, `credentials/`, `adapters/`, `templates/`, and `showcase/` (skipping `invalid-*`), and names the `dev/` and `replay/` files explicitly — each directory's `core.yaml` with `hookway validate`, its `replay.yaml` with `hookway-replay validate`.
 
 So **a new subdirectory is silently skipped by `validate-examples`** until the Makefile learns about it; place new examples at the top level or in a globbed subdirectory, or add the directory to the recipe.
 

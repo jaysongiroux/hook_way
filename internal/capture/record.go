@@ -14,6 +14,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/deliverysnapshot"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/publishmsg"
 	"github.com/jaysongiroux/hook_way/internal/queue"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
@@ -43,6 +44,7 @@ func (r Record) MetadataOnly(reason string) Record {
 // BuilderOptions configures a Builder.
 type BuilderOptions struct {
 	Flows          map[string]graph.FlowConfig
+	Credentials    map[string]flowconfig.CredentialProfile
 	Destinations   map[string]config.DestinationConfig
 	MaxRecordBytes int64
 	CoreVersion    string
@@ -52,21 +54,51 @@ type BuilderOptions struct {
 
 // Builder turns failures into records.
 type Builder struct {
-	nodes    map[string]map[string]graph.NodeConfig
-	dests    map[string]config.DestinationConfig
-	maxBytes int64
-	version  string
-	instance string
-	now      func() time.Time
+	nodes             map[string]map[string]graph.NodeConfig
+	creationOnly      map[string]bool
+	credentialHeaders map[string][]string
+	dests             map[string]config.DestinationConfig
+	maxBytes          int64
+	version           string
+	instance          string
+	now               func() time.Time
 }
 
 func NewBuilder(o BuilderOptions) *Builder {
-	b := &Builder{nodes: map[string]map[string]graph.NodeConfig{}, dests: o.Destinations, maxBytes: o.MaxRecordBytes,
+	b := &Builder{creationOnly: map[string]bool{}, credentialHeaders: map[string][]string{}, nodes: map[string]map[string]graph.NodeConfig{}, dests: o.Destinations, maxBytes: o.MaxRecordBytes,
 		version: o.CoreVersion, instance: o.CoreInstance, now: o.Now}
 	if b.now == nil {
 		b.now = time.Now
 	}
 	for flow, fc := range o.Flows {
+		managed := false
+		for _, nc := range fc.Nodes {
+			if nc.Type == "batch" {
+				b.creationOnly[flow] = true
+			}
+			if nc.Type == "register_route" {
+				var options flowconfig.RegisterRouteOptions
+				if nc.Options.Decode(&options) == nil && options.Mode == "after_create" {
+					b.creationOnly[flow] = true
+				}
+			}
+			if nc.Type == "http_request" {
+				var options flowconfig.HTTPRequestOptions
+				if nc.Options.Decode(&options) == nil {
+					if len(options.RequireHeaders) > 0 {
+						b.creationOnly[flow] = true
+					}
+					if options.Credential != nil {
+						managed = true
+					}
+				}
+			}
+		}
+		if managed {
+			headers, _ := flowconfig.AuthenticationRedactions(flowconfig.Config{Flows: map[string]graph.FlowConfig{flow: fc}, Credentials: o.Credentials})
+			b.credentialHeaders[flow] = append(headers, "Authorization", "Cookie")
+		}
+
 		byID := make(map[string]graph.NodeConfig, len(fc.Nodes))
 		for _, nc := range fc.Nodes {
 			byID[nc.ID] = nc
@@ -119,6 +151,25 @@ func (b *Builder) fromFailure(flow string, head graph.RequestHead, status int, e
 			m.ReceivedAt = ce.Event.ReceivedAt.UTC()
 		}
 	}
+	if b.creationOnly[flow] {
+		// A proxy timeout can already have created an object. Capturing an
+		// automatic resume would repeat creation, or require persisting caller keys.
+		sanitize(&m)
+		return Record{Metadata: m}.MetadataOnly(replaywire.NotRetryableUnsupported), true
+	}
+	if headers, ok := b.credentialHeaders[flow]; ok {
+		env.V.Raw.Head.Header = logging.FilterHeaders(env.V.Raw.Head.Header, nil, headers)
+		if env.Upstream != nil {
+			upstream := *env.Upstream
+			upstream.Header = logging.FilterHeaders(env.Upstream.Header, nil, headers)
+			env.Upstream = &upstream
+		}
+		if ce, ok := env.Extra.(flowconfig.CapturedEvent); ok {
+			ce.Event.Headers = logging.FilterHeaders(ce.Event.Headers, nil, headers)
+			ce.Event.OrigHeaders = logging.FilterHeaders(ce.Event.OrigHeaders, nil, headers)
+			env.Extra = ce
+		}
+	}
 	if metadataOnly {
 		if ev.NodeType == "publish" {
 			_, _, _ = b.publishTarget(&m, nc, env)
@@ -128,7 +179,12 @@ func (b *Builder) fromFailure(flow string, head graph.RequestHead, status int, e
 	var payload Payload
 	var err error
 	if ev.NodeType == "publish" {
-		payload, err = b.publishPayload(&m, nc, env)
+		var prepared graph.Envelope
+		_, prepared, err = b.publishTarget(&m, nc, env)
+		if err == nil {
+			env = prepared
+			payload, err = b.publishPayload(&m, nc, env)
+		}
 	} else {
 		payload, err = RenderInputBody(env)
 	}
@@ -208,7 +264,7 @@ func (b *Builder) publishTarget(m *replaywire.FailureMetadata, nc graph.NodeConf
 	dest := b.dests[opts.Destination]
 	m.DestinationID, m.DestinationType, m.Target = opts.Destination, dest.Type, opts.Target
 	m.DestinationHash = DestinationHash(dest)
-	target, prepared, err := flowconfig.PreparePublish(opts, env)
+	target, prepared, err := flowconfig.PreparePublishForNode(nc.ID, opts, env)
 	m.RenderedTarget = target
 	return opts, prepared, err
 }

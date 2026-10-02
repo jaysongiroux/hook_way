@@ -14,6 +14,8 @@ export function BuilderHeader({
   onExport,
   onDestinations,
   onConnections,
+  onRouting,
+  onCredentials,
   onEnv,
   onServer,
   onReplay,
@@ -28,6 +30,8 @@ export function BuilderHeader({
   onExport: () => void;
   onDestinations: () => void;
   onConnections: () => void;
+  onRouting?: () => void;
+  onCredentials?: () => void;
   onEnv: () => void;
   onServer: () => void;
   onReplay: () => void;
@@ -36,7 +40,14 @@ export function BuilderHeader({
 }) {
   return (
     <Box component="header" px="md" style={{ ...HEADER_STYLE, flexShrink: 0 }}>
-      <Group mih={HEADER_HEIGHT} justify="space-between" align="center" wrap="wrap" gap="xs" style={{ width: "100%" }}>
+      <Group
+        mih={HEADER_HEIGHT}
+        justify="space-between"
+        align="center"
+        wrap="wrap"
+        gap="xs"
+        style={{ width: "100%" }}
+      >
         <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
           <Logo to="/" />
           <Text size="sm" c={DARK.muted} fw={500} visibleFrom="sm">
@@ -81,11 +92,15 @@ export function BuilderHeader({
               <Menu.Item onClick={onImport}>Import YAML</Menu.Item>
               <Menu.Item onClick={onExport}>Export YAML</Menu.Item>
               <Menu.Divider />
-              <Menu.Item onClick={onLoadExample}>Load production example</Menu.Item>
+              <Menu.Item onClick={onLoadExample}>
+                Load production example
+              </Menu.Item>
               <Menu.Divider />
               <Menu.Label>Workspace</Menu.Label>
               <Menu.Item onClick={onConnections}>Connections</Menu.Item>
               <Menu.Item onClick={onDestinations}>Destinations</Menu.Item>
+              <Menu.Item onClick={onRouting}>Routing</Menu.Item>
+              <Menu.Item onClick={onCredentials}>Credentials</Menu.Item>
               <Menu.Item onClick={onEnv}>Environment</Menu.Item>
               <Menu.Item onClick={onServer}>Core server</Menu.Item>
               <Menu.Item onClick={onReplay}>Replay service</Menu.Item>

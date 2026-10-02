@@ -5,6 +5,8 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
 )
 
 // BodyCloner supplies branch ownership for custom parsed bodies such as XML DOMs.
@@ -42,6 +44,7 @@ func clonePayload(p Payload) (out Payload, err error) {
 		v.Raw = cloneRaw(v.Raw)
 		return v, nil
 	case Envelope:
+		v.Publish = deliverymeta.Clone(v.Publish)
 		v.V.Raw = cloneRaw(v.V.Raw)
 		v.Vars = maps.Clone(v.Vars)
 		v.MessageAttributes = maps.Clone(v.MessageAttributes)
@@ -52,6 +55,7 @@ func clonePayload(p Payload) (out Payload, err error) {
 		v.Body = b
 		if v.Upstream != nil {
 			u := *v.Upstream
+			u.Values = maps.Clone(v.Upstream.Values)
 			u.Header = u.Header.Clone()
 			u.Body = slices.Clone(u.Body)
 			v.Upstream = &u

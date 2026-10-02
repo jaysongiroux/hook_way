@@ -17,7 +17,7 @@ func TestReviewRuntimeRejectsSchemaInvalidOptions(t *testing.T) {
 		{"auth", "scheme: header_exact\nsecret: value\nsource: {kind: header, key: ''}\n"},
 	}
 
-	r, err := NewRegistry()
+	r, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

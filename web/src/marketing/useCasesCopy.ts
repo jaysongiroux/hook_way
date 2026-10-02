@@ -15,7 +15,7 @@ export interface UseCase {
 
 export const USE_CASES_INTRO = {
   title: "Patterns that stay in your infrastructure",
-  lead: "Hookway sits in front of the systems you already run. These are the flows operators actually configure: verify once, then branch, transform, and publish without a SaaS control plane in the path.",
+  lead: "Connect webhook senders to the systems your team already runs. These examples show how to verify requests, prepare their data, and send events or files to the right service.",
 } as const;
 
 export const USE_CASES: UseCase[] = [
@@ -23,7 +23,7 @@ export const USE_CASES: UseCase[] = [
     id: "multipart-s3",
     title: "Store upload attachments in S3, metadata elsewhere",
     summary:
-      "A multipart webhook can fan out so decoded file bytes land in S3 while form fields publish to a queue.",
+      "Store files from a webhook upload in S3 and send the accompanying form fields to a queue.",
     detail:
       "Parse multipart/form-data into fields and files, reshape each branch with a code node, then publish.payload: object to S3 and an envelope to RabbitMQ (or any other destination). The S3 key includes a sanitized vendor filename, and PutObject uses the vendor Content-Type.",
     examplePath: "examples/multipart-split.yaml",
@@ -33,9 +33,10 @@ export const USE_CASES: UseCase[] = [
   {
     id: "fanout",
     title: "Fan out one verified event to several backends",
-    summary: "One signature check, then publish to each destination your services already consume.",
+    summary:
+      "Verify an event once, then send it to several destinations, such as an archive and a work queue.",
     detail:
-      "Declare destinations once and reference them from publish nodes. stop_on_failure publishes in order; skip_failed runs direct publish branches concurrently. Consumers still dedupe on the envelope id.",
+      "Declare destinations once and reference them from publish nodes. stop_on_failure publishes in order; skip_failed runs direct publish branches concurrently. Dedupe sender retries with a stable sender event ID; a new request receives a new envelope ID.",
     examplePath: "examples/destinations/rabbitmq.yaml",
     exampleHref: repoBlob("examples/destinations/rabbitmq.yaml"),
     exampleLabel: "rabbitmq.yaml",
@@ -44,17 +45,18 @@ export const USE_CASES: UseCase[] = [
     id: "dynamic-routing",
     title: "Route each environment to its own queue",
     summary:
-      "Turn request-scoped values into a safe target such as {envName}-events, then deliver to the matching SQS queue.",
+      "Check that the requested environment is allowed, then send the event to its SQS queue.",
     detail:
-      "Path placeholders populate variables automatically. field_map can copy JSON body values, while a code node can derive variables from filtered headers or the parsed body. The example allowlists environments and requires each queue to exist; unknown, unsafe, or unresolved targets fail closed.",
-    examplePath: "examples/variables.yaml",
-    exampleHref: repoBlob("examples/variables.yaml"),
-    exampleLabel: "variables.yaml",
+      "The route node selects an environment from the parsed body, query, or headers and checks it against the configured routing profile. A dedicated flow pins its environment. The example requires each queue to exist; unknown, unsafe, or unresolved targets fail closed.",
+    examplePath: "examples/routing/admission.yaml",
+    exampleHref: repoBlob("examples/routing/admission.yaml"),
+    exampleLabel: "admission.yaml",
   },
   {
     id: "xml-proxy",
     title: "Prune XML and forward the transformed document",
-    summary: "Verify the raw bytes, work on an element tree, then HTTP-forward application/xml upstream.",
+    summary:
+      "Verify the sender’s signature, remove unwanted XML elements, and forward the cleaned document to an API.",
     detail:
       "body_format: xml keeps attributes and repeated siblings addressable. xml_prune applies fixed rules; http_request can send body: transformed with the pruned document.",
     examplePath: "examples/xml.yaml",
@@ -64,7 +66,8 @@ export const USE_CASES: UseCase[] = [
   {
     id: "branching",
     title: "Branch on payload shape before delivery",
-    summary: "Drop noise, reject bad payloads, or route the first matching labelled path.",
+    summary:
+      "Filter out unwanted events or choose a delivery path based on fields such as event type or order status.",
     detail:
       "filter stops a branch, if/else splits two outcomes, and switch picks the first matching port. Conditions can read headers or dotted body paths after JSON or XML parse.",
     examplePath: "examples/filters.yaml",
@@ -74,7 +77,8 @@ export const USE_CASES: UseCase[] = [
   {
     id: "redis-stream",
     title: "Hand verified events to Redis Streams",
-    summary: "Append each envelope to a durable Redis or Valkey stream for workers to consume with XREADGROUP.",
+    summary:
+      "Append each envelope to a durable Redis or Valkey stream for workers to consume with XREADGROUP.",
     detail:
       "Hookway writes with XADD; your consumers own group creation and retention. Choose a list for a simpler work queue or Pub/Sub only when occasional loss is acceptable.",
     examplePath: "examples/destinations/redis_stream.yaml",
@@ -84,7 +88,8 @@ export const USE_CASES: UseCase[] = [
   {
     id: "sync-proxy",
     title: "Reverse-proxy a request synchronously",
-    summary: "When you need the upstream status and body back to the sender, use http_request plus respond passthrough.",
+    summary:
+      "Call an API and return its HTTP status and response body to the original caller on the same connection.",
     detail:
       "This is distinct from the async webhook destination. The graph returns the upstream response on the same connection, with path-variable safety checks.",
     examplePath: "examples/showcase/proxy.yaml",

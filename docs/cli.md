@@ -1,16 +1,17 @@
 # CLI
 
-Hookway ships two commands you run, and a third compiled for the browser.
+For a normal ingress deployment, run `hookway`. Add `hookway-replay` only if
+you need to retain and retry failed deliveries after an early acknowledgement.
+These are the two terminal programs shipped by Hookway.
 
 | Command | What it is | Image |
 |---|---|---|
 | [`hookway`](#hookway) | Core. It serves webhooks, and it checks configs, prints the config schema, and serves the config builder. | `hookway` |
 | [`hookway-replay`](#hookway-replay) | The optional replay service. It keeps the deliveries core missed after the sender got its 2xx, and retries them when you ask. | `hookway-replay` (Docker Hub: `<image>-replay`) |
-| [`hookway-wasm`](#hookway-wasm) | The config validator and schema compiled to WebAssembly for the builder. Not a terminal command. | — |
 
 ## Getting help
 
-Both commands document themselves:
+Each terminal command has a help page with its purpose, flags and examples:
 
 ```bash
 hookway help                  # every command, the environment, exit codes
@@ -45,8 +46,12 @@ docker run --rm hookway:local help    # each image's entrypoint is its binary
 ```
 
 The core image runs `hookway` with no command (serve). The replay image runs
-`hookway-replay serve` by default. Any other command works in either image:
+`hookway-replay serve` by default. Pass commands supported by that image's
+binary, for example:
 `docker run --rm hookway-replay:local migrate --config /etc/hookway-replay/replay.yaml`.
+
+The browser builder uses a separate [WebAssembly artifact](#hookway-wasm),
+not a terminal program. See [cmd/README.md](../cmd/README.md) for the entrypoints.
 
 ## Recipes
 

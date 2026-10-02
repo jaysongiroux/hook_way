@@ -1,6 +1,8 @@
 # Replay service half of the replay example (docker-compose.yaml in this
 # directory). Both replay replicas and the one-shot migration use this file.
-# Every setting is described in docs/replay-service.md.
+# Demonstrates shared failure storage and coordinated retry workers across
+# two replay replicas, with bounded retention and separate capture, operator
+# and metrics keys. Every setting is described in docs/replay-service.md.
 server:
   addr: ":8080"
 logging:

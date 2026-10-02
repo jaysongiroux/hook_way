@@ -55,6 +55,8 @@ type AuthInfo struct {
 }
 
 type EnvelopeOptions struct {
+	// SkipBodyParsing keeps raw proxy bodies out of JSON and base64 copies.
+	SkipBodyParsing    bool
 	Endpoint           string
 	DestinationQueueID string
 	Queue              string
@@ -103,12 +105,14 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 		copied := append([]string(nil), values...)
 		env.Query[key] = copied
 	}
-	var parsed any
-	if err := json.Unmarshal(opts.RawBody, &parsed); err == nil {
-		env.Body = parsed
-	} else {
-		encoded := base64.StdEncoding.EncodeToString(opts.RawBody)
-		env.RawBodyBase64 = &encoded
+	if !opts.SkipBodyParsing {
+		var parsed any
+		if err := json.Unmarshal(opts.RawBody, &parsed); err == nil {
+			env.Body = parsed
+		} else {
+			encoded := base64.StdEncoding.EncodeToString(opts.RawBody)
+			env.RawBodyBase64 = &encoded
+		}
 	}
 	env.RawBody = opts.RawBody
 	env.OrigHeaders = req.Header.Clone()

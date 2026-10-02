@@ -1,0 +1,42 @@
+# A synthetic schema demonstrates validation, explicit single-type coercion,
+# union ID preservation and removal of exactly object.content after validation.
+# Replace this illustrative schema with a privately supplied complete schema.
+server: {addr: ":8080", max_body_bytes: 20971520, max_inflight_requests: 16}
+destinations: {broker: {type: sqs, sqs: {region: us-east-1}}}
+flows:
+  sample:
+    responses:
+      published: {status: 200, body: '{"message":"Processed"}'}
+      auth_error: {status: 400, body: '{"error":"invalid credentials"}'}
+      body_error: {status: 400, body: '{"error":"invalid JSON"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/schema/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 20971520}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_INGRESS_TOKEN}, signature_header: Authorization, remove_bearer: true}
+      - {id: env, type: envelope, body_format: json}
+      - id: validate
+        type: transform
+        kind: json_schema
+        json_schema:
+          type: object
+          required: [event_type, event_id, file_id, object]
+          additionalProperties: true
+          properties:
+            event_type: {type: string}
+            event_id: {anyOf: [{type: string}, {type: number}]}
+            file_id: {anyOf: [{type: string}, {type: number}]}
+            object:
+              type: object
+              required: [id]
+              properties: {id: {anyOf: [{type: string}, {type: number}]}}
+        coercions: [{path: event_type, type: string}]
+      - {id: strip, type: transform, kind: strip_fields, fields: [object.content]}
+      - id: send
+        type: publish
+        destination: broker
+        target: synthetic-projected-events.fifo
+        wire_body: json
+        fifo:
+          group_id: {source: body, path: file_id}
+          deduplication_id: {source: body, path: event_id}
+    edges: [in>body, body>auth, auth>env, env>validate, validate>strip, strip>send]

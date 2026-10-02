@@ -2,9 +2,10 @@
 // one line; the long form stays in docs/ so there is a single source of truth.
 //
 // Nothing here is aspirational. Items listed as gaps in
-// docs/production-readiness.md are deliberately absent: no readiness drain, no
+// docs/production-readiness.md are deliberately absent: no readiness withdrawal, no
 // durable ingest spool, no automatic re-drive, no config hot reload, no scoped
-// admin tokens, no OpenTelemetry export, and no throughput claim.
+// core admin tokens, or OpenTelemetry export. throughput measurements
+// carry their workload and synthetic-destination qualification separately.
 //
 // Write for the reader, not the code: "the sender already got its 2xx" says
 // what "an acknowledged failure" means to someone who runs webhooks.
@@ -20,34 +21,37 @@ export interface ProductionCard {
   line: string;
 }
 
+export const PERFORMANCE_SUMMARY =
+  "Measured: 5,000 requests/s in three 20-second bursts on two replicas, each with 2 vCPU and 4 GiB, against a synthetic destination.";
+
 export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "load",
-    title: "Bounds in-flight work",
+    title: "Limit simultaneous requests",
     value: "256",
-    valueLabel: "default in-flight ceiling",
-    line: "Excess requests get a 503 and Retry-After before the body is buffered.",
+    valueLabel: "active requests per replica by default",
+    line: "At capacity, new requests get 503 and Retry-After before their bodies are read. You can enable a short wait for capacity.",
   },
   {
     id: "retries",
-    title: "Retries, then optional dead-letter",
+    title: "Retry failed deliveries",
     value: "3",
-    valueLabel: "webhook attempts, 500ms to 30s",
-    line: "Webhook, Kafka and RabbitMQ retry with backoff; only webhook honours a 429 or dead-letters a failed publish.",
+    valueLabel: "webhook attempts; waits from 500ms to 30s",
+    line: "Webhook, Kafka and RabbitMQ retry with increasing waits. Only webhook handles 429 Retry-After or sends failures to an optional dead-letter destination.",
   },
   {
     id: "metrics",
     title: "Exports Prometheus metrics",
-    value: "45",
+    value: "55",
     valueLabel: "Prometheus metrics exported",
-    line: "With a Grafana dashboard in the repo whose key panels are pinned to the metric names by a test.",
+    line: "Enable Prometheus metrics to track requests, failures, and delivery latency. The repository includes a Grafana dashboard.",
   },
   {
     id: "controls",
-    title: "Scopes controls per flow",
-    value: "11",
-    valueLabel: "verification schemes",
-    line: "Verification fails closed; rate limits and replay protection are set per flow.",
+    title: "Set access rules for each flow",
+    value: "13",
+    valueLabel: "authentication formats",
+    line: "Reject invalid credentials, limit request rates, and block duplicate requests. Rate limits and duplicate caches are local to each replica.",
   },
   {
     id: "packaging",

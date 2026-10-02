@@ -430,3 +430,20 @@ func TestValidateWithEnv_MissingConnectionVarDowngradesToWarning(t *testing.T) {
 		t.Fatalf("expected the mode issue to be reported on connections.cache.mode, got %#v", resp.Issues)
 	}
 }
+
+func TestNativeDeclarationSchemas(t *testing.T) {
+	b, err := Schema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(b, &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	for _, name := range []string{"credentials", "routing"} {
+		if properties[name] == nil {
+			t.Fatal("missing declaration schema", name)
+		}
+	}
+}

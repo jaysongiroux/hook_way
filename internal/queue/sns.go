@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 
+	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
@@ -23,10 +25,12 @@ type snsAPI interface {
 }
 
 type SNSTarget struct {
-	Name    string
-	Create  bool
-	Subject string
-	FIFO    *FIFOSettings
+	ARN        string
+	Attributes map[string]string
+	Name       string
+	Create     bool
+	Subject    string
+	FIFO       *FIFOSettings
 	// Template is set for dynamic routes (Name contains {variable}
 	// placeholders). Rendered topic names the matcher accepts are looked up
 	// (and created when Create is set) on first sight with these settings.
@@ -34,6 +38,9 @@ type SNSTarget struct {
 }
 
 type SNSConfig struct {
+	// AdmissionBudget tunes the native connector's idle pool; injected APIs
+	// remain caller-owned. This is derived serving metadata, not authored YAML.
+	AdmissionBudget int
 	Region          string
 	Endpoint        string
 	AccessKeyID     string
@@ -77,9 +84,19 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 	}
 	p := &SNSPublisher{client: client, destID: cfg.DestinationID, policy: cfg.Policy, logger: logger, targets: newTargetResolver[snsTargetState](0, logger)}
 
-	arnByName, err := p.listTopicARNs(ctx)
-	if err != nil {
-		return nil, err
+	arnByName := map[string]string{}
+	needsList := false
+	for _, target := range cfg.Targets {
+		if target.ARN == "" {
+			needsList = true
+		}
+	}
+	if needsList {
+		var err error
+		arnByName, err = p.listTopicARNs(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	for _, target := range cfg.Targets {
@@ -101,7 +118,14 @@ func NewSNSPublisher(ctx context.Context, client snsAPI, cfg SNSConfig) (*SNSPub
 // when Create is set, or fails. Used at startup and on first sight of a
 // rendered dynamic target.
 func (p *SNSPublisher) provisionTopic(ctx context.Context, target SNSTarget, arnByName map[string]string) (snsTargetState, error) {
+	if err := config.ValidateBrokerAttributes("sns", strings.HasSuffix(target.Name, ".fifo"), target.Attributes); err != nil {
+		return snsTargetState{}, err
+	}
 	arn, existed := arnByName[target.Name]
+	if target.ARN != "" {
+		arn = target.ARN
+		existed = true
+	}
 	switch {
 	case existed:
 		p.logger.Debug("topic exists", slog.String("destination", p.destID), slog.String("target", target.Name))
@@ -192,7 +216,10 @@ func (p *SNSPublisher) reconcileTopic(ctx context.Context, target SNSTarget, arn
 }
 
 func snsCreateAttributes(target SNSTarget) map[string]string {
-	attrs := map[string]string{}
+	attrs := maps.Clone(target.Attributes)
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
 	if strings.HasSuffix(target.Name, ".fifo") {
 		attrs["FifoTopic"] = "true"
 		if target.FIFO != nil && target.FIFO.DedupContentBasedFallback {
@@ -210,7 +237,7 @@ func (p *SNSPublisher) Publish(ctx context.Context, destinationID, target string
 		}
 		return err
 	}
-	body, err := json.Marshal(msg)
+	body, err := BrokerBody(msg)
 	if err != nil {
 		return err
 	}
@@ -223,18 +250,61 @@ func (p *SNSPublisher) Publish(ctx context.Context, destinationID, target string
 		Message:           aws.String(string(body)),
 		MessageAttributes: attrs,
 	}
-	if state.subject != "" && state.fifo == nil {
+	if state.subject != "" && !strings.HasSuffix(target, ".fifo") {
 		in.Subject = aws.String(state.subject)
 	}
-	if state.fifo != nil {
-		groupID, dedupID, _ := resolveFIFO(msg, *state.fifo)
-		in.MessageGroupId = aws.String(groupID)
-		if dedupID != "" {
-			in.MessageDeduplicationId = aws.String(dedupID)
+	if msg.Publish != nil {
+		if msg.Publish.Subject != "" {
+			if strings.HasSuffix(target, ".fifo") || len(msg.Publish.Subject) > 99 || strings.ContainsAny(msg.Publish.Subject, "\r\n") {
+				return fmt.Errorf("invalid SNS subject")
+			}
+			in.Subject = aws.String(msg.Publish.Subject)
+		}
+		if msg.Publish.MessageStructure != "" {
+			if len(msg.MessageAttributes) > 0 {
+				return fmt.Errorf("SNS JSON message structure does not deliver message attributes")
+			}
+			if msg.Publish.MessageStructure != "json" {
+				return fmt.Errorf("unsupported SNS message structure")
+			}
+			var protocols map[string]json.RawMessage
+			if err := json.Unmarshal(body, &protocols); err != nil {
+				return fmt.Errorf("SNS protocol message must be a JSON object")
+			}
+			if _, ok := protocols["default"]; !ok {
+				return fmt.Errorf("SNS protocol message requires default")
+			}
+			for _, value := range protocols {
+				var text string
+				if json.Unmarshal(value, &text) != nil {
+					return fmt.Errorf("SNS protocol values must be strings")
+				}
+			}
+			in.MessageStructure = aws.String("json")
 		}
 	}
-	_, err = p.client.Publish(ctx, in)
-	return err
+	if err := validateBrokerSize(body, msg.MessageAttributes, 262144); err != nil {
+		return err
+	}
+	groupID, dedupID, err := brokerFIFO(msg, target, state.fifo)
+	if err != nil {
+		return err
+	}
+	if groupID != "" {
+		in.MessageGroupId = aws.String(groupID)
+	}
+	if dedupID != "" {
+		in.MessageDeduplicationId = aws.String(dedupID)
+	}
+
+	return brokerRetry(ctx, msg, func(explicit bool) error {
+		var options []func(*sns.Options)
+		if explicit {
+			options = append(options, func(o *sns.Options) { o.Retryer = aws.NopRetryer{} })
+		}
+		_, err := p.client.Publish(ctx, in, options...)
+		return err
+	})
 }
 
 // Ready confirms all resolved topics are reachable. With no targets it is a no-op.
@@ -249,3 +319,9 @@ func (p *SNSPublisher) Ready(ctx context.Context) error {
 }
 
 func (p *SNSPublisher) Close() error { return nil }
+
+func init() {
+	for key, mutable := range config.BrokerMutableAttributes("sns") {
+		snsMutableAttrs[key] = mutable
+	}
+}

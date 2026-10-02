@@ -36,7 +36,7 @@ func roundTripValue(t *testing.T, v any) any {
 }
 
 func TestValueRoundTripIsExact(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<?xml version="1.0"?><o xmlns:a="urn:a" a:id="7"><i> 1 </i><e/></o>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<?xml version="1.0"?><o xmlns:a="urn:a" a:id="7"><i> 1 </i><e/></o>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestValueNamedScalarsDecodeToTheirKind(t *testing.T) {
 }
 
 func TestValuePointerDocumentDecodesAsAValue(t *testing.T) {
-	doc, err := transform.ParseXML([]byte("<a/>"))
+	doc, err := transform.ParseXMLWithLimits([]byte("<a/>"), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,5 +127,29 @@ func TestAnyFromValueRejectsUnknownTypes(t *testing.T) {
 	}
 	if _, err := anyFromValue(nil, 0); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("anyFromValue(nil) = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestXMLSnapshotMixedContentAndChildIdentity(t *testing.T) {
+	raw := `<?xml version="1.0"?><!--before--><R xmlns="urn:sample" xmlns:p="urn:other" key="plain" p:key="namespaced">before<C/>between<?note value?><!--comment--><p:C/>after</R><!--after-->`
+	doc, err := transform.ParseXMLWithLimits([]byte(raw), transform.XMLLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := roundTripValue(t, doc).(transform.Document)
+	if !reflect.DeepEqual(got, doc) {
+		t.Fatal("XML snapshot lost tree metadata")
+	}
+	if got.Root.Content[1].Element != got.Root.Children[0] {
+		t.Fatal("content child alias lost")
+	}
+	encoded, err := transform.SerializeXML(got)
+	if err != nil || string(encoded) != raw {
+		t.Fatalf("snapshot %s: %v", encoded, err)
+	}
+	index := 9
+	malformed := &deliverysnapshot.Value{Type: deliverysnapshot.TypeXML, XML: &deliverysnapshot.XMLDocument{Root: &deliverysnapshot.XMLElement{Content: []deliverysnapshot.XMLContent{{Child: &index}}}}}
+	if _, err := anyFromValue(malformed, 0); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("invalid child reference accepted: %v", err)
 	}
 }

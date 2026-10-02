@@ -40,7 +40,7 @@ func TestDocumentImplementsBodyCloner(t *testing.T) {
 }
 
 func TestParseXMLRoundTripPreservesXLink(t *testing.T) {
-	doc, err := ParseXML([]byte(pipelineXML))
+	doc, err := ParseXMLWithLimits([]byte(pipelineXML), XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestParseXMLRoundTripPreservesXLink(t *testing.T) {
 }
 
 func TestDocumentCloneIsIndependent(t *testing.T) {
-	doc, err := ParseXML([]byte(`<ROOT><A>1</A></ROOT>`))
+	doc, err := ParseXMLWithLimits([]byte(`<ROOT><A>1</A></ROOT>`), XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestDocumentCloneIsIndependent(t *testing.T) {
 }
 
 func TestXMLPruneFullPipeline(t *testing.T) {
-	doc, err := ParseXML([]byte(pipelineXML))
+	doc, err := ParseXMLWithLimits([]byte(pipelineXML), XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestXMLPruneFullPipeline(t *testing.T) {
 }
 
 func TestXMLPruneEmptyParentDependsOnEmptyLeaves(t *testing.T) {
-	doc, err := ParseXML([]byte(`<ROOT><WRAPPER><EMPTY/></WRAPPER><KEEP>x</KEEP></ROOT>`))
+	doc, err := ParseXMLWithLimits([]byte(`<ROOT><WRAPPER><EMPTY/></WRAPPER><KEEP>x</KEEP></ROOT>`), XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestXMLPruneEmptyParentDependsOnEmptyLeaves(t *testing.T) {
 }
 
 func TestXMLPruneUnknownRuleFailsClosed(t *testing.T) {
-	doc, err := ParseXML([]byte(`<ROOT><A/></ROOT>`))
+	doc, err := ParseXMLWithLimits([]byte(`<ROOT><A/></ROOT>`), XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,14 +187,14 @@ func TestXMLPruneUnknownRuleFailsClosed(t *testing.T) {
 }
 
 func TestParseXMLRejectsNonUTF8Charset(t *testing.T) {
-	_, err := ParseXML([]byte(`<?xml version="1.0" encoding="ISO-8859-1"?><ROOT/>`))
+	_, err := ParseXMLWithLimits([]byte(`<?xml version="1.0" encoding="ISO-8859-1"?><ROOT/>`), XMLLimits{})
 	if err == nil || !strings.Contains(err.Error(), "charset") {
 		t.Fatalf("err = %v, want charset failure", err)
 	}
 }
 
 func TestParseXMLRejectsMalformed(t *testing.T) {
-	_, err := ParseXML([]byte(`<ROOT><UNCLOSED>`))
+	_, err := ParseXMLWithLimits([]byte(`<ROOT><UNCLOSED>`), XMLLimits{})
 	if err == nil {
 		t.Fatal("expected parse error")
 	}

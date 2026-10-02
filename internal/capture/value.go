@@ -190,7 +190,7 @@ func anyFromValue(v *dsValue, depth int) (any, error) {
 		if v.XML == nil {
 			return nil, fmt.Errorf("%w: xml value without a document", ErrUnsupported)
 		}
-		return documentFromXML(*v.XML), nil
+		return documentFromXML(*v.XML)
 	case deliverysnapshot.TypeFloat32:
 		f, err := strconv.ParseFloat(v.Text, 32)
 		return float32(f), numberErr(v, err)
@@ -245,14 +245,35 @@ func numberErr(v *dsValue, err error) error {
 }
 
 func xmlFromDocument(d transform.Document) *deliverysnapshot.XMLDocument {
-	return &deliverysnapshot.XMLDocument{Declaration: d.Declaration, Root: xmlFromElement(d.Root)}
+	return &deliverysnapshot.XMLDocument{Declaration: d.Declaration, Root: xmlFromElement(d.Root), Before: xmlContentFrom(d.Before, nil), After: xmlContentFrom(d.After, nil)}
 }
-
+func xmlContentFrom(items []transform.XMLContent, children []*transform.Element) []deliverysnapshot.XMLContent {
+	if items == nil {
+		return nil
+	}
+	out := make([]deliverysnapshot.XMLContent, 0, len(items))
+	indices := make(map[*transform.Element]int, len(children))
+	for i, c := range children {
+		indices[c] = i
+	}
+	for _, c := range items {
+		v := deliverysnapshot.XMLContent{Kind: c.Kind, Text: c.Text, Target: c.Target}
+		if c.Element != nil {
+			i, ok := indices[c.Element]
+			if !ok {
+				continue
+			}
+			v.Child = &i
+		}
+		out = append(out, v)
+	}
+	return out
+}
 func xmlFromElement(e *transform.Element) *deliverysnapshot.XMLElement {
 	if e == nil {
 		return nil
 	}
-	out := &deliverysnapshot.XMLElement{Name: e.Name, Attr: slices.Clone(e.Attr), Text: e.Text}
+	out := &deliverysnapshot.XMLElement{Name: e.Name, Attr: slices.Clone(e.Attr), Text: e.Text, Prefix: e.Prefix, QName: e.QName, AttrPrefixes: slices.Clone(e.AttrPrefixes), Content: xmlContentFrom(e.Content, e.Children)}
 	if e.Children != nil {
 		out.Children = make([]*deliverysnapshot.XMLElement, len(e.Children))
 		for i, c := range e.Children {
@@ -261,21 +282,64 @@ func xmlFromElement(e *transform.Element) *deliverysnapshot.XMLElement {
 	}
 	return out
 }
-
-func documentFromXML(d deliverysnapshot.XMLDocument) transform.Document {
-	return transform.Document{Declaration: d.Declaration, Root: elementFromXML(d.Root)}
-}
-
-func elementFromXML(e *deliverysnapshot.XMLElement) *transform.Element {
-	if e == nil {
-		return nil
+func documentFromXML(d deliverysnapshot.XMLDocument) (transform.Document, error) {
+	remaining := 1000000
+	root, err := elementFromXML(d.Root, 0, &remaining)
+	if err != nil {
+		return transform.Document{}, err
 	}
-	out := &transform.Element{Name: e.Name, Attr: slices.Clone(e.Attr), Text: e.Text}
+	before, err := xmlContentTo(d.Before, nil)
+	if err != nil {
+		return transform.Document{}, err
+	}
+	after, err := xmlContentTo(d.After, nil)
+	if err != nil {
+		return transform.Document{}, err
+	}
+	return transform.Document{Declaration: d.Declaration, Root: root, Before: before, After: after}, nil
+}
+func xmlContentTo(items []deliverysnapshot.XMLContent, children []*transform.Element) ([]transform.XMLContent, error) {
+	if items == nil {
+		return nil, nil
+	}
+	out := make([]transform.XMLContent, len(items))
+	seen := map[int]bool{}
+	for i, c := range items {
+		out[i] = transform.XMLContent{Kind: c.Kind, Text: c.Text, Target: c.Target}
+		if c.Child != nil {
+			idx := *c.Child
+			if idx < 0 || idx >= len(children) || children[idx] == nil || seen[idx] {
+				return nil, fmt.Errorf("%w: invalid XML child reference", ErrUnsupported)
+			}
+			seen[idx] = true
+			out[i].Element = children[idx]
+		}
+	}
+	return out, nil
+}
+func elementFromXML(e *deliverysnapshot.XMLElement, depth int, remaining *int) (*transform.Element, error) {
+	if e == nil {
+		return nil, nil
+	}
+	*remaining -= 1 + len(e.Content)
+	if depth > 256 || *remaining < 0 {
+		return nil, fmt.Errorf("%w: XML tree limit", ErrUnsupported)
+	}
+	out := &transform.Element{Name: e.Name, Attr: slices.Clone(e.Attr), Text: e.Text, Prefix: e.Prefix, QName: e.QName, AttrPrefixes: slices.Clone(e.AttrPrefixes)}
 	if e.Children != nil {
 		out.Children = make([]*transform.Element, len(e.Children))
 		for i, c := range e.Children {
-			out.Children[i] = elementFromXML(c)
+			child, err := elementFromXML(c, depth+1, remaining)
+			if err != nil {
+				return nil, err
+			}
+			out.Children[i] = child
 		}
 	}
-	return out
+	content, err := xmlContentTo(e.Content, out.Children)
+	if err != nil {
+		return nil, err
+	}
+	out.Content = content
+	return out, nil
 }

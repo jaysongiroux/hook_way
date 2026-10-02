@@ -52,20 +52,45 @@ const CORE_REPLAY_SCHEMA: JSONSchema = {
 };
 
 const SECTION_COPY: Record<string, { label: string; description: string }> = {
-  server: { label: "Server", description: "Listener for the replay API, health checks, and readiness." },
-  logging: { label: "Logging", description: "Structured replay-service log level." },
-  metrics: { label: "Metrics", description: "Prometheus endpoint and optional dedicated listener." },
-  database: { label: "Database", description: "Shared PostgreSQL connection and client TLS." },
-  core: { label: "Core callback", description: "Private control endpoint used when a retry runs." },
-  retention: { label: "Retention", description: "Lifetime, capacity, artifact size, and cleanup interval." },
-  workers: { label: "Workers", description: "Per-replica retry concurrency, deadline, and lease." },
-  keys: { label: "API keys", description: "Named bearer tokens with least-privilege scopes." },
+  server: {
+    label: "Server",
+    description: "Listener for the replay API, health checks, and readiness.",
+  },
+  logging: {
+    label: "Logging",
+    description: "Structured replay-service log level.",
+  },
+  metrics: {
+    label: "Metrics",
+    description: "Prometheus endpoint and optional dedicated listener.",
+  },
+  database: {
+    label: "Database",
+    description: "Shared PostgreSQL connection and client TLS.",
+  },
+  core: {
+    label: "Core callback",
+    description: "Private control endpoint used when a retry runs.",
+  },
+  retention: {
+    label: "Retention",
+    description: "Lifetime, capacity, artifact size, and cleanup interval.",
+  },
+  workers: {
+    label: "Workers",
+    description: "Per-replica retry concurrency, deadline, and lease.",
+  },
+  keys: {
+    label: "API keys",
+    description: "Named bearer tokens with least-privilege scopes.",
+  },
 };
 
 const HELP: Record<string, string> = {
   url: "Replay service URL used by core to capture failed deliveries.",
   capture_token: "Key with capture scope. Prefer ${REPLAY_CAPTURE_TOKEN}.",
-  max_record_bytes: "Largest artifact core will send with bytes rather than metadata only.",
+  max_record_bytes:
+    "Largest artifact core will send with bytes rather than metadata only.",
   addr: "Listener address such as :8080.",
   token: "Use an environment reference rather than a literal secret.",
   max_concurrent: "Maximum replay deliveries core accepts at once.",
@@ -73,7 +98,8 @@ const HELP: Record<string, string> = {
   client_cert: "Client certificate path; configure with client key.",
   client_key: "Client private-key path; configure with client certificate.",
   server_name: "TLS server-name override.",
-  insecure_skip_verify: "Disables certificate verification. Do not use in production.",
+  insecure_skip_verify:
+    "Disables certificate verification. Do not use in production.",
   level: "debug, info, warn, or error.",
   enabled: "Expose Prometheus metrics.",
   path: "HTTP path for metrics, normally /metrics.",
@@ -90,7 +116,13 @@ const HELP: Record<string, string> = {
   lease: "Must be at least execution timeout plus 15 seconds.",
 };
 
-export function ReplaySettingsPanel({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+export function ReplaySettingsPanel({
+  opened,
+  onClose,
+}: {
+  opened: boolean;
+  onClose: () => void;
+}) {
   const coreReplayConfig = useGraphStore((s) => s.coreReplayConfig);
   const replayServiceConfig = useGraphStore((s) => s.replayServiceConfig);
   const setCoreReplayConfig = useGraphStore((s) => s.setCoreReplayConfig);
@@ -127,45 +159,79 @@ export function ReplaySettingsPanel({ opened, onClose }: { opened: boolean; onCl
           <Stack gap={4} maw={600}>
             <Text fw={600}>Add the optional replay service</Text>
             <Text size="sm" c="dimmed">
-              This creates the core connection block and a separate replay.yaml using the repository&apos;s development defaults. Nothing is sent to a running service.
+              This creates the core connection block and a separate replay.yaml
+              using the repository&apos;s development defaults. Nothing is sent
+              to a running service.
             </Text>
           </Stack>
-          <Button leftSection={<TbPlus aria-hidden size={16} />} onClick={addReplayConfiguration}>
+          <Button
+            leftSection={<TbPlus aria-hidden size={16} />}
+            onClick={addReplayConfiguration}
+          >
             Add replay configuration
           </Button>
         </Stack>
       ) : (
         <Stack gap="sm">
           {(coreReplayConfig === null || replayServiceConfig === null) && (
-            <Alert color="yellow" icon={<TbAlertTriangle aria-hidden />} title="Replay setup is incomplete">
-              Add the missing document to configure both sides of the connection.
-              <Button size="compact-sm" variant="subtle" ml="xs" onClick={addReplayConfiguration}>
+            <Alert
+              color="yellow"
+              icon={<TbAlertTriangle aria-hidden />}
+              title="Replay setup is incomplete"
+            >
+              Add the missing document to configure both sides of the
+              connection.
+              <Button
+                size="compact-sm"
+                variant="subtle"
+                ml="xs"
+                onClick={addReplayConfiguration}
+              >
                 Add missing config
               </Button>
             </Alert>
           )}
           {advisories.map((message) => (
-            <Alert key={message} color="yellow" icon={<TbAlertTriangle aria-hidden />} title="Check shared credentials">
+            <Alert
+              key={message}
+              color="yellow"
+              icon={<TbAlertTriangle aria-hidden />}
+              title="Check shared credentials"
+            >
               {message}
             </Alert>
           ))}
-          <Tabs defaultValue={coreReplayConfig !== null ? "core" : "service"} keepMounted={false}>
+          <Tabs
+            defaultValue={coreReplayConfig !== null ? "core" : "service"}
+            keepMounted={false}
+          >
             <Tabs.List>
               <Tabs.Tab value="core">Core integration</Tabs.Tab>
               <Tabs.Tab value="service">Replay service</Tabs.Tab>
             </Tabs.List>
             <Tabs.Panel value="core" pt="md">
               {coreReplayConfig === null ? (
-                <MissingDocument name="core replay block" onAdd={addReplayConfiguration} />
+                <MissingDocument
+                  name="core replay block"
+                  onAdd={addReplayConfiguration}
+                />
               ) : (
                 <Stack gap="sm">
                   <Text size="sm" c="dimmed" maw={720}>
-                    Settings written to core.yaml under <Text span ff="monospace">replay:</Text>. Core uses these to capture failures and accept private retry callbacks.
+                    Settings written to core.yaml under{" "}
+                    <Text span ff="monospace">
+                      replay:
+                    </Text>
+                    . Core uses these to capture failures and accept private
+                    retry callbacks.
                   </Text>
                   <SchemaForm
+                    scope="core/replay"
                     schema={CORE_REPLAY_SCHEMA}
                     value={coreReplayConfig}
-                    onChange={(value) => setCoreReplayConfig(value as Record<string, unknown>)}
+                    onChange={(value) =>
+                      setCoreReplayConfig(value as Record<string, unknown>)
+                    }
                     fieldHelp={(name) => HELP[name]}
                     groupObjects
                     secretFields={["capture_token", "token"]}
@@ -175,10 +241,14 @@ export function ReplaySettingsPanel({ opened, onClose }: { opened: boolean; onCl
             </Tabs.Panel>
             <Tabs.Panel value="service" pt="md">
               {replayServiceConfig === null ? (
-                <MissingDocument name="replay.yaml" onAdd={addReplayConfiguration} />
+                <MissingDocument
+                  name="replay.yaml"
+                  onAdd={addReplayConfiguration}
+                />
               ) : schemaFailed ? (
                 <Alert color="red" title="Replay schema unavailable">
-                  Reload the builder to restore structured replay settings. Imported YAML is still preserved.
+                  Reload the builder to restore structured replay settings.
+                  Imported YAML is still preserved.
                 </Alert>
               ) : !schema ? (
                 <Stack gap="xs" aria-label="Loading replay settings">
@@ -204,8 +274,12 @@ export function ReplaySettingsPanel({ opened, onClose }: { opened: boolean; onCl
 function MissingDocument({ name, onAdd }: { name: string; onAdd: () => void }) {
   return (
     <Stack align="flex-start" gap="sm" py="md">
-      <Text size="sm" c="dimmed">No {name} is present in this workspace.</Text>
-      <Button size="xs" variant="light" onClick={onAdd}>Add missing config</Button>
+      <Text size="sm" c="dimmed">
+        No {name} is present in this workspace.
+      </Text>
+      <Button size="xs" variant="light" onClick={onAdd}>
+        Add missing config
+      </Button>
     </Stack>
   );
 }
@@ -220,25 +294,42 @@ function ReplayServiceEditor({
   onChange: (config: Record<string, unknown>) => void;
 }) {
   const properties = schemaProperties(schema);
-  const update = (key: string, value: unknown) => onChange({ ...config, [key]: value });
+  const update = (key: string, value: unknown) =>
+    onChange({ ...config, [key]: value });
   return (
     <Stack gap="sm">
       <Text size="sm" c="dimmed" maw={720}>
-        Settings written to the separate replay.yaml used by hookway-replay. Defaults stay omitted unless you change or seed them.
+        Settings written to the separate replay.yaml used by hookway-replay.
+        Defaults stay omitted unless you change or seed them.
       </Text>
       <Accordion defaultValue="server">
-        {["server", "logging", "metrics", "database", "core", "retention", "workers"].map((key) => (
+        {[
+          "server",
+          "logging",
+          "metrics",
+          "database",
+          "core",
+          "retention",
+          "workers",
+        ].map((key) => (
           <Accordion.Item key={key} value={key}>
             <Accordion.Control>
               <Group justify="space-between" wrap="nowrap" pr="xs">
-                <Text size="sm" fw={600}>{SECTION_COPY[key].label}</Text>
-                <Text size="xs" c="dimmed" visibleFrom="sm">{SECTION_COPY[key].description}</Text>
+                <Text size="sm" fw={600}>
+                  {SECTION_COPY[key].label}
+                </Text>
+                <Text size="xs" c="dimmed" visibleFrom="sm">
+                  {SECTION_COPY[key].description}
+                </Text>
               </Group>
             </Accordion.Control>
             <Accordion.Panel>
               <Stack gap="xs">
-                <Text size="xs" c="dimmed" hiddenFrom="sm">{SECTION_COPY[key].description}</Text>
+                <Text size="xs" c="dimmed" hiddenFrom="sm">
+                  {SECTION_COPY[key].description}
+                </Text>
                 <SchemaForm
+                  scope={`replay/${key}`}
                   schema={properties[key]}
                   value={asRecord(config[key])}
                   onChange={(value) => update(key, value)}
@@ -253,12 +344,19 @@ function ReplayServiceEditor({
         <Accordion.Item value="keys">
           <Accordion.Control>
             <Group justify="space-between" wrap="nowrap" pr="xs">
-              <Text size="sm" fw={600}>API keys</Text>
-              <Text size="xs" c="dimmed" visibleFrom="sm">Named bearer tokens with least-privilege scopes.</Text>
+              <Text size="sm" fw={600}>
+                API keys
+              </Text>
+              <Text size="xs" c="dimmed" visibleFrom="sm">
+                Named bearer tokens with least-privilege scopes.
+              </Text>
             </Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <ReplayKeysEditor value={Array.isArray(config.keys) ? config.keys : []} onChange={(value) => update("keys", value)} />
+            <ReplayKeysEditor
+              value={Array.isArray(config.keys) ? config.keys : []}
+              onChange={(value) => update("keys", value)}
+            />
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
@@ -266,7 +364,13 @@ function ReplayServiceEditor({
   );
 }
 
-function ReplayKeysEditor({ value, onChange }: { value: unknown[]; onChange: (keys: unknown[]) => void }) {
+function ReplayKeysEditor({
+  value,
+  onChange,
+}: {
+  value: unknown[];
+  onChange: (keys: unknown[]) => void;
+}) {
   const rows = value.map(asRecord);
   const update = (index: number, patch: Record<string, unknown>) =>
     onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -278,32 +382,72 @@ function ReplayKeysEditor({ value, onChange }: { value: unknown[]; onChange: (ke
   };
   return (
     <Stack gap="md">
-      <Text size="xs" c="dimmed">Use separate capture, operator, and metrics credentials. Literal tokens must be at least 32 characters.</Text>
+      <Text size="xs" c="dimmed">
+        Use separate capture, operator, and metrics credentials. Literal tokens
+        must be at least 32 characters.
+      </Text>
       {rows.map((row, index) => {
-        const unknown = (Array.isArray(row.scopes) ? row.scopes.map(String) : []).filter((scope) => !SCOPES.includes(scope));
+        const unknown = (
+          Array.isArray(row.scopes) ? row.scopes.map(String) : []
+        ).filter((scope) => !SCOPES.includes(scope));
         const scopes = [...SCOPES, ...unknown];
         return (
-          <Stack key={`${String(row.name ?? "key")}-${index}`} gap="xs" data-testid={`replay-key-${index}`}>
+          <Stack
+            key={`${String(row.name ?? "key")}-${index}`}
+            gap="xs"
+            data-testid={`replay-key-${index}`}
+          >
             <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <Text fw={600} size="sm" ff="monospace">{String(row.name || `key_${index + 1}`)}</Text>
-              <ActionIcon aria-label={`Remove replay key ${index + 1}`} variant="subtle" color="red" onClick={() => onChange(rows.filter((_, i) => i !== index))}>
+              <Text fw={600} size="sm" ff="monospace">
+                {String(row.name || `key_${index + 1}`)}
+              </Text>
+              <ActionIcon
+                aria-label={`Remove replay key ${index + 1}`}
+                variant="subtle"
+                color="red"
+                onClick={() => onChange(rows.filter((_, i) => i !== index))}
+              >
                 <TbTrash aria-hidden size={16} />
               </ActionIcon>
             </Group>
             <Group grow align="flex-start">
-              <TextInput label="Name" value={String(row.name ?? "")} onChange={(event) => update(index, { name: event.currentTarget.value })} />
-              <PasswordInput label="Token" value={String(row.token ?? "")} onChange={(event) => update(index, { token: event.currentTarget.value })} />
+              <TextInput
+                label="Name"
+                value={String(row.name ?? "")}
+                onChange={(event) =>
+                  update(index, { name: event.currentTarget.value })
+                }
+              />
+              <PasswordInput
+                label="Token"
+                value={String(row.token ?? "")}
+                onChange={(event) =>
+                  update(index, { token: event.currentTarget.value })
+                }
+              />
             </Group>
-            <Checkbox.Group label="Scopes" value={Array.isArray(row.scopes) ? row.scopes.map(String) : []} onChange={(selected) => update(index, { scopes: selected })}>
+            <Checkbox.Group
+              label="Scopes"
+              value={Array.isArray(row.scopes) ? row.scopes.map(String) : []}
+              onChange={(selected) => update(index, { scopes: selected })}
+            >
               <Group mt={6} gap="md">
-                {scopes.map((scope) => <Checkbox key={scope} value={scope} label={scope} />)}
+                {scopes.map((scope) => (
+                  <Checkbox key={scope} value={scope} label={scope} />
+                ))}
               </Group>
             </Checkbox.Group>
             {index < rows.length - 1 && <Divider />}
           </Stack>
         );
       })}
-      <Button size="xs" variant="light" leftSection={<TbPlus aria-hidden size={14} />} onClick={add} style={{ alignSelf: "flex-start" }}>
+      <Button
+        size="xs"
+        variant="light"
+        leftSection={<TbPlus aria-hidden size={14} />}
+        onClick={add}
+        style={{ alignSelf: "flex-start" }}
+      >
         Add API key
       </Button>
     </Stack>
@@ -317,18 +461,40 @@ function replayAdvisories(
   if (!coreConfig || !replayConfig) return [];
   const out: string[] = [];
   const captureToken = String(coreConfig.capture_token ?? "");
-  const keys = Array.isArray(replayConfig.keys) ? replayConfig.keys.map(asRecord) : [];
-  if (captureToken && !keys.some((key) => Array.isArray(key.scopes) && key.scopes.map(String).includes("capture") && key.token === captureToken)) {
-    out.push("Core's capture token does not match a capture-scoped replay API key.");
+  const keys = Array.isArray(replayConfig.keys)
+    ? replayConfig.keys.map(asRecord)
+    : [];
+  if (
+    captureToken &&
+    !keys.some(
+      (key) =>
+        Array.isArray(key.scopes) &&
+        key.scopes.map(String).includes("capture") &&
+        key.token === captureToken,
+    )
+  ) {
+    out.push(
+      "Core's capture token does not match a capture-scoped replay API key.",
+    );
   }
   const coreControlToken = String(asRecord(coreConfig.control).token ?? "");
-  const replayControlToken = String(asRecord(replayConfig.core).control_token ?? "");
-  if (coreControlToken && replayControlToken && coreControlToken !== replayControlToken) {
-    out.push("Core's control token and replay.yaml's core control token do not match.");
+  const replayControlToken = String(
+    asRecord(replayConfig.core).control_token ?? "",
+  );
+  if (
+    coreControlToken &&
+    replayControlToken &&
+    coreControlToken !== replayControlToken
+  ) {
+    out.push(
+      "Core's control token and replay.yaml's core control token do not match.",
+    );
   }
   return out;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

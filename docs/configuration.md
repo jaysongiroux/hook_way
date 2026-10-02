@@ -21,7 +21,8 @@ config validation failed
 - `server.shutdown_timeout`: optional duration, default `10s`. Same non-positive restriction as `read_timeout`.
 - `server.publish_timeout`: optional duration, default `10s` (matches `write_timeout`/`shutdown_timeout`). Same non-positive restriction as `read_timeout`. Bounds the fan-out publish for a single webhook request; the publish runs detached from the inbound request's cancellation (a sender disconnect or timeout does not abort in-flight publishes) but is still bounded by this deadline so a stalled destination cannot hang a delivery indefinitely. Config validation rejects `publish_timeout` greater than `shutdown_timeout` (a slow synchronous publish could otherwise make a clean SIGTERM shutdown time out and report failure) or greater than `write_timeout` (a sync-mode response can't be written after `write_timeout` elapses, so the sender would see a spurious timeout and retry). Lower `publish_timeout` or raise the other value to resolve either error.
 - `server.max_body_bytes`: required positive integer.
-- `server.max_inflight_requests`: optional integer. Omitted or explicit `0` defaults to `256`, capping concurrently processed webhook requests; once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. Explicit `-1` disables the limit (unlimited in-flight requests). Any other negative value is rejected. Health, readiness, and metrics endpoints are never subject to this limit.
+- `server.max_inflight_requests`: optional integer. Omitted or explicit `0` defaults to `256`, capping concurrently processed webhook requests; by default, once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. Explicit `-1` disables the limit (unlimited in-flight requests). Any other negative value is rejected. Health, readiness, and metrics endpoints are never subject to this limit.
+- `server.max_pending_requests` and `server.admission_wait_timeout`: optional bounded waiting before an execution slot becomes available. Set both to positive values, for example `256` and `1s`; omitting both retains immediate overload rejection. Requires a finite `max_inflight_requests`. Waiting uses the existing HTTP handler goroutine and reads no body. Queue overflow or timeout returns `503` with `Retry-After`; cancellation or server close ends waiting without running the flow. The wait timeout must be shorter than read, write and shutdown timeouts. It uses part of the response budget, so leave room for subsequent processing and publishing. Observe `hookway_admission_waiting_requests`, `hookway_admission_wait_total{flow,result}` and `hookway_admission_wait_duration_seconds{flow,result}`; results are bounded to admitted, full, timeout, canceled and closing. This queue is volatile and sends success only after the configured flow completes.
 - `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for flows using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
 - `server.readiness_require_all`: optional boolean, default `false`. When false, `/ready` returns 200 with a per-flow body while at least one flow is ready. When true, `/ready` returns 503 if any flow is unready.
 
@@ -307,7 +308,7 @@ A connection defined but referenced by nothing is reported at severity `warning`
 
 Connections are resolved once, at load time, exactly like inline config. The merged result is an ordinary destination, so nothing about publishing, readiness, or retry behaviour changes.
 
-That means **rotating a destination credential still requires a restart.** `connections` changes *where* a secret lives, not *when* it is read. Only inbound auth supports live rotation, via [`auth.secret_ref`](#secret-references) and its background refresh and overlap window; there is no equivalent for destinations, because the backend clients (pgxpool, Kafka writers, Redis clients, AMQP connections) capture their credentials at construction.
+That means **rotating a destination credential still requires a restart.** `connections` changes *where* a secret lives, not *when* it is read. Inbound auth and [managed HTTP credentials](ingress-adapters.md#managed-outbound-credentials) support live rotation, via [`auth.secret_ref`](#secret-references) and its background refresh and overlap window; there is no equivalent for destinations, because the backend clients (pgxpool, Kafka writers, Redis clients, AMQP connections) capture their credentials at construction.
 
 Secrets in a connection are written the same way as anywhere else: `${ENV_VAR}` references, expanded at load. Note that expansion runs over the whole file as text *before* it is parsed, so a `${VAR}` written inside a comment still counts as a reference.
 
@@ -317,7 +318,7 @@ Consolidating credentials narrows the number of places to look, and widens what 
 
 ## Destinations
 
-`destinations` is a top-level map of backends keyed by stable id. Each entry may either configure its backend inline (every example under `examples/destinations/` does) or set `connection: <name>` to take its credentials from a [connection](#connections) and keep only its sink fields. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, Temporal task queue, or Lambda function name/ARN). Optional `create`, SNS/SQS `message_attributes`, and `payload` (`envelope` or `object`) are the only per-publish options. Blocks such as `queue_options`, `redis_options`, `kafka_options`, `temporal_options`, `fifo`, `sqs_options`, and `sns_options` are **not** fields on the `publish` node — unknown fields fail `hookway validate`. Use destination-level settings (for example `rabbitmq.queue_defaults`) or a dedicated destination per queue. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `lambda`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
+`destinations` is a top-level map of backends keyed by stable id. Each entry may either configure its backend inline (every example under `examples/destinations/` does) or set `connection: <name>` to take its credentials from a [connection](#connections) and keep only its sink fields. A flow `publish` node names one of these ids and a `target` (queue, topic, routing key, stream, collection, object prefix, Temporal task queue, or Lambda function name/ARN). Per-publish options include `create`, `message_attributes`, `payload`, and SQS/SNS-specific wire formats, grouping, FIFO identities, retries and resource attributes. See [Ingress adapters](ingress-adapters.md#sqs-and-sns-publication) for those contracts. Unknown fields such as `sqs_options`, `sns_options`, `queue_options` or `kafka_options` still fail validation. Supported types: `rabbitmq`, `sqs`, `sns`, `s3`, `lambda`, `redis_stream`, `redis_list`, `redis_pubsub`, `redis_kv`, `postgres`, `mongodb`, `kafka`, `webhook`, and `temporal`. See `examples/destinations/` for a complete reference config per type.
 
 ### RabbitMQ
 
@@ -412,7 +413,7 @@ SQS fields live under `destinations.<id>.sqs`. Credentials are optional: when bo
 - `destinations.<id>.sqs.endpoint`: optional endpoint override; set to `http://localhost:4566` to target LocalStack. Usually `${AWS_ENDPOINT}` (left empty in production).
 - `destinations.<id>.sqs.access_key_id` / `secret_access_key`: optional static credentials, usually `${AWS_ACCESS_KEY_ID}` / `${AWS_SECRET_ACCESS_KEY}`. Omit both to use the default credential chain.
 
-`sqs_options` and `fifo` are **not** fields on the `publish` node or on the destination. A `.fifo` suffix still makes create-time declaration set `FifoQueue=true`, but MessageGroupId is not sent, so AWS FIFO publishes fail. Use a standard (non-`.fifo`) queue from operator YAML until those options exist on `publish`.
+Standard and FIFO queues are supported. A `.fifo` target requires `publish.fifo` identities; standard queues may use `publish.group_id` for fair grouping and `publish.sqs.delay_seconds`. Use `publish.resource_attributes` for supported queue attributes. See [broker options](ingress-adapters.md#sqs-and-sns-publication) and [the FIFO example](../examples/destinations/fifo-sqs.yaml).
 
 ```yaml
 destinations:
@@ -437,7 +438,7 @@ SNS fields live under `destinations.<id>.sns` and mirror SQS (region, endpoint o
 - `destinations.<id>.sns.endpoint`: optional endpoint override (LocalStack).
 - `destinations.<id>.sns.access_key_id` / `secret_access_key`: optional static credentials; omit both for the default chain.
 
-`sns_options` and `fifo` are **not** fields on the `publish` node or on the destination. Same FIFO caveat as SQS: a `.fifo` suffix is not enough to publish. Use a standard topic from operator YAML.
+Standard and FIFO topics are supported. A `.fifo` target requires `publish.fifo`; `publish.sns` supplies an existing topic ARN, subject or protocol JSON structure as applicable. See [broker options](ingress-adapters.md#sqs-and-sns-publication).
 
 ### AWS Lambda
 
@@ -543,7 +544,7 @@ Postgres fields live under `destinations.<id>.postgres`. Hookway inserts each we
 |--------|------|-------|
 | `id` | `text` | Event id; PRIMARY KEY |
 | `target` | `text` | Per-route `target` value (not a table name) |
-| `idempotency_key` | `text` | Nullable; ingest leaves this empty. Dedupe on `id` |
+| `idempotency_key` | `text` | Nullable; ingest leaves this empty. Sender retries require a stable sender event ID for deduplication |
 | `source_ip` | `text` | Client IP (nullable) |
 | `method` | `text` | HTTP method |
 | `path` | `text` | Request path |
@@ -557,7 +558,7 @@ Two indexes are also created `IF NOT EXISTS`: one on `target` and one on `receiv
 
 **`target` as a column:** the publish `target` is stored in the `target` column rather than selecting a different table. Use it to distinguish event sources when multiple flows share the same destination.
 
-**Deduplication:** inserts use `INSERT ... ON CONFLICT (id) DO NOTHING`. At-least-once retries from a provider are safe — duplicate event ids are silently ignored.
+**Deduplication:** inserts use `INSERT ... ON CONFLICT (id) DO NOTHING`. Repeated delivery of the same Hookway envelope is ignored. Each new inbound request receives a new Hookway ID, so sender retries can insert another row. Deduplicate sender retries using a stable sender event ID in your application.
 
 **Pre-existing table caveat:** `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table. If the table already exists with an incompatible schema, inserts will fail at runtime. Hookway does not migrate columns — ensure the table matches the expected schema or drop and recreate it before starting.
 
@@ -783,7 +784,7 @@ See `examples/destinations/redis_stream.yaml` for a full annotated reference wit
 **Best practices for `redis_stream`:**
 
 - `redis_options.max_len` / `consumer_group` are not on the `publish` node, so streams are unbounded unless you trim from the consumer side, and Hookway does not create a consumer group at startup.
-- Delivery is at-least-once: a message appended via XADD is acknowledged to the webhook provider before the consumer confirms processing, so consumers must tolerate duplicates (deduplicate on envelope `id`).
+- Delivery is at-least-once: a message appended via XADD is acknowledged to the webhook provider before the consumer confirms processing. Consumers must tolerate duplicates: the envelope `id` identifies internal delivery retries and replay, while sender retries require a stable sender event ID.
 - Redis connectivity for a `redis_stream` destination is established lazily — verified at the `/ready` (`/readyz`) probe and on the first publish.
 
 ### Webhook
@@ -1001,6 +1002,8 @@ When `create: true` and the target does not exist, it is created with the config
 
 ## Flows
 
+Typed routing, registration, managed outbound credentials, bounded batches, ordered XML and flow response policies are documented in [Ingress adapters](ingress-adapters.md).
+
 A flow is the request pipeline. Trigger paths must not overlap another flow or the reserved health/readiness/metrics paths. Flow names are internal identifiers; the public HTTP path comes from the `http_trigger` node, not from the flow name.
 
 ```yaml
@@ -1194,7 +1197,7 @@ Node fields (every type):
 Flow fields:
 
 - `capture_failures`: optional, default `true`. Set `false` to never capture this flow's failures for the replay service (see [Replay](#replay)). It has no effect without the `replay:` block.
-- `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers still dedupe on envelope `id`.
+- `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial success under `skip_failed` releases the `replay_guard` reservation so a sender retry is accepted (I17); consumers must deduplicate sender retries using a stable sender event ID, because each new inbound request receives a new envelope `id`.
 - `nodes` / `edges`: required.
 
 ### Trigger, gates, and body
@@ -1207,6 +1210,8 @@ Flow fields:
 - `replay_guard`: process-local replay cache (`ttl`, `max_entries`, `key` template). N pods means N allowed replays (W5). The reservation is released on retryable publish failure so a broker outage does not become a permanent `409`.
 
 ### Auth
+
+The additional separate-header HMAC, multi-signature HMAC and P-256 ECDSA protocols are documented in [Request signatures](ingress-adapters.md#request-signatures).
 
 Each flow builds its verifier once at startup from the `auth` (or `no_auth`) node. An unknown scheme fails closed.
 
@@ -1306,7 +1311,7 @@ See `examples/filters.yaml`.
 ### XML bodies
 
 An `envelope` with `body_format: xml` parses the verified bytes into an element
-tree. The HMAC is always checked against the raw bytes first (I6), so a
+tree. Authentication is checked before this parse (I6), so a
 document is never parsed before it is trusted.
 
 What understands that tree:
@@ -1314,7 +1319,7 @@ What understands that tree:
 | Node | Behavior |
 | --- | --- |
 | `filter` | `source: body` paths address element local names below the root, `@name` for an attribute. A leaf compares as a string, so `gt`/`lt` work on numeric text. |
-| `code` | The script sees `{declaration, root}` with each element as `{name, ns, attr, attrns, text, children}`, and must return the same shape. |
+| `code` | The script sees `{declaration, root, before, after}`; elements include names/namespaces, legacy attribute/text views, ordered `attributes` and `content`, and `children`. Preserve that tagged tree; see [ordered XML editing](ingress-adapters.md#proxy-contracts-and-document-handling). |
 | `transform` | `kind: xml_prune` only. `field_map` and `changed_fields` are JSON-only and are rejected at validate time. |
 | `http_request` | `body: transformed` re-serializes the tree and sends `application/xml`. `body: raw` sends the original bytes. |
 | `publish` | Serializes the tree and base64-encodes it into the envelope's `raw_body_base64`, with `body: null`. |
@@ -1451,7 +1456,7 @@ is `queue.Message` in `internal/queue/publisher.go`.
 | Field | JSON type | Always present | Description |
 |---|---|---|---|
 | `schema_version` | string | yes | Envelope contract version, currently `"1.0"`. Additive changes keep the major; a removal or a change of meaning requires a new version. Gate your parser on this. |
-| `id` | string | yes | UUIDv7 event id, unique per delivery. **This is the dedup key.** Consumers dedupe on `id`. |
+| `id` | string | yes | UUIDv7 ID assigned per inbound request and retained by internal delivery retries and replay. A sender retry creates a new ID; deduplicate those with a stable sender event ID. |
 | `idempotency_key` | string | **no — omitted on ingest** | Present in the struct, but ingest never populates it, so it is omitted from every normally-published envelope. Do not build dedup on it. See [Idempotency](security.md#idempotency). |
 | `request_id` | string | when non-empty | The inbound `X-Request-ID` (or `security.request_id_header`) if the sender supplied one, else a generated UUID. Matches the `X-Request-ID` response header and the `request_id` log field. |
 | `trace_id` | string | when non-empty | 32-hex W3C trace id, taken from the inbound `traceparent` or `X-Trace-ID` when either is a valid trace id, else generated. |
@@ -1507,7 +1512,7 @@ three always-on headers above are already written by the time it runs.
 return { body: input.body, vars: { computed: String(input.body.id).toUpperCase() } };
 ```
 
-Input is a deep copy of `{body, vars, headers}`. Sensitive headers are redacted. The script cannot see `Verified`, raw request bytes, `Upstream`, or auth secrets. Return `{body, vars}`; omitted keys keep the previous envelope values.
+Input is an isolated view of `{body, vars, headers, request}`. `request` contains method, path and redacted query values. Sensitive headers are redacted. Optional `upstream` contains only status, explicitly selected scalar values and a selection error; raw upstream bodies, raw request bytes, `Verified` and resolved auth secrets are unavailable. Return `{body, vars}`; omitted keys keep the previous envelope values.
 
 An XML body (from `body_format: xml`) arrives as a tagged node tree — `{declaration, root}`, where each element is `{name, ns, attr, attrns, text, children}` — and the script must return the same shape, which keeps the body an XML document for a downstream `xml_prune` or a `body: transformed` forward. The shape is deliberately explicit rather than a convenience mapping of element names to values: a convenience mapping cannot represent attributes, repeated siblings, or mixed content, so a script that read and returned such a body would silently drop parts of the document. `attr` is keyed by local name so a script need not know the vendor's namespace prefix; `attrns` carries the namespace URI of any attribute that has one, keyed by the same local name, so a read-and-return script round-trips namespaces without having to think about them.
 
@@ -1526,6 +1531,7 @@ The interrupt is checked between JavaScript statements. A pathological regex may
 Hookway emits structured `slog` JSON logs. Each log record carries a consistent set of field keys so log queries and alerts are stable across destinations.
 
 - `logging.level`: optional, one of `debug`, `info`, `warn`, `error`; default `info`. Controls the minimum severity written to stdout — e.g. set `debug` to see the startup verify/exists checks and retry-attempt lines called out below, which are otherwise suppressed at the default `info` level. `HOOKWAY_LOG_LEVEL` overrides this at process start (env > `logging.level` > info). An invalid env or config value fails startup.
+- Flow admission refusals use bounded error summaries instead of a request log for every 503. Each configured flow permits at most one summary write in flight and one summary per second; other refused handlers do not wait for that writer. `rejected_requests` counts refusals accumulated since the preceding summary. The final unsummarized interval remains visible in HTTP/admission metrics, which count every request. Publication failures and recovery records retain their existing logging behavior.
 - `logging.header_allowlist`: optional list of HTTP header names that may appear in structured request logs. **Empty (the default) logs no request headers** (fail-closed). Allowed names are still redacted by the built-in sensitive-header heuristics and `security.redacted_header_denylist`. Proxy forwarding uses `security.forwarded_header_allowlist` and is independent of this list.
 
 `hookway_config_load_failures_total` still increments on a failed load, but **fatal pre-listener failures are primarily visible via structured logs and a supervisor restart**. The process usually exits before Prometheus can scrape that counter.

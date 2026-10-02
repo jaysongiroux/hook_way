@@ -7,7 +7,7 @@ import "github.com/jaysongiroux/hook_way/internal/cli"
 // listing the same commands and flags.
 var program = cli.Program{
 	Name:    "hookway",
-	Summary: "receive, verify, and route webhooks",
+	Summary: "run the webhook ingress server and inspect flow configurations",
 	Default: "serve",
 	Commands: []cli.Command{
 		{
@@ -103,7 +103,16 @@ container image runs it as its HEALTHCHECK. /healthz is liveness only; use
 			Help:    `Prints "hookway <version> (<commit>)". A plain go build reports "dev (none)".`,
 		},
 	},
-	Footer: `Environment:
+	Footer: `Start here:
+  hookway validate --config examples/config.yaml
+  hookway serve --config examples/config.yaml
+
+Deploy this binary to receive requests and execute configured flows. Routing,
+authentication, transforms, proxies and broker publication run inside it.
+Use validate, schema and editor while preparing the config; healthcheck is
+for container probes. Queue consumers are separate from Hookway.
+
+Environment:
   HOOKWAY_CONFIG     the config file when --config is not given
   HOOKWAY_LOG_LEVEL  overrides logging.level at start: debug, info, warn, error
 

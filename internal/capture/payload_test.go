@@ -14,6 +14,7 @@ import (
 func TestRenderPayloadIsTheEnvelopeForEveryDestinationType(t *testing.T) {
 	msg := richMessage()
 	msg.PayloadMode = "envelope"
+	msg.Publish = nil
 	want, err := json.Marshal(msg)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestRenderPayloadProxyWebhookIsTheOriginalBody(t *testing.T) {
 }
 
 func TestRenderInputBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte("<a><b>1</b></a>"))
+	doc, err := transform.ParseXMLWithLimits([]byte("<a><b>1</b></a>"), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,5 +93,15 @@ func TestRenderInputBody(t *testing.T) {
 				t.Fatalf("RenderInputBody = %q (%s), want %q (%s)", p.Bytes, p.ContentType, c.body, c.ctype)
 			}
 		})
+	}
+}
+
+func TestRenderBrokerPayloadUsesFrozenBytes(t *testing.T) {
+	msg := richMessage()
+	for _, typ := range []string{"sqs", "sns"} {
+		p, err := RenderPayload(config.DestinationConfig{Type: typ}, msg)
+		if err != nil || !bytes.Equal(p.Bytes, msg.Publish.Body) {
+			t.Fatalf("%s rendered body = %q, %v", typ, p.Bytes, err)
+		}
 	}
 }

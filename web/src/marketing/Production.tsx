@@ -1,14 +1,15 @@
-import { Stack, Text } from "@mantine/core";
+import { Anchor, Stack, Text } from "@mantine/core";
 import { Bento, Tile } from "./Bento";
-import { PRODUCTION_CARDS } from "./productionCopy";
+import { PERFORMANCE_SUMMARY, PRODUCTION_CARDS } from "./productionCopy";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
+import { repoBlob } from "./links";
 
 export function Production() {
   return (
     <Section
-      title="Operational controls ship with the binary"
-      lead="In-flight limits and publish retries apply by default; Prometheus metrics ship in the binary but must be enabled in config."
+      title="Control load, monitor delivery, and recover failures"
+      lead="Limit active requests, retry supported deliveries, and enable Prometheus metrics to see how your flows are performing. Add the optional replay service when you need to retry missed deliveries."
       background={DARK.recessed}
     >
       <Bento>
@@ -31,6 +32,13 @@ export function Production() {
           </Tile>
         ))}
       </Bento>
+      <Text size="sm" c={DARK.muted} mt="xl">
+        {PERFORMANCE_SUMMARY}{" "}
+        <Anchor href={repoBlob("docs/performance.md")} target="_blank" rel="noopener noreferrer">
+          Results and methodology
+        </Anchor>
+        .
+      </Text>
     </Section>
   );
 }

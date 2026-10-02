@@ -16,6 +16,7 @@ import (
 // part count and per-part size hiding behind one Content-Length, so both are
 // enforced while streaming rather than measured after buffering.
 type multipartLimits struct {
+	MaxTotalBytes  int64
 	MaxParts       int
 	MaxPartBytes   int64
 	IncludeContent bool
@@ -74,6 +75,7 @@ func parseMultipart(contentType string, body []byte, lim multipartLimits) (map[s
 	reader := multipart.NewReader(bytes.NewReader(body), boundary)
 	seen := map[string]int{}
 	count := 0
+	var total int64
 	for {
 		part, err := reader.NextPart()
 		if errors.Is(err, io.EOF) {
@@ -105,6 +107,10 @@ func parseMultipart(contentType string, body []byte, lim multipartLimits) (map[s
 			return nil, http.StatusRequestEntityTooLarge, fmt.Errorf("multipart part %q exceeds max_part_bytes (%d)", name, lim.MaxPartBytes)
 		}
 
+		total += int64(len(content))
+		if lim.MaxTotalBytes > 0 && total > lim.MaxTotalBytes {
+			return nil, http.StatusRequestEntityTooLarge, fmt.Errorf("multipart body exceeds max_total_bytes (%d)", lim.MaxTotalBytes)
+		}
 		if filename == "" {
 			// A part with no filename is a form field. A repeated field name
 			// keeps the last value, matching net/http's own form semantics.

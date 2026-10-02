@@ -148,7 +148,8 @@ func TestHTTPRequestIsolatesEgressConnectionPools(t *testing.T) {
 	env := retryEnvelope("{}")
 	env.Vars["tenant"] = "tenant"
 	_, err := templated.Run(context.Background(), env)
-	if err == nil || !strings.Contains(err.Error(), "not an allowed egress target") {
+	var transportErr *url.Error
+	if !errors.As(err, &transportErr) || !strings.Contains(transportErr.Err.Error(), "not an allowed egress target") {
 		t.Fatalf("guarded Run() = %v, want private-address rejection", err)
 	}
 	if guardedDials.Load() != 1 || calls.Load() != 2 {

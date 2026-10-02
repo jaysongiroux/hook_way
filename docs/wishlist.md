@@ -7,3 +7,4 @@ Remaining:
 - Split admin API keys
 - allow for multi-file yml support -> split server out to server.yml
 - Terminal devs can run to receive webhooks without having to configure a local env to connect to a queue (or any other destination). Terminal command can be configured how it forwards the request (like a POST request)
+- JSON serialization node

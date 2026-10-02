@@ -1,0 +1,24 @@
+# Validate identity independently before filtering unsupported event types.
+# A finite drop_reason appears in metrics/logs; dropped events never publish.
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations: {broker: {type: sqs, sqs: {region: us-east-1}}}
+flows:
+  sample:
+    responses:
+      dropped: {status: 200, body: '{"message":"Ignored"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/filter/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_INGRESS_TOKEN}, signature_header: X-Api-Key}
+      - {id: env, type: envelope}
+      - id: identity
+        type: transform
+        kind: json_schema
+        json_schema: {type: object, required: [event_id, event_type], properties: {event_id: {type: string, minLength: 1}, event_type: {type: string}}}
+      - id: supported
+        type: filter
+        conditions: [{source: body, path: event_type, operator: regex, value: "^(created|updated)$"}]
+        on_no_match: drop
+        drop_reason: dropped_unused_event_type
+      - {id: send, type: publish, destination: broker, target: synthetic-events, wire_body: json}
+    edges: [in>body, body>auth, auth>env, env>identity, identity>supported, supported>send]

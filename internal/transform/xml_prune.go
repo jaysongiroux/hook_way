@@ -118,6 +118,7 @@ func removeEmptySelfClosing(el *Element) {
 		kept = append(kept, c)
 	}
 	el.Children = kept
+	el.syncContent()
 }
 
 func removeEmptyParents(el *Element) {
@@ -133,6 +134,7 @@ func removeEmptyParents(el *Element) {
 		kept = append(kept, c)
 	}
 	el.Children = kept
+	el.syncContent()
 }
 
 func removeMatching(el *Element, drop func(*Element) bool) {
@@ -148,6 +150,7 @@ func removeMatching(el *Element, drop func(*Element) bool) {
 		kept = append(kept, c)
 	}
 	el.Children = kept
+	el.syncContent()
 }
 
 // isHardcodedOnlyParty is the contract for rule 3:

@@ -331,14 +331,25 @@ func (p *orderedPublisher) targets() []string {
 func (p *orderedPublisher) Ready(context.Context) error { return nil }
 func (p *orderedPublisher) Close() error                { return nil }
 
-// TestI11_UnknownAuthSchemeFailsClosed asserts every request is rejected.
+// TestI11_UnknownAuthSchemeFailsClosed requires rejection before serving.
 func TestI11_UnknownAuthSchemeFailsClosed(t *testing.T) {
 	src := strings.Replace(gatedYAML(), "scheme: hmac_sha256_hex", "scheme: not_a_real_scheme", 1)
-	srv := newServer(t, src, nil)
-	body := []byte(`{"ok":true}`)
-	rec := post(srv, signedRequest(http.MethodPost, "/webhooks/github", body))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("unknown scheme = %d, want 401 (fail closed, never 202)", rec.Code)
+	cfg, issues := flowconfig.LoadBytes([]byte(src), "test", false)
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue.Message, "unknown signature scheme") && issue.Severity != "warning" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("unknown scheme passed validation")
+	}
+	srv, err := httpapi.NewFlowServer(cfg, &testPublisher{}, slog.Default(), nil)
+	if srv != nil {
+		_ = srv.Close()
+	}
+	if !errors.Is(err, flowconfig.ErrAuthConfiguration) {
+		t.Fatalf("unknown scheme passed startup: %v", err)
 	}
 }
 

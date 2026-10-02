@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,14 +21,18 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/jaysongiroux/hook_way/internal/auth"
 	"github.com/jaysongiroux/hook_way/internal/capture"
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/outboundcred"
 	"github.com/jaysongiroux/hook_way/internal/publishmsg"
 	"github.com/jaysongiroux/hook_way/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/routing"
+	"github.com/jaysongiroux/hook_way/internal/routingstore"
 	"github.com/jaysongiroux/hook_way/internal/secretref"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
@@ -39,7 +45,8 @@ type FlowServer struct {
 	logger         *slog.Logger
 	metrics        *metrics.Metrics
 	trustedProxies []*net.IPNet
-	inflight       chan struct{}
+	gate           *requestGate
+	admission      *metrics.Admission
 	literalPaths   map[string]string
 	patternPaths   []flowPattern
 	flows          map[string]mountedFlow
@@ -73,6 +80,9 @@ type flowPattern struct {
 }
 
 type mountedFlow struct {
+	overload   *overloadLog
+	responses  map[string]graph.ResponsePolicy
+	nodeTypes  map[string]string
 	name       string
 	methods    map[string]struct{}
 	allow      string
@@ -122,6 +132,12 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	if issues := flowconfig.RoutingIssues(cfg); len(issues) > 0 {
 		return nil, fmt.Errorf("invalid flow routing: %s", issues[0].Message)
 	}
+	if issues := flowconfig.RoutingConfigurationIssues(cfg); len(issues) > 0 {
+		return nil, fmt.Errorf("invalid routing configuration: %s", issues[0].Message)
+	}
+	if issues := flowconfig.CredentialConfigurationIssues(cfg); len(issues) > 0 {
+		return nil, fmt.Errorf("invalid credentials: %s", issues[0].Message)
+	}
 	headers, queries := flowconfig.AuthenticationRedactions(cfg)
 	cfg.Security.RedactedHeaderDenylist = append(append([]string(nil), cfg.Security.RedactedHeaderDenylist...), headers...)
 	extra.QueryDenylist = queries
@@ -139,9 +155,58 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			_ = c.Close()
 		}
 	}
-	if extra.Secrets == nil {
-		extra.Secrets = func(o flowconfig.SecretRefOptions) (flowconfig.SecretsFunc, error) {
-			fn, closer, err := bindSecretRef(o, logger, m)
+	extra.Credentials = maps.Clone(extra.Credentials)
+	if extra.Credentials == nil {
+		extra.Credentials = map[string]flowconfig.CredentialProvider{}
+	}
+	credentialNames := make([]string, 0, len(cfg.Credentials))
+	for name := range cfg.Credentials {
+		credentialNames = append(credentialNames, name)
+	}
+	sort.Strings(credentialNames)
+	for _, name := range credentialNames {
+		if extra.Credentials[name] != nil {
+			continue
+		}
+		provider, err := outboundcred.New(name, cfg.Credentials[name], logger, m.Credential)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("credential profile %q: %w", name, err)
+		}
+		extra.Credentials[name] = provider
+		closers = append(closers, provider)
+	}
+	if extra.RoutingRegistry == nil {
+		extra.RoutingRegistry, _ = routing.NewRegistry(cfg.Routing)
+	}
+	extra.RoutingStores = maps.Clone(extra.RoutingStores)
+	if extra.RoutingStores == nil {
+		extra.RoutingStores = map[string]routing.Reader{}
+	}
+	for _, name := range sortedRoutingStores(cfg.Routing.Stores) {
+		if extra.RoutingStores[name] != nil {
+			continue
+		}
+		store, err := routingstore.NewWithAdmissionBudget(context.Background(), cfg.Routing.Stores[name], cfg.Server.MaxInflightRequests)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("routing store %q: %w", name, err)
+		}
+		closers = append(closers, store)
+		extra.RoutingStores[name] = store
+	}
+	if extra.BatchObservation == nil {
+		extra.BatchObservation = func(node, result string) { m.Batch(node, result) }
+	}
+	if extra.RoutingObservation == nil {
+		extra.RoutingObservation = func(node, result string) { m.Routing(node, result) }
+	}
+	if extra.Secrets == nil && extra.AuthSecrets == nil {
+		extra.AuthSecrets = func(o flowconfig.AuthOptions) (flowconfig.SecretsFunc, error) {
+			validate := func(value []byte) error {
+				return flowconfig.ValidateAuthKey(o, value)
+			}
+			fn, closer, err := bindSecretRef(*o.SecretRef, logger, m, validate)
 			if err != nil {
 				return nil, err
 			}
@@ -179,6 +244,10 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		closerStart := len(closers)
 		compiled, compileErr := graph.Compile(name, fc, reg)
 		if compileErr != nil {
+			if errors.Is(compileErr, flowconfig.ErrAuthConfiguration) || errors.Is(compileErr, flowconfig.ErrRoutingConfiguration) || errors.Is(compileErr, flowconfig.ErrCredentialConfiguration) {
+				closeAll()
+				return nil, fmt.Errorf("flow %q: %w", name, compileErr)
+			}
 			for _, closer := range closers[closerStart:] {
 				_ = closer.Close()
 			}
@@ -189,7 +258,13 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		if flowHasNoAuth(fc) {
 			logger.Warn("flow uses no_auth; requests are accepted without verification", "flow", name)
 		}
+		nodeTypes := map[string]string{}
+		for _, node := range flowconfig.ExpandedNodes(fc) {
+			nodeTypes[node.ID] = node.Type
+		}
 		s.flows[name] = mountedFlow{
+			overload:  &overloadLog{},
+			responses: fc.Responses, nodeTypes: nodeTypes,
 			name: name, methods: methodSet(methods), allow: strings.Join(methods, ", "),
 			flow: compiled, destByNode: destByNode, destIDs: uniqueDestIDs(destByNode),
 			broken: compileErr != nil || compiled == nil,
@@ -211,18 +286,17 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	// header early would drop every resolver.
 	s.closers = closers
 	s.trustedProxies = parseCIDRs(cfg.Security.TrustedProxies)
-	if cfg.Server.MaxInflightRequests > 0 {
-		s.inflight = make(chan struct{}, cfg.Server.MaxInflightRequests)
-	}
+	s.gate = newRequestGate(cfg.Server.MaxInflightRequests, cfg.Server.MaxPendingRequests, cfg.Server.AdmissionWaitTimeout)
 	s.metrics.RegisterConfig(processCfg)
 	s.readiness = newReadinessProber(pub, m, logger, cfg.Server.ReadinessInterval, cfg.Server.ReadinessTimeout)
 	s.routes()
+	s.admission = m.NewAdmission(cfg.Server.MaxInflightRequests)
 	return s, nil
 }
 
 func triggerRouting(fc graph.FlowConfig) (path string, methods []string, destByNode map[string]string, err error) {
 	destByNode = map[string]string{}
-	for _, nc := range fc.Nodes {
+	for _, nc := range flowconfig.ExpandedNodes(fc) {
 		switch nc.Type {
 		case "http_trigger":
 			opts, decErr := flowconfig.TriggerOptions(nc)
@@ -263,7 +337,7 @@ func uniqueDestIDs(destByNode map[string]string) []string {
 }
 
 func flowHasNoAuth(fc graph.FlowConfig) bool {
-	for _, nc := range fc.Nodes {
+	for _, nc := range flowconfig.ExpandedNodes(fc) {
 		if nc.Type == "no_auth" {
 			return true
 		}
@@ -338,6 +412,8 @@ func (s *FlowServer) StartReadinessProbe(ctx context.Context) <-chan struct{} {
 // than once, including concurrent calls.
 func (s *FlowServer) Close() error {
 	s.closeOnce.Do(func() {
+		s.gate.close()
+		s.admission.Close()
 		var errs []error
 		for _, c := range s.closers {
 			errs = append(errs, c.Close())
@@ -363,10 +439,20 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	status := http.StatusInternalServerError
 	flowLabel := ""
+	executionOutcome := "error"
+	var overload *overloadLog
 	defer func() {
 		s.metrics.HTTP(flowLabel, "", "", status)
 		if flowLabel != "" {
+			s.metrics.FlowOutcome(flowLabel, executionOutcome)
+			if overload == nil {
+				s.logger.Info("flow completed", "flow", flowLabel, "outcome", executionOutcome, "status", status, "request_id", requestIDFromContext(r.Context()), "trace_id", traceIDFromContext(r.Context()))
+			}
 			s.metrics.RequestDuration(flowLabel, "", "", status, time.Since(start))
+		}
+		if overload != nil {
+			overload.record(s.logger, flowLabel)
+			return
 		}
 		hooklogging.Request(s.logger, hooklogging.RequestAttrs{
 			Method: r.Method, Path: r.URL.Path, Endpoint: flowLabel,
@@ -408,18 +494,35 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, r, status, map[string]string{"error": "bad request"})
 		return
 	}
-	if s.inflight != nil {
-		select {
-		case s.inflight <- struct{}{}:
-			defer func() { <-s.inflight }()
-		default:
-			status = http.StatusServiceUnavailable
-			w.Header().Set("Retry-After", "1")
-			s.metrics.Saturated(mf.name, "", "")
-			s.writeJSON(w, r, status, map[string]string{"error": "server busy"})
-			return
-		}
+	waitStart := time.Now()
+	queued := false
+	result := s.gate.acquire(r.Context(), func() { queued = true; s.metrics.AdmissionWaiting(1) })
+	if queued {
+		s.metrics.AdmissionWaiting(-1)
+		s.metrics.AdmissionWait(mf.name, string(result), time.Since(waitStart))
+	} else if result == gateFull && s.cfg.Server.MaxPendingRequests > 0 {
+		s.metrics.AdmissionWait(mf.name, string(result), 0)
 	}
+	if result != gateAdmitted {
+		overload = mf.overload
+		status = http.StatusServiceUnavailable
+		w.Header().Set("Retry-After", "1")
+		if result == gateFull || result == gateTimeout {
+			s.metrics.Saturated(mf.name, "", "")
+		}
+		s.writeJSON(w, r, status, map[string]string{"error": "server busy"})
+		return
+	}
+	defer s.gate.release()
+
+	if !s.admission.Enter() {
+		overload = mf.overload
+		status = http.StatusServiceUnavailable
+		w.Header().Set("Retry-After", "1")
+		s.writeJSON(w, r, status, map[string]string{"error": "server closing"})
+		return
+	}
+	defer s.admission.Leave()
 
 	sourceIP := s.helpers().sourceIP(r)
 	head := flowconfig.HeadFromRequest(r, pathVars, sourceIP)
@@ -445,11 +548,16 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 
 	ctx := flowconfig.WithBodyReader(r.Context(), r.Body)
 	ctx = context.WithValue(ctx, captureRequestKey{}, creq)
+	var dropped atomic.Bool
+	var publishFailed atomic.Bool
 	opts := graph.RunOptions{
 		PublishTimeout:    s.cfg.Server.PublishTimeout,
 		FanoutConcurrency: s.cfg.Server.FanoutConcurrencyLimit(),
 		OnNode: func(ev graph.NodeEvent) {
 			outcome := "ok"
+			if ev.Dropped {
+				outcome = "dropped"
+			}
 			if ev.Err != nil {
 				outcome = "error"
 				var panicErr graph.PanicError
@@ -462,6 +570,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			if ev.NodeType == "publish" {
 				publishOutcome := "success"
 				if ev.Err != nil {
+					publishFailed.Store(true)
 					publishOutcome = "error"
 				}
 				s.metrics.Publish(mf.name, mf.destByNode[ev.NodeID], ev.Target, publishOutcome, ev.Duration)
@@ -470,7 +579,12 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if ev.Dropped {
-				s.metrics.Filtered(mf.name, "", "", "flow")
+				dropped.Store(true)
+				level := "flow"
+				if ev.DropReason != "" {
+					level = ev.DropReason
+				}
+				s.metrics.Filtered(mf.name, "", "", level)
 			}
 			started := time.Now().Add(-ev.Duration)
 			_, span := nodeTracer.Start(r.Context(), "hookway.node."+ev.NodeType,
@@ -486,6 +600,9 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			attrs := []any{"flow", mf.name, "node_id", ev.NodeID, "node_type", ev.NodeType,
 				"duration_ms", ev.Duration.Milliseconds(),
 				"request_id", head.RequestID, "trace_id", head.TraceID, "event_id", head.EventID}
+			if ev.DropReason != "" {
+				attrs = append(attrs, "drop_reason", ev.DropReason)
+			}
 			if ev.Err != nil {
 				span.RecordError(ev.Err)
 				span.SetStatus(codes.Error, ev.Err.Error())
@@ -511,6 +628,23 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	published, failed := deliveryMaps(mf, term)
+	executionOutcome = flowOutcome(mf, term, runErr, dropped.Load(), publishFailed.Load())
+	if runErr != nil {
+		s.recordFlowError(mf, statusFromNodeError(runErr), runErr)
+	}
+	if policy, configured := mf.responses[executionOutcome]; configured && (runErr != nil || term.Response == nil) {
+		status = policy.Status
+		for name, value := range policy.Headers {
+			w.Header().Set(name, value)
+		}
+		w.WriteHeader(status)
+		if r.Method != http.MethodHead && policy.Body != "" {
+			if _, err := io.WriteString(w, policy.Body); err != nil {
+				s.logger.Error("response write failed", "request_id", head.RequestID, "error", err)
+			}
+		}
+		return
+	}
 	if runErr != nil {
 		status = statusFromNodeError(runErr)
 		if status == http.StatusServiceUnavailable {
@@ -528,7 +662,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(status)
-		if status != http.StatusNoContent && status != http.StatusNotModified && len(term.Response.Body) > 0 {
+		if r.Method != http.MethodHead && status != http.StatusNoContent && status != http.StatusNotModified && len(term.Response.Body) > 0 {
 			if _, err := w.Write(term.Response.Body); err != nil {
 				s.logger.Error("response write failed", "error", err,
 					"request_id", requestIDFromContext(r.Context()),
@@ -555,21 +689,16 @@ func (s *FlowServer) writeJSON(w http.ResponseWriter, r *http.Request, status in
 func (s *FlowServer) writeFlowError(w http.ResponseWriter, r *http.Request, mf mountedFlow, status int, err error) {
 	switch status {
 	case http.StatusUnauthorized:
-		s.metrics.AuthFailure(mf.name, "invalid_signature")
 		s.writeJSON(w, r, status, map[string]string{"error": "unauthorized"})
 	case http.StatusForbidden:
-		s.metrics.Forbidden(mf.name, "", "")
 		s.writeJSON(w, r, status, map[string]string{"error": "forbidden"})
 	case http.StatusConflict:
-		s.metrics.DuplicateRejected(mf.name, "", "")
 		s.writeJSON(w, r, status, map[string]string{"error": "replay detected"})
 	case http.StatusRequestEntityTooLarge:
 		s.writeJSON(w, r, status, map[string]string{"error": "payload too large"})
 	case http.StatusUnprocessableEntity:
-		s.metrics.Filtered(mf.name, "", "", "endpoint")
 		s.writeJSON(w, r, status, map[string]string{"error": "filtered"})
 	case http.StatusTooManyRequests:
-		s.metrics.RateLimited(mf.name, "", "")
 		s.writeJSON(w, r, status, map[string]string{"error": "rate limited"})
 	case http.StatusServiceUnavailable:
 		s.writeJSON(w, r, status, map[string]string{"error": "service unavailable"})
@@ -579,7 +708,6 @@ func (s *FlowServer) writeFlowError(w http.ResponseWriter, r *http.Request, mf m
 		s.writeJSON(w, r, status, map[string]string{"error": "upstream error"})
 	case http.StatusBadRequest:
 		if strings.Contains(err.Error(), "loop detected") {
-			s.metrics.LoopRejected(mf.name, "", "")
 			s.writeJSON(w, r, status, map[string]string{"error": "loop detected"})
 			return
 		}
@@ -620,8 +748,11 @@ func deliveryMaps(mf mountedFlow, term graph.Terminal) (published, failed []map[
 // bindSecretRef builds a secret resolver and returns both its lookup function
 // and its closer. The closer must be retained: the resolver runs a refresh
 // ticker goroutine that otherwise outlives the server.
-func bindSecretRef(o flowconfig.SecretRefOptions, logger *slog.Logger, m *metrics.Metrics) (flowconfig.SecretsFunc, io.Closer, error) {
-	ref := secretref.Ref{Provider: o.Provider, Name: o.Name}
+func bindSecretRef(o flowconfig.SecretRefOptions, logger *slog.Logger, m *metrics.Metrics, validators ...func([]byte) error) (flowconfig.SecretsFunc, io.Closer, error) {
+	ref := secretref.Ref{Provider: o.Provider, Name: o.Name, JSONField: o.JSONField, Selection: o.Selection}
+	if len(validators) > 0 {
+		ref.Validate = validators[0]
+	}
 	if o.Refresh != "" {
 		d, err := time.ParseDuration(o.Refresh)
 		if err != nil {
@@ -708,4 +839,39 @@ func destError(dest map[string]error, id string) error {
 		return err
 	}
 	return errNotProbed
+}
+
+// Record gate failures using their execution status before response policies
+// can map them to compatibility acknowledgements.
+func (s *FlowServer) recordFlowError(mf mountedFlow, status int, err error) {
+	var ne graph.NodeError
+	if errors.As(err, &ne) && ne.Reason == "auth_unavailable" {
+		s.metrics.AuthFailure(mf.name, "key_unavailable")
+		return
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		s.metrics.AuthFailure(mf.name, auth.FailureReason(err))
+	case http.StatusForbidden:
+		s.metrics.Forbidden(mf.name, "", "")
+	case http.StatusConflict:
+		s.metrics.DuplicateRejected(mf.name, "", "")
+	case http.StatusUnprocessableEntity:
+		s.metrics.Filtered(mf.name, "", "", "endpoint")
+	case http.StatusTooManyRequests:
+		s.metrics.RateLimited(mf.name, "", "")
+	case http.StatusBadRequest:
+		if strings.Contains(err.Error(), "loop detected") {
+			s.metrics.LoopRejected(mf.name, "", "")
+		}
+	}
+}
+
+func sortedRoutingStores(stores map[string]routing.StoreConfig) []string {
+	names := make([]string, 0, len(stores))
+	for name := range stores {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

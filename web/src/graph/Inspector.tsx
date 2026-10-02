@@ -1,9 +1,20 @@
 import { useEffect, useState } from "react";
-import { Button, Group, Select, Stack, Text, Textarea, TextInput } from "@mantine/core";
+import {
+  Button,
+  Group,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+} from "@mantine/core";
 import { useGraphStore } from "./store";
-import { NODE_SCHEMAS, DEST_TYPES, nodeLabel } from "./nodeSchema";
-import { nodeFieldHelp, nodeHelp } from "./help";
-import { SchemaForm } from "./SchemaForm";
+import { NODE_SCHEMAS, nodeLabel } from "./nodeSchema";
+import { nodeHelp, portLabel } from "./help";
+import { FlowResponseEditor } from "./FlowResponseEditor";
+import { NodeReadiness } from "./NodeReadiness";
+import { NodeOptionsForm } from "./NodeOptionsForm";
+import { nodeScope } from "./formDrafts";
 import { Sections, type SectionSpec } from "./InspectorSections";
 import { yamlIdOf } from "./model";
 
@@ -12,20 +23,33 @@ export function Inspector() {
   const node = useGraphStore((s) => s.nodes.find((n) => n.id === s.selectedId));
   const updateNodeData = useGraphStore((s) => s.updateNodeData);
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
-  const edge = useGraphStore((s) => s.edges.find((e) => e.id === s.selectedEdgeId));
+  const edge = useGraphStore((s) =>
+    s.edges.find((e) => e.id === s.selectedEdgeId),
+  );
   const nodes = useGraphStore((s) => s.nodes);
-  const destinations = useGraphStore((s) => s.destinations);
+  const activeFlow = useGraphStore((s) => s.activeFlow);
   const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
-  const setDeliveryFailurePolicy = useGraphStore((s) => s.setDeliveryFailurePolicy);
+  const setDeliveryFailurePolicy = useGraphStore(
+    (s) => s.setDeliveryFailurePolicy,
+  );
   const setSelected = useGraphStore((s) => s.setSelected);
 
   if (selectedEdgeId && edge) {
     const from = nodes.find((n) => n.id === edge.source);
     const to = nodes.find((n) => n.id === edge.target);
-    const port = edge.sourceHandle && edge.sourceHandle !== "out" ? `:${edge.sourceHandle}` : "";
+    const port =
+      edge.sourceHandle && edge.sourceHandle !== "out"
+        ? `:${edge.sourceHandle}`
+        : "";
     return (
       <Stack gap="sm" data-testid="inspector">
-        <Text fw={600} size="xs" tt="uppercase" c="dimmed" style={{ letterSpacing: "0.08em" }}>
+        <Text
+          fw={600}
+          size="xs"
+          tt="uppercase"
+          c="dimmed"
+          style={{ letterSpacing: "0.08em" }}
+        >
           Edge
         </Text>
         <Text fw={600} size="sm" ff="monospace">
@@ -33,7 +57,8 @@ export function Inspector() {
           {port}&gt;{to ? yamlIdOf(to) : "?"}
         </Text>
         <Text size="xs" c="dimmed">
-          Wiring is typed. Drag a new connection to change it.
+          Nodes connect only when their input and output types match. Drag a new
+          connection to change this path.
         </Text>
       </Stack>
     );
@@ -42,16 +67,23 @@ export function Inspector() {
   if (!selectedId || !node) {
     return (
       <Stack gap="sm" data-testid="inspector">
-        <Text fw={600} size="xs" tt="uppercase" c="dimmed" style={{ letterSpacing: "0.08em" }}>
+        <Text
+          fw={600}
+          size="xs"
+          tt="uppercase"
+          c="dimmed"
+          style={{ letterSpacing: "0.08em" }}
+        >
           Flow
         </Text>
         <Text size="sm" c="dimmed">
-          Click a node to edit it. These settings apply to the whole flow.
+          Double-click a node to configure it. These settings apply to the whole
+          flow.
         </Text>
         <FlowNameField />
         <Select
           label="Delivery failure policy"
-          description="Controls publish failures. Continue after failures tries every publish and returns 202 when at least one succeeds."
+          description="Controls publish failures. Continue after failures tries every publish. The default response is 202 when at least one succeeds; HTTP response policies can override it."
           data={[
             { value: "", label: "Use default (stop on first failure)" },
             { value: "stop_on_failure", label: "Stop on first failure" },
@@ -62,9 +94,16 @@ export function Inspector() {
           comboboxProps={{ keepMounted: false }}
           onChange={(v) => setDeliveryFailurePolicy(v ?? "")}
         />
+        <FlowResponseEditor />
         {nodes.length > 0 && (
           <Stack gap={6}>
-            <Text fw={600} size="xs" tt="uppercase" c="dimmed" style={{ letterSpacing: "0.08em" }}>
+            <Text
+              fw={600}
+              size="xs"
+              tt="uppercase"
+              c="dimmed"
+              style={{ letterSpacing: "0.08em" }}
+            >
               Nodes
             </Text>
             <Stack gap={0} className="hookway-inspector-node-list">
@@ -81,7 +120,12 @@ export function Inspector() {
                   aria-label={`Select ${yamlIdOf(n)}`}
                   onClick={() => setSelected(n.id)}
                 >
-                  <Group justify="space-between" wrap="nowrap" gap="xs" w="100%">
+                  <Group
+                    justify="space-between"
+                    wrap="nowrap"
+                    gap="xs"
+                    w="100%"
+                  >
                     <Text ff="monospace" size="xs" c="dark">
                       {yamlIdOf(n)}
                     </Text>
@@ -100,30 +144,46 @@ export function Inspector() {
 
   const meta = NODE_SCHEMAS[node.data.nodeType];
   const description = node.data.description ?? "";
-  const destNames = Object.keys(destinations);
-  const enums = node.data.nodeType === "publish" && destNames.length > 0 ? { destination: destNames } : undefined;
-  const setOptions = (options: unknown) => updateNodeData(node.id, { options: options as Record<string, unknown> });
-
+  const setOptions = (options: Record<string, unknown>) =>
+    updateNodeData(node.id, { options });
   const sections: SectionSpec[] = [
     {
-      value: "options",
-      label: "Options",
-      badge: nodeLabel(node.data.nodeType),
+      value: "metadata",
+      label: "Identity and description",
       render: () => (
-        <SchemaForm
-          schema={meta?.schema}
-          value={node.data.options}
-          onChange={setOptions}
-          enums={enums}
-          fieldHelp={(field) => nodeFieldHelp(node.data.nodeType, field)}
-        />
+        <Stack gap="sm">
+          <TextInput
+            label="Node ID"
+            description="Unique name used in YAML connections, for example in>out."
+            value={yamlIdOf(node)}
+            onChange={(e) =>
+              updateNodeData(node.id, { yamlId: e.currentTarget.value })
+            }
+          />
+          <Textarea
+            label="Description"
+            description="Optional note exported with this node."
+            value={description}
+            autosize
+            minRows={2}
+            onChange={(e) =>
+              updateNodeData(node.id, { description: e.currentTarget.value })
+            }
+          />
+        </Stack>
       ),
     },
   ];
 
   return (
     <Stack gap="sm" data-testid="inspector">
-      <Text fw={600} size="xs" tt="uppercase" c="dimmed" style={{ letterSpacing: "0.08em" }}>
+      <Text
+        fw={600}
+        size="xs"
+        tt="uppercase"
+        c="dimmed"
+        style={{ letterSpacing: "0.08em" }}
+      >
         {nodeLabel(node.data.nodeType)}
       </Text>
       {nodeHelp(node.data.nodeType) && (
@@ -132,30 +192,24 @@ export function Inspector() {
         </Text>
       )}
       <Text size="xs" c="dimmed">
-        {meta ? `${meta.input} → ${meta.output}` : ""}
-        {meta?.detached ? " · detached" : ""}
+        YAML type: <Text component="code" inherit>{node.data.nodeType}</Text>
+        {meta ? ` · ${portLabel(meta.input)} → ${portLabel(meta.output)}` : ""}
+        {meta?.detached ? " · delivery step" : ""}
       </Text>
-      <TextInput
-        label="Id"
-        description="YAML node id used in edges, e.g. in>out."
-        value={yamlIdOf(node)}
-        onChange={(e) => updateNodeData(node.id, { yamlId: e.currentTarget.value })}
+      <NodeReadiness nodeId={node.id} />
+      <NodeOptionsForm
+        key={`options/${node.id}`}
+        nodeType={node.data.nodeType}
+        value={node.data.options}
+        onChange={setOptions}
+        scope={nodeScope(activeFlow, node.id)}
+        nodeId={yamlIdOf(node)}
       />
-      <Textarea
-        label="Description"
-        description="Optional note explaining what this node does. Exported as the node's description field."
-        placeholder="Verify the GitHub signature over the raw body."
-        value={description}
-        autosize
-        minRows={2}
-        onChange={(e) => updateNodeData(node.id, { description: e.currentTarget.value })}
+      <Sections
+        key={`metadata/${node.id}`}
+        sections={sections}
+        defaultOpen={[]}
       />
-      <Sections key={node.id} sections={sections} />
-      {node.data.nodeType === "publish" && destNames.length === 0 && (
-        <Text size="xs" c="dimmed">
-          Add a destination in Destinations ({DEST_TYPES.length} types). Publish references it by name.
-        </Text>
-      )}
     </Stack>
   );
 }
@@ -175,7 +229,7 @@ function FlowNameField() {
   return (
     <TextInput
       label="Flow name"
-      description="YAML key. The public URL comes from the http_trigger path."
+      description="Name of this flow in YAML. Set its public URL in the HTTP endpoint node."
       value={draft}
       error={error || undefined}
       onChange={(e) => {

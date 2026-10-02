@@ -10,7 +10,7 @@ import (
 )
 
 func TestReadBodyRejectsOversizeBody(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestReadBodyRejectsOversizeBody(t *testing.T) {
 }
 
 func TestReadBodyAcceptsBodyAtLimit(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestReadBodyAcceptsBodyAtLimit(t *testing.T) {
 }
 
 func TestReadBodyRejectsEmptyAndMissingReader(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,5 +70,21 @@ func TestReadBodyRejectsEmptyAndMissingReader(t *testing.T) {
 	}
 	if _, err := node.Run(context.Background(), graph.RequestHead{}); err == nil {
 		t.Fatal("missing reader accepted")
+	}
+}
+
+func TestReadBodyAllowEmptyIsExplicitAndStillBounded(t *testing.T) {
+	for _, method := range []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"} {
+		for _, size := range []int{0, 3, 4, 5} {
+			node := readBodyNode{id: "read", maxBytes: 4, allowEmpty: true}
+			ctx := WithBodyReader(context.Background(), strings.NewReader(strings.Repeat("x", size)))
+			out, err := node.Run(ctx, graph.RequestHead{Method: method})
+			if (err != nil) != (size > 4) {
+				t.Fatalf("%s size %d: %v", method, size, err)
+			}
+			if err == nil && len(out.(graph.RawRequest).Body) != size {
+				t.Fatal("body changed")
+			}
+		}
 	}
 }

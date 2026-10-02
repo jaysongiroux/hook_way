@@ -1,0 +1,57 @@
+# Verify one original request, then publish each admitted JSON child separately.
+# Dedicated mode requires an array, skips other admitted environments, and
+# attempts all eligible children before returning HTTP 502 for child failures. Hookway never consumes these queues.
+# Fields/resources below are synthetic; bind real contracts in private config.
+server: {addr: ":8080", max_body_bytes: 1048576, publish_timeout: 5s, max_inflight_requests: 16}
+destinations:
+  broker: {type: sqs, sqs: {region: us-east-1}}
+routing:
+  profiles:
+    sample: {account_id: "000000000000", credential_mode: sample}
+  environments:
+    preview: {aliases: [staging], profiles: [sample], accounts: ["000000000000"], destination_prefix: preview}
+    secondary: {profiles: [sample], accounts: ["000000000000"], destination_prefix: secondary}
+flows:
+  sample:
+    capture_failures: false # Batch child snapshots/redrive are not supported yet.
+    responses:
+      auth_error: {status: 400, body: '{"error":"invalid signature"}'}
+      body_error: {status: 400, body: '{"message":"Invalid JSON"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: ecdsa_p256_sha256_headers
+        secret_ref: {provider: env, name: SAMPLE_ECDSA_PUBLIC_KEY}
+        signature_header: X-Sample-Signature
+        timestamp_header: X-Sample-Timestamp
+        timestamp_unit: seconds
+        timestamp_tolerance: 5m
+      - {id: env, type: envelope, body_format: json}
+      - id: batch
+        type: batch
+        description: Bounded concurrent child publication for one receiving environment.
+        mode: dedicated
+        receiving_environment: preview
+        profile: sample
+        environment_path: environment
+        event_id_path: event_id
+        max_children: 1000
+        concurrency: 8
+        max_inflight: 64
+        timeout: 30s
+        child:
+          entry: batch.send
+          nodes:
+            - id: batch.send
+              type: publish
+              destination: broker
+              target: "{route_prefix}-sample-events.fifo"
+              create: true
+              wire_body: json
+              fifo:
+                group_id: {source: variable, path: batch_group_id}
+                deduplication_id: {source: variable, path: batch_event_id}
+          edges: []
+    edges: [in>body, body>auth, auth>env, env>batch]

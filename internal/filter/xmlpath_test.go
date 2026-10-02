@@ -11,7 +11,7 @@ import (
 // reason.
 func doc(t *testing.T, raw string) transform.Document {
 	t.Helper()
-	d, err := transform.ParseXML([]byte(raw))
+	d, err := transform.ParseXMLWithLimits([]byte(raw), transform.XMLLimits{})
 	if err != nil {
 		t.Fatalf("ParseXML(%q) = %v", raw, err)
 	}

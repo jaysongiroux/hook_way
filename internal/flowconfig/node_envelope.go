@@ -3,6 +3,7 @@ package flowconfig
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -40,6 +41,7 @@ type envelopeNode struct {
 	id            string
 	format        string
 	multipart     multipartLimits
+	xml           transform.XMLLimits
 	allowlist     []string
 	denylist      []string
 	queryDenylist []string
@@ -52,6 +54,7 @@ func newEnvelopeNode(id string, opts EnvelopeOptions, allowlist, denylist []stri
 	}
 	return envelopeNode{
 		id: id, format: format, multipart: opts.Multipart.limits(),
+		xml:       transform.XMLLimits{MaxBytes: opts.XML.MaxBytes, MaxDepth: opts.XML.MaxDepth, MaxNodes: opts.XML.MaxNodes},
 		allowlist: allowlist, denylist: denylist,
 	}
 }
@@ -71,6 +74,7 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 		Header: head.Header,
 	}
 	event, err := webhook.BuildEnvelopeWithOptions(req, webhook.EnvelopeOptions{
+		SkipBodyParsing: n.format != "json",
 		Endpoint:        head.Path,
 		RawBody:         verified.Raw.Body,
 		ReceivedAt:      time.Now(),
@@ -131,9 +135,13 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 		out.Extra = CapturedEvent{Event: event}
 		return out, nil
 	case "xml":
-		doc, err := transform.ParseXML(verified.Raw.Body)
+		doc, err := transform.ParseXMLWithLimits(verified.Raw.Body, n.xml)
 		if err != nil {
-			return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+			status := http.StatusBadRequest
+			if errors.Is(err, transform.ErrXMLLimit) {
+				status = http.StatusRequestEntityTooLarge
+			}
+			return nil, graph.NodeError{NodeID: n.id, Status: status, Err: err}
 		}
 		event.Body = nil
 		out.Body = doc

@@ -79,3 +79,20 @@ func TestStripBearerPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestExactOptionalPrefixIsCaseSensitive(t *testing.T) {
+	verifier, err := NewVerifier(Spec{AuthType: AuthTypeHeaderExact, Scheme: SchemeExact, Secret: "synthetic-secret", RemovePrefix: "Api-Key "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{"synthetic-secret", "Api-Key synthetic-secret"} {
+		if err = verifier.Verify(token, nil, time.Now()); err != nil {
+			t.Fatalf("valid token rejected: %v", err)
+		}
+	}
+	for _, token := range []string{"api-key synthetic-secret", "Api-Key  synthetic-secret", "Bearer synthetic-secret", "Api-Key "} {
+		if err = verifier.Verify(token, nil, time.Now()); err == nil {
+			t.Fatal("invalid token accepted")
+		}
+	}
+}

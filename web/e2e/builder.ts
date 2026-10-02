@@ -14,23 +14,33 @@ export class BuilderPage {
 
   async openInspector(): Promise<void> {
     if (await this.inspector().isVisible()) return;
-    await this.page.getByRole("button", { name: "Inspector", exact: true }).click();
+    await this.page
+      .getByRole("button", { name: "Inspector", exact: true })
+      .click();
     await expect(this.inspector()).toBeVisible();
   }
 
   async closeInspector(): Promise<void> {
     if (!(await this.inspector().isVisible())) return;
-    await this.inspector().getByRole("button", { name: "Close Inspector" }).click();
+    await this.inspector()
+      .getByRole("button", { name: "Close Inspector" })
+      .click();
     await expect(this.inspector()).toBeHidden();
   }
 
   async gotoReady(): Promise<void> {
     await this.page.goto("/builder");
-    await expect(this.page.getByRole("button", { name: "Inspector", exact: true })).toBeVisible();
+    await expect(
+      this.page.getByRole("button", { name: "Inspector", exact: true }),
+    ).toBeVisible();
     // The node list only fills in once the persisted (or starter) graph has
     // loaded, so opening the inspector once is how we wait for a ready app.
     await this.openInspector();
-    await expect(this.inspector().getByRole("button", { name: /^Select / }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(
+      this.inspector()
+        .getByRole("button", { name: /^Select / })
+        .first(),
+    ).toBeVisible({ timeout: 15_000 });
     // Left closed: the header and the Config dialogs sit behind the modal's
     // overlay, so every other helper starts from a clear canvas.
     await this.closeInspector();
@@ -77,7 +87,9 @@ export class BuilderPage {
   }
 
   flowMenuItem(name: string): Locator {
-    const pattern = new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s*✓)?$`);
+    const pattern = new RegExp(
+      `^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s*✓)?$`,
+    );
     return this.page.getByRole("menuitem", { name: pattern });
   }
 
@@ -107,8 +119,17 @@ export class BuilderPage {
     await this.backToFlow();
     // exact: true -- see the note in import-panels.spec.ts: substring name
     // matching makes "Select body" ambiguous with "Select body2".
-    await this.inspector().getByRole("button", { name: `Select ${id}`, exact: true }).click();
-    await expect(this.inspector().getByLabel("Id", { exact: true })).toHaveValue(id);
+    await this.inspector()
+      .getByRole("button", { name: `Select ${id}`, exact: true })
+      .click();
+    const metadata = this.inspector().getByRole("button", {
+      name: "Identity and description",
+    });
+    if ((await metadata.getAttribute("aria-expanded")) !== "true")
+      await metadata.click();
+    await expect(
+      this.inspector().getByLabel("Node ID", { exact: true }),
+    ).toHaveValue(id);
   }
 
   /**

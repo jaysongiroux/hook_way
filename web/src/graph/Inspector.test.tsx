@@ -19,9 +19,11 @@ beforeEach(() => {
   useGraphStore.getState().clear();
 });
 
-test("shows flow options when nothing is selected", () => {
+test("flow guidance explains double-click editing", () => {
   wrap();
-  expect(screen.getByText(/click a node/i)).toBeInTheDocument();
+  expect(
+    screen.getByText(/double-click a node to configure it/i),
+  ).toBeInTheDocument();
   expect(screen.getByLabelText("Flow name")).toBeInTheDocument();
 });
 
@@ -29,7 +31,9 @@ test("lists nodes in the flow so they can be opened from the inspector", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: null });
   wrap();
-  fireEvent.click(screen.getByRole("button", { name: `Select ${n.data.yamlId}` }));
+  fireEvent.click(
+    screen.getByRole("button", { name: `Select ${n.data.yamlId}` }),
+  );
   expect(useGraphStore.getState().selectedId).toBe(n.id);
 });
 
@@ -40,7 +44,9 @@ test("a selected node offers no way back that looks like dismissing the inspecto
   const n = createNode("publish", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap();
-  expect(screen.queryByRole("button", { name: "Back to flow" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Back to flow" }),
+  ).not.toBeInTheDocument();
 });
 
 test("a selected edge offers no way back that looks like dismissing the inspector", () => {
@@ -53,7 +59,9 @@ test("a selected edge offers no way back that looks like dismissing the inspecto
     selectedEdgeId: "e1",
   });
   wrap();
-  expect(screen.queryByRole("button", { name: "Back to flow" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Back to flow" }),
+  ).not.toBeInTheDocument();
 });
 
 test("the flow name field can be emptied while typing and restores on blur if left blank", () => {
@@ -89,18 +97,25 @@ test("editing a trigger path updates the store", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap();
-  expect(screen.getByText(/HTTP entry point/i)).toBeInTheDocument();
-  const pathInput = screen.getByLabelText("path") as HTMLInputElement;
+  expect(screen.getByText(/Start the flow/i)).toBeInTheDocument();
+  const pathInput = screen.getByLabelText("Request path") as HTMLInputElement;
   fireEvent.change(pathInput, { target: { value: "/webhooks/github" } });
-  expect(useGraphStore.getState().nodes[0].data.options.path).toBe("/webhooks/github");
+  expect(useGraphStore.getState().nodes[0].data.options.path).toBe(
+    "/webhooks/github",
+  );
 });
 
 test("editing the description updates the store", () => {
   const n = createNode("publish", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap();
-  // Description is a top-level field beside Id, not a collapsed section, so
-  // it is reachable without opening an accordion.
-  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Fan out to billing." } });
-  expect(useGraphStore.getState().nodes[0].data.description).toBe("Fan out to billing.");
+  fireEvent.click(
+    screen.getByRole("button", { name: "Identity and description" }),
+  );
+  fireEvent.change(screen.getByLabelText("Description"), {
+    target: { value: "Fan out to billing." },
+  });
+  expect(useGraphStore.getState().nodes[0].data.description).toBe(
+    "Fan out to billing.",
+  );
 });

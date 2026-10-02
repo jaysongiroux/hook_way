@@ -7,15 +7,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaysongiroux/hook_way/internal/awsconf"
-	"github.com/jaysongiroux/hook_way/internal/testenv"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	snsservice "github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
+
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 )
 
 // startLocalStack boots a LocalStack container with SQS+SNS and returns its
@@ -373,4 +374,79 @@ func receiveSQSMessage(t *testing.T, ctx context.Context, client *sqs.Client, qu
 		return &m
 	}
 	return nil
+}
+
+// TestAWSBrokerBodyStandardAndFIFO covers all four queue/topic types with
+// retained subscriptions. Only this isolated test consumes queues.
+func TestAWSBrokerBodyStandardAndFIFO(t *testing.T) {
+	endpoint := startLocalStack(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sq := sqs.NewFromConfig(cfg)
+	sn := snsservice.NewFromConfig(cfg)
+	for _, fifo := range []bool{false, true} {
+		suffix := ""
+		if fifo {
+			suffix = ".fifo"
+		}
+		queueName := "sample-direct" + suffix
+		sp, err := NewSQSPublisher(ctx, sq, SQSConfig{Targets: []SQSTarget{{Name: queueName, Create: true, Attributes: map[string]string{"VisibilityTimeout": "60"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg := Message{Publish: &deliverymeta.Publish{WireBody: "raw", Body: []byte(`{"sample":true}`)}, MessageAttributes: map[string]MessageAttribute{"sample": {DataType: "Binary", StringValue: "AP8="}}}
+		if fifo {
+			msg.Publish.FIFO = &deliverymeta.FIFO{GroupID: "sample-group", DeduplicationID: "sample-direct"}
+		}
+		if err := sp.Publish(ctx, "broker", queueName, msg); err != nil {
+			t.Fatal(err)
+		}
+		url, err := sq.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(queueName)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := sq.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: url.QueueUrl, WaitTimeSeconds: 5, MessageAttributeNames: []string{"All"}, AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll}, MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll}}) //nolint:staticcheck // LocalStack 3.4 needs the legacy selector alongside the current SQS field.
+		if err != nil || len(out.Messages) != 1 {
+			t.Fatalf("SQS fifo=%v: %+v %v", fifo, out, err)
+		}
+		received := out.Messages[0]
+		if aws.ToString(received.Body) != string(msg.Publish.Body) || string(received.MessageAttributes["sample"].BinaryValue) != string([]byte{0, 255}) {
+			t.Fatalf("SQS wire changed: %+v", received)
+		}
+		topicName := "sample-topic" + suffix
+		np, err := NewSNSPublisher(ctx, sn, SNSConfig{Targets: []SNSTarget{{Name: topicName, Create: true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		attrs := map[string]string{}
+		if fifo {
+			attrs["FifoQueue"] = "true"
+		}
+		sub, err := sq.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("sample-sub" + suffix), Attributes: attrs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subscribeSQSToSNS(t, ctx, cfg, topicName, aws.ToString(sub.QueueUrl))
+		if fifo {
+			msg.Publish.FIFO.DeduplicationID = "sample-topic"
+		}
+		if err := np.Publish(ctx, "broker", topicName, msg); err != nil {
+			t.Fatal(err)
+		}
+		out, err = sq.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: sub.QueueUrl, WaitTimeSeconds: 5, MessageAttributeNames: []string{"All"}, AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll}, MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll}}) //nolint:staticcheck // LocalStack 3.4 needs the legacy selector alongside the current SQS field.
+		if err != nil || len(out.Messages) != 1 {
+			t.Fatalf("SNS fifo=%v: %+v %v", fifo, out, err)
+		}
+		received = out.Messages[0]
+		if aws.ToString(received.Body) != string(msg.Publish.Body) {
+			t.Fatalf("SNS wire changed: %+v", received)
+		}
+		if fifo && (received.Attributes["MessageGroupId"] != "sample-group" || received.Attributes["MessageDeduplicationId"] != "sample-topic") {
+			t.Fatalf("SNS FIFO identity changed: %+v", received.Attributes)
+		}
+	}
 }

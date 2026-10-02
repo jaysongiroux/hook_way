@@ -62,3 +62,31 @@ func TestRenderMessageAttributesRejectsUnboundTemplate(t *testing.T) {
 		t.Fatal("expected unbound template error")
 	}
 }
+
+func TestBinaryAttributeRenderingPreservesEncodedBytes(t *testing.T) {
+	attrs, err := renderMessageAttributes(map[string]any{"sample": map[string]any{"data_type": "Binary", "value": "AP8="}, "count": map[string]any{"data_type": "Number.int", "value": 42}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attrs["sample"].Value != "AP8=" || attrs["sample"].DataType != "Binary" || attrs["count"].DataType != "Number.int" {
+		t.Fatalf("attributes = %+v", attrs)
+	}
+	if _, err := renderMessageAttributes(map[string]any{"sample": map[string]any{"data_type": "Binary", "value": "bad"}}, nil); err == nil {
+		t.Fatal("invalid binary accepted")
+	}
+}
+
+func TestTypedStringArrayOmitsOnlyExplicitEmptyValues(t *testing.T) {
+	for _, value := range []string{"[]", `["status"]`} {
+		attrs, err := renderMessageAttributes(map[string]any{"fields_changed": map[string]any{"data_type": "String.Array", "value": "{fields}", "omit_if_empty": true}}, map[string]string{"fields": value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (len(attrs) == 0) != (value == "[]") {
+			t.Fatal(attrs)
+		}
+	}
+	if _, err := renderMessageAttributes(map[string]any{"x": map[string]any{"data_type": "String", "value": "", "omit_if_empty": true}}, nil); err == nil {
+		t.Fatal("non-array omit accepted")
+	}
+}

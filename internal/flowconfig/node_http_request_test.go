@@ -274,7 +274,7 @@ func TestHTTPRequestBodyRawDefaultSendsOriginalBytes(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	doc, err := transform.ParseXML([]byte(`<ROOT><KEEP>ok</KEEP></ROOT>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<ROOT><KEEP>ok</KEEP></ROOT>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestHTTPRequestBodyTransformedSendsSerializedXML(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer upstream.Close()
-	doc, err := transform.ParseXML([]byte(`<ROOT><KEEP>ok</KEEP></ROOT>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<ROOT><KEEP>ok</KEEP></ROOT>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestReviewConnectionNominatedHeadersAreRemoved(t *testing.T) {
 	}
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "https://example.test", nil)
 	n.(httpRequestNode).copyForwardedHeaders(req, src)
-	for _, h := range []http.Header{req.Header, filterPassthroughHeaders(src)} {
+	for _, h := range []http.Header{req.Header, filterPassthroughHeadersWithOptions(src, RespondOptions{})} {
 		if h.Get("X-Internal") != "" || h.Get("X-Other") != "" || h.Get("X-Public") != "visible" {
 			t.Fatalf("hop-by-hop leak: %v", h)
 		}

@@ -9,9 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
-	"gopkg.in/yaml.v3"
+	"github.com/jaysongiroux/hook_way/internal/routing"
 )
 
 // Issue is one validation problem, anchored to a dotted config path.
@@ -185,7 +187,25 @@ func preserveSeverity(issues []config.ValidationIssue) ValidateResponse {
 
 // Schema returns the JSON Schema describing the config YAML.
 func Schema() ([]byte, error) {
-	return config.SchemaJSON()
+	data, err := config.SchemaJSON()
+	if err != nil {
+		return nil, err
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil, err
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	reflector := config.NewSchemaReflector()
+	reflector.DoNotReference = true
+	// Native-only declarations remain authorable without loading AWS or secrets.
+	credentials := reflector.Reflect(&map[string]flowconfig.CredentialProfile{})
+	routingSchema := reflector.Reflect(&routing.Config{})
+	if properties != nil {
+		properties["credentials"] = credentials
+		properties["routing"] = routingSchema
+	}
+	return json.MarshalIndent(schema, "", "  ")
 }
 
 // NodeSchemas returns the per-node option schemas used by the config UI.

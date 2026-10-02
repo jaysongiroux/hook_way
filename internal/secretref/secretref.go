@@ -8,6 +8,7 @@ package secretref
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,10 +32,14 @@ type Resolver interface {
 
 // Ref is the authored secret_ref object.
 type Ref struct {
-	Provider string // env | file | aws_secrets_manager
-	Name     string
-	Refresh  time.Duration // default 15m
-	Overlap  time.Duration // how long the previous secret stays valid
+	Selection string // exact or newest_matching; empty preserves legacy selection
+
+	JSONField string
+	Validate  func([]byte) error
+	Provider  string // env | file | aws_secrets_manager
+	Name      string
+	Refresh   time.Duration // default 15m
+	Overlap   time.Duration // how long the previous secret stays valid
 }
 
 // fetcher loads the current secret value from a backing store. Implementations
@@ -44,6 +49,7 @@ type fetcher interface {
 }
 
 type cached struct {
+	prepare  func([]byte) ([]byte, error)
 	fetch    fetcher
 	refresh  time.Duration
 	overlap  time.Duration
@@ -72,6 +78,12 @@ func New(ref Ref, logger *slog.Logger, onFail func()) (Resolver, error) {
 	if ref.Name == "" {
 		return nil, errors.New("secret_ref.name is required")
 	}
+	if ref.Selection != "" && ref.Selection != "exact" && ref.Selection != "newest_matching" {
+		return nil, errors.New("invalid secret selection policy")
+	}
+	if ref.Selection != "" && ref.Provider != "aws_secrets_manager" {
+		return nil, errors.New("secret selection requires aws_secrets_manager")
+	}
 	if ref.Refresh < 0 || ref.Overlap < 0 {
 		return nil, errors.New("secret_ref refresh and overlap must be non-negative")
 	}
@@ -94,7 +106,12 @@ func newFetcher(ctx context.Context, ref Ref) (fetcher, error) {
 	case "file":
 		return fileFetcher{path: ref.Name}, nil
 	case "aws_secrets_manager":
-		return newAWSFetcher(ctx, ref.Name)
+		f, err := newAWSFetcher(ctx, ref.Name)
+		if err == nil {
+			f.exact = ref.Selection == "exact"
+			f.strictMatching = ref.Selection == "newest_matching"
+		}
+		return f, err
 	default:
 		return nil, fmt.Errorf("secret_ref.provider %q is not supported", ref.Provider)
 	}
@@ -102,6 +119,9 @@ func newFetcher(ctx context.Context, ref Ref) (fetcher, error) {
 
 func newCached(ctx context.Context, ref Ref, f fetcher, logger *slog.Logger, onFail func(), now func() time.Time) (*cached, error) {
 	value, err := f.Fetch(ctx)
+	if err == nil {
+		value, err = prepareValue(ref, value)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("secret_ref %s %q: %w", ref.Provider, ref.Name, err)
 	}
@@ -111,6 +131,7 @@ func newCached(ctx context.Context, ref Ref, f fetcher, logger *slog.Logger, onF
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &cached{
 		fetch:    f,
+		prepare:  func(value []byte) ([]byte, error) { return prepareValue(ref, value) },
 		refresh:  ref.Refresh,
 		overlap:  ref.Overlap,
 		now:      now,
@@ -141,7 +162,12 @@ func (c *cached) loop(ctx context.Context) {
 }
 
 func (c *cached) refreshOnce(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	value, err := c.fetch.Fetch(ctx)
+	if err == nil && c.prepare != nil {
+		value, err = c.prepare(value)
+	}
 	if err != nil || len(value) == 0 {
 		if err == nil {
 			err = errors.New("empty secret")
@@ -181,4 +207,25 @@ func (c *cached) Close() error {
 		<-c.stopped
 	}
 	return nil
+}
+
+func prepareValue(ref Ref, value []byte) ([]byte, error) {
+	if len(value) > 1<<20 {
+		return nil, errors.New("secret value exceeds 1 MiB")
+	}
+	if ref.JSONField != "" {
+		var bundle map[string]json.RawMessage
+		if json.Unmarshal(value, &bundle) != nil {
+			return nil, errors.New("secret bundle must be a JSON object")
+		}
+		var text string
+		if json.Unmarshal(bundle[ref.JSONField], &text) != nil || text == "" {
+			return nil, errors.New("secret bundle field must be a nonempty string")
+		}
+		value = []byte(text)
+	}
+	if ref.Validate != nil && ref.Validate(value) != nil {
+		return nil, errors.New("invalid authentication key material")
+	}
+	return value, nil
 }

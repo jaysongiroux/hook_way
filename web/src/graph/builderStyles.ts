@@ -31,6 +31,9 @@ export const BUILDER_CSS = `
   outline-offset: 2px;
 }
 .${PALETTE_ITEM_CLASS} {
+  min-width: 0;
+  width: 100%;
+  overflow-wrap: anywhere;
   background: ${DARK.surface};
   border: 1px solid ${DARK.border};
   border-radius: 4px;

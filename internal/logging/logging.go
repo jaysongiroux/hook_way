@@ -58,6 +58,9 @@ func Request(logger *slog.Logger, attrs RequestAttrs) {
 	} else if attrs.Status >= http.StatusBadRequest {
 		level = slog.LevelWarn
 	}
+	if !logger.Enabled(context.Background(), level) {
+		return
+	}
 	logger.Log(context.Background(), level, msg,
 		"method", attrs.Method,
 		"path", attrs.Path,

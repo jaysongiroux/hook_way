@@ -11,6 +11,12 @@ import (
 )
 
 type Metrics struct {
+	admissionWaiting         prometheus.Gauge
+	admissionWaits           *prometheus.CounterVec
+	admissionWaitDuration    *prometheus.HistogramVec
+	batch                    *prometheus.CounterVec
+	credentials              *prometheus.CounterVec
+	routing                  *prometheus.CounterVec
 	registry                 *prometheus.Registry
 	httpRequests             *prometheus.CounterVec
 	authFailures             *prometheus.CounterVec
@@ -31,6 +37,9 @@ type Metrics struct {
 	endpointInfo             *prometheus.GaugeVec
 	destinationInfo          *prometheus.GaugeVec
 	inflight                 prometheus.Gauge
+	admitted                 *prometheus.GaugeVec
+	admissionCapacity        prometheus.Gauge
+	admissionServers         *prometheus.GaugeVec
 	configLoadFailures       *prometheus.CounterVec
 	rabbitMQReconnects       prometheus.Counter
 	rabbitMQConfirms         prometheus.Counter
@@ -49,6 +58,7 @@ type Metrics struct {
 	panics                   *prometheus.CounterVec
 	buildInfo                *prometheus.GaugeVec
 	compensationFailed       *prometheus.CounterVec
+	flowOutcomes             *prometheus.CounterVec
 	nodeTotal                *prometheus.CounterVec
 	nodeDuration             *prometheus.HistogramVec
 	secretRefreshFailures    *prometheus.CounterVec
@@ -62,6 +72,9 @@ type Metrics struct {
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.admissionWaiting = prometheus.NewGauge(prometheus.GaugeOpts{Name: "hookway_admission_waiting_requests", Help: "HTTP handlers waiting for an execution slot; bodies have not been parsed."})
+	m.admissionWaits = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_admission_wait_total", Help: "Contended admission outcomes for configured bounded waiting queues."}, []string{"flow", "result"})
+	m.admissionWaitDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "hookway_admission_wait_duration_seconds", Help: "Time spent waiting for execution admission.", Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5}}, []string{"flow", "result"})
 	m.httpRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_http_requests_total",
 		Help: "HTTP requests handled by Hookway.",
@@ -94,6 +107,12 @@ func New() *Metrics {
 		Name: "hookway_variable_unresolved_total",
 		Help: "Webhook requests whose routing variables could not be resolved, by action taken (rejected or fallback).",
 	}, []string{"endpoint", "variable", "action"})
+	m.credentials = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_credentials_total", Help: "Native outbound credential operations by configured profile and bounded result."}, []string{"profile", "result"})
+	m.batch = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_batch_children_total", Help: "Batch children by configured node and finite outcome."}, []string{"node", "result"})
+	m.routing = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookway_routing_total",
+		Help: "Typed routing and environment admission by bounded outcome.",
+	}, []string{"node", "result"})
 	m.variableLookup = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_variable_lookup_total",
 		Help: "Lookup-source variable resolutions by result: hit, miss, cached, or error.",
@@ -140,6 +159,22 @@ func New() *Metrics {
 		Name: "hookway_inflight_requests",
 		Help: "In-flight Hookway requests.",
 	})
+	m.admitted = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_admitted_requests",
+		Help: "Active flow requests past admission, by bounded or unlimited mode; excludes health, metrics and admission rejections.",
+	}, []string{"mode"})
+	m.admissionCapacity = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hookway_admission_capacity",
+		Help: "Sum of finite admission slots for flow servers sharing this registry, including servers still draining admitted work.",
+	})
+	m.admissionServers = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hookway_admission_servers",
+		Help: "Flow servers owning admission telemetry by bounded or unlimited mode, including servers still draining admitted work.",
+	}, []string{"mode"})
+	for _, mode := range []string{"bounded", "unlimited"} {
+		m.admitted.WithLabelValues(mode).Set(0)
+		m.admissionServers.WithLabelValues(mode).Set(0)
+	}
 	m.configLoadFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_config_load_failures_total",
 		Help: "Config load failures before serving traffic.",
@@ -202,6 +237,7 @@ func New() *Metrics {
 		Name: "hookway_compensation_failed_total",
 		Help: "Replay-reservation release failures. A silent failure leaves the reservation until TTL, so a legitimate retry is rejected 409.",
 	}, []string{"flow"})
+	m.flowOutcomes = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_flow_outcomes_total", Help: "Execution outcomes independent of HTTP response status."}, []string{"flow", "outcome"})
 	m.nodeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_node_total",
 		Help: "Graph node executions by outcome. Labels are config-bounded (flow, node id, node type); never rendered lookup targets.",
@@ -239,13 +275,14 @@ func New() *Metrics {
 		Help: "Redrives the control listener is running now.",
 	})
 	m.registry.MustRegister(
-		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.duplicateRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected,
+		m.admissionWaiting, m.admissionWaits, m.admissionWaitDuration,
+		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.duplicateRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected, m.routing, m.credentials, m.batch,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
-		m.endpointInfo, m.destinationInfo, m.inflight, m.configLoadFailures, m.rabbitMQReconnects,
+		m.endpointInfo, m.destinationInfo, m.inflight, m.admitted, m.admissionCapacity, m.admissionServers, m.configLoadFailures, m.rabbitMQReconnects,
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
-		m.destinationReady, m.panics, m.buildInfo, m.compensationFailed, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
+		m.destinationReady, m.panics, m.buildInfo, m.compensationFailed, m.flowOutcomes, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
 		m.captureTotal, m.captureDropped, m.captureBufferBytes, m.controlRuns, m.controlInflight,
 	)
 	return m
@@ -472,7 +509,7 @@ func (m *Metrics) CompensationFailed(flow string) {
 	m.compensationFailed.WithLabelValues(flow).Inc()
 }
 
-// Node records one graph node execution. outcome is "ok", "error", or "panic".
+// Node records one graph node execution. outcome is "ok", "dropped", "error", or "panic".
 // Labels must stay config-bounded: never pass a rendered lookup target or
 // request-derived value.
 func (m *Metrics) Node(flow, nodeID, nodeType, outcome string, duration time.Duration) {
@@ -493,4 +530,41 @@ func (m *Metrics) SecretRefreshFailure(provider, name string) {
 // so this carries no unbounded-cardinality risk.
 func (m *Metrics) SetBuildInfo(version, commit string) {
 	m.buildInfo.WithLabelValues(version, commit).Set(1)
+}
+
+func (m *Metrics) FlowOutcome(flow, outcome string) {
+	m.flowOutcomes.WithLabelValues(flow, outcome).Inc()
+}
+
+func (m *Metrics) Routing(node, result string) {
+	switch result {
+	case "hit", "miss", "key_invalid", "store_error", "environment_denied", "registration_registered", "registration_pending", "registration_key_invalid", "registration_environment_denied":
+	default:
+		result = "store_error"
+	}
+	m.routing.WithLabelValues(node, result).Inc()
+}
+
+func (m *Metrics) Credential(profile, result string) {
+	switch result {
+	case "acquired", "cache_hit", "acquisition_failed", "secret_refresh_failed", "session_rejected":
+	default:
+		result = "acquisition_failed"
+	}
+	m.credentials.WithLabelValues(profile, result).Inc()
+}
+
+func (m *Metrics) Batch(node, result string) {
+	switch result {
+	case "published", "environment_missing", "environment_denied", "environment_skipped", "id_invalid", "child_invalid", "filtered", "child_failed", "publish_failed", "unattempted":
+	default:
+		result = "child_failed"
+	}
+	m.batch.WithLabelValues(node, result).Inc()
+}
+
+func (m *Metrics) AdmissionWaiting(delta float64) { m.admissionWaiting.Add(delta) }
+func (m *Metrics) AdmissionWait(flow, result string, duration time.Duration) {
+	m.admissionWaits.WithLabelValues(flow, result).Inc()
+	m.admissionWaitDuration.WithLabelValues(flow, result).Observe(duration.Seconds())
 }

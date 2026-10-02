@@ -3,12 +3,16 @@ package examplesmoke
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -18,20 +22,25 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"gopkg.in/yaml.v3"
+
 	"github.com/jaysongiroux/hook_way/internal/auth"
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	"github.com/jaysongiroux/hook_way/internal/httpapi"
+	"github.com/jaysongiroux/hook_way/internal/jsoncanon"
 	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
@@ -43,6 +52,16 @@ import (
 // validate never constructs verifiers or runs the graph.
 func TestExampleSmoke(t *testing.T) {
 	jwtPriv, jwtPEM := rsaPublicPEM(t)
+	ecPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&ecPriv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SAMPLE_ECDSA_KEY", base64.StdEncoding.EncodeToString(der))
+	t.Setenv("SAMPLE_SIGNING_BUNDLE", `{"signing_key":"synthetic"}`)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -83,6 +102,41 @@ func TestExampleSmoke(t *testing.T) {
 				t.Fatalf("serve-path issues: %v", blocking)
 			}
 
+			if rel == "routing/shared.yaml" || rel == "routing/registration.yaml" {
+				t.Skip("native DynamoDB binding has dedicated integration coverage; offline validation already passed")
+			}
+			if strings.HasPrefix(rel, "adapters/") {
+				t.Skip("specialized signed batches, schema projection, SNS diff and managed XML have dedicated acceptance tests; offline validation passed")
+			}
+			if strings.HasPrefix(rel, "credentials/") {
+				t.Skip("native secret/token profiles have dedicated HTTP and provider acceptance tests; offline validation already passed")
+			}
+			if rel == "proxy/admitted.yaml" {
+				u, _ := url.Parse(upstream.URL)
+				for name, binding := range cfg.Routing.Environments {
+					binding.BackendHost = u.Hostname()
+					cfg.Routing.Environments[name] = binding
+				}
+				port, _ := strconv.Atoi(u.Port())
+				flow := cfg.Flows["admitted_proxy"]
+				for i := range flow.Nodes {
+					if flow.Nodes[i].Type == "http_request" {
+						var options map[string]any
+						if err := flow.Nodes[i].Options.Decode(&options); err != nil {
+							t.Fatal(err)
+						}
+						options["upstream"].(map[string]any)["scheme"] = "http"
+						options["upstream"].(map[string]any)["port"] = port
+						options["allow_private_targets"] = true
+						var node yaml.Node
+						if err := node.Encode(options); err != nil {
+							t.Fatal(err)
+						}
+						flow.Nodes[i].Options = node
+					}
+				}
+				cfg.Flows["admitted_proxy"] = flow
+			}
 			pub := &capturingPublisher{}
 			srv, err := httpapi.NewFlowServer(cfg, pub, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 			if err != nil {
@@ -99,7 +153,7 @@ func TestExampleSmoke(t *testing.T) {
 			for _, name := range flowNames(cfg) {
 				t.Run(name, func(t *testing.T) {
 					pub.reset()
-					req := requestForFlow(t, cfg.Flows[name], jwtPriv)
+					req := requestForFlow(t, cfg.Flows[name], jwtPriv, ecPriv)
 					ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
 					defer cancel()
 					req = req.WithContext(ctx)
@@ -203,6 +257,7 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"STRIPE_WEBHOOK_SECRET":   "stripe-secret",
 		"ORDERS_WEBHOOK_SECRET":   "orders-secret",
 		"NOTIFY_WEBHOOK_SECRET":   "notify-secret",
+		"SAMPLE_WEBHOOK_SECRET":   "synthetic-secret",
 		"REVENUECAT_WEBHOOK_AUTH": "revenuecat-token",
 		"BASIC_WEBHOOK_SECRET":    "basic-secret",
 		"REDIS_URL":               "redis://localhost:6379",
@@ -254,7 +309,7 @@ func rsaPublicPEM(t *testing.T) (*rsa.PrivateKey, string) {
 	return priv, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
-func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) *http.Request {
+func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey, ecPriv *ecdsa.PrivateKey) *http.Request {
 	t.Helper()
 	path, method := triggerRoute(t, fc)
 	// An xml envelope parses the raw bytes as XML, so the JSON payload every
@@ -269,12 +324,18 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey) 
 		// filters on files.document.content_type, so the part must claim PDF.
 		body, contentType = multipartBody(t)
 	}
+	if strings.HasPrefix(path, "/proxy/admitted/") {
+		body = []byte(`{"env_name":"staging"}`)
+	}
+	if path == "/webhooks/shared" {
+		body = []byte(`{"x_env_name":"staging"}`)
+	}
 	req := httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-GitHub-Event", "push")
 	// showcase/production.yaml's trusted flow allowlists RFC1918 ranges.
 	req.RemoteAddr = "10.0.0.1:3456"
-	signRequest(t, req, fc, body, jwtPriv)
+	signRequest(t, req, fc, body, jwtPriv, ecPriv)
 	return req
 }
 
@@ -360,7 +421,7 @@ func fillPath(path string) string {
 	return path
 }
 
-func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []byte, jwtPriv *rsa.PrivateKey) {
+func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []byte, jwtPriv *rsa.PrivateKey, ecPriv *ecdsa.PrivateKey) {
 	t.Helper()
 	for _, nc := range fc.Nodes {
 		switch nc.Type {
@@ -381,6 +442,47 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 			}
 			secret := authSecret(t, opts)
 			switch scheme {
+			case auth.SchemeHMACSHA256HeadersDot, auth.SchemeHMACSHA256TSDotMulti, auth.SchemeECDSAP256SHA256Headers:
+				ts := strconv.FormatInt(time.Now().Unix(), 10)
+				if opts.TimestampUnit == "milliseconds" {
+					ts = strconv.FormatInt(time.Now().UnixMilli(), 10)
+				}
+				signed := body
+				if opts.BodyRepresentation == "json_js" {
+					var err error
+					signed, err = jsoncanon.Stringify(context.Background(), body)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				separator := "."
+				if scheme == auth.SchemeECDSAP256SHA256Headers {
+					separator = ""
+				}
+				payload := append([]byte(ts+separator), signed...)
+				var signature string
+				if scheme == auth.SchemeECDSAP256SHA256Headers {
+					digest := sha256.Sum256(payload)
+					sig, err := ecdsa.SignASN1(rand.Reader, ecPriv, digest[:])
+					if err != nil {
+						t.Fatal(err)
+					}
+					signature = base64.StdEncoding.EncodeToString(sig)
+				} else {
+					mac := hmac.New(sha256.New, []byte(secret))
+					mac.Write(payload)
+					signature = hex.EncodeToString(mac.Sum(nil))
+				}
+				if scheme == auth.SchemeHMACSHA256TSDotMulti {
+					label := opts.SignatureLabel
+					if label == "" {
+						label = "s"
+					}
+					signature = "t=" + ts + "," + label + "=bad," + label + "=" + signature
+				} else {
+					req.Header.Set(opts.TimestampHeader, ts)
+				}
+				req.Header.Set(header, signature)
 			case auth.SchemeHMACSHA256Hex:
 				req.Header.Set(header, githubHMAC(secret, body))
 			case auth.SchemeHMACSHA256TSColon:
@@ -417,6 +519,13 @@ func authSecret(t *testing.T, opts flowconfig.AuthOptions) string {
 	secret := os.Getenv(opts.SecretRef.Name)
 	if secret == "" {
 		t.Fatalf("secret_ref env %s is empty", opts.SecretRef.Name)
+	}
+	if opts.SecretRef.JSONField != "" {
+		var bundle map[string]string
+		if err := json.Unmarshal([]byte(secret), &bundle); err != nil {
+			t.Fatal(err)
+		}
+		secret = bundle[opts.SecretRef.JSONField]
 	}
 	return secret
 }

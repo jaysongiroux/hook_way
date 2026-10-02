@@ -5,7 +5,10 @@ import { parse } from "yaml";
 import { scanEnvVars } from "../src/graph/envScan";
 import { NODE_IDENTITY_KEYS } from "../src/graph/nodeIdentity";
 
-const examplesRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../examples");
+const examplesRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../examples",
+);
 
 export interface ExampleFixture {
   name: string;
@@ -35,6 +38,10 @@ export function exampleFixtures(): ExampleFixture[] {
     "connections.yaml",
     ...listYaml("destinations", () => true),
     ...listYaml("auth", () => true),
+    ...listYaml("routing", () => true),
+    ...listYaml("proxy", () => true),
+    ...listYaml("credentials", () => true),
+    ...listYaml("adapters", () => true),
     ...listYaml("showcase", (file) => !file.includes("invalid")),
   ];
   return rels.map((name) => {
@@ -69,7 +76,10 @@ export function connectionNames(config: Record<string, unknown>): string[] {
  * A connection is authored flat, so its fields sit alongside `type` rather
  * than under a per-type block -- unlike destEntry below.
  */
-export function connEntry(config: Record<string, unknown>, name: string): { type: string; fields: Record<string, unknown> } {
+export function connEntry(
+  config: Record<string, unknown>,
+  name: string,
+): { type: string; fields: Record<string, unknown> } {
   const connections = isRecord(config.connections) ? config.connections : {};
   const entry = isRecord(connections[name]) ? connections[name] : {};
   const fields: Record<string, unknown> = {};
@@ -86,8 +96,10 @@ export interface FlowNodeYaml {
   options: Record<string, unknown>;
 }
 
-
-export function flowNodes(config: Record<string, unknown>, flow: string): FlowNodeYaml[] {
+export function flowNodes(
+  config: Record<string, unknown>,
+  flow: string,
+): FlowNodeYaml[] {
   const flows = isRecord(config.flows) ? config.flows : {};
   const raw = isRecord(flows[flow]) ? flows[flow] : {};
   const list = Array.isArray(raw.nodes) ? raw.nodes : [];
@@ -106,13 +118,19 @@ export function flowNodes(config: Record<string, unknown>, flow: string): FlowNo
   });
 }
 
-export function flowPolicy(config: Record<string, unknown>, flow: string): string {
+export function flowPolicy(
+  config: Record<string, unknown>,
+  flow: string,
+): string {
   const flows = isRecord(config.flows) ? config.flows : {};
   const raw = isRecord(flows[flow]) ? flows[flow] : {};
   return String(raw.delivery_failure_policy ?? "").trim();
 }
 
-export function destEntry(config: Record<string, unknown>, name: string): { type: string; block: Record<string, unknown> } {
+export function destEntry(
+  config: Record<string, unknown>,
+  name: string,
+): { type: string; block: Record<string, unknown> } {
   const destinations = isRecord(config.destinations) ? config.destinations : {};
   const entry = isRecord(destinations[name]) ? destinations[name] : {};
   const type = String(entry.type ?? "");
@@ -120,7 +138,9 @@ export function destEntry(config: Record<string, unknown>, name: string): { type
   return { type, block };
 }
 
-export function serverConfig(config: Record<string, unknown>): Record<string, unknown> {
+export function serverConfig(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
   return isRecord(config.server) ? config.server : {};
 }
 

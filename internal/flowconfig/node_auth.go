@@ -2,9 +2,11 @@ package flowconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/auth"
@@ -12,53 +14,73 @@ import (
 )
 
 type authNode struct {
-	id       string
-	opts     AuthOptions
-	verifier auth.Verifier
-	secrets  SecretsFunc
-	header   string
-	queryKey string
+	id               string
+	opts             AuthOptions
+	verifier         auth.Verifier
+	secrets          SecretsFunc
+	header, queryKey string
+	mu               sync.Mutex
+	cached           map[string]auth.Verifier
 }
 
-func newAuthNode(id string, opts AuthOptions, logger *slog.Logger, secrets SecretsFunc) graph.Node {
-	if logger == nil {
-		logger = slog.Default()
+// ValidateAuthKey applies the same bounds at startup and every refresh.
+func ValidateAuthKey(o AuthOptions, value []byte) error {
+	if len(value) == 0 || len(value) > 65536 {
+		return errors.New("key material must be nonempty and at most 64 KiB")
 	}
+	spec := AuthSpec(o)
+	spec.Secret = string(value)
+	if _, err := auth.NewVerifier(spec); err != nil {
+		return errors.New("invalid authentication key material")
+	}
+	return nil
+}
+
+// AuthSpec is shared by initial binding and refresh validation.
+func AuthSpec(o AuthOptions) auth.Spec {
+	spec := auth.Spec{Scheme: defaultAuthScheme(o.Scheme), Secret: o.Secret,
+		TimestampTolerance: 5 * time.Minute, RemoveBearer: o.RemoveBearer, RemovePrefix: o.RemovePrefix,
+		ExpectedIssuer: o.ExpectedIssuer, ExpectedAudience: o.ExpectedAudience, BodyHashClaim: o.BodyHashClaim,
+		TimestampUnit: o.TimestampUnit, TimestampPolicy: o.TimestampPolicy, BodyRepresentation: o.BodyRepresentation, SignatureLabel: o.SignatureLabel}
+	if o.TimestampTolerance != "" {
+		spec.TimestampTolerance, _ = time.ParseDuration(o.TimestampTolerance)
+	}
+	return spec
+}
+
+func newAuthNode(id string, opts AuthOptions, secrets SecretsFunc) (graph.Node, error) {
 	header := opts.SignatureHeader
 	queryKey := ""
 	if opts.Source != nil {
-		switch opts.Source.Kind {
-		case "query":
+		if opts.Source.Kind == "query" {
 			queryKey = opts.Source.Key
-		case "header":
+		} else {
 			header = opts.Source.Key
 		}
 	}
-	spec := auth.Spec{
-		TimestampTolerance: 5 * time.Minute,
-		Scheme:             defaultAuthScheme(opts.Scheme),
-		Secret:             opts.Secret,
-		RemoveBearer:       opts.RemoveBearer,
-		ExpectedIssuer:     opts.ExpectedIssuer,
-		ExpectedAudience:   opts.ExpectedAudience,
-		BodyHashClaim:      opts.BodyHashClaim,
-	}
-	if opts.TimestampTolerance != "" {
-		if d, err := time.ParseDuration(opts.TimestampTolerance); err == nil {
-			spec.TimestampTolerance = d
-		}
-	}
-	var verifier auth.Verifier
+	n := &authNode{id: id, opts: opts, secrets: secrets, header: header, queryKey: queryKey, cached: map[string]auth.Verifier{}}
 	if secrets == nil {
-		var err error
-		verifier, err = auth.NewVerifier(spec)
+		if opts.SecretRef != nil {
+			return nil, fmt.Errorf("auth %q: secret resolver is required", id)
+		}
+		if err := ValidateAuthKey(opts, []byte(opts.Secret)); err != nil {
+			return nil, fmt.Errorf("auth %q: invalid key material", id)
+		}
+		v, err := auth.NewVerifier(AuthSpec(opts))
 		if err != nil {
-			logger.Error("signature scheme unavailable; node will reject all requests",
-				"node_id", id, "scheme", opts.Scheme, "error", err.Error())
-			verifier = auth.RejectAll{}
+			return nil, fmt.Errorf("auth %q: invalid key material", id)
+		}
+		n.verifier = v
+	} else {
+		values, err := secrets(context.Background())
+		if err != nil || len(values) == 0 || len(values) > 2 {
+			return nil, fmt.Errorf("auth %q: secret unavailable", id)
+		}
+		if _, err = n.verifiers(values); err != nil {
+			return nil, fmt.Errorf("auth %q: invalid key material", id)
 		}
 	}
-	return authNode{id: id, opts: opts, verifier: verifier, secrets: secrets, header: header, queryKey: queryKey}
+	return n, nil
 }
 
 func defaultAuthScheme(scheme string) string {
@@ -72,7 +94,7 @@ func defaultAuthScheme(scheme string) string {
 	}
 }
 
-func (n authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
+func (n *authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
 	raw, ok := in.(graph.RawRequest)
 	if !ok {
 		return nil, graph.NodeError{
@@ -80,65 +102,104 @@ func (n authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, err
 			Err: fmt.Errorf("auth %q: expected RawRequest, got %T", n.id, in),
 		}
 	}
-	credential := n.credential(raw)
-	if err := n.verify(ctx, credential, raw.Body); err != nil {
-		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusUnauthorized,
-			Err: auth.ErrUnauthorized,
-		}
+	credential, err := n.credential(raw)
+	request := auth.Input{Signature: credential, Timestamp: raw.Head.Header.Get(n.opts.TimestampHeader), Body: raw.Body}
+	if err == nil && n.opts.BodyRepresentation == "json_js" {
+		request = request.WithCanonicalCache()
 	}
-	return graph.Verified{Raw: raw, Identity: n.opts.Scheme}, nil
+	if err == nil {
+		err = n.verify(ctx, request)
+	}
+	if err != nil {
+		status, reason := http.StatusUnauthorized, "auth_error"
+		if errors.Is(err, errAuthUnavailable) || errors.Is(err, auth.ErrVerificationUnavailable) {
+			status, reason = http.StatusServiceUnavailable, "auth_unavailable"
+		}
+		return nil, graph.NodeError{NodeID: n.id, Status: status, Reason: reason, Err: err}
+	}
+	return graph.Verified{Raw: raw, Identity: n.opts.Scheme, OriginalJSON: request.PreparedRepresentation()}, nil
 }
 
-func (n authNode) verify(ctx context.Context, credential string, body []byte) error {
-	now := time.Now()
-	if n.secrets == nil {
-		return n.verifier.Verify(credential, body, now)
+var errAuthUnavailable = errors.New("authentication key unavailable")
+
+func (n *authNode) verifiers(values [][]byte) ([]auth.Verifier, error) {
+	if len(values) == 0 || len(values) > 2 {
+		return nil, errAuthUnavailable
 	}
-	secrets, err := n.secrets(ctx)
-	if err != nil || len(secrets) == 0 {
-		return auth.ErrUnauthorized
-	}
-	spec := auth.Spec{
-		TimestampTolerance: 5 * time.Minute,
-		Scheme:             defaultAuthScheme(n.opts.Scheme),
-		RemoveBearer:       n.opts.RemoveBearer,
-		ExpectedIssuer:     n.opts.ExpectedIssuer,
-		ExpectedAudience:   n.opts.ExpectedAudience,
-		BodyHashClaim:      n.opts.BodyHashClaim,
-	}
-	if n.opts.TimestampTolerance != "" {
-		if d, err := time.ParseDuration(n.opts.TimestampTolerance); err == nil {
-			spec.TimestampTolerance = d
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	current := make(map[string]auth.Verifier, len(values))
+	out := make([]auth.Verifier, 0, len(values))
+	for _, value := range values {
+		if len(value) == 0 || len(value) > 65536 {
+			return nil, errAuthUnavailable
 		}
+		key := string(value)
+		v := n.cached[key]
+		if v == nil {
+			spec := AuthSpec(n.opts)
+			spec.Secret = key
+			var err error
+			v, err = auth.NewVerifier(spec)
+			if err != nil {
+				return nil, errAuthUnavailable
+			}
+		}
+		current[key] = v
+		out = append(out, v)
 	}
-	var last error
-	for _, secret := range secrets {
-		spec.Secret = string(secret)
-		v, err := auth.NewVerifier(spec)
+	n.cached = current // bounded to the active rotation window
+	return out, nil
+}
+func (n *authNode) verify(ctx context.Context, in auth.Input) error {
+	verifiers := []auth.Verifier{n.verifier}
+	if n.secrets != nil {
+		values, err := n.secrets(ctx)
 		if err != nil {
-			last = err
-			continue
+			return errAuthUnavailable
 		}
-		last = v.Verify(credential, body, now)
+		verifiers, err = n.verifiers(values)
+		if err != nil {
+			return err
+		}
+	}
+	now := time.Now()
+	var last error
+	for _, v := range verifiers {
+		if typed, ok := v.(auth.RequestVerifier); ok {
+			last = typed.VerifyRequest(ctx, in, now)
+		} else {
+			last = v.Verify(in.Signature, in.Body, now)
+		}
 		if last == nil {
 			return nil
 		}
-	}
-	if last == nil {
-		return auth.ErrUnauthorized
+		if errors.Is(last, auth.ErrVerificationUnavailable) {
+			return last // Retrying representation work with another key cannot help.
+		}
 	}
 	return last
 }
-
-func (n authNode) credential(raw graph.RawRequest) string {
+func (n *authNode) credential(raw graph.RawRequest) (string, error) {
+	var values []string
 	if n.queryKey != "" {
-		return raw.Head.Query.Get(n.queryKey)
+		values = raw.Head.Query[n.queryKey]
+	} else if n.header != "" {
+		values = raw.Head.Header.Values(n.header)
 	}
-	if n.header != "" {
-		return raw.Head.Header.Get(n.header)
+	if len(values) > 1 {
+		return "", auth.Failure{Reason: "duplicate_header"}
 	}
-	return ""
+	if n.opts.TimestampHeader != "" && len(raw.Head.Header.Values(n.opts.TimestampHeader)) > 1 {
+		return "", auth.Failure{Reason: "duplicate_header"}
+	}
+	if len(values) == 0 || values[0] == "" {
+		return "", auth.Failure{Reason: "missing_header"}
+	}
+	if len(values[0]) > auth.MaxCredentialBytes {
+		return "", auth.Failure{Reason: "header_too_large"}
+	}
+	return values[0], nil
 }
 
 type noAuthNode struct{ id string }

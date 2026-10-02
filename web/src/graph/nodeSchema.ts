@@ -18,6 +18,7 @@ export type JSONSchema =
       minimum?: number;
       maximum?: number;
       minItems?: number;
+      maxItems?: number;
       default?: unknown;
     };
 
@@ -27,6 +28,15 @@ export interface NodeSchemaMeta {
   detached: boolean;
   on_error: boolean;
   schema: JSONSchema;
+  auth_schemes?: Record<
+    string,
+    {
+      request_signature: boolean;
+      separate_timestamp: boolean;
+      jwt: boolean;
+      key_format: "shared_secret" | "pem" | "base64_der";
+    }
+  >;
 }
 
 export interface DestSchemaMeta {
@@ -97,11 +107,15 @@ export function connOwnedPaths(connType: string): string[] {
   return out;
 }
 
-export function isSchemaObject(schema: JSONSchema | undefined): schema is Exclude<JSONSchema, boolean> {
+export function isSchemaObject(
+  schema: JSONSchema | undefined,
+): schema is Exclude<JSONSchema, boolean> {
   return typeof schema === "object" && schema !== null;
 }
 
-export function schemaProperties(schema: JSONSchema | undefined): Record<string, JSONSchema> {
+export function schemaProperties(
+  schema: JSONSchema | undefined,
+): Record<string, JSONSchema> {
   return isSchemaObject(schema) ? (schema.properties ?? {}) : {};
 }
 
@@ -109,7 +123,9 @@ export function schemaRequired(schema: JSONSchema | undefined): string[] {
   return isSchemaObject(schema) ? (schema.required ?? []) : [];
 }
 
-export function schemaEnum(schema: JSONSchema | undefined): string[] | undefined {
+export function schemaEnum(
+  schema: JSONSchema | undefined,
+): string[] | undefined {
   if (!isSchemaObject(schema) || !schema.enum) return undefined;
   return schema.enum.map((v) => String(v));
 }
@@ -127,8 +143,32 @@ export function humanLabel(key: string): string {
   return key.replace(/_/g, " ");
 }
 
+const NODE_LABELS: Record<string, string> = {
+  http_trigger: "HTTP endpoint",
+  loop_guard: "Prevent request loops",
+  ip_allowlist: "Allow client IPs",
+  rate_limit: "Limit request rate",
+  read_body: "Read request body",
+  auth: "Verify signature or token",
+  no_auth: "Skip authentication",
+  replay_guard: "Reject duplicate requests",
+  envelope: "Parse request body",
+  filter: "Filter events",
+  register_route: "Save a route",
+  route: "Select an environment",
+  lookup: "Look up a value",
+  batch: "Process a batch",
+  transform: "Transform data",
+  code: "Run JavaScript",
+  switch: "Switch between routes",
+  if_else: "Branch with if / else",
+  http_request: "Call an HTTP API",
+  publish: "Send to a destination",
+  respond: "Return an HTTP response",
+};
+
 export function nodeLabel(type: string): string {
-  return humanLabel(type);
+  return NODE_LABELS[type] ?? humanLabel(type);
 }
 
 /** Strict equality, matching graph.PortType.Accepts. */
@@ -141,18 +181,34 @@ const EXTRA_DEFAULTS: Record<string, Record<string, unknown>> = {
   read_body: { max_bytes: 1048576 },
   rate_limit: { rpm: 60 },
   envelope: { body_format: "json" },
-  auth: { scheme: "hmac_sha256_hex", signature_header: "X-Hub-Signature-256", secret: "${WEBHOOK_SECRET}" },
+  auth: {
+    scheme: "hmac_sha256_hex",
+    source: { kind: "header", key: "X-Signature" },
+    secret_ref: { provider: "env", name: "WEBHOOK_SECRET" },
+  },
   respond: { passthrough: true },
   publish: { create: true },
   filter: { conditions: [{ source: "body", path: "", operator: "eq" }] },
-  switch: { cases: [{ port: "matched", when: { source: "body", path: "", operator: "eq" } }], default: "default" },
-  if_else: { match: "all", conditions: [{ source: "body", path: "", operator: "eq" }] },
+  switch: {
+    cases: [
+      { port: "matched", when: { source: "body", path: "", operator: "eq" } },
+    ],
+    default: "default",
+  },
+  if_else: {
+    match: "all",
+    conditions: [{ source: "body", path: "", operator: "eq" }],
+  },
 };
 
-export function defaultNodeOptions(type: string, id: string): Record<string, unknown> {
+export function defaultNodeOptions(
+  type: string,
+  id: string,
+): Record<string, unknown> {
   const meta = NODE_SCHEMAS[type];
   const out: Record<string, unknown> = { ...(EXTRA_DEFAULTS[type] ?? {}) };
-  if (type === "http_trigger" && out.path === undefined) out.path = `/webhooks/${id}`;
+  if (type === "http_trigger" && out.path === undefined)
+    out.path = `/webhooks/${id}`;
   for (const key of schemaRequired(meta?.schema)) {
     if (out[key] !== undefined) continue;
     out[key] = defaultForSchema(schemaProperties(meta?.schema)[key]);
@@ -185,7 +241,12 @@ function switchPorts(options: Record<string, unknown>): string[] {
   const cases = options.cases;
   if (Array.isArray(cases)) {
     for (const c of cases) {
-      if (c && typeof c === "object" && "port" in c && String((c as { port?: unknown }).port)) {
+      if (
+        c &&
+        typeof c === "object" &&
+        "port" in c &&
+        String((c as { port?: unknown }).port)
+      ) {
         ports.push(String((c as { port: unknown }).port));
       }
     }
@@ -201,7 +262,10 @@ function switchPorts(options: Record<string, unknown>): string[] {
  * Both the canvas handles and connection validation read this, so a new
  * branching node type is added here and nowhere else.
  */
-export function labelledPorts(nodeType: string, options: Record<string, unknown>): string[] {
+export function labelledPorts(
+  nodeType: string,
+  options: Record<string, unknown>,
+): string[] {
   if (nodeType === "if_else") return ["true", "false"];
   if (nodeType === "switch") return switchPorts(options);
   return [];

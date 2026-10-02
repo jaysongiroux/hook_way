@@ -63,7 +63,7 @@ func TestTransformFieldMapCopiesPath(t *testing.T) {
 }
 
 func TestTransformXMLPruneRewritesEnvelopeBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<ROOT><EMPTY/><KEEP>ok</KEEP></ROOT>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<ROOT><EMPTY/><KEEP>ok</KEEP></ROOT>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

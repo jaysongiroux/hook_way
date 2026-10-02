@@ -11,12 +11,16 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jaysongiroux/hook_way/internal/auth"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/routing"
 	"github.com/jaysongiroux/hook_way/internal/transform"
 	"github.com/jaysongiroux/hook_way/internal/vars"
-	"gopkg.in/yaml.v3"
 )
+
+var ErrAuthConfiguration = errors.New("invalid authentication configuration")
 
 var errNotImplemented = errors.New("flowconfig: node behavior not implemented")
 
@@ -36,25 +40,34 @@ type RateLimitOptions struct {
 	KeyBy string `yaml:"key_by,omitempty" json:"key_by,omitempty"`
 }
 type ReadBodyOptions struct {
-	MaxBytes int64 `yaml:"max_bytes" json:"max_bytes" jsonschema:"required,minimum=1"`
+	AllowEmpty bool  `yaml:"allow_empty,omitempty" json:"allow_empty,omitempty"`
+	MaxBytes   int64 `yaml:"max_bytes" json:"max_bytes" jsonschema:"required,minimum=1"`
 }
 type SecretRefOptions struct {
-	Provider string `yaml:"provider" json:"provider" jsonschema:"required,enum=env,enum=file,enum=aws_secrets_manager"`
-	Name     string `yaml:"name" json:"name" jsonschema:"required"`
-	Refresh  string `yaml:"refresh,omitempty" json:"refresh,omitempty"`
-	Overlap  string `yaml:"overlap,omitempty" json:"overlap,omitempty"`
+	Selection string `yaml:"selection,omitempty" json:"selection,omitempty" jsonschema:"enum=exact,enum=newest_matching"`
+	JSONField string `yaml:"json_field,omitempty" json:"json_field,omitempty"`
+	Provider  string `yaml:"provider" json:"provider" jsonschema:"required,enum=env,enum=file,enum=aws_secrets_manager"`
+	Name      string `yaml:"name" json:"name" jsonschema:"required"`
+	Refresh   string `yaml:"refresh,omitempty" json:"refresh,omitempty"`
+	Overlap   string `yaml:"overlap,omitempty" json:"overlap,omitempty"`
 }
 type AuthSourceOptions struct {
 	Kind string `yaml:"kind" json:"kind" jsonschema:"required,enum=header,enum=query"`
 	Key  string `yaml:"key" json:"key" jsonschema:"required"`
 }
 type AuthOptions struct {
+	TimestampHeader    string             `yaml:"timestamp_header,omitempty" json:"timestamp_header,omitempty"`
+	TimestampUnit      string             `yaml:"timestamp_unit,omitempty" json:"timestamp_unit,omitempty" jsonschema:"enum=seconds,enum=milliseconds"`
+	TimestampPolicy    string             `yaml:"timestamp_policy,omitempty" json:"timestamp_policy,omitempty" jsonschema:"enum=symmetric,enum=age,enum=unchecked"`
+	BodyRepresentation string             `yaml:"body_representation,omitempty" json:"body_representation,omitempty" jsonschema:"enum=raw,enum=json_js"`
+	SignatureLabel     string             `yaml:"signature_label,omitempty" json:"signature_label,omitempty"`
 	Scheme             string             `yaml:"scheme" json:"scheme" jsonschema:"required"`
 	Secret             string             `yaml:"secret,omitempty" json:"secret,omitempty"`
 	SecretRef          *SecretRefOptions  `yaml:"secret_ref,omitempty" json:"secret_ref,omitempty"`
 	SignatureHeader    string             `yaml:"signature_header,omitempty" json:"signature_header,omitempty"`
 	Source             *AuthSourceOptions `yaml:"source,omitempty" json:"source,omitempty"`
 	TimestampTolerance string             `yaml:"timestamp_tolerance,omitempty" json:"timestamp_tolerance,omitempty"`
+	RemovePrefix       string             `yaml:"remove_prefix,omitempty" json:"remove_prefix,omitempty"`
 	RemoveBearer       bool               `yaml:"remove_bearer,omitempty" json:"remove_bearer,omitempty"`
 	ExpectedIssuer     string             `yaml:"expected_issuer,omitempty" json:"expected_issuer,omitempty"`
 	ExpectedAudience   string             `yaml:"expected_audience,omitempty" json:"expected_audience,omitempty"`
@@ -67,8 +80,15 @@ type ReplayGuardOptions struct {
 	Key        string `yaml:"key,omitempty" json:"key,omitempty"`
 }
 type EnvelopeOptions struct {
+	XML        XMLParseOptions  `yaml:"xml,omitempty" json:"xml,omitempty"`
 	BodyFormat string           `yaml:"body_format,omitempty" json:"body_format,omitempty" jsonschema:"enum=json,enum=xml,enum=raw,enum=multipart"`
 	Multipart  MultipartOptions `yaml:"multipart,omitempty" json:"multipart,omitempty"`
+}
+
+type XMLParseOptions struct {
+	MaxBytes int64 `yaml:"max_bytes,omitempty" json:"max_bytes,omitempty" jsonschema:"minimum=1,maximum=67108864"`
+	MaxDepth int   `yaml:"max_depth,omitempty" json:"max_depth,omitempty" jsonschema:"minimum=1,maximum=1024"`
+	MaxNodes int   `yaml:"max_nodes,omitempty" json:"max_nodes,omitempty" jsonschema:"minimum=1,maximum=1000000"`
 }
 
 // MultipartOptions bounds a body_format: multipart parse. The defaults are
@@ -76,8 +96,9 @@ type EnvelopeOptions struct {
 // exposed to is max_parts x max_part_bytes held in memory, plus a 4/3 base64
 // copy of whatever content is carried, per in-flight request.
 type MultipartOptions struct {
-	MaxParts     int   `yaml:"max_parts,omitempty" json:"max_parts,omitempty" jsonschema:"minimum=1,maximum=256"`
-	MaxPartBytes int64 `yaml:"max_part_bytes,omitempty" json:"max_part_bytes,omitempty" jsonschema:"minimum=1"`
+	MaxTotalBytes int64 `yaml:"max_total_bytes,omitempty" json:"max_total_bytes,omitempty" jsonschema:"minimum=1,maximum=67108864"`
+	MaxParts      int   `yaml:"max_parts,omitempty" json:"max_parts,omitempty" jsonschema:"minimum=1,maximum=256"`
+	MaxPartBytes  int64 `yaml:"max_part_bytes,omitempty" json:"max_part_bytes,omitempty" jsonschema:"minimum=1"`
 	// IncludeContent is a pointer so an explicit false is distinguishable
 	// from an unset field; the default is true.
 	IncludeContent *bool `yaml:"include_content,omitempty" json:"include_content,omitempty"`
@@ -91,6 +112,7 @@ const (
 // limits applies the documented defaults.
 func (o MultipartOptions) limits() multipartLimits {
 	lim := multipartLimits{
+		MaxTotalBytes:  o.MaxTotalBytes,
 		MaxParts:       o.MaxParts,
 		MaxPartBytes:   o.MaxPartBytes,
 		IncludeContent: true,
@@ -114,6 +136,7 @@ type FilterConditionOptions struct {
 	Value    any    `yaml:"value,omitempty" json:"value,omitempty"`
 }
 type FilterOptions struct {
+	DropReason string                   `yaml:"drop_reason,omitempty" json:"drop_reason,omitempty" jsonschema:"enum=dropped_unused_event_type,enum=dropped_unsupported_event_type"`
 	Conditions []FilterConditionOptions `yaml:"conditions" json:"conditions" jsonschema:"required,minItems=1"`
 	OnNoMatch  string                   `yaml:"on_no_match,omitempty" json:"on_no_match,omitempty" jsonschema:"enum=drop,enum=reject"`
 }
@@ -135,12 +158,16 @@ type FieldMappingOptions struct {
 	To   string `yaml:"to" json:"to" jsonschema:"required"`
 }
 type TransformOptions struct {
-	Kind     string                `yaml:"kind" json:"kind" jsonschema:"required,enum=changed_fields,enum=field_map,enum=xml_prune"`
-	From     string                `yaml:"from,omitempty" json:"from,omitempty"`
-	To       string                `yaml:"to,omitempty" json:"to,omitempty"`
-	Name     string                `yaml:"name,omitempty" json:"name,omitempty"`
-	Mappings []FieldMappingOptions `yaml:"mappings,omitempty" json:"mappings,omitempty"`
-	Rules    []string              `yaml:"rules,omitempty" json:"rules,omitempty"`
+	JSONSchema map[string]any               `yaml:"json_schema,omitempty" json:"json_schema,omitempty"`
+	Coercions  []transform.ScalarCoercion   `yaml:"coercions,omitempty" json:"coercions,omitempty"`
+	Fields     []string                     `yaml:"fields,omitempty" json:"fields,omitempty"`
+	XMLAdapter *transform.XMLAdapterOptions `yaml:"xml_adapter,omitempty" json:"xml_adapter,omitempty"`
+	Kind       string                       `yaml:"kind" json:"kind" jsonschema:"required,enum=changed_fields,enum=field_map,enum=xml_prune,enum=xml_ordered_prune,enum=json_schema,enum=strip_fields,enum=changed_fields_js"`
+	From       string                       `yaml:"from,omitempty" json:"from,omitempty"`
+	To         string                       `yaml:"to,omitempty" json:"to,omitempty"`
+	Name       string                       `yaml:"name,omitempty" json:"name,omitempty"`
+	Mappings   []FieldMappingOptions        `yaml:"mappings,omitempty" json:"mappings,omitempty"`
+	Rules      []string                     `yaml:"rules,omitempty" json:"rules,omitempty"`
 }
 type CodeOptions struct {
 	Script         string `yaml:"script" json:"script" jsonschema:"required"`
@@ -184,15 +211,29 @@ func (o IfElseOptions) set() ConditionSetOptions {
 }
 
 type HTTPRequestOptions struct {
-	URL            string            `yaml:"url" json:"url" jsonschema:"required"`
-	ForwardMethod  bool              `yaml:"forward_method,omitempty" json:"forward_method,omitempty"`
-	ForwardQuery   bool              `yaml:"forward_query,omitempty" json:"forward_query,omitempty"`
-	ForwardHeaders []string          `yaml:"forward_headers,omitempty" json:"forward_headers,omitempty"`
-	Timeout        string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	Headers        map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
-	ErrorOnStatus  []string          `yaml:"error_on_status,omitempty" json:"error_on_status,omitempty"`
-	Body           string            `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed"`
-	Retry          HTTPRetryOptions  `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Credential        *HTTPCredentialOptions `yaml:"credential,omitempty" json:"credential,omitempty"`
+	RequireHeaders    []string               `yaml:"require_headers,omitempty" json:"require_headers,omitempty"`
+	RequireBodyFields []string               `yaml:"require_body_fields,omitempty" json:"require_body_fields,omitempty"`
+	URL               string                 `yaml:"url,omitempty" json:"url,omitempty"`
+	Upstream          *HTTPUpstreamOptions   `yaml:"upstream,omitempty" json:"upstream,omitempty"`
+	Method            string                 `yaml:"method,omitempty" json:"method,omitempty"`
+	BodyMethods       []string               `yaml:"body_methods,omitempty" json:"body_methods,omitempty"`
+	QueryMode         string                 `yaml:"query_mode,omitempty" json:"query_mode,omitempty" jsonschema:"enum=all,enum=first,enum=last"`
+	RemoveQuery       []string               `yaml:"remove_query,omitempty" json:"remove_query,omitempty"`
+	HeaderMode        string                 `yaml:"header_mode,omitempty" json:"header_mode,omitempty" jsonschema:"enum=forward,enum=replace"`
+	RemoveHeaders     []string               `yaml:"remove_headers,omitempty" json:"remove_headers,omitempty"`
+	RemoveBodyFields  []string               `yaml:"remove_body_fields,omitempty" json:"remove_body_fields,omitempty"`
+	MaxResponseBytes  int64                  `yaml:"max_response_bytes,omitempty" json:"max_response_bytes,omitempty" jsonschema:"minimum=1,maximum=67108864"`
+	ResponseBindings  *HTTPResponseBindings  `yaml:"response_bindings,omitempty" json:"response_bindings,omitempty"`
+	Redirects         *HTTPRedirectOptions   `yaml:"redirects,omitempty" json:"redirects,omitempty"`
+	ForwardMethod     bool                   `yaml:"forward_method,omitempty" json:"forward_method,omitempty"`
+	ForwardQuery      bool                   `yaml:"forward_query,omitempty" json:"forward_query,omitempty"`
+	ForwardHeaders    []string               `yaml:"forward_headers,omitempty" json:"forward_headers,omitempty"`
+	Timeout           string                 `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Headers           map[string]string      `yaml:"headers,omitempty" json:"headers,omitempty"`
+	ErrorOnStatus     []string               `yaml:"error_on_status,omitempty" json:"error_on_status,omitempty"`
+	Body              string                 `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed"`
+	Retry             HTTPRetryOptions       `yaml:"retry,omitempty" json:"retry,omitempty"`
 	// AllowPrivateTargets opts this node out of the SSRF egress policy that
 	// blocks loopback, link-local, private, and cloud-metadata destinations.
 	// It exists for operators who genuinely proxy to an internal service. It
@@ -207,15 +248,71 @@ type HTTPRequestOptions struct {
 // this node usually issues. Retries cover transport errors, timeouts, 429, and
 // 5xx; every other status is terminal.
 type HTTPRetryOptions struct {
-	MaxAttempts    int    `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty" jsonschema:"minimum=1,maximum=10"`
+	On             string   `yaml:"on,omitempty" json:"on,omitempty" jsonschema:"enum=network,enum=network_and_status"`
+	Methods        []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+	TotalTimeout   string   `yaml:"total_timeout,omitempty" json:"total_timeout,omitempty"`
+	MaxAttempts    int      `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty" jsonschema:"minimum=1,maximum=10"`
+	InitialBackoff string   `yaml:"initial_backoff,omitempty" json:"initial_backoff,omitempty"`
+	MaxBackoff     string   `yaml:"max_backoff,omitempty" json:"max_backoff,omitempty"`
+}
+
+type HTTPUpstreamOptions struct {
+	Profile             string `yaml:"profile" json:"profile" jsonschema:"required"`
+	EnvironmentVariable string `yaml:"environment_variable" json:"environment_variable" jsonschema:"required"`
+	Scheme              string `yaml:"scheme,omitempty" json:"scheme,omitempty" jsonschema:"enum=http,enum=https"`
+	Port                int    `yaml:"port,omitempty" json:"port,omitempty" jsonschema:"minimum=1,maximum=65535"`
+	Path                string `yaml:"path,omitempty" json:"path,omitempty"`
+}
+type HTTPResponseBindings struct {
+	Status       string            `yaml:"status,omitempty" json:"status,omitempty"`
+	Fields       map[string]string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	MaxJSONBytes int64             `yaml:"max_json_bytes,omitempty" json:"max_json_bytes,omitempty" jsonschema:"minimum=1,maximum=1048576"`
+}
+type HTTPRedirectOptions struct {
+	MaxHops int `yaml:"max_hops" json:"max_hops" jsonschema:"required,minimum=1,maximum=10"`
+}
+
+// PublishIdentityOptions selects a bounded FIFO identity, independently of the
+// transport request ID. Hash sources always use the original request bytes.
+type PublishIdentityOptions struct {
+	Source       string `yaml:"source" json:"source" jsonschema:"required,enum=static,enum=body,enum=header,enum=variable,enum=raw_sha256,enum=json_js_sha256"`
+	Value        string `yaml:"value,omitempty" json:"value,omitempty"`
+	Path         string `yaml:"path,omitempty" json:"path,omitempty"`
+	Fallback     string `yaml:"fallback,omitempty" json:"fallback,omitempty"`
+	HashLength   int    `yaml:"hash_length,omitempty" json:"hash_length,omitempty" jsonschema:"minimum=1,maximum=64"`
+	FallbackHash string `yaml:"fallback_hash,omitempty" json:"fallback_hash,omitempty" jsonschema:"enum=raw_sha256,enum=json_js_sha256"`
+}
+type PublishFIFOOptions struct {
+	GroupID         PublishIdentityOptions  `yaml:"group_id" json:"group_id" jsonschema:"required"`
+	DeduplicationID *PublishIdentityOptions `yaml:"deduplication_id,omitempty" json:"deduplication_id,omitempty"`
+	ContentBased    bool                    `yaml:"content_based_deduplication,omitempty" json:"content_based_deduplication,omitempty"`
+}
+type PublishRetryOptions struct {
+	MaxAttempts    int    `yaml:"max_attempts" json:"max_attempts" jsonschema:"required,minimum=1,maximum=10"`
 	InitialBackoff string `yaml:"initial_backoff,omitempty" json:"initial_backoff,omitempty"`
 	MaxBackoff     string `yaml:"max_backoff,omitempty" json:"max_backoff,omitempty"`
 }
+type PublishSQSOptions struct {
+	QueueOwnerAccountID string `yaml:"queue_owner_account_id,omitempty" json:"queue_owner_account_id,omitempty"`
+	DelaySeconds        *int32 `yaml:"delay_seconds,omitempty" json:"delay_seconds,omitempty" jsonschema:"minimum=0,maximum=900"`
+}
+type PublishSNSOptions struct {
+	TopicARN         string `yaml:"topic_arn,omitempty" json:"topic_arn,omitempty"`
+	Subject          string `yaml:"subject,omitempty" json:"subject,omitempty"`
+	MessageStructure string `yaml:"message_structure,omitempty" json:"message_structure,omitempty" jsonschema:"enum=json"`
+}
 type PublishOptions struct {
-	Destination       string         `yaml:"destination" json:"destination" jsonschema:"required"`
-	Target            string         `yaml:"target" json:"target" jsonschema:"required"`
-	Create            bool           `yaml:"create,omitempty" json:"create,omitempty"`
-	MessageAttributes map[string]any `yaml:"message_attributes,omitempty" json:"message_attributes,omitempty"`
+	GroupID            *PublishIdentityOptions `yaml:"group_id,omitempty" json:"group_id,omitempty"`
+	SQS                *PublishSQSOptions      `yaml:"sqs,omitempty" json:"sqs,omitempty"`
+	SNS                *PublishSNSOptions      `yaml:"sns,omitempty" json:"sns,omitempty"`
+	ResourceAttributes map[string]string       `yaml:"resource_attributes,omitempty" json:"resource_attributes,omitempty"`
+	WireBody           string                  `yaml:"wire_body,omitempty" json:"wire_body,omitempty" jsonschema:"enum=envelope,enum=raw,enum=json,enum=json_js"`
+	FIFO               *PublishFIFOOptions     `yaml:"fifo,omitempty" json:"fifo,omitempty"`
+	Retry              *PublishRetryOptions    `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Destination        string                  `yaml:"destination" json:"destination" jsonschema:"required"`
+	Target             string                  `yaml:"target" json:"target" jsonschema:"required"`
+	Create             bool                    `yaml:"create,omitempty" json:"create,omitempty"`
+	MessageAttributes  map[string]any          `yaml:"message_attributes,omitempty" json:"message_attributes,omitempty"`
 	// Payload selects how object-capable destinations store the event.
 	// Empty or "envelope" (default) writes the JSON Message. "object" writes
 	// decoded file bytes (body must be a {content, filename?, content_type?}
@@ -224,10 +321,12 @@ type PublishOptions struct {
 	Payload string `yaml:"payload,omitempty" json:"payload,omitempty" jsonschema:"enum=envelope,enum=object"`
 }
 type RespondOptions struct {
-	Status      int               `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"minimum=200,maximum=599"`
-	Headers     map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Body        string            `yaml:"body,omitempty" json:"body,omitempty"`
-	Passthrough bool              `yaml:"passthrough,omitempty" json:"passthrough,omitempty"`
+	ForwardSetCookie bool              `yaml:"forward_set_cookie,omitempty" json:"forward_set_cookie,omitempty"`
+	ForwardHeaders   []string          `yaml:"forward_headers,omitempty" json:"forward_headers,omitempty"`
+	Status           int               `yaml:"status,omitempty" json:"status,omitempty" jsonschema:"minimum=200,maximum=599"`
+	Headers          map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Body             string            `yaml:"body,omitempty" json:"body,omitempty"`
+	Passthrough      bool              `yaml:"passthrough,omitempty" json:"passthrough,omitempty"`
 }
 
 type nodeDefinition struct {
@@ -255,14 +354,15 @@ func defineErr[T any](name string, in, out graph.PortType, detached bool, valida
 		newNode: func(nc graph.NodeConfig) (graph.Node, error) {
 			opts, err := decodeOptions[T](nc)
 			if err != nil {
-				return nil, err
+				return nil, nodeBuildError(name, err)
 			}
 			if validate != nil {
 				if err := validate(opts); err != nil {
-					return nil, fmt.Errorf("node %q (%s): %w", nc.ID, name, err)
+					return nil, fmt.Errorf("node %q (%s): %w", nc.ID, name, nodeBuildError(name, err))
 				}
 			}
-			return build(nc.ID, opts)
+			node, err := build(nc.ID, opts)
+			return node, nodeBuildError(name, err)
 		},
 	}
 }
@@ -270,13 +370,21 @@ func defineErr[T any](name string, in, out graph.PortType, detached bool, valida
 // RegistryOptions customizes runtime node constructors used when compiling
 // flows for serving. Validation uses the zero value.
 type RegistryOptions struct {
-	Publishers      PublisherResolver
-	Lookups         func(LookupOptions) LookupFunc
-	Secrets         func(SecretRefOptions) (SecretsFunc, error)
-	Logger          *slog.Logger
-	HeaderDenylist  []string
-	HeaderAllowlist []string
-	QueryDenylist   []string
+	BatchSlots         chan struct{}
+	BatchObservation   func(string, string)
+	Credentials        map[string]CredentialProvider
+	RoutingRegistry    *routing.Registry
+	RoutingStores      map[string]routing.Reader
+	RoutingObservation func(string, string)
+	ValidateOnly       bool
+	AuthSecrets        func(AuthOptions) (SecretsFunc, error)
+	Publishers         PublisherResolver
+	Lookups            func(LookupOptions) LookupFunc
+	Secrets            func(SecretRefOptions) (SecretsFunc, error)
+	Logger             *slog.Logger
+	HeaderDenylist     []string
+	HeaderAllowlist    []string
+	QueryDenylist      []string
 }
 
 // SecretsFunc returns the currently-valid secret values for an auth node.
@@ -310,15 +418,24 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			return nil
 		}, newReadBody),
 		defineErr("auth", graph.PortRawRequest, graph.PortVerified, false, validateAuth, func(id string, o AuthOptions) (graph.Node, error) {
+			if opts.ValidateOnly {
+				return stubNode{name: "auth validation only"}, nil
+			}
 			var secrets SecretsFunc
-			if o.SecretRef != nil && opts.Secrets != nil {
+			if o.SecretRef != nil && opts.AuthSecrets != nil {
+				fn, err := opts.AuthSecrets(o)
+				if err != nil {
+					return nil, err
+				}
+				secrets = fn
+			} else if o.SecretRef != nil && opts.Secrets != nil {
 				fn, err := opts.Secrets(*o.SecretRef)
 				if err != nil {
 					return nil, err
 				}
 				secrets = fn
 			}
-			return newAuthNode(id, o, opts.Logger, secrets), nil
+			return newAuthNode(id, o, secrets)
 		}),
 		define[NoAuthOptions]("no_auth", graph.PortRawRequest, graph.PortVerified, false, nil, func(id string, _ NoAuthOptions) graph.Node {
 			return newNoAuthNode(id, opts.Logger)
@@ -329,7 +446,12 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			n.queryDenylist = opts.QueryDenylist
 			return n
 		}),
+		defineErr("batch", graph.PortEnvelope, graph.PortTerminal, false, validateBatch, func(id string, o BatchOptions) (graph.Node, error) { return newBatchNode(id, o, opts) }),
 		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode),
+		defineErr("register_route", graph.PortEnvelope, graph.PortEnvelope, false, validateRegisterRoute, func(id string, o RegisterRouteOptions) (graph.Node, error) { return newRegisterRouteNode(id, o, opts) }),
+		defineErr("route", graph.PortEnvelope, graph.PortEnvelope, false, validateRoute, func(id string, o RouteOptions) (graph.Node, error) {
+			return newRouteNode(id, o, opts)
+		}),
 		defineErr("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, func(id string, o LookupOptions) (graph.Node, error) {
 			var fn LookupFunc
 			if opts.Lookups != nil {
@@ -347,12 +469,33 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			}
 			code := n.(codeNode)
 			code.allowlist, code.denylist = opts.HeaderAllowlist, opts.HeaderDenylist
+			code.queryDenylist = opts.QueryDenylist
 			return code, nil
 		}),
 		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
 		define("if_else", graph.PortEnvelope, graph.PortEnvelope, false, validateIfElse, newIfElseNode),
 		defineErr("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) (graph.Node, error) {
-			return newHTTPRequestNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist)
+			value, err := newHTTPRequestNodeWithRegistry(id, o, opts.HeaderAllowlist, opts.HeaderDenylist, opts.RoutingRegistry, opts.ValidateOnly)
+			if err != nil {
+				return nil, err
+			}
+			n := value.(httpRequestNode)
+			n.credentials = opts.Credentials
+			if !opts.ValidateOnly && o.Credential != nil {
+				profiles := []string{o.Credential.Profile}
+				if profiles[0] == "" {
+					profiles = nil
+					for _, p := range o.Credential.EnvironmentProfiles {
+						profiles = append(profiles, p)
+					}
+				}
+				for _, p := range profiles {
+					if opts.Credentials[p] == nil {
+						return nil, ErrCredentialConfiguration
+					}
+				}
+			}
+			return n, nil
 		}),
 		defineErr("publish", graph.PortEnvelope, graph.PortEnvelope, true, validatePublish, func(id string, o PublishOptions) (graph.Node, error) {
 			return newPublishNode(id, o, opts.Publishers)
@@ -395,11 +538,10 @@ func RegisterWithOptions(reg *graph.Registry, opts RegistryOptions) error {
 	return nil
 }
 
-func NewRegistry() (*graph.Registry, error) {
-	return NewRegistryWithOptions(RegistryOptions{})
-}
-
 func NewRegistryWithOptions(opts RegistryOptions) (*graph.Registry, error) {
+	if opts.BatchSlots == nil {
+		opts.BatchSlots = make(chan struct{}, 1024)
+	}
 	reg := graph.NewRegistry()
 	if err := RegisterWithOptions(reg, opts); err != nil {
 		return nil, err
@@ -444,6 +586,49 @@ func require(name, value string) error {
 }
 
 func validateAuth(o AuthOptions) error {
+	for _, header := range []string{o.SignatureHeader, o.TimestampHeader} {
+		if header != "" && !validAuthHeader(header) {
+			return errors.New("authentication header must be a valid HTTP field name")
+		}
+	}
+	if o.Source != nil && o.Source.Kind == "header" && !validAuthHeader(o.Source.Key) {
+		return errors.New("authentication header must be a valid HTTP field name")
+	}
+	if o.SecretRef != nil && len(o.SecretRef.JSONField) > 256 {
+		return errors.New("secret_ref.json_field is limited to 256 bytes")
+	}
+	if err := auth.ValidateSpec(AuthSpec(o)); err != nil {
+		return err
+	}
+	if auth.SeparateTimestamp(o.Scheme) {
+		if o.TimestampHeader == "" {
+			return errors.New("timestamp_header is required for separate-header signatures")
+		}
+		signature := o.SignatureHeader
+		if o.Source != nil {
+			if o.Source.Kind != "header" {
+				return errors.New("separate signatures require header source")
+			}
+			signature = o.Source.Key
+		}
+		if signature == "" || strings.EqualFold(signature, o.TimestampHeader) {
+			return errors.New("separate signature and timestamp headers must be distinct and nonempty")
+		}
+	} else if o.TimestampHeader != "" {
+		return errors.New("timestamp_header requires a separate-header signature scheme")
+	}
+	if o.Scheme == auth.SchemeHMACSHA256TSDotMulti && o.SignatureHeader == "" && o.Source == nil {
+		return errors.New("multi-signature scheme requires a credential source")
+	}
+	if o.Secret != "" && !strings.Contains(o.Secret, "${") {
+		if err := ValidateAuthKey(o, []byte(o.Secret)); err != nil {
+			return errors.New("invalid authentication key material")
+		}
+	}
+
+	if o.RemovePrefix != "" && (o.Scheme != auth.SchemeExact || o.RemoveBearer || strings.ContainsAny(o.RemovePrefix, "\r\n\x00")) {
+		return errors.New("remove_prefix requires exact auth without remove_bearer and a valid header prefix")
+	}
 	if o.Scheme == auth.SchemeNoAuth {
 		return errors.New("use the explicit no_auth node instead of auth.scheme: no_auth")
 	}
@@ -458,6 +643,11 @@ func validateAuth(o AuthOptions) error {
 		return errors.New("exactly one of secret or secret_ref is required")
 	}
 	if o.SecretRef != nil {
+		if o.SecretRef.Selection != "" {
+			if err := validateCredentialSecret(*o.SecretRef); err != nil {
+				return err
+			}
+		}
 		if err := require("secret_ref.provider", o.SecretRef.Provider); err != nil {
 			return err
 		}
@@ -512,6 +702,14 @@ func validateReplayGuard(o ReplayGuardOptions) error {
 	return validateTemplate("key", o.Key)
 }
 func validateEnvelope(o EnvelopeOptions) error {
+	x := o.XML
+	if (x.MaxBytes != 0 || x.MaxDepth != 0 || x.MaxNodes != 0) && o.BodyFormat != "xml" {
+		return errors.New("xml options require body_format: xml")
+	}
+	if x.MaxBytes < 0 || x.MaxBytes > 64<<20 || x.MaxDepth < 0 || x.MaxDepth > 1024 || x.MaxNodes < 0 || x.MaxNodes > 1000000 {
+		return errors.New("invalid XML parse limits")
+	}
+
 	switch o.BodyFormat {
 	case "", "json", "xml", "raw", "multipart":
 	default:
@@ -525,7 +723,7 @@ func validateEnvelope(o EnvelopeOptions) error {
 // than silently ignored, the same reasoning as http_request's retry block: a
 // lone limit is always a half-written config.
 func validateMultipart(o EnvelopeOptions) error {
-	set := o.Multipart.MaxParts != 0 || o.Multipart.MaxPartBytes != 0 || o.Multipart.IncludeContent != nil
+	set := o.Multipart.MaxParts != 0 || o.Multipart.MaxPartBytes != 0 || o.Multipart.MaxTotalBytes != 0 || o.Multipart.IncludeContent != nil
 	if set && o.BodyFormat != "multipart" {
 		return errors.New("multipart options have no effect without body_format: multipart")
 	}
@@ -535,12 +733,21 @@ func validateMultipart(o EnvelopeOptions) error {
 	if o.Multipart.MaxParts > 256 {
 		return errors.New("multipart.max_parts must be 256 or fewer")
 	}
-	if o.Multipart.MaxPartBytes < 0 {
+	if o.Multipart.MaxTotalBytes < 0 || o.Multipart.MaxTotalBytes > 64<<20 {
+		return errors.New("multipart.max_total_bytes must be 1..67108864")
+	}
+	if o.Multipart.MaxPartBytes < 0 || o.Multipart.MaxPartBytes > 64<<20 {
 		return errors.New("multipart.max_part_bytes must not be negative")
 	}
 	return nil
 }
 func validateFilter(o FilterOptions) error {
+	if o.DropReason != "" && o.DropReason != "dropped_unused_event_type" && o.DropReason != "dropped_unsupported_event_type" {
+		return errors.New("invalid finite filter drop_reason")
+	}
+	if o.DropReason != "" && o.OnNoMatch == "reject" {
+		return errors.New("drop_reason requires a drop filter")
+	}
 	if len(o.Conditions) == 0 {
 		return errors.New("conditions is required")
 	}
@@ -575,18 +782,47 @@ func validateLookup(o LookupOptions) error {
 	return validateDuration("negative_ttl", o.NegativeTTL, true)
 }
 func validateTransform(o TransformOptions) error {
+	if (o.JSONSchema != nil || len(o.Coercions) > 0) && o.Kind != "json_schema" {
+		return errors.New("json_schema and coercions require kind: json_schema")
+	}
+	if len(o.Fields) > 0 && o.Kind != "strip_fields" {
+		return errors.New("fields requires strip_fields")
+	}
+	if o.XMLAdapter != nil && o.Kind != "xml_ordered_prune" {
+		return errors.New("xml_adapter requires xml_ordered_prune")
+	}
 	if err := require("kind", o.Kind); err != nil {
 		return err
 	}
 	switch o.Kind {
-	case "changed_fields":
+	case "json_schema":
+		_, err := transform.NewValidator(o.JSONSchema, o.Coercions)
+		return err
+	case "strip_fields":
+		if len(o.Fields) == 0 || len(o.Fields) > 64 {
+			return errors.New("strip_fields requires 1..64 paths")
+		}
+		for _, f := range o.Fields {
+			if !transform.JSONFieldPath(f) {
+				return errors.New("invalid strip_fields path")
+			}
+		}
+	case "changed_fields", "changed_fields_js":
 		if o.From == "" || o.To == "" {
 			return errors.New("changed_fields requires from and to")
+		}
+		if o.Kind == "changed_fields_js" && (!strings.HasPrefix(o.From, "body.") || !strings.HasPrefix(o.To, "body.")) {
+			return errors.New("changed_fields_js requires body paths into the original JSON request")
 		}
 	case "field_map":
 		if len(o.Mappings) == 0 {
 			return errors.New("field_map requires mappings")
 		}
+	case "xml_ordered_prune":
+		if o.XMLAdapter == nil || len(o.Rules) > 0 {
+			return errors.New("xml_ordered_prune requires xml_adapter and forbids rules overrides")
+		}
+		return o.XMLAdapter.Validate()
 	case "xml_prune":
 		for i, rule := range o.Rules {
 			if !transform.KnownXMLPruneRule(rule) {
@@ -602,10 +838,10 @@ func validateCode(o CodeOptions) error {
 	if err := require("script", o.Script); err != nil {
 		return err
 	}
-	if o.MaxInputBytes < 0 {
+	if o.MaxInputBytes < 0 || o.MaxInputBytes > 64<<20 {
 		return errors.New("max_input_bytes must be positive")
 	}
-	if o.MaxOutputBytes < 0 {
+	if o.MaxOutputBytes < 0 || o.MaxOutputBytes > 64<<20 {
 		return errors.New("max_output_bytes must be positive")
 	}
 	if o.MaxCallStack < 0 {
@@ -656,31 +892,63 @@ func validateIfElse(o IfElseOptions) error {
 	return validateConditions("", o.Match, o.Conditions)
 }
 func validateHTTPRequest(o HTTPRequestOptions) error {
-	if err := require("url", o.URL); err != nil {
-		return err
+	if (o.URL == "") == (o.Upstream == nil) {
+		return errors.New("exactly one of url or upstream is required")
 	}
-	if err := validateTemplate("url", o.URL); err != nil {
-		return err
-	}
-	if tpl, err := vars.Parse(o.URL); err == nil && !tpl.HasPlaceholders() {
-		if err := validateHTTPURL(o.URL); err != nil {
+	if o.Upstream != nil {
+		u := o.Upstream
+		if u.Profile == "" || !vars.ValidName(u.EnvironmentVariable) {
+			return errors.New("upstream requires profile and a valid environment_variable")
+		}
+		if u.Scheme != "" && u.Scheme != "http" && u.Scheme != "https" {
+			return errors.New("upstream scheme must be http or https")
+		}
+		if u.Port < 0 || u.Port > 65535 {
+			return errors.New("invalid upstream port")
+		}
+		if u.Path != "" && (!strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") || strings.ContainsAny(u.Path, "?#")) {
+			return errors.New("upstream.path must be an absolute path without query or fragment")
+		}
+		if err := validateTemplate("upstream.path", u.Path); err != nil {
+			return err
+		}
+	} else {
+		if err := validateTemplate("url", o.URL); err != nil {
+			return err
+		}
+		if tpl, err := vars.Parse(o.URL); err == nil && !tpl.HasPlaceholders() {
+			if err := validateHTTPURL(o.URL); err != nil {
+				return fmt.Errorf("url: %w", err)
+			}
+		}
+		if err := validateURLHostTemplate(o.URL); err != nil {
 			return fmt.Errorf("url: %w", err)
 		}
+		if o.AllowPrivateTargets && o.Credential == nil && !urlAuthorityIsTemplated(o.URL) {
+			return errors.New("allow_private_targets has no effect unless the url host contains a {variable} or an admitted upstream is used")
+		}
 	}
-	// A templated URL gets no host validation above -- there is no host to
-	// validate until a request renders one. That is exactly the SSRF case, so
-	// the shape of the template is constrained instead: a {variable} in the
-	// authority must be followed by a literal dotted domain, which pins the
-	// destination to a fixed domain no matter what a request supplies.
-	if err := validateURLHostTemplate(o.URL); err != nil {
-		return fmt.Errorf("url: %w", err)
+	if err := validateHTTPCredential(o.Credential); err != nil {
+		return err
 	}
-	// The egress policy only applies when a request can choose the host, so
-	// opting out of it on a node with a literal host does nothing. Reject it
-	// rather than accept a line that reads like a security decision and is
-	// not one -- the same reasoning as the retry block below.
-	if o.AllowPrivateTargets && !urlAuthorityIsTemplated(o.URL) {
-		return errors.New("allow_private_targets has no effect unless the url host contains a {variable}; a literal host is already the operator's own choice")
+	if o.Credential != nil && (o.Retry.MaxAttempts > 1 || o.Redirects != nil) {
+		return errors.New("managed credentials own session retry and forbid additional retries or redirects")
+	}
+	for _, header := range o.RequireHeaders {
+		if !validAuthHeader(header) {
+			return errors.New("invalid required header")
+		}
+	}
+	for _, path := range o.RequireBodyFields {
+		if !validSelectionPath(path) {
+			return errors.New("invalid required body field")
+		}
+	}
+	if len(o.RequireHeaders) > 32 || len(o.RequireBodyFields) > 32 {
+		return errors.New("request preflight fields exceed 32")
+	}
+	if err := validateProxyContract(o); err != nil {
+		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(o.Body)) {
 	case "", "raw", "transformed":
@@ -698,6 +966,16 @@ func validateHTTPRequest(o HTTPRequestOptions) error {
 // rather than silently ignored: retry is opt-in through max_attempts, so a
 // lone backoff value is always a half-written config.
 func validateHTTPRetry(o HTTPRetryOptions) error {
+	if o.On != "" && o.On != "network" && o.On != "network_and_status" {
+		return errors.New("retry.on must be network or network_and_status")
+	}
+	if err := validateDuration("retry.total_timeout", o.TotalTimeout, false); err != nil {
+		return err
+	}
+	if o.MaxAttempts < 2 && (o.On != "" || len(o.Methods) > 0) {
+		return errors.New("retry.on and retry.methods require at least two attempts")
+	}
+
 	if o.MaxAttempts < 0 {
 		return errors.New("retry.max_attempts must not be negative")
 	}
@@ -740,12 +1018,21 @@ func validatePublish(o PublishOptions) error {
 	}
 	switch o.Payload {
 	case "", "envelope", "object":
-		return nil
+		return validatePublishDelivery(o)
 	default:
 		return fmt.Errorf("payload %q is not supported (use envelope or object)", o.Payload)
 	}
 }
 func validateRespond(o RespondOptions) error {
+	if !o.Passthrough && (o.ForwardSetCookie || len(o.ForwardHeaders) > 0) {
+		return errors.New("forward_set_cookie and forward_headers require passthrough")
+	}
+	for _, name := range o.ForwardHeaders {
+		if !validAuthHeader(name) {
+			return errors.New("invalid response header name")
+		}
+	}
+
 	if o.Passthrough == (o.Status != 0) {
 		return errors.New("exactly one of status or passthrough is required")
 	}
@@ -772,4 +1059,24 @@ func validateDuration(name, value string, allowZero bool) error {
 		return fmt.Errorf("%s must be %s", name, map[bool]string{true: "non-negative", false: "positive"}[allowZero])
 	}
 	return nil
+}
+
+func validAuthHeader(s string) bool {
+	if s == "" || len(s) > 256 {
+		return false
+	}
+	for _, c := range s {
+		valid := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", c)
+		if !valid {
+			return false
+		}
+	}
+	return true
+}
+
+func nodeBuildError(name string, err error) error {
+	if err != nil && name == "auth" {
+		return fmt.Errorf("%w: %w", ErrAuthConfiguration, err)
+	}
+	return err
 }

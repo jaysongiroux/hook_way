@@ -1,0 +1,49 @@
+# Exact typed DynamoDB routing for a shared webhook endpoint. Create the table
+# with string HASH id and RANGE id_type, and provision preview-events first.
+# Rows retain id, id_type, env_name and epoch-second created_at. Hookway only
+# publishes to SQS. A register_route node in an authenticated core flow can
+# register rows; external datastore tooling owns table backfills and cleanup.
+# The configured sandbox profile admits preview/staging, never production.
+# AWS credentials use the default chain; optional endpoints support LocalStack.
+server: {addr: ":8080", max_body_bytes: 1048576}
+routing:
+  stores:
+    primary: {table: synthetic-routing, region: us-east-1, timeout: 2s}
+  profiles:
+    sandbox: {account_id: "000000000000", credential_mode: sandbox}
+    production: {account_id: "111111111111", credential_mode: production}
+  environments:
+    preview:
+      aliases: [staging]
+      profiles: [sandbox]
+      accounts: ["000000000000"]
+      destination_prefix: preview
+      backend_host: preview.example.test
+    production:
+      aliases: [live]
+      profiles: [production]
+      accounts: ["111111111111"]
+      destination_prefix: prod
+      backend_host: api.example.org
+
+destinations:
+  events: {type: sqs, sqs: {region: us-east-1}}
+flows:
+  shared:
+    responses:
+      lookup_error: {status: 400, body: '{"error":"routing failed"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: "${SAMPLE_WEBHOOK_SECRET}", signature_header: Authorization, remove_prefix: "Api-Key "}
+      - {id: env, type: envelope, body_format: json}
+      # Drop unused families before lookup. Add event-specific paths/types in
+      # separate branches; no index filtering or concatenated composite keys.
+      - {id: supported, type: filter, conditions: [{source: body, path: event, operator: eq, value: changed}], on_no_match: drop}
+      - id: routing
+        type: route
+        profile: sandbox
+        store: primary
+        candidates: [{source: body, path: data.object.id, id_type: record_a}]
+      - {id: out, type: publish, destination: events, target: '{route_prefix}-events', create: false, wire_body: raw}
+    edges: [in>body, body>auth, auth>env, env>supported, supported>routing, routing>out]

@@ -119,3 +119,4 @@ node_modules/
 
 # scratch build output
 tmp/
+/bin/

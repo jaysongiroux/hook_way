@@ -4,20 +4,25 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/routing"
 	"github.com/jaysongiroux/hook_way/internal/vars"
-	"gopkg.in/yaml.v3"
 )
 
 // Config is a Hookway config document: shared process settings plus named flows.
 type Config struct {
+	Routing      routing.Config
+	Credentials  map[string]CredentialProfile
 	Server       config.ServerConfig
 	Security     config.SecurityConfig
 	Metrics      config.MetricsConfig
@@ -48,10 +53,10 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	}
 
 	var issues []config.ValidationIssue
-	// Only `flows` is tolerated alongside the shared process settings; it is
-	// decoded separately below. Every other top-level key -- including
+	// `flows` and `routing` are decoded separately below. Every other
+	// non-shared top-level key -- including
 	// `endpoints` -- is reported as unknown by the strict decoder.
-	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows")
+	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials")
 	issues = append(issues, sharedIssues...)
 	issues = append(issues, shared.ValidationIssues()...)
 
@@ -67,9 +72,110 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 		Destinations: shared.Destinations,
 		Flows:        flows,
 	}
+	var routingConfig routing.Config
+	// Decode this extra block separately, strictly, without accepting unknown
+	// keys inside it. Shared sections and flows have their own strict decoders.
+	var root map[string]yaml.Node
+	if yaml.Unmarshal(data, &root) == nil {
+		if node, ok := root["routing"]; ok {
+			block, _ := yaml.Marshal(node)
+			decoder := yaml.NewDecoder(bytes.NewReader(block))
+			decoder.KnownFields(true)
+			if err := decoder.Decode(&routingConfig); err != nil {
+				issues = append(issues, cfgIssue("routing", err.Error(), ""))
+			}
+		}
+	}
+	var credentials map[string]CredentialProfile
+	if node, ok := root["credentials"]; ok {
+		block, _ := yaml.Marshal(node)
+		decoder := yaml.NewDecoder(bytes.NewReader(block))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&credentials); err != nil {
+			issues = append(issues, cfgIssue("credentials", err.Error(), ""))
+		}
+	}
+	cfg.Credentials = credentials
+	cfg.Routing = routingConfig
+	issues = append(issues, CredentialConfigurationIssues(cfg)...)
+	issues = append(issues, RoutingConfigurationIssues(cfg)...)
 	issues = append(issues, compileFlows(cfg)...)
 	issues = append(issues, crossFlowIssues(cfg)...)
 	return cfg, issues
+}
+
+func RoutingConfigurationIssues(cfg Config) []config.ValidationIssue {
+	registry, err := routing.NewRegistry(cfg.Routing)
+	if err != nil {
+		return []config.ValidationIssue{cfgIssue("routing", err.Error(), "")}
+	}
+	var issues []config.ValidationIssue
+	for _, name := range sortedKeys(cfg.Flows) {
+		seen := map[string]bool{}
+		for _, node := range ExpandedNodes(cfg.Flows[name]) {
+			if seen[node.ID] {
+				issues = append(issues, cfgIssue("flows."+name+".nodes."+node.ID, "duplicate node ID across parent and child definitions", ""))
+			}
+			seen[node.ID] = true
+			if node.Type == "batch" {
+				o, err := decodeOptions[BatchOptions](node)
+				if err == nil {
+					field := "flows." + name + ".nodes." + node.ID
+					if !registry.HasProfile(o.Profile) {
+						issues = append(issues, cfgIssue(field, "batch routing profile is not configured", ""))
+					}
+					if o.Mode == "dedicated" {
+						if _, err := registry.Admit(o.ReceivingEnvironment, o.Profile); err != nil {
+							issues = append(issues, cfgIssue(field, "batch receiving environment is not admitted", ""))
+						}
+					}
+					if cfg.Replay.Configured && cfg.Flows[name].CapturesFailures() {
+						issues = append(issues, cfgIssue(field, "batch failure capture is unsupported; explicitly set capture_failures: false", ""))
+					}
+				}
+			}
+			if node.Type == "http_request" {
+				o, err := decodeOptions[HTTPRequestOptions](node)
+				if err == nil && o.Upstream != nil && !registry.HasProfile(o.Upstream.Profile) {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+node.ID, "upstream profile is not configured", ""))
+				}
+			}
+			if node.Type == "register_route" {
+				o, err := decodeOptions[RegisterRouteOptions](node)
+				if err == nil {
+					field := "flows." + name + ".nodes." + node.ID
+					if !registry.HasProfile(o.Profile) {
+						issues = append(issues, cfgIssue(field, "registration profile is not configured", ""))
+					}
+					if _, ok := cfg.Routing.Stores[o.Store]; !ok {
+						issues = append(issues, cfgIssue(field, "registration store is not configured", ""))
+					}
+				}
+			}
+			if node.Type != "route" {
+				continue
+			}
+			o, err := decodeOptions[RouteOptions](node)
+			if err != nil {
+				continue
+			}
+			field := "flows." + name + ".nodes." + node.ID
+			if !registry.HasProfile(o.Profile) {
+				issues = append(issues, cfgIssue(field, "route profile is not configured", ""))
+			}
+			if o.Store != "" {
+				if _, ok := cfg.Routing.Stores[o.Store]; !ok {
+					issues = append(issues, cfgIssue(field, "route store is not configured", ""))
+				}
+			}
+			if o.Fixed != "" {
+				if _, err := registry.Admit(o.Fixed, o.Profile); err != nil {
+					issues = append(issues, cfgIssue(field, "fixed environment is not admitted", ""))
+				}
+			}
+		}
+	}
+	return issues
 }
 
 // ServingConfig projects this document onto config.Config so the
@@ -84,7 +190,7 @@ func (c Config) ServingConfig() config.Config {
 		path := "/"
 		var dests []config.EndpointDestinationConfig
 		variables := map[string]config.VariableConfig{}
-		for _, nc := range fc.Nodes {
+		for _, nc := range ExpandedNodes(fc) {
 			switch nc.Type {
 			case "http_trigger":
 				if opts, err := decodeOptions[HTTPTriggerOptions](nc); err == nil && opts.Path != "" {
@@ -99,8 +205,21 @@ func (c Config) ServingConfig() config.Config {
 							variables[name] = config.VariableConfig{Pattern: "^[a-zA-Z0-9._-]{1,128}$"}
 						}
 					}
+					var fifo *config.FIFOConfig
+					if opts.FIFO != nil && opts.FIFO.ContentBased {
+						fifo = &config.FIFOConfig{}
+						fifo.Dedup.ContentBasedFallback = true
+					}
+					var sqsOptions config.SQSEndpointOptions
+					var snsOptions config.SNSEndpointOptions
+					if opts.SQS != nil {
+						sqsOptions.QueueOwnerAccountID = opts.SQS.QueueOwnerAccountID
+					}
+					if opts.SNS != nil {
+						snsOptions.TopicARN = opts.SNS.TopicARN
+					}
 					dests = append(dests, config.EndpointDestinationConfig{
-						Destination: opts.Destination, Target: opts.Target, Create: opts.Create,
+						Destination: opts.Destination, Target: opts.Target, Create: opts.Create, FIFO: fifo, BrokerAttributes: opts.ResourceAttributes, SQSOptions: sqsOptions, SNSOptions: snsOptions,
 					})
 				}
 			}
@@ -180,7 +299,7 @@ func decodeFlows(data []byte, source string) (map[string]graph.FlowConfig, []con
 }
 
 func compileFlows(cfg Config) []config.ValidationIssue {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{ValidateOnly: true})
 	if err != nil {
 		return []config.ValidationIssue{cfgIssue("flows", err.Error(), "")}
 	}
@@ -195,8 +314,22 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 			issues = append(issues, cfgIssue("flows."+name, err.Error(), ""))
 			continue
 		}
-		for _, problem := range ce.Problems {
-			issues = append(issues, cfgIssue("flows."+name, problem, ""))
+		nodeIndexes := make(map[string]int, len(cfg.Flows[name].Nodes))
+		for nodeIndex, node := range cfg.Flows[name].Nodes {
+			// A duplicate ID identifies both entries. The first declaration is
+			// a stable repair target until one of the duplicate names is changed.
+			if _, present := nodeIndexes[node.ID]; !present {
+				nodeIndexes[node.ID] = nodeIndex
+			}
+		}
+		for problemIndex, problem := range ce.Problems {
+			field := "flows." + name
+			if nodeID, tagged := ce.ProblemFields[problemIndex]; tagged {
+				if nodeIndex, present := nodeIndexes[nodeID]; present {
+					field = fmt.Sprintf("flows.%s.nodes[%d]", name, nodeIndex)
+				}
+			}
+			issues = append(issues, cfgIssue(field, problem, ""))
 		}
 	}
 	return issues
@@ -204,9 +337,12 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 
 func crossFlowIssues(cfg Config) []config.ValidationIssue {
 	issues := RoutingIssues(cfg)
+	brokerDedup := map[string]bool{}
+	brokerResources := map[string]map[string]string{}
+	brokerBindings := map[string]string{}
 	for _, name := range sortedKeys(cfg.Flows) {
 		flow := cfg.Flows[name]
-		for _, nc := range flow.Nodes {
+		for _, nc := range ExpandedNodes(flow) {
 			switch nc.Type {
 			case "publish":
 				opts, err := decodeOptions[PublishOptions](nc)
@@ -220,6 +356,49 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 							opts.Destination, strings.Join(sortedKeys(cfg.Destinations), ", ")),
 						"reference an existing destinations.* id"))
 					continue
+				}
+				awsBroker := dest.Type == "sqs" || dest.Type == "sns"
+				if (opts.GroupID != nil || opts.SQS != nil || opts.SNS != nil || len(opts.ResourceAttributes) > 0 || opts.FIFO != nil || opts.Retry != nil || (opts.WireBody != "" && opts.WireBody != "envelope")) && !awsBroker {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID, "fifo, retry and broker wire_body require an sqs or sns destination", ""))
+				}
+				if awsBroker {
+					field := "flows." + name + ".nodes." + nc.ID
+					if opts.SQS != nil && dest.Type != "sqs" || opts.SNS != nil && dest.Type != "sns" {
+						issues = append(issues, cfgIssue(field, "sqs/sns options must match destination type", ""))
+					}
+					if opts.GroupID != nil && strings.HasSuffix(opts.Target, ".fifo") {
+						issues = append(issues, cfgIssue(field, "group_id is for standard targets", ""))
+					}
+					if err := config.ValidateBrokerAttributes(dest.Type, strings.HasSuffix(opts.Target, ".fifo"), opts.ResourceAttributes); err != nil {
+						issues = append(issues, cfgIssue(field+".resource_attributes", err.Error(), ""))
+					}
+					key := opts.Destination + "/" + opts.Target
+					if previous, seen := brokerResources[key]; seen && !maps.Equal(previous, opts.ResourceAttributes) {
+						issues = append(issues, cfgIssue(field+".resource_attributes", "publish nodes sharing a target must agree on resource attributes", ""))
+					}
+					brokerResources[key] = opts.ResourceAttributes
+					binding := ""
+					if opts.SQS != nil {
+						binding = opts.SQS.QueueOwnerAccountID
+					}
+					if opts.SNS != nil {
+						binding = opts.SNS.TopicARN
+					}
+					if previous, seen := brokerBindings[key]; seen && previous != binding {
+						issues = append(issues, cfgIssue(field, "publish nodes sharing a target must agree on broker resource binding", ""))
+					}
+					brokerBindings[key] = binding
+					if opts.FIFO != nil {
+						key := opts.Destination + "/" + opts.Target
+						if previous, seen := brokerDedup[key]; seen && previous != opts.FIFO.ContentBased {
+							issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".fifo", "publish nodes sharing a broker target must agree on content_based_deduplication", ""))
+						}
+						brokerDedup[key] = opts.FIFO.ContentBased
+					}
+					fifoTarget := strings.HasSuffix(opts.Target, ".fifo")
+					if fifoTarget != (opts.FIFO != nil) {
+						issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".fifo", "FIFO targets require fifo settings; standard targets must omit them", ""))
+					}
 				}
 				if opts.Payload == "object" && !objectPayloadDestType(dest.Type) {
 					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".payload",
@@ -388,8 +567,21 @@ func StandaloneIssues(cfg Config) []config.ValidationIssue {
 // AuthenticationRedactions includes configured credential sources even when
 // their names do not match the built-in sensitive-header heuristic.
 func AuthenticationRedactions(cfg Config) (headers, queries []string) {
+	for _, p := range cfg.Credentials {
+		for h := range p.Headers {
+			headers = append(headers, h)
+		}
+		if p.Kind != "static" {
+			headers = append(headers, "Authorization")
+		}
+	}
 	for _, fc := range cfg.Flows {
-		for _, nc := range fc.Nodes {
+		for _, nc := range ExpandedNodes(fc) {
+			if nc.Type == "http_request" {
+				if o, e := decodeOptions[HTTPRequestOptions](nc); e == nil {
+					headers = append(headers, o.RequireHeaders...)
+				}
+			}
 			if nc.Type != "auth" {
 				continue
 			}

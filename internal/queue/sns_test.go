@@ -14,6 +14,7 @@ import (
 )
 
 type fakeSNS struct {
+	listCalls  int
 	topics     map[string]string            // name -> arn
 	attrs      map[string]map[string]string // arn -> attributes
 	published  []*sns.PublishInput
@@ -59,6 +60,7 @@ func (f *fakeSNS) SetTopicAttributes(ctx context.Context, in *sns.SetTopicAttrib
 }
 
 func (f *fakeSNS) ListTopics(ctx context.Context, in *sns.ListTopicsInput, _ ...func(*sns.Options)) (*sns.ListTopicsOutput, error) {
+	f.listCalls++
 	out := &sns.ListTopicsOutput{}
 	for _, arn := range f.topics {
 		out.Topics = append(out.Topics, snstypes.Topic{TopicArn: aws.String(arn)})

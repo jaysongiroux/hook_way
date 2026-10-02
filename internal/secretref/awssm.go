@@ -22,8 +22,10 @@ type secretsAPI interface {
 }
 
 type awsFetcher struct {
-	client secretsAPI
-	name   string
+	client         secretsAPI
+	name           string
+	exact          bool
+	strictMatching bool
 }
 
 func newAWSFetcher(ctx context.Context, name string) (*awsFetcher, error) {
@@ -51,11 +53,25 @@ type listedSecret struct {
 }
 
 func (f *awsFetcher) Fetch(ctx context.Context) ([]byte, error) {
+	if f.exact {
+		return f.get(ctx, f.name)
+	}
 	listed, err := f.listMatching(ctx)
+	if f.strictMatching {
+		if err != nil {
+			return nil, err
+		}
+		if len(listed) == 0 {
+			return nil, fmt.Errorf("secret name filter has no matches")
+		}
+	}
 	if err != nil || len(listed) == 0 {
 		return f.get(ctx, f.name)
 	}
 	sort.Slice(listed, func(i, j int) bool {
+		if listed[i].changed.Equal(listed[j].changed) {
+			return listed[i].id < listed[j].id
+		}
 		return listed[i].changed.After(listed[j].changed)
 	})
 	return f.get(ctx, listed[0].id)
@@ -70,7 +86,10 @@ func (f *awsFetcher) listMatching(ctx context.Context) ([]listedSecret, error) {
 			Values: []string{f.name},
 		}}
 	)
-	for {
+	for pages := 0; ; pages++ {
+		if pages >= 100 {
+			return nil, fmt.Errorf("secret listing exceeds 100 pages")
+		}
 		page, err := f.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
 			Filters:   filter,
 			NextToken: token,

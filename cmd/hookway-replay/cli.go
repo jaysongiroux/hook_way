@@ -8,7 +8,7 @@ import "github.com/jaysongiroux/hook_way/internal/cli"
 // commands and flags.
 var program = cli.Program{
 	Name:    "hookway-replay",
-	Summary: "keep the deliveries core missed after the sender got its 2xx, and retry them",
+	Summary: "store failed ingress deliveries in PostgreSQL and retry them through core",
 	Commands: []cli.Command{
 		{
 			Name:    "serve",
@@ -78,7 +78,15 @@ also checks the database and its schema version.`,
 			Help:    `Prints "hookway-replay <version> (<commit>)". A plain go build reports "dev (none)".`,
 		},
 	},
-	Footer: `Environment:
+	Footer: `Optional service: deploy alongside core only when you need to inspect and
+retry failed deliveries after an early acknowledgement. It requires a replay
+config, PostgreSQL, and core's replay capture/control configuration.
+
+First start: run migrate --config replay.yaml, then serve --config replay.yaml.
+Retries repeat the failed destination publication through core. This service
+does not consume messages from SQS or other destination queues.
+
+Environment:
   HOOKWAY_REPLAY_CONFIG  the config file when --config is not given
   HOOKWAY_LOG_LEVEL      overrides logging.level at start: debug, info, warn, error
 

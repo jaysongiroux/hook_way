@@ -8,15 +8,20 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/auth"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 func mustAuthNode(t *testing.T, body string) graph.Node {
 	t.Helper()
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,16 +55,13 @@ func TestAuthVerifiesRawBytesNotReserialized(t *testing.T) {
 }
 
 func TestAuthUnknownSchemeFailsClosed(t *testing.T) {
-	reg, _ := NewRegistry()
+	reg, _ := NewRegistryWithOptions(RegistryOptions{})
 	spec, _ := reg.Lookup("auth")
-	node, err := spec.New(nodeConfigFromYAML(t, "auth",
-		"scheme: not_a_real_scheme\nsecret: s\nsignature_header: X-S\n"))
-	if err != nil {
-		return
+	_, err := spec.New(nodeConfigFromYAML(t, "auth", "scheme: not_a_real_scheme\nsecret: s\nsignature_header: X-S\n"))
+	if err == nil {
+		t.Fatal("unknown scheme must fail compilation")
 	}
-	if _, err := node.Run(context.Background(), graph.RawRequest{}); err == nil {
-		t.Fatal("unknown scheme accepted a request; must fail closed (I11)")
-	}
+
 }
 
 func TestAuthInvalidSignatureDoesNotLeakSecret(t *testing.T) {
@@ -97,7 +99,7 @@ func TestAuthQueryParamSource(t *testing.T) {
 }
 
 func TestNoAuthProducesVerified(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,5 +167,92 @@ func TestReviewAuthRequiresExplicitTrustAndJWTBodyBinding(t *testing.T) {
 	}
 	if err := validateAuth(AuthOptions{Scheme: "jwt_hs256", Secret: "s", BodyHashClaim: "body_sha256"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConcurrentMultiSignatureAuthenticationDuringRotation(t *testing.T) {
+	var keys atomic.Value
+	keys.Store([][]byte{[]byte("new"), []byte("old")})
+	n, err := newAuthNode("auth", AuthOptions{Scheme: "hmac_sha256_ts_dot_multi", SignatureHeader: "X-Sig", TimestampUnit: "seconds"}, func(context.Context) ([][]byte, error) { return keys.Load().([][]byte), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sign := func(secret string) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(ts + ".raw"))
+		return "t=" + ts + ",s=bad,s=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if _, err := n.Run(context.Background(), graph.RawRequest{Head: graph.RequestHead{Header: http.Header{"X-Sig": {sign("old")}}}, Body: []byte("raw")}); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := 0; j < 100; j++ {
+			if j%2 == 0 {
+				keys.Store([][]byte{[]byte("old"), []byte("new")})
+			} else {
+				keys.Store([][]byte{[]byte("new"), []byte("old")})
+			}
+		}
+	}()
+	wg.Wait()
+	keys.Store([][]byte{[]byte("new")})
+	if _, err := n.Run(context.Background(), graph.RawRequest{Head: graph.RequestHead{Header: http.Header{"X-Sig": {sign("old")}}}, Body: []byte("raw")}); err == nil {
+		t.Fatal("expired rotation key accepted")
+	}
+}
+
+func TestSignedRepresentationDeadlineReturnsRetryableFailure(t *testing.T) {
+	node := mustAuthNode(t, "scheme: hmac_sha256_headers_dot\nsecret: synthetic\nsignature_header: X-Sig\ntimestamp_header: X-Time\ntimestamp_unit: milliseconds\ntimestamp_policy: age\ntimestamp_tolerance: 1m\nbody_representation: json_js\n")
+	ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	mac := hmac.New(sha256.New, []byte("synthetic"))
+	mac.Write([]byte(ts + ".{}"))
+	input := graph.RawRequest{Head: graph.RequestHead{Header: http.Header{"X-Sig": {hex.EncodeToString(mac.Sum(nil))}, "X-Time": {ts}}}, Body: []byte(`{}`)}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	out, err := node.Run(ctx, input)
+	var ne graph.NodeError
+	if out != nil || !errors.As(err, &ne) || ne.Status != http.StatusServiceUnavailable || ne.Reason != "auth_unavailable" || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("temporary failure = %v, output = %v", err, out)
+	}
+	// Malformed JSON remains a permanent authentication failure.
+	input.Body = []byte("bad")
+	out, err = node.Run(context.Background(), input)
+	if out != nil || !errors.As(err, &ne) || ne.Status != http.StatusUnauthorized {
+		t.Fatalf("invalid body = %v, output = %v", err, out)
+	}
+}
+
+type unavailableAuthVerifier struct {
+	calls *atomic.Int32
+	err   error
+}
+
+func (v unavailableAuthVerifier) Verify(_ string, _ []byte, _ time.Time) error {
+	v.calls.Add(1)
+	return v.err
+}
+func TestAuthRotationDoesNotRepeatUnavailableRepresentationWork(t *testing.T) {
+	for _, tc := range []struct {
+		err       error
+		wantCalls int32
+	}{{auth.ErrVerificationUnavailable, 1}, {auth.ErrUnauthorized, 2}} {
+		var calls atomic.Int32
+		v := unavailableAuthVerifier{calls: &calls, err: tc.err}
+		n := &authNode{secrets: func(context.Context) ([][]byte, error) { return [][]byte{[]byte("first"), []byte("second")}, nil }, cached: map[string]auth.Verifier{"first": v, "second": v}}
+		if err := n.verify(context.Background(), auth.Input{}); !errors.Is(err, tc.err) || calls.Load() != tc.wantCalls {
+			t.Fatalf("rotation result = %v, attempts = %d", err, calls.Load())
+		}
 	}
 }

@@ -16,6 +16,11 @@ server:
   max_inflight_requests: 256
   fanout_concurrency: 8
 
+routing:
+  profiles: {sample: {account_id: "000000000000", credential_mode: sample}}
+  environments:
+    sample: {profiles: [sample], accounts: ["000000000000"], destination_prefix: internal}
+
 security:
   trusted_proxy_headers: true
   trusted_proxies:
@@ -136,10 +141,10 @@ flows:
     nodes:
       - {id: in, type: http_trigger, description: "Accepts any method under the upstream proxy prefix.", path: "/upstream/proxy/{rest...}", methods: [ANY]}
       - {id: rl, type: rate_limit, description: "Caps proxy traffic at 120 requests per minute.", rpm: 120}
-      - {id: body, type: read_body, description: "Buffers the body so it can be signed and forwarded.", max_bytes: 10485760}
+      - {id: body, type: read_body, description: "Buffers the body so it can be signed and forwarded.", max_bytes: 10485760, allow_empty: true}
       - {id: auth, type: auth, description: "Checks the shared proxy token in X-Auth.", scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
       - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
-      - {id: up, type: http_request, description: "Forwards method, query, and trailing path upstream.", url: "${UPSTREAM_BASE}/{rest}", forward_method: true, forward_query: true, timeout: 10s}
+      - {id: up, type: http_request, description: "Forwards method, query, and trailing path upstream.", url: "${UPSTREAM_BASE}/{rest}", forward_method: true, forward_query: true, remove_headers: [X-Auth], timeout: 10s}
       - {id: resp, type: respond, description: "Returns the upstream response to the caller unchanged.", passthrough: true}
     edges: [in>rl, rl>body, body>auth, auth>env, env>up, up>resp]
 
@@ -151,5 +156,6 @@ flows:
       - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
       - {id: auth, type: no_auth, description: "Network trust replaces signature verification here."}
       - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
-      - {id: out, type: publish, description: "Inserts each event into the Postgres warehouse table.", destination: warehouse, target: internal-jobs, create: true}
-    edges: [in>allow, allow>rl, rl>body, body>auth, auth>env, env>out]
+      - {id: admission, type: route, description: "Admits the configured receiving environment, ignoring request overrides.", profile: sample, fixed: sample}
+      - {id: out, type: publish, description: "Inserts each event into the Postgres warehouse table.", destination: warehouse, target: '{route_prefix}-jobs', create: true}
+    edges: [in>allow, allow>rl, rl>body, body>auth, auth>env, env>admission, admission>out]

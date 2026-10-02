@@ -37,7 +37,7 @@ func TestPreparePublishMatchesWhatThePublishNodeSends(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, prepared, err := PreparePublish(opts, in)
+	target, prepared, err := PreparePublishForNode("node", opts, in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestPreparePublishMatchesWhatThePublishNodeSends(t *testing.T) {
 
 func TestPreparePublishReportsUnrenderableTargets(t *testing.T) {
 	opts := PublishOptions{Destination: "primary", Target: "{missing}-queue"}
-	target, _, err := PreparePublish(opts, graph.Envelope{Vars: map[string]string{}})
+	target, _, err := PreparePublishForNode("", opts, graph.Envelope{Vars: map[string]string{}})
 	if err == nil || target != "" {
 		t.Fatalf("PreparePublish = %q, %v; want an error and no target", target, err)
 	}

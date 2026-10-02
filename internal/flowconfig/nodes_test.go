@@ -7,57 +7,64 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jaysongiroux/hook_way/internal/graph"
 	"gopkg.in/yaml.v3"
+
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 var wantedCatalog = map[string]struct {
 	in, out  graph.PortType
 	detached bool
 }{
-	"http_trigger": {graph.PortNone, graph.PortRequestHead, false},
-	"loop_guard":   {graph.PortRequestHead, graph.PortRequestHead, false},
-	"ip_allowlist": {graph.PortRequestHead, graph.PortRequestHead, false},
-	"rate_limit":   {graph.PortRequestHead, graph.PortRequestHead, false},
-	"read_body":    {graph.PortRequestHead, graph.PortRawRequest, false},
-	"auth":         {graph.PortRawRequest, graph.PortVerified, false},
-	"no_auth":      {graph.PortRawRequest, graph.PortVerified, false},
-	"replay_guard": {graph.PortVerified, graph.PortVerified, false},
-	"envelope":     {graph.PortVerified, graph.PortEnvelope, false},
-	"filter":       {graph.PortEnvelope, graph.PortEnvelope, false},
-	"lookup":       {graph.PortEnvelope, graph.PortEnvelope, false},
-	"transform":    {graph.PortEnvelope, graph.PortEnvelope, false},
-	"code":         {graph.PortEnvelope, graph.PortEnvelope, false},
-	"switch":       {graph.PortEnvelope, graph.PortEnvelope, false},
-	"if_else":      {graph.PortEnvelope, graph.PortEnvelope, false},
-	"http_request": {graph.PortEnvelope, graph.PortEnvelope, false},
-	"publish":      {graph.PortEnvelope, graph.PortEnvelope, true},
-	"respond":      {graph.PortEnvelope, graph.PortTerminal, false},
+	"http_trigger":   {graph.PortNone, graph.PortRequestHead, false},
+	"loop_guard":     {graph.PortRequestHead, graph.PortRequestHead, false},
+	"ip_allowlist":   {graph.PortRequestHead, graph.PortRequestHead, false},
+	"rate_limit":     {graph.PortRequestHead, graph.PortRequestHead, false},
+	"read_body":      {graph.PortRequestHead, graph.PortRawRequest, false},
+	"auth":           {graph.PortRawRequest, graph.PortVerified, false},
+	"no_auth":        {graph.PortRawRequest, graph.PortVerified, false},
+	"replay_guard":   {graph.PortVerified, graph.PortVerified, false},
+	"envelope":       {graph.PortVerified, graph.PortEnvelope, false},
+	"filter":         {graph.PortEnvelope, graph.PortEnvelope, false},
+	"register_route": {graph.PortEnvelope, graph.PortEnvelope, false},
+	"route":          {graph.PortEnvelope, graph.PortEnvelope, false},
+	"lookup":         {graph.PortEnvelope, graph.PortEnvelope, false},
+	"batch":          {graph.PortEnvelope, graph.PortTerminal, false},
+	"transform":      {graph.PortEnvelope, graph.PortEnvelope, false},
+	"code":           {graph.PortEnvelope, graph.PortEnvelope, false},
+	"switch":         {graph.PortEnvelope, graph.PortEnvelope, false},
+	"if_else":        {graph.PortEnvelope, graph.PortEnvelope, false},
+	"http_request":   {graph.PortEnvelope, graph.PortEnvelope, false},
+	"publish":        {graph.PortEnvelope, graph.PortEnvelope, true},
+	"respond":        {graph.PortEnvelope, graph.PortTerminal, false},
 }
 
 var validNodeYAML = map[string]string{
-	"http_trigger": "path: /webhooks/{id}\nmethods: [POST]\n",
-	"loop_guard":   "max_hops: 3\n",
-	"ip_allowlist": "cidrs: [10.0.0.0/8]\n",
-	"rate_limit":   "rpm: 60\nburst: 10\nkey_by: source_ip\n",
-	"read_body":    "max_bytes: 1024\n",
-	"auth":         "scheme: hmac_sha256_hex\nsecret_ref: {provider: env, name: TEST_SECRET, refresh: 15m, overlap: 5m}\nsource: {kind: header, key: X-Signature}\ntimestamp_tolerance: 5m\n",
-	"no_auth":      "",
-	"replay_guard": "ttl: 5m\nmax_entries: 10000\nkey: '{id}'\n",
-	"envelope":     "body_format: json\n",
-	"filter":       "conditions: [{source: body, path: event, operator: eq, value: created}]\non_no_match: drop\n",
-	"lookup":       "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n",
-	"transform":    "kind: changed_fields\nfrom: body.previous\nto: body.current\nname: changed_fields\n",
-	"code":         "script: 'return {body: input.body}'\ntimeout: 1s\nmax_input_bytes: 1048576\nmax_output_bytes: 1048576\nmax_call_stack: 1000\n",
-	"switch":       "cases: [{port: matched, match: any, conditions: [{source: body, path: event, operator: eq, value: created}]}]\ndefault: unmatched\n",
-	"if_else":      "match: all\nconditions: [{source: body, path: event, operator: eq, value: created}]\n",
-	"http_request": "url: https://example.test/{rest}\nforward_method: true\nforward_query: true\nforward_headers: [X-Request-ID]\ntimeout: 5s\nheaders: {X-Service: hookway}\nerror_on_status: [5xx]\n",
-	"publish":      "destination: primary\ntarget: '{route}-queue'\ncreate: true\nmessage_attributes: {event: '{body.event}'}\n",
-	"respond":      "passthrough: true\n",
+	"http_trigger":   "path: /webhooks/{id}\nmethods: [POST]\n",
+	"loop_guard":     "max_hops: 3\n",
+	"ip_allowlist":   "cidrs: [10.0.0.0/8]\n",
+	"rate_limit":     "rpm: 60\nburst: 10\nkey_by: source_ip\n",
+	"read_body":      "max_bytes: 1024\n",
+	"auth":           "scheme: hmac_sha256_hex\nsecret_ref: {provider: env, name: TEST_SECRET, refresh: 15m, overlap: 5m}\nsource: {kind: header, key: X-Signature}\ntimestamp_tolerance: 5m\n",
+	"no_auth":        "",
+	"replay_guard":   "ttl: 5m\nmax_entries: 10000\nkey: '{id}'\n",
+	"envelope":       "body_format: json\n",
+	"filter":         "conditions: [{source: body, path: event, operator: eq, value: created}]\non_no_match: drop\n",
+	"register_route": "mode: after_create\nstore: primary\nprofile: sandbox\nenvironment_variable: route\nid_source: upstream\nid_path: created_id\nid_type: record_a\n",
+	"route":          "profile: sandbox\nfixed: demo\n",
+	"lookup":         "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n",
+	"batch":          "mode: shared\nprofile: sandbox\nenvironment_path: environment\nevent_id_path: event_id\nchild:\n  entry: node.send\n  nodes: [{id: node.send, type: publish, destination: primary, target: sample}]\n  edges: []\n",
+	"transform":      "kind: changed_fields\nfrom: body.previous\nto: body.current\nname: changed_fields\n",
+	"code":           "script: 'return {body: input.body}'\ntimeout: 1s\nmax_input_bytes: 1048576\nmax_output_bytes: 1048576\nmax_call_stack: 1000\n",
+	"switch":         "cases: [{port: matched, match: any, conditions: [{source: body, path: event, operator: eq, value: created}]}]\ndefault: unmatched\n",
+	"if_else":        "match: all\nconditions: [{source: body, path: event, operator: eq, value: created}]\n",
+	"http_request":   "url: https://example.test/{rest}\nforward_method: true\nforward_query: true\nforward_headers: [X-Request-ID]\ntimeout: 5s\nheaders: {X-Service: hookway}\nerror_on_status: [5xx]\n",
+	"publish":        "destination: primary\ntarget: '{route}-queue'\ncreate: true\nmessage_attributes: {event: '{body.event}'}\n",
+	"respond":        "passthrough: true\n",
 }
 
 func TestRegistryCatalogExact(t *testing.T) {
-	r, err := NewRegistry()
+	r, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +80,7 @@ func TestRegistryCatalogExact(t *testing.T) {
 }
 
 func TestPublishIsOnlyDetachedType(t *testing.T) {
-	r, err := NewRegistry()
+	r, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,29 +96,32 @@ func TestPublishIsOnlyDetachedType(t *testing.T) {
 }
 
 func TestEveryOptionContractRoundTripsAndRejectsUnknownFields(t *testing.T) {
-	defs := catalog(RegistryOptions{})
+	defs := catalog(RegistryOptions{ValidateOnly: true})
 	if len(defs) != len(wantedCatalog) {
 		t.Fatalf("definitions=%d, want %d", len(defs), len(wantedCatalog))
 	}
 	implemented := map[string]bool{
-		"http_trigger": true,
-		"loop_guard":   true,
-		"ip_allowlist": true,
-		"rate_limit":   true,
-		"read_body":    true,
-		"auth":         true,
-		"no_auth":      true,
-		"replay_guard": true,
-		"envelope":     true,
-		"filter":       true,
-		"lookup":       true,
-		"switch":       true,
-		"if_else":      true,
-		"publish":      true,
-		"http_request": true,
-		"respond":      true,
-		"transform":    true,
-		"code":         true,
+		"http_trigger":   true,
+		"loop_guard":     true,
+		"ip_allowlist":   true,
+		"rate_limit":     true,
+		"read_body":      true,
+		"auth":           true,
+		"no_auth":        true,
+		"replay_guard":   true,
+		"envelope":       true,
+		"filter":         true,
+		"register_route": true,
+		"route":          true,
+		"lookup":         true,
+		"switch":         true,
+		"if_else":        true,
+		"publish":        true,
+		"http_request":   true,
+		"respond":        true,
+		"batch":          true,
+		"transform":      true,
+		"code":           true,
 	}
 	for _, def := range defs {
 		t.Run(def.name, func(t *testing.T) {
@@ -156,7 +166,7 @@ func TestSettledRequiredAndExclusiveOptions(t *testing.T) {
 		{"code", ""}, {"switch", ""}, {"http_request", ""}, {"publish", "destination: primary\n"},
 		{"respond", ""}, {"respond", "status: 200\npassthrough: true\n"},
 	}
-	r, err := NewRegistry()
+	r, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +211,7 @@ func zeroPayload(port graph.PortType) graph.Payload {
 // assertion is that the description is absent from Options -- if it leaked,
 // New would have failed the first half of this test.
 func TestEveryNodeTypeAcceptsDescription(t *testing.T) {
-	defs := catalog(RegistryOptions{})
+	defs := catalog(RegistryOptions{ValidateOnly: true})
 	if len(defs) != len(wantedCatalog) {
 		t.Fatalf("definitions=%d, want %d", len(defs), len(wantedCatalog))
 	}

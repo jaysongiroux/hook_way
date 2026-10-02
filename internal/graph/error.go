@@ -5,6 +5,8 @@ import "fmt"
 // NodeError wraps a node failure with the HTTP status the server should
 // return. Nodes return these so the server does not string-match error text.
 type NodeError struct {
+	// Reason optionally refines the bounded HTTP execution outcome.
+	Reason string
 	NodeID string
 	Status int
 	Err    error

@@ -137,7 +137,7 @@ func TestCodeNodeCannotSeeIdentityOrSecret(t *testing.T) {
 }
 
 func TestCodeNodeReadsXMLBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER id="O1"><Amount>500</Amount></ORDER></MESSAGE>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<MESSAGE><ORDER id="O1"><Amount>500</Amount></ORDER></MESSAGE>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestCodeNodeReadsXMLBody(t *testing.T) {
 }
 
 func TestCodeNodeRewritesXMLBodyAndKeepsItXML(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestCodeNodeRewritesXMLBodyAndKeepsItXML(t *testing.T) {
 }
 
 func TestCodeNodeRejectsMalformedXMLReturn(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER/></MESSAGE>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<MESSAGE><ORDER/></MESSAGE>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestCodeNodeJSONBodyUnaffected(t *testing.T) {
 // An XML script must not be able to reach back into the caller's Document, the
 // way cloneJSONValue stops a JSON script from mutating its input.
 func TestCodeNodeDoesNotMutateOriginalXMLBody(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(`<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`))
+	doc, err := transform.ParseXMLWithLimits([]byte(`<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

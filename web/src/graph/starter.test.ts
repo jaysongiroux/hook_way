@@ -8,7 +8,11 @@ import type { FlowSnapshot, HookwayNode } from "./model";
 
 function snapshots(doc: ReturnType<typeof starterDocument>): FlowSnapshot[] {
   return [
-    { nodes: doc.nodes, edges: doc.edges, deliveryFailurePolicy: doc.deliveryFailurePolicy },
+    {
+      nodes: doc.nodes,
+      edges: doc.edges,
+      deliveryFailurePolicy: doc.deliveryFailurePolicy,
+    },
     ...Object.values(doc.otherFlows),
   ];
 }
@@ -23,12 +27,17 @@ test("the production YAML is the builder starter", () => {
   expect(PRODUCTION_YAML).toContain("ack:on_error>dlq");
 });
 
-test("every catalog node type except lookup appears in the starter", () => {
-  const types = new Set(allNodes(starterDocument()).map((n) => n.data.nodeType));
-  for (const type of NODE_TYPES.filter((t) => t !== "lookup")) {
+test("every node without native store dependencies appears in the starter", () => {
+  const types = new Set(
+    allNodes(starterDocument()).map((n) => n.data.nodeType),
+  );
+  for (const type of NODE_TYPES.filter(
+    (t) => !["lookup", "register_route", "batch"].includes(t),
+  )) {
     expect(types.has(type), type).toBe(true);
   }
   expect(types.has("lookup")).toBe(false);
+  expect(types.has("register_route")).toBe(false);
 });
 
 test("the github flow fans out, switches, and has an on_error path", () => {
@@ -43,7 +52,10 @@ test("the github flow fans out, switches, and has an on_error path", () => {
 
 test("every starter flow is laid out instead of stacked at the origin", () => {
   for (const snap of snapshots(starterDocument())) {
-    expect(nodesStacked(snap.nodes), "flow nodes should have distinct positions").toBe(false);
+    expect(
+      nodesStacked(snap.nodes),
+      "flow nodes should have distinct positions",
+    ).toBe(false);
   }
 });
 
@@ -61,7 +73,10 @@ test("every starter edge is a legal connection in its flow", () => {
         snap.nodes,
         prior,
       );
-      expect(ok, `${edge.source}:${edge.sourceHandle ?? "out"}>${edge.target}`).toBe(true);
+      expect(
+        ok,
+        `${edge.source}:${edge.sourceHandle ?? "out"}>${edge.target}`,
+      ).toBe(true);
     });
   }
 });

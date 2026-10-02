@@ -18,12 +18,13 @@ func WithBodyReader(ctx context.Context, r io.Reader) context.Context {
 }
 
 type readBodyNode struct {
-	id       string
-	maxBytes int64
+	allowEmpty bool
+	id         string
+	maxBytes   int64
 }
 
 func newReadBody(id string, opts ReadBodyOptions) graph.Node {
-	return readBodyNode{id: id, maxBytes: opts.MaxBytes}
+	return readBodyNode{id: id, maxBytes: opts.MaxBytes, allowEmpty: opts.AllowEmpty}
 }
 
 func (n readBodyNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
@@ -55,7 +56,7 @@ func (n readBodyNode) Run(ctx context.Context, in graph.Payload) (graph.Payload,
 			Err: fmt.Errorf("body exceeds max_bytes %d", n.maxBytes),
 		}
 	}
-	if len(body) == 0 {
+	if len(body) == 0 && !n.allowEmpty {
 		return nil, graph.NodeError{
 			NodeID: n.id, Status: http.StatusBadRequest,
 			Err: fmt.Errorf("empty body"),

@@ -48,7 +48,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 					))
 				}
 			}
-		case "respond":
+		case "batch", "respond":
 			hasRespond = true
 		case "code":
 			opts, err := decodeOptions[CodeOptions](nc)
@@ -158,6 +158,9 @@ func parallelRespondIssues(prefix string, fc graph.FlowConfig) []config.Validati
 	types := make(map[string]string, len(fc.Nodes))
 	for _, node := range fc.Nodes {
 		types[node.ID] = node.Type
+		if node.Type == "batch" {
+			types[node.ID] = "respond"
+		}
 	}
 	edges, _ := graph.ParseEdges(fc.Edges)
 	out := map[string][]string{}
@@ -288,6 +291,11 @@ func bodyFormatIssues(prefix string, fc graph.FlowConfig) []config.ValidationIss
 					issues = append(issues, issue)
 				}
 			}
+		case "batch":
+			if format != "json" && !reported[cur.id] {
+				reported[cur.id] = true
+				issues = append(issues, cfgIssue(prefix+".nodes."+cur.id, "batch requires a JSON envelope", "set body_format: json"))
+			}
 		case "transform":
 			if !reported[cur.id] {
 				if issue, bad := transformBodyFormatIssue(prefix, node.index, cur.id, format, node.cfg); bad {
@@ -373,14 +381,14 @@ func transformBodyFormatIssue(prefix string, index int, id, format string, nc gr
 	}
 	field := fmt.Sprintf("%s.nodes[%d].kind", prefix, index)
 	switch opts.Kind {
-	case "xml_prune":
+	case "xml_prune", "xml_ordered_prune":
 		if format != "xml" {
 			return cfgIssue(field,
 				fmt.Sprintf("transform %q uses kind: xml_prune but reaches an envelope with body_format: %s; the body is not an XML document and the node would fail at runtime", id, formatName(format)),
 				"set the envelope's body_format to xml, or use a json transform kind",
 			), true
 		}
-	case "field_map", "changed_fields":
+	case "field_map", "changed_fields", "changed_fields_js", "json_schema", "strip_fields":
 		if format == "xml" {
 			return cfgIssue(field,
 				fmt.Sprintf("transform %q uses kind: %s but reaches an envelope with body_format: xml; these kinds walk JSON and the node would fail at runtime", id, opts.Kind),

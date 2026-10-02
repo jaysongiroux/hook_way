@@ -18,9 +18,13 @@ export function Hero() {
             Receive, verify, and route webhooks.
           </Title>
           <Text size="lg" c={DARK.muted} ta="center" maw={620}>
-            Verify the request by wire format, then publish into the queues, streams, databases, and services
-            you already run — from one YAML file. The builder exports that YAML; it does not talk to a running
-            process.
+            Check who sent each request, prepare its data, and send it to the queues,
+            databases, or APIs your team already uses. Run Hookway in your own
+            infrastructure with one YAML configuration file.
+          </Text>
+          <Text size="sm" c={DARK.muted} ta="center" maw={620}>
+            Design a flow in the builder, export the YAML, then deploy it yourself.
+            The builder does not connect to or manage your running server.
           </Text>
           <Group gap="sm" mt="xs">
             <Button component={Link} to="/builder" size="md" color="brand">

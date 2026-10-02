@@ -37,16 +37,27 @@ const HYPE = [
 
 test("use-cases page states the S3 attachment pattern and links examples that exist", () => {
   wrap(<UseCases />);
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/patterns that stay in your infrastructure/i);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    /patterns that stay in your infrastructure/i,
+  );
   const main = screen.getByRole("main");
   expect(main).toHaveTextContent(/store upload attachments in s3/i);
   expect(main).toHaveTextContent(/payload: object/i);
   expect(main).toHaveTextContent(/route each environment to its own queue/i);
-  expect(main).toHaveTextContent(/filtered headers or the parsed body/i);
-  expect(main).toHaveTextContent(/unknown, unsafe, or unresolved targets fail closed/i);
+  expect(main).toHaveTextContent(/parsed body, query, or headers/i);
+  expect(main).toHaveTextContent(/stable sender event ID/i);
+  expect(main).toHaveTextContent(
+    /unknown, unsafe, or unresolved targets fail closed/i,
+  );
   for (const uc of USE_CASES) {
-    expect(existsSync(resolve(repoRoot, uc.examplePath)), `${uc.examplePath} missing`).toBe(true);
-    expect(screen.getByRole("link", { name: uc.exampleLabel })).toHaveAttribute("href", uc.exampleHref);
+    expect(
+      existsSync(resolve(repoRoot, uc.examplePath)),
+      `${uc.examplePath} missing`,
+    ).toBe(true);
+    expect(screen.getByRole("link", { name: uc.exampleLabel })).toHaveAttribute(
+      "href",
+      uc.exampleHref,
+    );
   }
 });
 
@@ -60,14 +71,25 @@ test("use-cases page avoids generic hype", () => {
 
 test("compare page names Hookdeck and Convoy without pricing language", () => {
   wrap(<Compare />);
-  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/how hookway compares/i);
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+    /how hookway compares/i,
+  );
   const main = screen.getByRole("main");
   expect(main).toHaveTextContent(/Hookdeck Event Gateway/);
   expect(main).toHaveTextContent(/Convoy/);
   expect(main).toHaveTextContent(/Outpost/);
   const lower = main.textContent!.toLowerCase();
-  for (const banned of ["$/mo", "free tier", "pricing page", "per month", "subscribe now"]) {
-    expect(lower, `must not discuss commercial packaging ("${banned}")`).not.toContain(banned);
+  for (const banned of [
+    "$/mo",
+    "free tier",
+    "pricing page",
+    "per month",
+    "subscribe now",
+  ]) {
+    expect(
+      lower,
+      `must not discuss commercial packaging ("${banned}")`,
+    ).not.toContain(banned);
   }
   for (const phrase of HYPE) {
     expect(lower, `must not use "${phrase}"`).not.toContain(phrase);
@@ -76,34 +98,65 @@ test("compare page names Hookdeck and Convoy without pricing language", () => {
 
 test("compare matrix covers every competitor column and cites sources", () => {
   wrap(<Compare />);
-  expect(screen.getByRole("region", { name: /scrollable comparison table/i })).toHaveAttribute("tabindex", "0");
-  const table = screen.getByRole("table", { name: /feature and integration comparison/i });
+  expect(
+    screen.getByRole("region", { name: /scrollable comparison table/i }),
+  ).toHaveAttribute("tabindex", "0");
+  const table = screen.getByRole("table", {
+    name: /feature and integration comparison/i,
+  });
   for (const c of COMPETITORS) {
-    expect(within(table).getByRole("columnheader", { name: c.name })).toBeInTheDocument();
+    expect(
+      within(table).getByRole("columnheader", { name: c.name }),
+    ).toBeInTheDocument();
   }
   expect(COMPARE_ROWS.length).toBeGreaterThanOrEqual(8);
-  expect(screen.getAllByRole("link", { name: /Hookdeck Destinations/i }).length).toBeGreaterThan(0);
-  expect(screen.getByRole("link", { name: /Hookdeck Transformations/i })).toBeInTheDocument();
-  expect(screen.getAllByRole("link", { name: /Hookdeck Outpost/i }).length).toBeGreaterThan(0);
-  expect(screen.getByRole("link", { name: /Convoy Sources/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Convoy Functions/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Convoy Metrics/i })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Hookdeck Limits" })).toHaveAttribute("href", "https://hookdeck.com/docs/limits");
-  expect(screen.getByRole("link", { name: "Hookdeck Events" })).toHaveAttribute("href", "https://hookdeck.com/docs/events");
-  expect(screen.getByRole("link", { name: "Hookdeck Retries" })).toHaveAttribute("href", "https://hookdeck.com/docs/retries");
-  expect(screen.getByRole("link", { name: "Hookdeck Requests" })).toHaveAttribute("href", "https://hookdeck.com/docs/requests");
-  expect(screen.getByRole("link", { name: "Convoy events and event deliveries" })).toHaveAttribute(
+  expect(
+    screen.getAllByRole("link", { name: /Hookdeck Destinations/i }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.getByRole("link", { name: /Hookdeck Transformations/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getAllByRole("link", { name: /Hookdeck Outpost/i }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    screen.getByRole("link", { name: /Convoy Sources/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: /Convoy Functions/i }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: /Convoy Metrics/i }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Hookdeck Limits" })).toHaveAttribute(
+    "href",
+    "https://hookdeck.com/docs/limits",
+  );
+  expect(screen.getByRole("link", { name: "Hookdeck Events" })).toHaveAttribute(
+    "href",
+    "https://hookdeck.com/docs/events",
+  );
+  expect(
+    screen.getByRole("link", { name: "Hookdeck Retries" }),
+  ).toHaveAttribute("href", "https://hookdeck.com/docs/retries");
+  expect(
+    screen.getByRole("link", { name: "Hookdeck Requests" }),
+  ).toHaveAttribute("href", "https://hookdeck.com/docs/requests");
+  expect(
+    screen.getByRole("link", { name: "Convoy events and event deliveries" }),
+  ).toHaveAttribute(
     "href",
     "https://www.getconvoy.io/docs/product-manual/events-and-event-deliveries",
   );
-  expect(screen.getByRole("link", { name: "Convoy retry event delivery" })).toHaveAttribute(
+  expect(
+    screen.getByRole("link", { name: "Convoy retry event delivery" }),
+  ).toHaveAttribute(
     "href",
     "https://www.getconvoy.io/docs/api-reference/event-deliveries/retry-event-delivery",
   );
-  expect(screen.getByRole("link", { name: "Hookway replay service" })).toHaveAttribute(
-    "href",
-    repoBlob("docs/replay-service.md"),
-  );
+  expect(
+    screen.getByRole("link", { name: "Hookway replay service" }),
+  ).toHaveAttribute("href", repoBlob("docs/replay-service.md"));
   expect(existsSync(resolve(repoRoot, "docs/replay-service.md"))).toBe(true);
 });
 
@@ -116,7 +169,9 @@ test("compare page states Hookdeck Event Gateway destinations are HTTP-oriented"
 
 test("the destinations row notes that Temporal workflow settings are not in standalone YAML", () => {
   const row = COMPARE_ROWS.find((r) => r.id === "destinations");
-  expect(row?.note).toMatch(/Temporal workflow settings are not yet exposed in standalone YAML/);
+  expect(row?.note).toMatch(
+    /Temporal workflow settings are not yet exposed in standalone YAML/,
+  );
   wrap(<Compare />);
   expect(screen.getByRole("main")).toHaveTextContent(
     /Temporal workflow settings are not yet exposed in standalone YAML/,
@@ -143,7 +198,11 @@ test("Hookway replay is the full optional service, not a partial", () => {
   expect(main).toHaveTextContent(/optional hookway-replay/i);
   expect(main).toHaveTextContent(/no product UI/i);
   expect(main).toHaveTextContent(/no automatic re-drive/i);
-  expect(screen.getByRole("rowheader", { name: "Inspect and retry failed deliveries" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("rowheader", {
+      name: "Inspect and retry failed deliveries",
+    }),
+  ).toBeInTheDocument();
 });
 
 test("the matrix separates payload retention from object publish", () => {
@@ -174,23 +233,35 @@ test("the matrix separates payload retention from object publish", () => {
   expect(main).toHaveTextContent(/10 MiB/);
   expect(main).toHaveTextContent(/2\.5 MB/);
   expect(main).toHaveTextContent(/1–5 MB/);
-  expect(COMPARE_ROWS.some((r) => /operator surface/i.test(r.capability))).toBe(false);
+  expect(COMPARE_ROWS.some((r) => /operator surface/i.test(r.capability))).toBe(
+    false,
+  );
 });
 
 test("the compare page leads with the publish wedge and where Hookway differs", () => {
   wrap(<Compare />);
   const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/inbound webhook gateways that receive third-party traffic/i);
-  expect(main).toHaveTextContent(/native publish into your queues, streams, databases, and object storage/i);
-  expect(main).toHaveTextContent(/11 wire-format schemes/);
+  expect(main).toHaveTextContent(
+    /gateways receive, verify, and deliver webhooks/i,
+  );
+  expect(main).toHaveTextContent(
+    /sends events directly to queues, streams, databases, and object storage/i,
+  );
+  expect(main).toHaveTextContent(/13 authentication formats/);
   expect(main).toHaveTextContent(/HTTP Basic/);
   expect(main).toHaveTextContent(/HS256/);
-  expect(main).toHaveTextContent(/fail closed/i);
-  expect(screen.getByRole("heading", { name: /where hookway differs/i })).toBeInTheDocument();
+  expect(main).toHaveTextContent(/unknown schemes are rejected/i);
+  expect(
+    screen.getByRole("heading", { name: /where hookway differs/i }),
+  ).toBeInTheDocument();
   expect(main).toHaveTextContent(/Native destinations/);
   expect(main).toHaveTextContent(/Object and file publish/);
   expect(main).toHaveTextContent(/Optional hookway-replay/);
   expect(main).toHaveTextContent(/This product/);
-  const table = screen.getByRole("table", { name: /feature and integration comparison/i });
-  expect(within(table).getByRole("columnheader", { name: "Hookway" })).toHaveAttribute("data-product", "hookway");
+  const table = screen.getByRole("table", {
+    name: /feature and integration comparison/i,
+  });
+  expect(
+    within(table).getByRole("columnheader", { name: "Hookway" }),
+  ).toHaveAttribute("data-product", "hookway");
 });

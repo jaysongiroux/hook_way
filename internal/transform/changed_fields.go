@@ -14,7 +14,7 @@ import (
 // itself into the result, matching the "changed fields array" convention
 // downstream consumers expect.
 func ChangedFields(prev, curr any) []string {
-	var paths []string
+	paths := []string{}
 	diff(prev, curr, "", &paths)
 	if promotesStatus(paths) && !contains(paths, "status") {
 		paths = append([]string{"status"}, paths...)
@@ -54,7 +54,13 @@ func diff(prev, curr any, prefix string, out *[]string) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			diff(prevMap[k], currMap[k], joinPath(prefix, k), out)
+			a, hasA := prevMap[k]
+			b, hasB := currMap[k]
+			if hasA != hasB {
+				emit(joinPath(prefix, k), out)
+			} else {
+				diff(a, b, joinPath(prefix, k), out)
+			}
 		}
 		return
 	}

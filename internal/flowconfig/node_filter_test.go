@@ -10,7 +10,7 @@ import (
 )
 
 func TestFilterDropReturnsTerminalWithoutError(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestFilterDropReturnsTerminalWithoutError(t *testing.T) {
 }
 
 func TestFilterRejectReturns422(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestFilterRejectReturns422(t *testing.T) {
 }
 
 func TestFilterPassThroughOnMatch(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

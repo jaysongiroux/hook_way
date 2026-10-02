@@ -148,6 +148,15 @@ func validationIssues(c Config) []ValidationIssue {
 	if c.Server.MaxInflightRequests < maxInflightRequestsUnlimited {
 		issues = append(issues, validationError("server.max_inflight_requests", "must be -1 (unlimited) or a positive integer", fmt.Sprintf("omit the field or set 0 to use the default of %d, or -1 to disable the limit", defaultMaxInflightRequests)))
 	}
+	if c.Server.MaxPendingRequests < 0 || c.Server.AdmissionWaitTimeout < 0 || (c.Server.MaxPendingRequests > 0) != (c.Server.AdmissionWaitTimeout > 0) {
+		issues = append(issues, validationError("server.max_pending_requests", "waiting requires a positive max_pending_requests and admission_wait_timeout together", "omit both for immediate overload rejection"))
+	}
+	if c.Server.MaxPendingRequests > 0 && c.Server.MaxInflightRequests <= 0 {
+		issues = append(issues, validationError("server.max_pending_requests", "waiting requires a finite max_inflight_requests", "set an execution limit such as 256"))
+	}
+	if c.Server.AdmissionWaitTimeout > 0 && (c.Server.AdmissionWaitTimeout >= c.Server.ReadTimeout || c.Server.AdmissionWaitTimeout >= c.Server.WriteTimeout || c.Server.AdmissionWaitTimeout >= c.Server.ShutdownTimeout) {
+		issues = append(issues, validationError("server.admission_wait_timeout", "must be shorter than read, write and shutdown timeouts", "reserve time after waiting to read, process and respond"))
+	}
 	if c.Server.FanoutConcurrency < 0 {
 		issues = append(issues, validationError("server.fanout_concurrency", "must be zero (default) or a positive integer", "set a bound such as 8"))
 	}
@@ -639,9 +648,12 @@ func validationIssues(c Config) []ValidationIssue {
 					}
 				}
 			}
+			if err := ValidateBrokerAttributes(dest.Type, strings.HasSuffix(destination.Target, ".fifo"), destination.BrokerAttributes); err != nil {
+				issues = append(issues, validationError(field+".broker_attributes", err.Error(), ""))
+			}
 			// SQS cross-endpoint consistency
 			if destOK && dest.Type == "sqs" {
-				cur := sqsRouteSettings{opts: destination.SQSOptions, fifo: destination.FIFO}
+				cur := sqsRouteSettings{opts: destination.SQSOptions, fifo: destination.FIFO, attrs: destination.BrokerAttributes}
 				for _, routeKey := range routeKeys {
 					if prev, ok := sqsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
 						issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
@@ -652,7 +664,7 @@ func validationIssues(c Config) []ValidationIssue {
 			}
 			// SNS cross-endpoint consistency
 			if destOK && dest.Type == "sns" {
-				cur := snsRouteSettings{opts: destination.SNSOptions, fifo: destination.FIFO}
+				cur := snsRouteSettings{opts: destination.SNSOptions, fifo: destination.FIFO, attrs: destination.BrokerAttributes}
 				for _, routeKey := range routeKeys {
 					if prev, ok := snsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
 						issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
@@ -809,13 +821,15 @@ func filterValidationIssues(fieldPrefix string, filters []FilterConditionConfig)
 }
 
 type sqsRouteSettings struct {
-	opts SQSEndpointOptions
-	fifo *FIFOConfig
+	attrs map[string]string
+	opts  SQSEndpointOptions
+	fifo  *FIFOConfig
 }
 
 type snsRouteSettings struct {
-	opts SNSEndpointOptions
-	fifo *FIFOConfig
+	attrs map[string]string
+	opts  SNSEndpointOptions
+	fifo  *FIFOConfig
 }
 
 func sqsOptionsValidationIssues(fieldPrefix string, opts SQSEndpointOptions) []ValidationIssue {

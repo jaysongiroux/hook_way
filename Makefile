@@ -34,15 +34,22 @@ wasm-harness: wasm
 	@echo "Serving harness on http://localhost:8091 (Ctrl-C to stop)"
 	cd cmd/hookway-wasm/harness && python3 -m http.server 8091
 
-# node-schema regenerates the JSON catalogs the config UI imports. node-schema-check
-# fails if the committed files drifted from `hookway schema --nodes/--destinations/--connections`.
+# node-schema regenerates JSON catalogs from the Go runtime contracts. Build and
+# parse every temporary output before replacing any catalog, so a failed command
+# never truncates a working catalog. Workspace schemas come from the full schema.
 node-schema:
-	$(GO) run ./cmd/hookway schema --nodes > web/src/graph/nodeSchema.json
-	$(GO) run ./cmd/hookway schema --destinations > web/src/graph/destinationSchema.json
-	$(GO) run ./cmd/hookway schema --connections > web/src/graph/connectionSchema.json
+	@set -eu; task_schema_dir=$$(mktemp -d); trap 'rm -rf "$$task_schema_dir"' 0; \
+	$(GO) run ./cmd/hookway schema --nodes > "$$task_schema_dir/nodeSchema.json"; \
+	$(GO) run ./cmd/hookway schema --destinations > "$$task_schema_dir/destinationSchema.json"; \
+	$(GO) run ./cmd/hookway schema --connections > "$$task_schema_dir/connectionSchema.json"; \
+	$(GO) run ./cmd/hookway schema > "$$task_schema_dir/fullSchema.json"; \
+	python3 -c 'import json, pathlib, sys; root = pathlib.Path(sys.argv[1]); catalogs = ["nodeSchema.json", "destinationSchema.json", "connectionSchema.json"]; [json.loads((root / name).read_text()) for name in catalogs]; full = json.loads((root / "fullSchema.json").read_text()); (root / "workspaceSchema.json").write_text(json.dumps({key: full["properties"][key] for key in ["routing", "credentials"]}, indent=2) + "\n")' "$$task_schema_dir"; \
+	for task_catalog in nodeSchema destinationSchema connectionSchema workspaceSchema; do \
+		mv "$$task_schema_dir/$$task_catalog.json" "web/src/graph/$$task_catalog.json"; \
+	done
 
 node-schema-check: node-schema
-	@git diff --exit-code -- web/src/graph/nodeSchema.json web/src/graph/destinationSchema.json web/src/graph/connectionSchema.json
+	@git diff --exit-code -- web/src/graph/nodeSchema.json web/src/graph/destinationSchema.json web/src/graph/connectionSchema.json web/src/graph/workspaceSchema.json
 
 web-install:
 	cd web && npm install
@@ -148,7 +155,7 @@ integration-test:
 	$(GO) test ./internal/queue -run TestRabbitMQ -count=1
 
 aws-integration-test:
-	$(GO) test ./internal/queue ./internal/lookup ./internal/secretref -run 'TestAWS' -count=1
+	$(GO) test ./internal/queue ./internal/lookup ./internal/secretref ./internal/httpapi -run 'TestAWS' -count=1
 
 redis-integration-test:
 	$(GO) test ./internal/queue -run 'TestRedis' -count=1
@@ -242,6 +249,8 @@ deadcode:
 validate:
 	$(GO) run ./cmd/hookway validate --config $(CONFIG)
 
+# JWT example placeholders are checked offline; test-examples separately
+# constructs real test keys and verifies its signed requests.
 validate-examples:
 	@export RABBITMQ_URL=amqp://guest:guest@localhost:5672/ \
 		PADDLE_WEBHOOK_SECRET=dummy \
@@ -249,6 +258,7 @@ validate-examples:
 		STRIPE_WEBHOOK_SECRET=dummy \
 		ORDERS_WEBHOOK_SECRET=dummy \
 		NOTIFY_WEBHOOK_SECRET=dummy \
+		SAMPLE_WEBHOOK_SECRET=dummy \
 		REVENUECAT_WEBHOOK_AUTH=dummy \
 		BASIC_WEBHOOK_SECRET=dummy \
 		JWT_PUBLIC_KEY=dummy \
@@ -285,9 +295,10 @@ validate-examples:
 		REPLAY_OPERATOR_TOKEN=operator-token-0123456789abcdefghi \
 		REPLAY_METRICS_TOKEN=metrics-token-0123456789abcdefghijk \
 		REPLAY_DATABASE_URL=postgres://localhost:5432/replay; \
-	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/templates/*.yaml; do \
+	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/routing/*.yaml examples/proxy/*.yaml examples/credentials/*.yaml examples/adapters/*.yaml examples/templates/*.yaml; do \
 		echo "validating $$f"; \
-		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
+		case $$f in examples/auth/jwt.yaml) opts="--no-env" ;; *) opts="" ;; esac; \
+		$(GO) run ./cmd/hookway validate $$opts --config $$f || exit 1; \
 	done; \
 	for f in examples/showcase/*.yaml; do \
 		case $$f in *invalid-*) continue ;; esac; \

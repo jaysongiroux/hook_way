@@ -50,7 +50,7 @@ func fullEnvelope() *Envelope {
 		}},
 		BodyFormat:        "json",
 		Vars:              map[string]string{"route": "orders"},
-		Upstream:          &Upstream{Status: 200, Header: map[string][]string{"X": {"y"}}, Body: []byte("ok")},
+		Upstream:          &Upstream{Values: map[string]string{"created_id": "sample-1"}, SelectionError: "missing_field", Status: 200, Header: map[string][]string{"X": {"y"}}, Body: []byte("ok")},
 		CapturedEvent:     &CapturedEvent{Event: WebhookEnvelope{ID: "evt", ReceivedAt: time.Date(2026, 9, 23, 12, 0, 0, 5, time.UTC), RawBodyBase64: &b64, Auth: AuthInfo{Type: "hmac", Verified: true}, Query: &Value{Type: TypeNilMap}, Body: &Value{Type: TypeNull}}},
 		Branch:            "",
 		MessageAttributes: map[string]MessageAttribute{"tenant": {DataType: "String", Value: "acme"}},
@@ -237,5 +237,12 @@ func TestDecodeRejectsUnknownFields(t *testing.T) {
 				t.Fatalf("Decode = %v, want ErrMalformed", err)
 			}
 		})
+	}
+}
+
+func TestVersionOneIncludesPublishMetadata(t *testing.T) {
+	snapshot, err := Decode(gz(t, `{"version":1,"kind":"resume","envelope":{"publish":{"destination":"broker"}}}`))
+	if err != nil || snapshot.Version != Version || snapshot.Envelope.Publish.Destination != "broker" {
+		t.Fatalf("snapshot = %+v, %v", snapshot, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	"github.com/jaysongiroux/hook_way/internal/queue"
@@ -25,6 +26,7 @@ func FromEnvelope(env graph.Envelope, destID, target string) (msg queue.Message,
 		if err != nil {
 			return
 		}
+		msg.Publish = deliverymeta.Clone(env.Publish)
 		msg.Body = env.Body
 		msg.Variables = env.Vars
 		var doc *transform.Document
@@ -44,6 +46,11 @@ func FromEnvelope(env graph.Envelope, destID, target string) (msg queue.Message,
 			msg.Body, msg.RawBodyBase64 = nil, &encoded
 		} else if env.Body != nil {
 			msg.RawBodyBase64 = nil
+		} else if env.BodyFormat == "raw" && msg.RawBodyBase64 == nil && len(msg.RawBody) > 0 {
+			// Raw proxy envelopes avoid this allocation at intake. An envelope
+			// publication still needs its serialized bytes; encode only here.
+			encoded := base64.StdEncoding.EncodeToString(msg.RawBody)
+			msg.RawBodyBase64 = &encoded
 		}
 		msg, err = attachObjectPayload(msg, env)
 	}()

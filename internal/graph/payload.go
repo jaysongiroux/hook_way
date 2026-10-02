@@ -3,6 +3,9 @@ package graph
 import (
 	"net/http"
 	"net/url"
+
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
+	"github.com/jaysongiroux/hook_way/internal/jsoncanon"
 )
 
 // Payload is the value carried on a graph edge. Implementations are the five
@@ -42,11 +45,16 @@ type RawRequest struct {
 func (RawRequest) PortType() PortType { return PortRawRequest }
 
 // Verified is a RawRequest whose signature has been checked against the raw
-// bytes (I6 -- never against a re-serialized body). Identity names the
+// bytes by default (I6). Explicit protocols may verify a declared representation
+// of the original bounded body before business transforms. Identity names the
 // credential that passed, for logging and replay attribution.
 type Verified struct {
-	Raw      RawRequest
-	Identity string
+	// OriginalJSON is request-local immutable serialization metadata, attached
+	// only after successful request authentication. It is not persisted and
+	// must match Raw.Body before reuse. Sharing it across clones is safe.
+	OriginalJSON *jsoncanon.Representation `json:"-"`
+	Raw          RawRequest
+	Identity     string
 }
 
 func (Verified) PortType() PortType { return PortVerified }
@@ -55,8 +63,9 @@ func (Verified) PortType() PortType { return PortVerified }
 // and resolved variables. Upstream is populated by an http_request node and
 // consumed by a respond node, which is how synchronous proxying works.
 type Envelope struct {
-	V    Verified
-	Body any
+	Publish *deliverymeta.Publish
+	V       Verified
+	Body    any
 	// BodyFormat is the envelope node's normalized parser mode. It lets
 	// adapters distinguish an intentionally raw body from parsed JSON null.
 	BodyFormat string
@@ -78,7 +87,7 @@ type Envelope struct {
 }
 
 // MessageAttribute is one SNS/SQS message attribute. DataType is String,
-// Number, or String.Array. Value is the AWS StringValue (JSON for arrays).
+// Number, Binary, or String.Array (custom suffixes supported). Value is StringValue (JSON for arrays), or base64 for Binary.
 type MessageAttribute struct {
 	DataType string
 	Value    string
@@ -88,9 +97,12 @@ func (Envelope) PortType() PortType { return PortEnvelope }
 
 // UpstreamResponse is an upstream HTTP reply captured by an http_request node.
 type UpstreamResponse struct {
-	Status int
-	Header http.Header
-	Body   []byte
+	// Values contains only explicitly selected, bounded scalar response fields.
+	Values         map[string]string
+	SelectionError string
+	Status         int
+	Header         http.Header
+	Body           []byte
 }
 
 // Terminal is a leaf result. Response is nil unless a respond node ran, in
@@ -103,6 +115,8 @@ type UpstreamResponse struct {
 // caller needs Deliveries to decide whether to compensate (see
 // NeedsCompensation).
 type Terminal struct {
+	// DropReason is finite, configuration-supplied filter metadata.
+	DropReason string
 	Response   *Response
 	Deliveries []Delivery
 	// Compensations lists nodes that reserved something and ran

@@ -50,6 +50,21 @@ func TestCatalogNodeRuntimeErrors(t *testing.T) {
 func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 	t.Helper()
 	return map[string]func(*testing.T) error{
+		"batch": func(t *testing.T) error {
+			n := mustCatalogNode(t, "batch", validNodeYAML["batch"], RegistryOptions{ValidateOnly: true})
+			_, err := n.Run(context.Background(), graph.RequestHead{})
+			return err
+		},
+		"register_route": func(t *testing.T) error {
+			n := mustCatalogNode(t, "register_route", "mode: direct\nstore: primary\nprofile: sandbox\nenvironment_variable: route\nid_source: body\nid_path: id\nid_type: record_a\n", RegistryOptions{ValidateOnly: true})
+			_, err := n.Run(context.Background(), graph.Envelope{})
+			return err
+		},
+		"route": func(t *testing.T) error {
+			n := mustCatalogNode(t, "route", "profile: sandbox\ncandidates: [{source: body, path: environment}]\n", RegistryOptions{RoutingRegistry: routeTestRegistry(t)})
+			_, err := n.Run(context.Background(), graph.Envelope{Body: map[string]any{"environment": "unknown"}})
+			return err
+		},
 		"http_trigger": func(t *testing.T) error {
 			_, err := mustCatalogNode(t, "http_trigger", validNodeYAML["http_trigger"], RegistryOptions{}).
 				Run(context.Background(), graph.Envelope{})
@@ -208,6 +223,46 @@ func TestOnErrorRecoversEveryFailingNode(t *testing.T) {
 func onErrorRecoveryCases(t *testing.T) map[string]func(*testing.T) {
 	t.Helper()
 	return map[string]func(*testing.T){
+		"batch": func(t *testing.T) {
+			src := `server: {addr: ":8080", max_body_bytes: 1024}
+routing:
+  profiles: {sandbox: {account_id: "000000000000", credential_mode: sandbox}}
+  environments: {preview: {profiles: [sandbox], accounts: ["000000000000"], destination_prefix: preview}}
+flows:
+  demo:
+    nodes:
+      - {id: in, type: http_trigger, path: /demo}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope}
+      - id: fail
+        type: batch
+        mode: dedicated
+        profile: sandbox
+        environment_path: environment
+        receiving_environment: preview
+        event_id_path: event_id
+        child:
+          entry: fail.send
+          nodes: [{id: fail.send, type: publish, destination: primary, target: sample}]
+          edges: []
+      - {id: fb, type: respond, status: 200, body: recovered}
+    edges: [in>body, body>auth, auth>env, env>fail, fail:on_error>fb]
+destinations:
+  primary: {type: webhook, webhook: {url: "https://example.test"}}
+`
+			assertRecovered(t, mustCompileDemo(t, src, RegistryOptions{ValidateOnly: true}), []byte(`{}`), "10.0.0.1", "")
+		},
+		"register_route": func(t *testing.T) {
+			src := envelopeFailYAML(`{id: fail, type: register_route, mode: direct, store: primary, profile: sandbox, environment_variable: route, id_source: body, id_path: id, id_type: record_a}`, respondOKNode, "env>fail, fail>ok, fail:on_error>fb")
+			src = "routing:\n  stores: {primary: {table: sample}}\n  profiles: {sandbox: {account_id: \"000000000000\", credential_mode: sandbox}}\n  environments: {}\n" + src
+			assertRecovered(t, mustCompileDemo(t, src, RegistryOptions{ValidateOnly: true}), []byte(`{}`), "10.0.0.1", "")
+		},
+		"route": func(t *testing.T) {
+			src := envelopeFailYAML(`{id: fail, type: route, profile: sandbox, candidates: [{source: body, path: environment}]}`, respondOKNode, "env>fail, fail>ok, fail:on_error>fb")
+			src = "routing:\n  profiles: {sandbox: {account_id: \"000000000000\", credential_mode: sandbox}}\n  environments: {preview: {profiles: [sandbox], accounts: [\"000000000000\"], destination_prefix: preview}}\n" + src
+			assertRecovered(t, mustCompileDemo(t, src, RegistryOptions{RoutingRegistry: routeTestRegistry(t)}), []byte(`{"environment":"unknown"}`), "10.0.0.1", "")
+		},
 		"loop_guard": func(t *testing.T) {
 			flow := mustCompileDemo(t, requestHeadFailYAML(`{id: fail, type: loop_guard, max_hops: 1}`), RegistryOptions{})
 			assertRecovered(t, flow, []byte(`{}`), "10.0.0.1", "1")

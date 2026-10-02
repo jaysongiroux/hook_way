@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sort"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+
 	"github.com/jaysongiroux/hook_way/internal/awsconf"
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/vars"
@@ -115,7 +117,16 @@ func NewFactory(opts FactoryOptions) *Factory {
 			if err != nil {
 				return nil, err
 			}
-			return NewSQSPublisher(ctx, sqs.NewFromConfig(awsCfg), cfg)
+			var closeIdle func()
+			client := sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
+				o.HTTPClient, closeIdle = awsconf.OwnHTTPClient(o.HTTPClient, cfg.AdmissionBudget)
+			})
+			publisher, err := NewSQSPublisher(ctx, client, cfg)
+			if err != nil {
+				closeIdle()
+				return nil, err
+			}
+			return &ownedPublisher{Publisher: publisher, closeIdle: closeIdle}, nil
 		}
 	}
 	snsConnector := opts.SNSConnector
@@ -125,7 +136,16 @@ func NewFactory(opts FactoryOptions) *Factory {
 			if err != nil {
 				return nil, err
 			}
-			return NewSNSPublisher(ctx, sns.NewFromConfig(awsCfg), cfg)
+			var closeIdle func()
+			client := sns.NewFromConfig(awsCfg, func(o *sns.Options) {
+				o.HTTPClient, closeIdle = awsconf.OwnHTTPClient(o.HTTPClient, cfg.AdmissionBudget)
+			})
+			publisher, err := NewSNSPublisher(ctx, client, cfg)
+			if err != nil {
+				closeIdle()
+				return nil, err
+			}
+			return &ownedPublisher{Publisher: publisher, closeIdle: closeIdle}, nil
 		}
 	}
 	s3Connector := opts.S3Connector
@@ -358,6 +378,7 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "sqs":
 			publisher, err := f.sqsConnector(ctx, id, SQSConfig{
+				AdmissionBudget: cfg.Server.MaxInflightRequests,
 				Region:          destination.SQS.Region,
 				Endpoint:        destination.SQS.Endpoint,
 				AccessKeyID:     destination.SQS.AccessKeyID,
@@ -373,6 +394,7 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "sns":
 			publisher, err := f.snsConnector(ctx, id, SNSConfig{
+				AdmissionBudget: cfg.Server.MaxInflightRequests,
 				Region:          destination.SNS.Region,
 				Endpoint:        destination.SNS.Endpoint,
 				AccessKeyID:     destination.SNS.AccessKeyID,
@@ -662,12 +684,14 @@ func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, SQSTarget{
-				Template:          routeMatcher(endpoint, route),
-				Name:              route.Target,
-				Create:            route.Create,
-				VisibilityTimeout: route.SQSOptions.VisibilityTimeout,
-				MessageRetention:  route.SQSOptions.MessageRetention,
-				FIFO:              mapFIFO(route.FIFO),
+				Attributes:          maps.Clone(route.BrokerAttributes),
+				QueueOwnerAccountID: route.SQSOptions.QueueOwnerAccountID,
+				Template:            routeMatcher(endpoint, route),
+				Name:                route.Target,
+				Create:              route.Create,
+				VisibilityTimeout:   route.SQSOptions.VisibilityTimeout,
+				MessageRetention:    route.SQSOptions.MessageRetention,
+				FIFO:                mapFIFO(route.FIFO),
 			})
 		}
 	}
@@ -697,11 +721,13 @@ func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
 			}
 			seen[route.Target] = struct{}{}
 			targets = append(targets, SNSTarget{
-				Template: routeMatcher(endpoint, route),
-				Name:     route.Target,
-				Create:   route.Create,
-				Subject:  route.SNSOptions.Subject,
-				FIFO:     mapFIFO(route.FIFO),
+				ARN:        route.SNSOptions.TopicARN,
+				Attributes: maps.Clone(route.BrokerAttributes),
+				Template:   routeMatcher(endpoint, route),
+				Name:       route.Target,
+				Create:     route.Create,
+				Subject:    route.SNSOptions.Subject,
+				FIFO:       mapFIFO(route.FIFO),
 			})
 		}
 	}

@@ -2,11 +2,11 @@ package bridge_test
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/jaysongiroux/hook_way/cmd/hookway-wasm/bridge"
-	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/configapi"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
@@ -53,9 +53,9 @@ func TestValidateMalformedHasIssues(t *testing.T) {
 }
 
 func TestSchemaMatchesConfig(t *testing.T) {
-	want, err := config.SchemaJSON()
+	want, err := configapi.Schema()
 	if err != nil {
-		t.Fatalf("config.SchemaJSON: %v", err)
+		t.Fatalf("configapi.Schema: %v", err)
 	}
 	got, err := bridge.Schema()
 	if err != nil {
@@ -109,5 +109,106 @@ keys: [{name: core, token: "${REPLAY_CAPTURE_TOKEN}", scopes: [capture]}]
 	}
 	if !strings.Contains(schema, `"retention"`) || !strings.Contains(schema, `"keys"`) {
 		t.Fatalf("replay schema missing sections: %s", schema)
+	}
+}
+
+func TestRequestSignatureProtocolsValidateOffline(t *testing.T) {
+	original, err := os.ReadFile("../../../examples/auth/request-signatures.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		src   string
+		valid bool
+	}{
+		{string(original), true},
+		{strings.Replace(string(original), "hmac_sha256_headers_dot", "unknown", 1), false},
+		{strings.Replace(string(original), "timestamp_unit: milliseconds", "timestamp_unit: invalid", 1), false},
+	} {
+		got, err := bridge.Validate(tc.src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result configapi.ValidateResponse
+		if err := json.Unmarshal([]byte(got), &result); err != nil {
+			t.Fatal(err)
+		}
+		valid := true
+		for _, issue := range result.Issues {
+			if issue.Severity != "warning" {
+				valid = false
+			}
+		}
+		if valid != tc.valid {
+			t.Fatalf("valid=%v: %s", valid, got)
+		}
+	}
+}
+
+func TestRoutingAdmissionOfflineAndUnboundProfileRejected(t *testing.T) {
+	for _, example := range []string{"shared", "admission"} {
+		source, err := os.ReadFile("../../../examples/routing/" + example + ".yaml") // #nosec G304 -- Controlled fixture name or test-owned temporary path.
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := bridge.Validate(string(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response configapi.ValidateResponse
+		if err := json.Unmarshal([]byte(result), &response); err != nil {
+			t.Fatal(err)
+		}
+		for _, issue := range response.Issues {
+			if issue.Severity != "warning" {
+				t.Fatal(issue)
+			}
+		}
+		result, err = bridge.Validate(strings.ReplaceAll(string(source), "profile: sandbox", "profile: missing"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal([]byte(result), &response); err != nil {
+			t.Fatal(err)
+		}
+		failed := false
+		for _, issue := range response.Issues {
+			if issue.Severity != "warning" {
+				failed = true
+			}
+		}
+		if !failed {
+			t.Fatal("unbound profile accepted")
+		}
+	}
+}
+
+func TestProxyContractOfflineValidation(t *testing.T) {
+	for _, example := range []string{"request-contract", "admitted"} {
+		source, err := os.ReadFile("../../../examples/proxy/" + example + ".yaml") // #nosec G304 -- Controlled fixture name or test-owned temporary path.
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, invalid := range []bool{false, true} {
+			input := string(source)
+			if invalid {
+				input = strings.ReplaceAll(input, "max_response_bytes: 20971520", "max_response_bytes: 67108865")
+			}
+			result, err := bridge.Validate(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response configapi.ValidateResponse
+			if err := json.Unmarshal([]byte(result), &response); err != nil {
+				t.Fatal(err)
+			}
+			failed := false
+			for _, issue := range response.Issues {
+				failed = failed || issue.Severity != "warning"
+			}
+			if failed != invalid {
+				t.Fatalf("%s invalid=%v: %s", example, invalid, result)
+			}
+		}
 	}
 }

@@ -16,7 +16,7 @@ import (
 const malformedPlaceholder = "{bad-name}"
 
 func TestMalformedTemplatesRejectedAtValidateAndCompile(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

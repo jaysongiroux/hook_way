@@ -1,6 +1,8 @@
 # Replay service config for `make dev-up` (examples/docker-compose.yaml). The
 # replay service and its one-shot migration both use this file. Every setting
-# is described in docs/replay-service.md.
+# is described in docs/replay-service.md. Demonstrates explicit migrations,
+# bounded operator-initiated retries, seven-day retention and separate
+# capture/operator/metrics permissions against a local PostgreSQL database.
 server:
   addr: ":8080"
 logging:

@@ -1,8 +1,10 @@
 package queue
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -14,7 +16,7 @@ import (
 const (
 	maxMessageAttributes          = 10
 	maxMessageAttributeNameBytes  = 256
-	maxMessageAttributeValueBytes = 256 * 1024
+	maxMessageAttributeValueBytes = 1048576
 )
 
 func validateMessageAttributes(attrs map[string]MessageAttribute) error {
@@ -39,22 +41,39 @@ func validateMessageAttribute(name string, attr MessageAttribute) error {
 	if len(name) > maxMessageAttributeNameBytes {
 		return fmt.Errorf("message attribute %q: name is %d bytes, AWS limit is %d", name, len(name), maxMessageAttributeNameBytes)
 	}
-	switch attr.DataType {
-	case "String", "Number", "String.Array":
-	default:
-		return fmt.Errorf("message attribute %q: unsupported DataType %q (use String, Number, or String.Array)", name, attr.DataType)
+	if len(attr.DataType) > 256 || strings.HasSuffix(attr.DataType, ".") {
+		return fmt.Errorf("invalid attribute data type")
 	}
-	if len(attr.StringValue) > maxMessageAttributeValueBytes {
+	base, _, _ := strings.Cut(attr.DataType, ".")
+	switch base {
+	case "String", "Number", "Binary":
+	default:
+		return fmt.Errorf("message attribute %q: unsupported DataType %q (use String, Number, Binary, or String.Array)", name, attr.DataType)
+	}
+	size := len(attr.StringValue)
+	if base == "Binary" {
+		if size > base64.StdEncoding.EncodedLen(maxMessageAttributeValueBytes) {
+			return fmt.Errorf("binary message attribute exceeds size limit")
+		}
+		decoded, _ := base64.StdEncoding.Strict().DecodeString(attr.StringValue)
+		size = len(decoded)
+	}
+	if size > maxMessageAttributeValueBytes {
 		return fmt.Errorf("message attribute %q: value is %d bytes, AWS limit is %d", name, len(attr.StringValue), maxMessageAttributeValueBytes)
 	}
-	switch attr.DataType {
-	case "Number":
-		if _, err := strconv.ParseFloat(attr.StringValue, 64); err != nil {
+	switch {
+	case base == "Binary":
+		decoded, err := base64.StdEncoding.Strict().DecodeString(attr.StringValue)
+		if err != nil || len(decoded) == 0 {
+			return fmt.Errorf("message attribute %q: Binary value must be nonempty base64", name)
+		}
+	case base == "Number":
+		if n, err := strconv.ParseFloat(attr.StringValue, 64); err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
 			return fmt.Errorf("message attribute %q: Number value %q is not numeric", name, attr.StringValue)
 		}
-	case "String.Array":
+	case attr.DataType == "String.Array":
 		var arr []any
-		if err := json.Unmarshal([]byte(attr.StringValue), &arr); err != nil {
+		if err := json.Unmarshal([]byte(attr.StringValue), &arr); err != nil || arr == nil {
 			return fmt.Errorf("message attribute %q: String.Array value must be a JSON array, got %q", name, attr.StringValue)
 		}
 	}
@@ -62,6 +81,11 @@ func validateMessageAttribute(name string, attr MessageAttribute) error {
 }
 
 func snsMessageAttributes(attrs map[string]MessageAttribute) (map[string]snstypes.MessageAttributeValue, error) {
+	for _, attr := range attrs {
+		if attr.DataType != "String" && attr.DataType != "Number" && attr.DataType != "String.Array" && attr.DataType != "Binary" {
+			return nil, fmt.Errorf("SNS supports String, Number, String.Array and Binary attributes")
+		}
+	}
 	if err := validateMessageAttributes(attrs); err != nil {
 		return nil, err
 	}
@@ -70,10 +94,14 @@ func snsMessageAttributes(attrs map[string]MessageAttribute) (map[string]snstype
 	}
 	out := make(map[string]snstypes.MessageAttributeValue, len(attrs))
 	for name, attr := range attrs {
-		out[name] = snstypes.MessageAttributeValue{
-			DataType:    aws.String(attr.DataType),
-			StringValue: aws.String(attr.StringValue),
+		value := snstypes.MessageAttributeValue{DataType: aws.String(attr.DataType)}
+		base, _, _ := strings.Cut(attr.DataType, ".")
+		if base == "Binary" {
+			value.BinaryValue, _ = base64.StdEncoding.Strict().DecodeString(attr.StringValue)
+		} else {
+			value.StringValue = aws.String(attr.StringValue)
 		}
+		out[name] = value
 	}
 	return out, nil
 }
@@ -87,10 +115,14 @@ func sqsMessageAttributes(attrs map[string]MessageAttribute) (map[string]sqstype
 	}
 	out := make(map[string]sqstypes.MessageAttributeValue, len(attrs))
 	for name, attr := range attrs {
-		out[name] = sqstypes.MessageAttributeValue{
-			DataType:    aws.String(attr.DataType),
-			StringValue: aws.String(attr.StringValue),
+		value := sqstypes.MessageAttributeValue{DataType: aws.String(attr.DataType)}
+		base, _, _ := strings.Cut(attr.DataType, ".")
+		if base == "Binary" {
+			value.BinaryValue, _ = base64.StdEncoding.Strict().DecodeString(attr.StringValue)
+		} else {
+			value.StringValue = aws.String(attr.StringValue)
 		}
+		out[name] = value
 	}
 	return out, nil
 }

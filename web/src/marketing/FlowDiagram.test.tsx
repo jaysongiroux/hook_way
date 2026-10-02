@@ -41,9 +41,9 @@ function wrap() {
 
 test("every node in the graph is labelled on the page", () => {
   wrap();
-  expect(screen.getAllByText("filter")).toHaveLength(2);
-  expect(screen.getAllByText("publish")).toHaveLength(3);
-  expect(screen.getByText("http trigger")).toBeInTheDocument();
+  expect(screen.getAllByText("Filter events")).toHaveLength(2);
+  expect(screen.getAllByText("Send to a destination")).toHaveLength(3);
+  expect(screen.getByText("HTTP endpoint")).toBeInTheDocument();
   for (const n of FLOW_NODES) {
     expect(screen.getByText(n.yamlId)).toBeInTheDocument();
     expect(screen.getByText(n.summary)).toBeInTheDocument();

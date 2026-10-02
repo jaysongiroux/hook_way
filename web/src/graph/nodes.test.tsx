@@ -36,7 +36,7 @@ test("FlowNode shows id, type, and a source handle", () => {
     <FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />,
   );
   expect(screen.getByText(n.id)).toBeInTheDocument();
-  expect(screen.getByText("http trigger")).toBeInTheDocument();
+  expect(screen.getByText("HTTP endpoint")).toBeInTheDocument();
   const icon = container.querySelector('[data-node-icon="http_trigger"] svg');
   expect(icon).not.toBeNull();
   expect(icon).toHaveAttribute("width", String(NODE_ICON_SIZE));
@@ -171,7 +171,7 @@ test("FlowNode omits the description line when there is none", () => {
   // Scoped to card text: the port handles carry their own title attributes, and
   // the summary line carries one because it ellipsises (see below).
   const titled = [...container.querySelectorAll("p[title]")].map((el) => el.getAttribute("title"));
-  expect(titled).toEqual(["hmac_sha256_hex"]);
+  expect(titled).toEqual(["Verify signature or token", "hmac_sha256_hex"]);
 });
 
 test("an ellipsised summary stays readable on hover", () => {

@@ -137,6 +137,7 @@ func (s Snapshot) validate() error {
 // Envelope mirrors graph.Envelope. Extra is represented only by
 // CapturedEvent, the one Extra type the flow nodes produce.
 type Envelope struct {
+	Publish           *Publish                    `json:"publish,omitempty"`
 	Verified          Verified                    `json:"verified"`
 	Body              *Value                      `json:"body"`
 	BodyFormat        string                      `json:"body_format"`
@@ -177,9 +178,11 @@ type RequestHead struct {
 
 // Upstream mirrors graph.UpstreamResponse.
 type Upstream struct {
-	Status int                 `json:"status"`
-	Header map[string][]string `json:"header"`
-	Body   []byte              `json:"body"`
+	Values         map[string]string   `json:"values,omitempty"`
+	SelectionError string              `json:"selection_error,omitempty"`
+	Status         int                 `json:"status"`
+	Header         map[string][]string `json:"header"`
+	Body           []byte              `json:"body"`
 }
 
 // MessageAttribute mirrors graph.MessageAttribute and queue.MessageAttribute
@@ -230,6 +233,7 @@ type AuthInfo struct {
 // Message mirrors queue.Message, including its in-memory fields. Auth is nil
 // when the message carried no auth information.
 type Message struct {
+	Publish            *Publish                    `json:"publish,omitempty"`
 	SchemaVersion      string                      `json:"schema_version"`
 	ID                 string                      `json:"id"`
 	IdempotencyKey     string                      `json:"idempotency_key"`
@@ -324,14 +328,29 @@ type Value struct {
 
 // XMLDocument mirrors transform.Document.
 type XMLDocument struct {
-	Declaration string      `json:"declaration"`
-	Root        *XMLElement `json:"root"`
+	Declaration string       `json:"declaration"`
+	Root        *XMLElement  `json:"root"`
+	Before      []XMLContent `json:"before"`
+	After       []XMLContent `json:"after"`
 }
 
 // XMLElement mirrors transform.Element.
 type XMLElement struct {
-	Name     xml.Name      `json:"name"`
-	Attr     []xml.Attr    `json:"attr"`
-	Children []*XMLElement `json:"children"`
-	Text     string        `json:"text"`
+	Name         xml.Name      `json:"name"`
+	Attr         []xml.Attr    `json:"attr"`
+	Children     []*XMLElement `json:"children"`
+	Text         string        `json:"text"`
+	Prefix       string        `json:"prefix"`
+	QName        string        `json:"qname"`
+	AttrPrefixes []string      `json:"attr_prefixes"`
+	Content      []XMLContent  `json:"content"`
+}
+
+// XMLContent points into the containing element's Children, preserving identity
+// without storing the same subtree twice. Top-level content has no child reference.
+type XMLContent struct {
+	Child  *int   `json:"child,omitempty"`
+	Kind   string `json:"kind"`
+	Text   string `json:"text"`
+	Target string `json:"target"`
 }

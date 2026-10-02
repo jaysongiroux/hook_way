@@ -1,9 +1,14 @@
-import { expect, test } from "vitest";
+import { useState } from "react";
+import { beforeEach, expect, test } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { SchemaForm } from "./SchemaForm";
 import type { JSONSchema } from "./nodeSchema";
+import { emptyDocument } from "./model";
+import { useGraphStore } from "./store";
+
+beforeEach(() => useGraphStore.setState(emptyDocument()));
 
 function wrap(
   schema: JSONSchema,
@@ -13,7 +18,12 @@ function wrap(
 ) {
   return render(
     <MantineProvider theme={theme}>
-      <SchemaForm schema={schema} value={value} onChange={onChange} fieldHelp={fieldHelp} />
+      <SchemaForm
+        schema={schema}
+        value={value}
+        onChange={onChange}
+        fieldHelp={fieldHelp}
+      />
     </MantineProvider>,
   );
 }
@@ -28,10 +38,24 @@ test("renders string, number, boolean, enum, array, nested object, and required 
       enabled: { type: "boolean" },
       color: { type: "string", enum: ["red", "blue"] },
       tags: { type: "array", items: { type: "string" } },
-      retry: { type: "object", properties: { max_attempts: { type: "integer" } } },
+      retry: {
+        type: "object",
+        properties: { max_attempts: { type: "integer" } },
+      },
     },
   };
-  wrap(schema, { name: "", count: "", enabled: false, color: "red", tags: ["a"], retry: { max_attempts: 1 } }, () => undefined);
+  wrap(
+    schema,
+    {
+      name: "",
+      count: "",
+      enabled: false,
+      color: "red",
+      tags: ["a"],
+      retry: { max_attempts: 1 },
+    },
+    () => undefined,
+  );
   expect(screen.getByLabelText("name")).toBeRequired();
   expect(screen.getByLabelText("count")).toBeInTheDocument();
   expect(screen.getByLabelText("enabled")).toBeInTheDocument();
@@ -39,21 +63,35 @@ test("renders string, number, boolean, enum, array, nested object, and required 
   expect(screen.getByLabelText("tags")).toBeInTheDocument();
   expect(screen.getByText("retry")).toBeInTheDocument();
   expect(screen.getByLabelText("max attempts")).toBeInTheDocument();
-  expect(screen.getByPlaceholderText("3")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("Default: 3")).toBeInTheDocument();
 });
 
 test("shows field help under an input", () => {
-  const schema: JSONSchema = { type: "object", properties: { path: { type: "string" } } };
-  wrap(schema, { path: "/x" }, () => undefined, () => "Public URL path.");
+  const schema: JSONSchema = {
+    type: "object",
+    properties: { path: { type: "string" } },
+  };
+  wrap(
+    schema,
+    { path: "/x" },
+    () => undefined,
+    () => "Public URL path.",
+  );
   expect(screen.getByText("Public URL path.")).toBeInTheDocument();
 });
 
 test("shows a validation message on blur when a required field is empty", () => {
-  const schema: JSONSchema = { type: "object", required: ["path"], properties: { path: { type: "string" } } };
+  const schema: JSONSchema = {
+    type: "object",
+    required: ["path"],
+    properties: { path: { type: "string" } },
+  };
   wrap(schema, { path: "" }, () => undefined);
   const input = screen.getByLabelText("path");
   fireEvent.blur(input);
-  expect(screen.getByText("Required")).toBeInTheDocument();
+  expect(
+    screen.getByText("Required to configure this node."),
+  ).toBeInTheDocument();
 });
 
 const GROUPED_SCHEMA: JSONSchema = {
@@ -61,15 +99,38 @@ const GROUPED_SCHEMA: JSONSchema = {
   properties: {
     url: { type: "string" },
     timeout: { type: "string" },
-    retry: { type: "object", properties: { max_attempts: { type: "integer" }, max_backoff: { type: "string" } } },
+    retry: {
+      type: "object",
+      properties: {
+        max_attempts: { type: "integer" },
+        max_backoff: { type: "string" },
+      },
+    },
     tls: { type: "object", properties: { ca_cert: { type: "string" } } },
   },
 };
 
-function wrapGrouped(value: unknown, onChange: (v: unknown) => void = () => undefined) {
+function wrapGrouped(
+  value: unknown,
+  onChange: (v: unknown) => void = () => undefined,
+) {
+  function StatefulGroupedForm() {
+    const [current, setCurrent] = useState(value);
+    return (
+      <SchemaForm
+        schema={GROUPED_SCHEMA}
+        value={current}
+        onChange={(next) => {
+          setCurrent(next);
+          onChange(next);
+        }}
+        groupObjects
+      />
+    );
+  }
   return render(
     <MantineProvider theme={theme}>
-      <SchemaForm schema={GROUPED_SCHEMA} value={value} onChange={onChange} groupObjects />
+      <StatefulGroupedForm />
     </MantineProvider>,
   );
 }
@@ -90,8 +151,8 @@ test("groupObjects keeps scalars flat and folds each nested block away", () => {
   expect(screen.getByLabelText("max attempts")).toHaveValue("3");
 });
 
-test("a folded block reports whether it holds anything", () => {
-  wrapGrouped({ retry: { max_attempts: 3, max_backoff: "1m" }, tls: {} });
+test("a folded block reports whether it is configured", () => {
+  wrapGrouped({ retry: { max_attempts: 3, max_backoff: "1m" } });
 
   expect(block("retry")).toHaveTextContent("2 set");
   expect(block("tls")).toHaveTextContent("not set");
@@ -102,9 +163,16 @@ test("editing inside a folded block writes through to the whole value", () => {
   wrapGrouped({ url: "https://x" }, (v) => changes.push(v));
 
   fireEvent.click(block("tls"));
-  fireEvent.change(screen.getByLabelText("ca cert"), { target: { value: "/etc/ca.pem" } });
+  expect(screen.queryByLabelText("ca cert")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("switch", { name: "Use tls" }));
+  fireEvent.change(screen.getByLabelText("ca cert"), {
+    target: { value: "/etc/ca.pem" },
+  });
 
-  expect(changes).toEqual([{ url: "https://x", tls: { ca_cert: "/etc/ca.pem" } }]);
+  expect(changes.at(-1)).toEqual({
+    url: "https://x",
+    tls: { ca_cert: "/etc/ca.pem" },
+  });
 });
 
 test("an expanded block stays a labelled group, as the fieldset it replaced was", () => {
@@ -114,4 +182,50 @@ test("an expanded block stays a labelled group, as the fieldset it replaced was"
 
   const group = screen.getByRole("group", { name: "retry" });
   expect(within(group).getByLabelText("max attempts")).toHaveValue("3");
+});
+
+test("free-form schemas and child node maps remain editable JSON, with invalid drafts retained", () => {
+  const changes: unknown[] = [];
+  const value = {
+    schema: { type: "object", required: ["id"] },
+    nodes: [{ id: "batch.send", type: "publish", destination: "queue" }],
+  };
+  wrap(
+    {
+      type: "object",
+      properties: {
+        schema: { type: "object", additionalProperties: true },
+        nodes: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+        },
+      },
+    },
+    value,
+    (next) => changes.push(next),
+  );
+  const schema = screen.getByRole("textbox", { name: "schema" });
+  expect(JSON.parse((schema as HTMLTextAreaElement).value)).toEqual(
+    value.schema,
+  );
+  expect(
+    JSON.parse(
+      (screen.getByRole("textbox", { name: "nodes" }) as HTMLTextAreaElement)
+        .value,
+    ),
+  ).toEqual(value.nodes[0]);
+  fireEvent.change(schema, { target: { value: '{"type":' } });
+  expect(changes).toHaveLength(0);
+  expect(schema).toHaveValue('{"type":');
+  fireEvent.change(schema, { target: { value: '{"type":"string"}' } });
+  expect(changes).toEqual([{ ...value, schema: { type: "string" } }]);
+  fireEvent.change(screen.getByRole("textbox", { name: "nodes" }), {
+    target: {
+      value: '{"id":"batch.send","type":"publish","destination":"other"}',
+    },
+  });
+  expect(changes.at(-1)).toEqual({
+    ...value,
+    nodes: [{ id: "batch.send", type: "publish", destination: "other" }],
+  });
 });

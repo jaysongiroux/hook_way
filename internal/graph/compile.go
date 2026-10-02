@@ -12,7 +12,14 @@ import (
 type CompileError struct {
 	Flow     string
 	Problems []string
+	Causes   []error
+	// ProblemFields associates a problem-list index with its original node ID.
+	// A missing key means a flow-wide/structural issue. IDs are values, not
+	// dotted paths: callers can resolve them through the original node list.
+	ProblemFields map[int]string
 }
+
+func (e *CompileError) Unwrap() []error { return e.Causes }
 
 func (e *CompileError) Error() string {
 	return fmt.Sprintf("flow %q: %d problem(s):\n  - %s",
@@ -63,7 +70,20 @@ func (f *Flow) NodeIDs() []string { return append([]string(nil), f.order...) }
 // rejects dangling branches. Types do not enforce gate presence, I8 filter
 // ordering or I9 capture timing; these need policy/topology and executor checks.
 func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
+	return compile(name, fc, reg, "")
+}
+
+// CompileChild compiles an explicitly seeded Envelope subflow. All ordinary
+// edge, reachability, terminal and cycle checks still apply; triggers are forbidden.
+func CompileChild(name string, fc FlowConfig, entry string, reg *Registry) (*Flow, error) {
+	if !ValidID(entry) {
+		return nil, fmt.Errorf("graph: child entry is required")
+	}
+	return compile(name, fc, reg, entry)
+}
+func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, error) {
 	ce := &CompileError{Flow: name}
+	ce.Problems = append(ce.Problems, ValidateResponses(fc.Responses)...)
 	f := &Flow{name: name, nodes: map[string]*bound{}, out: map[string][]Edge{}}
 	if reg == nil {
 		ce.Problems = append(ce.Problems, "node registry is nil")
@@ -79,40 +99,76 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 
 	// (1) and (2): track identity independently from successful construction.
 	seenIDs := map[string]bool{}
+	invalidNodes := false
 	for _, nc := range fc.Nodes {
 		if !validID(nc.ID) {
-			ce.Problems = append(ce.Problems, fmt.Sprintf("node id %q is empty or invalid", nc.ID))
+			invalidNodes = true
+			ce.addNodeProblem(nc.ID, fmt.Sprintf("node id %q is empty or invalid", nc.ID))
 		}
 		if seenIDs[nc.ID] {
-			ce.Problems = append(ce.Problems, fmt.Sprintf("duplicate node id %q", nc.ID))
+			invalidNodes = true
+			ce.addNodeProblem(nc.ID, fmt.Sprintf("duplicate node id %q", nc.ID))
 			continue
 		}
 		seenIDs[nc.ID] = true
 		if nc.Type == "" {
-			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q has no type", nc.ID))
+			invalidNodes = true
+			ce.addNodeProblem(nc.ID, fmt.Sprintf("node %q has no type", nc.ID))
 			continue
 		}
 		spec, ok := reg.Lookup(nc.Type)
 		if !ok {
 			known := reg.Types()
 			sort.Strings(known)
-			ce.Problems = append(ce.Problems,
+			invalidNodes = true
+			ce.addNodeProblem(nc.ID,
 				fmt.Sprintf("node %q: unknown node type %q (known types: %s)",
 					nc.ID, nc.Type, strings.Join(known, ", ")))
 			continue
 		}
 		node, err := construct(spec, nc)
 		if err != nil {
-			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q (%s): %v", nc.ID, nc.Type, err))
+			ce.Causes = append(ce.Causes, err)
+			invalidNodes = true
+			ce.addNodeProblem(nc.ID, fmt.Sprintf("node %q (%s): %v", nc.ID, nc.Type, err))
 			continue
 		}
 		target, err := configuredTarget(node)
 		if err != nil {
-			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q: %v", nc.ID, err))
+			invalidNodes = true
+			ce.Causes = append(ce.Causes, err)
+			ce.addNodeProblem(nc.ID, fmt.Sprintf("node %q: %v", nc.ID, err))
 			continue
 		}
 		f.nodes[nc.ID] = &bound{id: nc.ID, spec: spec, node: node, target: target}
 		f.order = append(f.order, nc.ID)
+	}
+
+	// Structural checks require a completely bound graph. Failed nodes would
+	// otherwise appear missing and produce misleading edge/reachability/leaf
+	// errors. Still report independent raw edge syntax errors and every primary
+	// node problem from this pass, alongside response/policy diagnostics.
+	if invalidNodes {
+		edges, err := ParseEdges(fc.Edges)
+		if err != nil {
+			ce.Problems = appendErrorProblems(ce.Problems, err)
+		}
+		// Missing declarations are independent authoring errors. Compare with
+		// the original IDs, never the successfully constructed subset.
+		seenEdges := map[Edge]bool{}
+		for _, edge := range edges {
+			if seenEdges[edge] {
+				ce.Problems = append(ce.Problems, fmt.Sprintf("duplicate edge %s", edge))
+				continue
+			}
+			seenEdges[edge] = true
+			for _, id := range []string{edge.From, edge.To} {
+				if !seenIDs[id] {
+					ce.Problems = append(ce.Problems, fmt.Sprintf("edge %s: unknown node %q", edge, id))
+				}
+			}
+		}
+		return nil, ce
 	}
 
 	// (3): exactly one trigger.
@@ -123,6 +179,15 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		}
 	}
 	switch {
+	case entry != "":
+		if len(roots) != 0 {
+			ce.Problems = append(ce.Problems, "child flows cannot contain triggers")
+		}
+		if b := f.nodes[entry]; b == nil || b.spec.In != PortEnvelope {
+			ce.Problems = append(ce.Problems, "child entry must consume Envelope")
+		} else {
+			f.root = entry
+		}
 	case len(roots) == 0:
 		ce.Problems = append(ce.Problems, "no trigger node (none has an input port of None)")
 	case len(roots) > 1:
@@ -190,6 +255,9 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		}
 		f.out[e.From] = append(f.out[e.From], e)
 		inbound[e.To]++
+	}
+	if entry != "" && inbound[entry] != 0 {
+		ce.Problems = append(ce.Problems, "child entry cannot have incoming edges")
 	}
 	for _, id := range f.order {
 		if inbound[id] > 1 {
@@ -263,6 +331,11 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 				"node %q (%s): respond node %q is reachable via a success continuation; respond is not detached",
 				id, f.nodes[id].spec.Type, respondID))
 		}
+		if batchID := f.successReachableType(id, "batch"); batchID != "" {
+			ce.Problems = append(ce.Problems, fmt.Sprintf(
+				"node %q (%s): batch response node %q is reachable via a success continuation; batch is not detached",
+				id, f.nodes[id].spec.Type, batchID))
+		}
 	}
 
 	// A selector emits exactly one successor per declared label. Fan-out
@@ -298,6 +371,14 @@ func Compile(name string, fc FlowConfig, reg *Registry) (*Flow, error) {
 		return nil, ce
 	}
 	return f, nil
+}
+
+func (e *CompileError) addNodeProblem(id, problem string) {
+	if e.ProblemFields == nil {
+		e.ProblemFields = make(map[int]string)
+	}
+	e.ProblemFields[len(e.Problems)] = id
+	e.Problems = append(e.Problems, problem)
 }
 
 // appendErrorProblems flattens errors.Join so each independently actionable

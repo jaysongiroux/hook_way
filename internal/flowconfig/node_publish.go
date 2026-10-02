@@ -39,22 +39,20 @@ func newPublishNode(id string, opts PublishOptions, resolver PublisherResolver) 
 
 func (n publishNode) DeliveryTarget() string { return n.opts.Target }
 
-// PreparePublish applies a publish node's options to its input envelope
-// exactly as the node does before handing it to the publisher: it renders the
-// target and message attributes from the envelope's variables and sets the
-// payload mode. Failure capture uses it to rebuild the message a failed
-// publish sent from the node's recorded input.
-func PreparePublish(opts PublishOptions, in graph.Envelope) (target string, prepared graph.Envelope, err error) {
+// PreparePublishForNode scopes frozen replay metadata to one publish node.
+// Success continuations publishing to the same target still prepare their own
+// body and identifiers. Capture uses this entry point to match runtime behavior.
+func PreparePublishForNode(nodeID string, opts PublishOptions, in graph.Envelope) (string, graph.Envelope, error) {
 	tpl, err := vars.Parse(opts.Target)
 	if err != nil {
 		return "", in, err
 	}
-	return preparePublish(opts, tpl, in)
+	return preparePublish(context.WithValue(context.Background(), publishingNodeKey{}, nodeID), opts, tpl, in)
 }
 
 // preparePublish returns the rendered target even when a later step fails, so
 // the node can report it on the failed delivery.
-func preparePublish(opts PublishOptions, tpl vars.Template, env graph.Envelope) (target string, prepared graph.Envelope, err error) {
+func preparePublish(ctx context.Context, opts PublishOptions, tpl vars.Template, env graph.Envelope) (target string, prepared graph.Envelope, err error) {
 	rendered, err := tpl.Render(env.Vars)
 	if err != nil {
 		return "", env, err
@@ -72,6 +70,11 @@ func preparePublish(opts PublishOptions, tpl vars.Template, env graph.Envelope) 
 	case "object":
 		env.PayloadMode = "object"
 	}
+	delivery, err := prepareDelivery(ctx, opts, rendered, env)
+	if err != nil {
+		return rendered, env, err
+	}
+	env.Publish = delivery
 	return rendered, env, nil
 }
 
@@ -92,9 +95,14 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 			NodeID: n.id, Status: http.StatusInternalServerError, Err: err,
 		}
 	}
-	rendered, prepared, err := preparePublish(n.opts, n.template, env)
+	rendered, prepared, err := preparePublish(context.WithValue(ctx, publishingNodeKey{}, n.id), n.opts, n.template, env)
 	if err != nil {
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
+		var nodeErr graph.NodeError
+		if errors.As(err, &nodeErr) {
+			nodeErr.NodeID = n.id
+			return term, nodeErr
+		}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
 	}
 	env = prepared

@@ -115,8 +115,8 @@ func TestRun_SchemaNodesListsCatalog(t *testing.T) {
 			t.Errorf("schema --nodes missing %s", name)
 		}
 	}
-	if len(doc) != 18 {
-		t.Fatalf("schema --nodes listed %d types, want 18", len(doc))
+	if len(doc) != 21 {
+		t.Fatalf("schema --nodes listed %d types, want 21", len(doc))
 	}
 }
 
@@ -268,8 +268,8 @@ func TestRunValidateShowcaseExamples(t *testing.T) {
 			t.Errorf("invalid-many missing %q in %q", want, joined)
 		}
 	}
-	if !strings.Contains(joined, "Terminal") && !strings.Contains(joined, "silently dropped") {
-		t.Errorf("invalid-many missing dangling leaf diagnostic in %q", joined)
+	if strings.Contains(joined, "unreachable") {
+		t.Errorf("invalid-many should report node failures before dependent reachability checks: %q", joined)
 	}
 }
 
@@ -555,5 +555,33 @@ func TestHostPortRendersLocalhostSuffix(t *testing.T) {
 		if got := hostPort(addr); got != want {
 			t.Errorf("hostPort(%q) = %q, want %q", addr, got, want)
 		}
+	}
+}
+
+func TestRequestSignatureConfigurationValidation(t *testing.T) {
+	original, err := os.ReadFile("../../examples/auth/request-signatures.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, src string
+		valid     bool
+	}{
+		{"offline references", string(original), true},
+		{"unknown scheme", strings.Replace(string(original), "hmac_sha256_headers_dot", "unknown", 1), false},
+		{"invalid unit", strings.Replace(string(original), "timestamp_unit: milliseconds", "timestamp_unit: invalid", 1), false},
+		{"missing timestamp header", strings.Replace(string(original), "timestamp_header: X-Sample-Timestamp", "timestamp_header: ''", 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.src), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out, errout bytes.Buffer
+			code := run([]string{"validate", "--config", path, "--json", "--no-env"}, &out, &errout)
+			if (code == 0) != tc.valid {
+				t.Fatalf("exit=%d: %s %s", code, &out, &errout)
+			}
+		})
 	}
 }

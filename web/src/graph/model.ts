@@ -1,7 +1,10 @@
 import type { Edge, Node } from "@xyflow/react";
 import { defaultNodeOptions, isNodeType, NODE_TYPES } from "./nodeSchema";
 
-export const DEFAULT_SERVER: Record<string, unknown> = { addr: ":8080", max_body_bytes: 1048576 };
+export const DEFAULT_SERVER: Record<string, unknown> = {
+  addr: ":8080",
+  max_body_bytes: 1048576,
+};
 export const DEFAULT_FLOW = "main";
 
 interface FlowNodeData extends Record<string, unknown> {
@@ -22,7 +25,16 @@ export interface FlowSnapshot {
   flowExtra?: Record<string, unknown>;
 }
 
+export interface EditorDraft {
+  text?: string;
+  rows?: { id: string; key: string; value: string }[];
+  rowIds?: string[];
+  error: string;
+}
+
 export interface GraphDocument {
+  /** Editor-only drafts; persisted locally, never serialized into YAML. */
+  formDrafts?: Record<string, EditorDraft>;
   nodes: HookwayNode[];
   edges: Edge[];
   serverConfig: Record<string, unknown>;
@@ -68,7 +80,10 @@ export function isNodeKind(s: string): boolean {
   return isNodeType(s);
 }
 
-export function createNode(type: string, position: { x: number; y: number }): HookwayNode {
+export function createNode(
+  type: string,
+  position: { x: number; y: number },
+): HookwayNode {
   const kind = isNodeType(type) ? type : NODE_TYPES[0];
   const name = nextName(kind);
   return {
@@ -85,6 +100,7 @@ export function createNode(type: string, position: { x: number; y: number }): Ho
 
 export function emptyDocument(): GraphDocument {
   return {
+    formDrafts: {},
     nodes: [],
     edges: [],
     serverConfig: { ...DEFAULT_SERVER },

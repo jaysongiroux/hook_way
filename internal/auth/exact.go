@@ -9,6 +9,7 @@ import (
 const SchemeExact = "exact"
 
 type exactVerifier struct {
+	removePrefix string
 	secret       string
 	removeBearer bool
 }
@@ -22,6 +23,9 @@ func (v exactVerifier) Verify(header string, _ []byte, _ time.Time) error {
 		return ErrUnauthorized
 	}
 	got := header
+	if v.removePrefix != "" {
+		got = strings.TrimPrefix(got, v.removePrefix)
+	}
 	if v.removeBearer {
 		got = stripBearerPrefix(got)
 		if got == "" {

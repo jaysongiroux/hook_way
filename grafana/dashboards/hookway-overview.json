@@ -424,6 +424,15 @@
           "expr": "histogram_quantile(0.95, sum(rate(hookway_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(hookway_request_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
         }
       ],
       "title": "Request Duration",
@@ -469,31 +478,31 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_forbidden_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
+          "expr": "sum(rate(hookway_forbidden_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "forbidden",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_duplicate_rejected_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
+          "expr": "sum(rate(hookway_duplicate_rejected_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "replay_guard",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_rate_limited_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
+          "expr": "sum(rate(hookway_rate_limited_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "rate_limited",
           "refId": "C"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_saturated_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
+          "expr": "sum(rate(hookway_saturated_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "saturated",
           "refId": "D"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_loop_rejected_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval]))",
+          "expr": "sum(rate(hookway_loop_rejected_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "loop",
           "refId": "E"
         }
@@ -542,7 +551,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(increase(hookway_filtered_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\", destination_queue_id=~\"${destination:regex}\", queue=~\"${queue:regex}\"}[$__rate_interval])) by (level)",
+          "expr": "sum(increase(hookway_filtered_total{job=~\"$job\", instance=~\"$instance\", endpoint=~\"${endpoint:regex}\"}[$__rate_interval])) by (level)",
           "legendFormat": "{{level}}",
           "refId": "A"
         }
@@ -1868,19 +1877,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[5m])) by (le, node_type))",
+          "expr": "histogram_quantile(0.50, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval])) by (le, node_type))",
           "legendFormat": "p50 {{node_type}}",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[5m])) by (le, node_type))",
+          "expr": "histogram_quantile(0.95, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval])) by (le, node_type))",
           "legendFormat": "p95 {{node_type}}",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.99, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\"}[5m])) by (le, node_type))",
+          "expr": "histogram_quantile(0.99, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval])) by (le, node_type))",
           "legendFormat": "p99 {{node_type}}",
           "refId": "C"
         }
@@ -1890,7 +1899,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Node executions by outcome (ok/error/panic). Labels are config-bounded: flow, node_id, node_type, outcome.",
+      "description": "Failed node executions (error/panic), grouped by outcome. Labels are config-bounded: flow, node_id, node_type, outcome.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -1911,7 +1920,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(increase(hookway_node_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval])) by (outcome)",
+          "expr": "sum(increase(hookway_node_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\", outcome=~\"error|panic\"}[$__rate_interval])) by (outcome)",
           "legendFormat": "{{outcome}}",
           "refId": "A"
         }
@@ -1921,7 +1930,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Share of node executions that ended in error. Uses config-bounded hookway_node_total labels only.",
+      "description": "Share of node executions ending in error or panic. Shows zero for observed successful traffic with no failure series; no traffic remains no data.",
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -1934,7 +1943,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(hookway_node_total{job=~\"$job\", instance=~\"$instance\", outcome=\"error\"}[5m])) / clamp_min(sum(rate(hookway_node_total{job=~\"$job\", instance=~\"$instance\"}[5m])), 1e-9)",
+          "expr": "(sum(rate(hookway_node_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\", outcome=~\"error|panic\"}[$__rate_interval])) or 0 * sum(rate(hookway_node_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval]))) / clamp_min(sum(rate(hookway_node_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval])), 1e-9)",
           "legendFormat": "error ratio",
           "refId": "A"
         }
@@ -1954,7 +1963,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(increase(hookway_node_total{job=~\"$job\", instance=~\"$instance\", node_type=\"lookup\"}[$__rate_interval])) by (outcome)",
+          "expr": "sum(increase(hookway_node_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\", node_type=\"lookup\"}[$__rate_interval])) by (outcome)",
           "legendFormat": "{{outcome}}",
           "refId": "A"
         }
@@ -1974,7 +1983,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", node_type=\"lookup\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(hookway_node_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\", node_type=\"lookup\"}[$__rate_interval])) by (le))",
           "legendFormat": "p95 lookup",
           "refId": "A"
         }
@@ -1994,7 +2003,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(increase(hookway_compensation_failed_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum(increase(hookway_compensation_failed_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "compensation failures",
           "refId": "A"
         }
@@ -2061,7 +2070,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (flow, outcome) (increase(hookway_capture_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum by (flow, outcome) (increase(hookway_capture_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "{{flow}} {{outcome}}",
           "refId": "A"
         }
@@ -2190,7 +2199,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (flow, outcome) (increase(hookway_control_runs_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "expr": "sum by (flow, outcome) (increase(hookway_control_runs_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval]))",
           "legendFormat": "{{flow}} {{outcome}}",
           "refId": "A"
         }
@@ -2249,6 +2258,877 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 154
+      },
+      "id": 140,
+      "panels": [],
+      "title": "Ingress Admission and Adapters",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Executing requests and finite slots per replica. Unlimited requests have no finite capacity. Health, metrics and refusals are excluded; flow/destination filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 155
+      },
+      "id": 141,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hookway_admitted_requests{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} executing ({{mode}})",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hookway_admission_capacity{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} finite capacity",
+          "refId": "B"
+        }
+      ],
+      "title": "Admitted Requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Bounded executing requests divided by finite capacity per replica. Zero-capacity/unlimited servers are excluded. Flow/destination filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 155
+      },
+      "id": 142,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (job, instance) (hookway_admitted_requests{job=~\"$job\", instance=~\"$instance\", mode=\"bounded\"}) / (sum by (job, instance) (hookway_admission_capacity{job=~\"$job\", instance=~\"$instance\"}) > 0)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Admission Utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Handlers waiting before body buffering, per replica. Enabled only by a configured bounded wait queue; flow/destination filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 155
+      },
+      "id": 143,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hookway_admission_waiting_requests{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} waiting",
+          "refId": "A"
+        }
+      ],
+      "title": "Admission Waiting",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Contended waiting outcomes per flow over the interval. Destination/queue filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 163
+      },
+      "id": 144,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (flow, result) (increase(hookway_admission_wait_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{flow}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Admission Wait Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Time spent in the admission wait queue, aggregated by flow across selected instances. This excludes subsequent flow execution.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 163
+      },
+      "id": 145,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, flow) (rate(hookway_admission_wait_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval])))",
+          "legendFormat": "{{flow}} p95",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, flow) (rate(hookway_admission_wait_duration_seconds_bucket{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval])))",
+          "legendFormat": "{{flow}} p99",
+          "refId": "B"
+        }
+      ],
+      "title": "Admission Wait Duration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Flow-server telemetry owners by bounded/unlimited mode, including servers with admitted work still draining. Not a replica count when owners overlap.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 163
+      },
+      "id": 146,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hookway_admission_servers{job=~\"$job\", instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} {{mode}} owners",
+          "refId": "A"
+        }
+      ],
+      "title": "Admission Modes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Execution outcomes independent of HTTP status. A tolerated publication failure can return 2xx; compare this with Messages Published. Destination/queue filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 171
+      },
+      "id": 147,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (flow, outcome) (increase(hookway_flow_outcomes_total{job=~\"$job\", instance=~\"$instance\", flow=~\"${endpoint:regex}\"}[$__rate_interval]))",
+          "legendFormat": "{{flow}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Flow Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Typed routing, environment admission and post-create registration outcomes. Labels contain configured node IDs, not request keys. There is no flow/destination label; those filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 171
+      },
+      "id": 148,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (node, result) (increase(hookway_routing_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Routing and Registration Outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Acquisitions, cache hits and failures by configured profile. Credentials are not labels. There is no flow/destination label; those filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 179
+      },
+      "id": 149,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (profile, result) (increase(hookway_credentials_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{profile}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Credential Operations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Child operations, not parent HTTP requests, by configured batch node and outcome. There is no flow/destination label; those filters do not apply.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 40,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 179
+      },
+      "id": 150,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (node, result) (increase(hookway_batch_children_total{job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{node}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Batch Child Outcomes",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

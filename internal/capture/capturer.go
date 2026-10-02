@@ -77,7 +77,7 @@ func New(o Options) (*Capturer, error) {
 	for name, fc := range o.Config.Flows {
 		enabled[name] = fc.CapturesFailures()
 	}
-	b := NewBuilder(BuilderOptions{Flows: o.Config.Flows, Destinations: o.Config.Destinations,
+	b := NewBuilder(BuilderOptions{Flows: o.Config.Flows, Credentials: o.Config.Credentials, Destinations: o.Config.Destinations,
 		MaxRecordBytes: r.MaxRecordBytes, CoreVersion: o.CoreVersion, CoreInstance: o.CoreInstance})
 	return &Capturer{builder: b, uploader: up, enabled: enabled}, nil
 }

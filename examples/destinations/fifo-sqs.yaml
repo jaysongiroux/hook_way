@@ -1,0 +1,51 @@
+# Publish authenticated JSON webhooks to an SQS FIFO queue.
+# Demonstrates explicit ordering/deduplication IDs, JSON wire bodies, bounded
+# retries and route response policies. Use an isolated broker and test secret.
+# Real integration fields, URLs and credentials belong in private config.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+  publish_timeout: 5s
+
+destinations:
+  broker:
+    type: sqs
+    on_existing_conflict: warn
+    sqs:
+      region: us-east-1
+      # endpoint: http://localhost:4566
+
+flows:
+  sample:
+    responses:
+      published:
+        status: 200
+        body: '{"status":"ok"}'
+        headers: {Content-Type: application/json}
+      auth_error:
+        status: 400
+        body: '{"error":"invalid credentials"}'
+        headers: {Content-Type: application/json}
+      # Omitted outcomes retain Hookway defaults. Confirm private helper
+      # failure contracts before adding body_error or publish_error policies.
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: exact
+        secret: "${SAMPLE_WEBHOOK_SECRET}"
+        signature_header: Authorization
+        remove_prefix: "Api-Key "
+      - {id: env, type: envelope, body_format: json}
+      - id: out
+        type: publish
+        destination: broker
+        target: synthetic-events.fifo
+        create: true
+        wire_body: json_js
+        fifo:
+          group_id: {source: json_js_sha256, hash_length: 10}
+          deduplication_id: {source: json_js_sha256, hash_length: 10}
+        retry: {max_attempts: 3, initial_backoff: 100ms, max_backoff: 200ms}
+    edges: [in>body, body>auth, auth>env, env>out]

@@ -1,8 +1,8 @@
 # examples/destinations/sqs.yaml
 #
 # Reference config for an AWS SQS destination, showing a standard queue.
-# sqs_options / fifo are not publish-node fields; a `.fifo`
-# suffix is not enough to publish (MessageGroupId is not sent).
+# FIFO publish settings and body formats are shown in fifo-sqs.yaml.
+# A .fifo target requires explicit publish.fifo identity settings.
 # Credentials: omit access_key_id / secret_access_key to use the default
 # AWS credential chain (IAM role, environment, ~/.aws). Set both to use
 # static credentials, or set endpoint to http://localhost:4566 for LocalStack.
@@ -29,17 +29,15 @@ destinations:
       # secret_access_key: "..."
 
 flows:
-  # Standard queue. fifo.group_id / sqs_options are not publish-node fields —
-  # do not use a `.fifo` target from operator YAML.
+  # Standard queue: FIFO identity settings are not needed.
   orders:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Signature, timestamp_tolerance: "5m"}
       - {id: env, type: envelope, body_format: json}
-      # Previously set sqs_options (visibility_timeout 30s, message_retention 96h)
-      # and fifo.group_id from body.customer.id; those fields are not on the
-      # publish node.
+      # Resource defaults use the destination config; this publishes the
+      # default Hookway envelope.
       - {id: out, type: publish, destination: jobs, target: orders-jobs, create: true}
     edges: [in>body, body>auth, auth>env, env>out]
 
@@ -49,6 +47,16 @@ flows:
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${NOTIFY_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, body_format: json}
-      # Previously set sqs_options visibility_timeout 60s, message_retention 24h.
-      - {id: out, type: publish, destination: jobs, target: notification-jobs, create: true}
+      # Standard queues can use a delay and fair-queue grouping without FIFO.
+      - id: out
+        type: publish
+        destination: jobs
+        target: notification-jobs
+        create: true
+        sqs: {delay_seconds: 10}
+        group_id: {source: static, value: sample-group}
+        resource_attributes:
+          VisibilityTimeout: "60"
+          MessageRetentionPeriod: "86400"
+          SqsManagedSseEnabled: "true"
     edges: [in>body, body>auth, auth>env, env>out]

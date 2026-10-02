@@ -14,7 +14,7 @@ import (
 )
 
 func TestSwitchFirstMatchWinsAndDefault(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestSwitchFirstMatchWinsAndDefault(t *testing.T) {
 }
 
 func TestSwitchNoDefaultIsError(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestSwitchNoDefaultIsError(t *testing.T) {
 }
 
 func TestSwitchConcurrentRequestsSelectIndependentBranches(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ flows:
 }
 
 func TestSwitchConditionListCombinators(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestSwitchConditionListCombinators(t *testing.T) {
 }
 
 func TestSwitchCaseOptionValidation(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestSwitchCaseOptionValidation(t *testing.T) {
 // on the replay request's headers would send it down a different branch than
 // it took the first time, which is the one thing a replay must not do.
 func TestSwitchRoutesReplayedEventOnOriginalHeaders(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ import {
 } from "./nodeSchema";
 
 test("every catalog node type has palette metadata", () => {
-  expect(NODE_TYPES).toHaveLength(18);
+  expect(NODE_TYPES).toHaveLength(21);
   for (const type of NODE_TYPES) {
     const meta = NODE_SCHEMAS[type];
     expect(meta.input, type).toBeTruthy();
@@ -32,17 +32,31 @@ test("every catalog node type has palette metadata", () => {
 });
 
 test("option schemas cover string, number, boolean, enum, array, and nested object", () => {
-  expect(schemaType(schemaProperties(NODE_SCHEMAS.http_trigger.schema).path)).toBe("string");
-  expect(schemaType(schemaProperties(NODE_SCHEMAS.read_body.schema).max_bytes)).toBe("integer");
-  expect(schemaType(schemaProperties(NODE_SCHEMAS.respond.schema).passthrough)).toBe("boolean");
-  expect(schemaType(schemaProperties(NODE_SCHEMAS.filter.schema).on_no_match)).toBe("enum");
-  expect(schemaType(schemaProperties(NODE_SCHEMAS.filter.schema).conditions)).toBe("array");
-  expect(schemaType(schemaProperties(NODE_SCHEMAS.auth.schema).secret_ref)).toBe("object");
+  expect(
+    schemaType(schemaProperties(NODE_SCHEMAS.http_trigger.schema).path),
+  ).toBe("string");
+  expect(
+    schemaType(schemaProperties(NODE_SCHEMAS.read_body.schema).max_bytes),
+  ).toBe("integer");
+  expect(
+    schemaType(schemaProperties(NODE_SCHEMAS.respond.schema).passthrough),
+  ).toBe("boolean");
+  expect(
+    schemaType(schemaProperties(NODE_SCHEMAS.filter.schema).on_no_match),
+  ).toBe("enum");
+  expect(
+    schemaType(schemaProperties(NODE_SCHEMAS.filter.schema).conditions),
+  ).toBe("array");
+  expect(
+    schemaType(schemaProperties(NODE_SCHEMAS.auth.schema).secret_ref),
+  ).toBe("object");
 });
 
 test("required options are marked on the schema", () => {
   expect(schemaRequired(NODE_SCHEMAS.http_trigger.schema)).toContain("path");
-  expect(schemaRequired(NODE_SCHEMAS.publish.schema)).toEqual(expect.arrayContaining(["destination", "target"]));
+  expect(schemaRequired(NODE_SCHEMAS.publish.schema)).toEqual(
+    expect.arrayContaining(["destination", "target"]),
+  );
   expect(schemaRequired(NODE_SCHEMAS.read_body.schema)).toContain("max_bytes");
 });
 
@@ -60,9 +74,20 @@ test("destination catalog lists the types the marketing page counts", () => {
 });
 
 test("every connection type in the generated catalog has fields", () => {
-  expect(CONN_TYPES).toEqual(["aws", "kafka", "mongodb", "postgres", "rabbitmq", "redis", "temporal"]);
+  expect(CONN_TYPES).toEqual([
+    "aws",
+    "kafka",
+    "mongodb",
+    "postgres",
+    "rabbitmq",
+    "redis",
+    "temporal",
+  ]);
   for (const type of CONN_TYPES) {
-    expect(Object.keys(schemaProperties(connSchema(type))).length, type).toBeGreaterThan(0);
+    expect(
+      Object.keys(schemaProperties(connSchema(type))).length,
+      type,
+    ).toBeGreaterThan(0);
   }
 });
 
@@ -72,7 +97,10 @@ test("every destination type except webhook maps to a real connection type", () 
   for (const dest of DEST_TYPES) {
     const conn = connTypeForDest(dest);
     if (dest === "webhook") {
-      expect(conn, "a webhook credential carries no host, so it is not a connection").toBeUndefined();
+      expect(
+        conn,
+        "a webhook credential carries no host, so it is not a connection",
+      ).toBeUndefined();
       continue;
     }
     expect(conn, dest).toBeDefined();
@@ -82,7 +110,12 @@ test("every destination type except webhook maps to a real connection type", () 
 
 test("connOwnedPaths walks into nested blocks", () => {
   const aws = connOwnedPaths("aws");
-  expect(aws).toEqual(["region", "endpoint", "access_key_id", "secret_access_key"]);
+  expect(aws).toEqual([
+    "region",
+    "endpoint",
+    "access_key_id",
+    "secret_access_key",
+  ]);
   const pg = connOwnedPaths("postgres");
   expect(pg).toContain("tls");
   expect(pg).toContain("tls.client_key");

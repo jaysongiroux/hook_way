@@ -1,10 +1,13 @@
 import type { IconType } from "react-icons";
 import {
   TbArrowBackUp,
+  TbStack2,
   TbArrowsSplit,
   TbBox,
   TbCode,
   TbDatabaseSearch,
+  TbDatabasePlus,
+  TbRoute,
   TbFileText,
   TbFilter,
   TbGauge,
@@ -26,6 +29,7 @@ import { DARK } from "../tokens";
 /** One shape per catalog type, so a node is recognizable before its label is read. */
 const NODE_TYPE_ICONS: Record<string, IconType> = {
   auth: TbShieldLock,
+  batch: TbStack2,
   code: TbCode,
   envelope: TbPackage,
   filter: TbFilter,
@@ -34,6 +38,8 @@ const NODE_TYPE_ICONS: Record<string, IconType> = {
   if_else: TbGitBranch,
   ip_allowlist: TbListCheck,
   lookup: TbDatabaseSearch,
+  register_route: TbDatabasePlus,
+  route: TbRoute,
   loop_guard: TbRepeatOff,
   no_auth: TbLockOpen,
   publish: TbSend,
@@ -50,12 +56,19 @@ export function nodeTypeIcon(type: string): IconType {
 }
 
 /** Publish shows the destination it writes to; every other node shows its type. */
-export function nodeGlyph(nodeType: string, destinationType?: string): IconType {
-  if (nodeType === "publish" && destinationType) return destinationPresentation(destinationType).icon;
+export function nodeGlyph(
+  nodeType: string,
+  destinationType?: string,
+): IconType {
+  if (nodeType === "publish" && destinationType)
+    return destinationPresentation(destinationType).icon;
   return nodeTypeIcon(nodeType);
 }
 
-export function destinationTypeOf(destinations: Record<string, unknown>, name: string): string {
+export function destinationTypeOf(
+  destinations: Record<string, unknown>,
+  name: string,
+): string {
   const entry = destinations[name];
   if (!entry || typeof entry !== "object" || !("type" in entry)) return "";
   const type = (entry as { type?: unknown }).type;
@@ -65,11 +78,26 @@ export function destinationTypeOf(destinations: Record<string, unknown>, name: s
 /** Smaller than the id + type block so the mark stays secondary to the name. */
 export const NODE_ICON_SIZE = 24;
 
-export function NodeGlyph({ nodeType, destinationType }: { nodeType: string; destinationType?: string }) {
+export function NodeGlyph({
+  nodeType,
+  destinationType,
+}: {
+  nodeType: string;
+  destinationType?: string;
+}) {
   const Icon = nodeGlyph(nodeType, destinationType);
-  const key = nodeType === "publish" && destinationType ? destinationType : nodeType;
+  const key =
+    nodeType === "publish" && destinationType ? destinationType : nodeType;
   return (
-    <span data-node-icon={key} style={{ display: "inline-flex", flexShrink: 0, color: DARK.text, lineHeight: 0 }}>
+    <span
+      data-node-icon={key}
+      style={{
+        display: "inline-flex",
+        flexShrink: 0,
+        color: DARK.text,
+        lineHeight: 0,
+      }}
+    >
       <Icon aria-hidden="true" focusable="false" size={NODE_ICON_SIZE} />
     </span>
   );

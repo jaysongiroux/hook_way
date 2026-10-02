@@ -171,3 +171,84 @@ func TestBuilderSanitizesUntrustedText(t *testing.T) {
 func graphEvent() graph.FailureEvent {
 	return graph.FailureEvent{NodeID: "out", NodeType: "publish", Input: testEnvelope(), Err: errors.New("sqs: 503")}
 }
+
+func TestBrokerFailureSnapshotFreezesPublication(t *testing.T) {
+	var fc graph.FlowConfig
+	if err := yaml.Unmarshal([]byte(`nodes:
+  - id: out
+    type: publish
+    destination: broker
+    target: events.fifo
+    wire_body: json_js
+    fifo:
+      group_id: {source: json_js_sha256, hash_length: 10}
+      deduplication_id: {source: json_js_sha256, hash_length: 10}
+    message_attributes:
+      changed: {data_type: String.Array, value: '["state"]'}
+`), &fc); err != nil {
+		t.Fatal(err)
+	}
+	builder := NewBuilder(BuilderOptions{Flows: map[string]graph.FlowConfig{"sample": fc}, Destinations: map[string]config.DestinationConfig{"broker": {Type: "sqs"}}, MaxRecordBytes: 1 << 20})
+	env := testEnvelope()
+	env.V.Raw.Body = []byte(` { "b": 2, "a": 1 } `)
+	record, ok := builder.FromFailure("sample", testHead, 200, graph.FailureEvent{NodeID: "out", NodeType: "publish", Input: env, Err: errors.New("broker unavailable")})
+	if !ok || !record.Metadata.Retryable || string(record.Payload) != `{"b":2,"a":1}` {
+		t.Fatalf("record retryable=%v body=%s", record.Metadata.Retryable, record.Payload)
+	}
+	snapshot, err := deliverysnapshot.Decode(record.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := EnvelopeFromSnapshot(*snapshot.Envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := restored.Publish
+	restored.V.Raw.Body = []byte(`{"different":true}`)
+	opts, err := flowconfig.PublishNodeOptions(fc.Nodes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, prepared, err := flowconfig.PreparePublishForNode("out", opts, restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(prepared.Publish, original) || prepared.MessageAttributes["changed"].Value != `["state"]` {
+		t.Fatal("redrive changed frozen broker publication")
+	}
+}
+
+func TestCredentialFlowsNeverPersistCallerCredentialsOrRepeatCreate(t *testing.T) {
+	for _, tc := range []struct {
+		mode, options string
+		metadataOnly  bool
+	}{{"caller", "url: https://api.example.org/create\nrequire_headers: [X-Sample-Key]\nforward_headers: [X-Sample-Key]\n", true}, {"managed", "url: https://api.example.org/proxy\ncredential: {profile: sample}\n", false}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			var options yaml.Node
+			if err := yaml.Unmarshal([]byte(tc.options), &options); err != nil {
+				t.Fatal(err)
+			}
+			fc := graph.FlowConfig{Nodes: []graph.NodeConfig{{ID: "up", Type: "http_request", Options: options}}}
+			b := NewBuilder(BuilderOptions{Flows: map[string]graph.FlowConfig{"sample": fc}, Credentials: map[string]flowconfig.CredentialProfile{"sample": {Headers: map[string]flowconfig.CredentialHeader{"X-Sample-Key": {}}}}, MaxRecordBytes: 1 << 20})
+			env := testEnvelope()
+			env.Upstream = &graph.UpstreamResponse{Status: 200, Header: http.Header{"Set-Cookie": {"sample=synthetic-cookie"}, "X-Sample-Key": {"synthetic-caller-key"}}, Body: []byte(`{"ok":true}`)}
+			env.V.Raw.Head.Header = http.Header{"X-Sample-Key": {"synthetic-caller-key"}, "Authorization": {"synthetic-caller-token"}, "Cookie": {"synthetic-cookie"}, "X-Keep": {"yes"}}
+			record, ok := b.FromFailure("sample", testHead, 200, graph.FailureEvent{NodeID: "up", NodeType: "http_request", Input: env, Err: errors.New("upstream timeout")})
+			if !ok {
+				t.Fatal("missing metadata")
+			}
+			if strings.Contains(string(record.Snapshot), "synthetic-caller") || strings.Contains(string(record.Snapshot), "synthetic-cookie") {
+				t.Fatal("persisted credential")
+			}
+			if tc.metadataOnly && (len(record.Snapshot) > 0 || len(record.Payload) > 0 || record.Metadata.Retryable) {
+				t.Fatal("creation captured an automatic retry", record.Metadata)
+			}
+			if !tc.metadataOnly && len(record.Snapshot) == 0 {
+				t.Fatal("managed proxy lost its redacted snapshot")
+			}
+			if env.V.Raw.Head.Header.Get("X-Sample-Key") != "synthetic-caller-key" {
+				t.Fatal("capture mutated input")
+			}
+		})
+	}
+}

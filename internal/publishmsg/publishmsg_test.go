@@ -34,6 +34,26 @@ func capturedEnvelope() graph.Envelope {
 	}
 }
 
+func TestRawPublicationEncodesBytesDeferredByProxyIntake(t *testing.T) {
+	for _, raw := range [][]byte{[]byte(`{"sample":true}`), {0xff, 0x00, 0xa5}} {
+		env := capturedEnvelope()
+		env.Body, env.BodyFormat = nil, "raw"
+		event := env.Extra.(flowconfig.CapturedEvent)
+		event.Event.Body, event.Event.RawBodyBase64, event.Event.RawBody = nil, nil, raw
+		env.Extra = event
+		msg, err := FromEnvelope(env, "primary", "sample")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg.Body != nil || msg.RawBodyBase64 == nil || *msg.RawBodyBase64 != base64.StdEncoding.EncodeToString(raw) {
+			t.Fatal("raw publication lost its bytes")
+		}
+		if env.Extra.(flowconfig.CapturedEvent).Event.RawBodyBase64 != nil {
+			t.Fatal("publisher changed captured ingress")
+		}
+	}
+}
+
 func TestFromEnvelopeUsesTheCapturedEvent(t *testing.T) {
 	env := capturedEnvelope()
 	msg, err := FromEnvelope(env, "primary", "orders-queue")
@@ -58,7 +78,7 @@ func TestFromEnvelopeUsesTheCapturedEvent(t *testing.T) {
 }
 
 func TestFromEnvelopeSerializesXMLBodies(t *testing.T) {
-	doc, err := transform.ParseXML([]byte("<order><id>7</id></order>"))
+	doc, err := transform.ParseXMLWithLimits([]byte("<order><id>7</id></order>"), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

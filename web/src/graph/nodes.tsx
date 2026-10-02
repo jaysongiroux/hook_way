@@ -99,7 +99,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
             <Text fw={600} size="sm" c={DARK.text} style={ONE_LINE}>
               {data.yamlId}
             </Text>
-            <Text size="xs" c={DARK.muted} style={{ ...ONE_LINE, fontFamily: "ui-monospace, Menlo, monospace" }}>
+            <Text size="xs" c={DARK.muted} title={nodeLabel(data.nodeType)} style={ONE_LINE}>
               {nodeLabel(data.nodeType)}
             </Text>
           </Stack>

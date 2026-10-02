@@ -16,7 +16,7 @@ export function Explore() {
   return (
     <Section
       title="See Hookway in context"
-      lead="Runnable routing patterns, or a sourced comparison with other inbound gateways."
+      lead="Explore working examples or compare Hookway with other webhook gateways."
     >
       <Box className={EXPLORE_GRID_CLASS}>
         <Stack className={EXPLORE_PRIMARY_CLASS} gap="sm">
@@ -24,7 +24,7 @@ export function Explore() {
             Use request data to choose the destination
           </Text>
           <Text c={DARK.muted} style={{ lineHeight: 1.6 }}>
-            Runnable flows for multipart splitting, XML pruning, fan-out, and dynamic routing. Variables can come
+            Examples show how to store uploaded files, clean up XML, send one event to several systems, and choose destinations from request data. Variables can come
             from a path, JSON body, or filtered header, then select a target such as{" "}
             <Text component="code" inherit c={DARK.text} style={{ fontFamily: MONO }}>
               {"{envName}-events"}
@@ -37,7 +37,7 @@ export function Explore() {
 
         <Stack className={EXPLORE_SECONDARY_CLASS} gap="sm">
           <Text component="h3" fw={650} c={DARK.text} style={{ fontSize: 18, lineHeight: 1.3, margin: 0 }}>
-            Compare the operating model
+            Compare how the gateways work
           </Text>
           <Text size="sm" c={DARK.muted} style={{ lineHeight: 1.6 }}>
             Deployment, verification, payload formats, destinations, replay, and observability beside Hookdeck Event

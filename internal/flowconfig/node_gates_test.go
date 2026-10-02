@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoopGuardRejectsAtMaxHops(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestLoopGuardRejectsAtMaxHops(t *testing.T) {
 }
 
 func TestIPAllowlistRejectsUnknownIP(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestIPAllowlistRejectsUnknownIP(t *testing.T) {
 }
 
 func TestRateLimitIndependentKeysAndBurst(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestRateLimitIndependentKeysAndBurst(t *testing.T) {
 }
 
 func TestGatesPassCompliantRequestThrough(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

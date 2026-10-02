@@ -1,0 +1,24 @@
+# Compare previous/current in the verified original JSON. Arrays compare as
+# JSON.stringify values, including object member order, and emit one array path.
+# status.* changes also emit status. Empty results omit the SNS String.Array.
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations: {broker: {type: sns, sns: {region: us-east-1}}}
+flows:
+  sample:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/changes/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_INGRESS_TOKEN}, signature_header: X-Api-Key}
+      - {id: env, type: envelope}
+      - {id: diff, type: transform, kind: changed_fields_js, from: body.previous, to: body.current, name: fields_changed}
+      - id: send
+        type: publish
+        destination: broker
+        target: synthetic-change-events.fifo
+        wire_body: json
+        fifo:
+          group_id: {source: body, path: event_id}
+          deduplication_id: {source: body, path: event_id}
+        message_attributes:
+          fields_changed: {data_type: String.Array, value: "{fields_changed}", omit_if_empty: true}
+    edges: [in>body, body>auth, auth>env, env>diff, diff>send]

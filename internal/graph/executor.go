@@ -13,6 +13,7 @@ import (
 type NodeEvent struct {
 	NodeID, NodeType string
 	Target           string
+	DropReason       string
 	Dropped          bool
 	Duration         time.Duration
 	Err              error
@@ -282,7 +283,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		}
 	}
 	started := time.Now()
-	out, runErr := invoke(nctx, b.node, in)
+	out, runErr := invoke(nctx, b.node, in, e.opts)
 	var pe PanicError
 	if errors.As(runErr, &pe) {
 		pe.NodeID = id
@@ -323,13 +324,18 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 				}
 			}
 		}
+		if _, childRunner := b.node.(ChildExecutionNode); childRunner && !b.spec.Detached {
+			for _, d := range terminal.Deliveries {
+				e.addDelivery(d)
+			}
+		}
 		// D12: only executor-collected Compensator instances are authorized.
 		// Node-returned payloads cannot inject release callbacks.
 	}
 	if b.spec.Detached && (!isTerminal || len(terminal.Deliveries) == 0) {
 		e.addDelivery(e.delivery(b, err, false))
 	}
-	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err, Target: b.target, Dropped: isTerminal && b.spec.Type == "filter" && err == nil})
+	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err, Target: b.target, Dropped: isTerminal && b.spec.Type == "filter" && err == nil, DropReason: terminal.DropReason})
 	// A successful reservation must be released even when its output is malformed.
 	if runErr == nil && isComp {
 		e.addCompensation(Compensation{NodeID: id, Node: comp, Input: saved})
@@ -392,12 +398,22 @@ func concretePort(p Payload) (PortType, error) {
 		return PortNone, fmt.Errorf("graph: unsupported payload %T; payloads must be concrete values", p)
 	}
 }
-func invoke(ctx context.Context, n Node, in Payload) (out Payload, err error) {
+
+// ChildExecutionNode runs typed child graphs and returns their executor-owned
+// outcomes. It is a trusted registry extension, never a script callback.
+type ChildExecutionNode interface {
+	RunChildren(context.Context, Payload, RunOptions) (Payload, error)
+}
+
+func invoke(ctx context.Context, n Node, in Payload, options ...RunOptions) (out Payload, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = PanicError{Value: r}
 		}
 	}()
+	if child, ok := n.(ChildExecutionNode); ok && len(options) > 0 {
+		return child.RunChildren(ctx, in, options[0])
+	}
 	return n.Run(ctx, in)
 }
 func observe(fn func(NodeEvent), ev NodeEvent) {
@@ -653,4 +669,32 @@ func runOneCompensation(ctx context.Context, c Compensation, reason error) (err 
 		return fmt.Errorf("compensation for node %q: %w", c.NodeID, err)
 	}
 	return nil
+}
+
+// RunChild executes a compiled Envelope child under its parent's cancellation
+// and deadline. Unlike redrive, batch delivery must stop when its caller ends.
+func (f *Flow) RunChild(ctx context.Context, in Envelope, opts RunOptions) (Terminal, error) {
+	if f == nil || f.nodes[f.root] == nil || f.nodes[f.root].spec.In != PortEnvelope {
+		return Terminal{}, errors.New("graph: uncompiled child flow")
+	}
+	if opts.PublishTimeout <= 0 {
+		return Terminal{}, errors.New("graph: child publish timeout must be positive")
+	}
+	ctx, cancel := context.WithTimeout(ctx, opts.PublishTimeout)
+	defer cancel()
+	ctx = context.WithValue(ctx, publishBudgetKey{}, struct{}{})
+	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
+	if err := ctx.Err(); err != nil {
+		e.recordUnattempted(nil)
+		return e.term, err
+	}
+	seed, err := clonePayload(in)
+	if err != nil {
+		return Terminal{}, err
+	}
+	err = e.node(ctx, f.root, seed)
+	if err != nil {
+		e.recordUnattempted(nil)
+	}
+	return e.term, err
 }

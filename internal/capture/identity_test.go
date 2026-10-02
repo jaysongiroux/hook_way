@@ -343,7 +343,7 @@ func TestRedriveThroughASnapshotIsByteIdentical(t *testing.T) {
 				}
 
 				// Capture's rendering path rebuilds exactly what failed.
-				target, prepared, err := flowconfig.PreparePublish(opts, input)
+				target, prepared, err := flowconfig.PreparePublishForNode("", opts, input)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -411,5 +411,18 @@ func TestRedriveThroughASnapshotIsByteIdentical(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNativeCredentialProfileReferenceAffectsNodeIdentity(t *testing.T) {
+	var first, second graph.NodeConfig
+	if err := yaml.Unmarshal([]byte("id: up\ntype: http_request\nurl: https://api.example.org/sample\ncredential: {profile: sample_a}\n"), &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal([]byte("id: up\ntype: http_request\nurl: https://api.example.org/sample\ncredential: {profile: sample_b}\n"), &second); err != nil {
+		t.Fatal(err)
+	}
+	if NodeConfigHash(first) == NodeConfigHash(second) {
+		t.Fatal("different credential profile references share replay identity")
 	}
 }

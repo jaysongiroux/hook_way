@@ -19,6 +19,26 @@ You do not need to host the builder to run Hookway. Write the YAML directly or
 use the builder wherever convenient, then deploy core with that file. The
 replay service is a separate optional deployment.
 
+For ingress replacement, see [Ingress adapters](docs/ingress-adapters.md):
+standard/FIFO SQS and SNS publication, typed routing, managed HTTP credentials,
+document relays, bounded batches and explicit response contracts. Queue
+consumers stay outside Hookway. The builder includes forms for these settings.
+Routing and registration execute inside core flows; see the
+[CLI reference](docs/cli.md) for core and replay commands.
+
+## Which command do I need?
+
+- **`hookway`** is the ingress server. Its `validate`, `schema` and `editor`
+  commands help you prepare flows; `serve` executes them. Start here.
+- **`hookway-replay`** is a separate, optional service with PostgreSQL storage
+  for inspecting and retrying failed deliveries after an early acknowledgement.
+
+`make build` builds these two service binaries. Both support `help` and
+`--help`. `cmd/hookway-wasm` builds the browser validator, not a terminal tool.
+See the [CLI reference](docs/cli.md) for commands, examples and exit codes.
+See [Performance results and methodology](docs/performance.md) for measured
+local burst, sustained-load, batch and document results and their limits.
+
 ## Architecture: the typed-port node graph
 
 A flow is a DAG, not a fixed pipeline. Every node declares the payload type it

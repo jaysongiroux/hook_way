@@ -10,9 +10,10 @@ import (
 )
 
 type filterNode struct {
-	id        string
-	chain     filter.Chain
-	onNoMatch string
+	id         string
+	chain      filter.Chain
+	onNoMatch  string
+	dropReason string
 }
 
 func newFilterNode(id string, opts FilterOptions) graph.Node {
@@ -28,7 +29,7 @@ func newFilterNode(id string, opts FilterOptions) graph.Node {
 	if onNoMatch == "" {
 		onNoMatch = "drop"
 	}
-	return filterNode{id: id, chain: chain, onNoMatch: onNoMatch}
+	return filterNode{id: id, chain: chain, onNoMatch: onNoMatch, dropReason: opts.DropReason}
 }
 
 func (n filterNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
@@ -55,5 +56,5 @@ func (n filterNode) Run(_ context.Context, in graph.Payload) (graph.Payload, err
 	}
 	// Silent drop: successful Terminal with no deliveries keeps the replay
 	// reservation (the event was consumed) and returns 202 to the sender.
-	return graph.Terminal{}, nil
+	return graph.Terminal{DropReason: n.dropReason}, nil
 }

@@ -24,28 +24,53 @@ beforeEach(() => {
   useGraphStore.getState().clear();
 });
 
-test("a selected node opens on Options", () => {
+test("primary node options are direct and identity metadata starts collapsed", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
-  useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id, selectedEdgeId: null });
+  useGraphStore.setState({
+    nodes: [n],
+    edges: [],
+    selectedId: n.id,
+    selectedEdgeId: null,
+  });
   wrap();
-  expect(section("Options")).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByLabelText("path")).toBeInTheDocument();
+  const path = screen.getByLabelText("Request path");
+  const metadata = section("Identity and description");
+  expect(path).toBeInTheDocument();
+  expect(screen.queryByLabelText("Id")).not.toBeInTheDocument();
+  expect(metadata).toHaveAttribute("aria-expanded", "false");
+  expect(
+    path.compareDocumentPosition(metadata) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });
 
-test("id and description stay outside the sections so both are always editable", () => {
+test("Identity and description opens below primary options when requested", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
-  useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id, selectedEdgeId: null });
+  useGraphStore.setState({
+    nodes: [n],
+    edges: [],
+    selectedId: n.id,
+    selectedEdgeId: null,
+  });
   wrap();
-  fireEvent.change(screen.getByLabelText("Id"), { target: { value: "in" } });
-  fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Entry point." } });
+  fireEvent.click(section("Identity and description"));
+  fireEvent.change(screen.getByLabelText("Node ID"), { target: { value: "in" } });
+  fireEvent.change(screen.getByLabelText("Description"), {
+    target: { value: "Entry point." },
+  });
   expect(useGraphStore.getState().nodes[0].data.yamlId).toBe("in");
-  expect(useGraphStore.getState().nodes[0].data.description).toBe("Entry point.");
+  expect(useGraphStore.getState().nodes[0].data.description).toBe(
+    "Entry point.",
+  );
 });
 
 test("sections open the first group by default", () => {
   render(
     <MantineProvider theme={theme}>
-      <Sections sections={[{ value: "a", label: "Alpha", render: () => <p>alpha body</p> }]} />
+      <Sections
+        sections={[
+          { value: "a", label: "Alpha", render: () => <p>alpha body</p> },
+        ]}
+      />
     </MantineProvider>,
   );
   expect(section("Alpha")).toHaveAttribute("aria-expanded", "true");

@@ -61,7 +61,7 @@ revisited deliberately.
 
 | ID | Limitation | Consequence |
 |---|---|---|
-| L1 | Rate limiting and replay protection are in-process (per pod) | N replicas mean N × the configured limit, and replay protection is per-pod rather than per-cluster. Consumers dedupe on the envelope `id` (UUIDv7), which is the documented contract |
+| L1 | Rate limiting and replay protection are in-process (per pod) | N replicas mean N × the configured limit, and replay protection is per-pod rather than per-cluster. The envelope `id` (UUIDv7) survives internal delivery retries and replay, but a sender retry receives a new ID. Consumers need a stable sender event ID to deduplicate across requests |
 | L2 | Flows are not resumable in-process | A pod that dies mid-flow loses in-flight work; recovery is the sender's retry, which is why a publish failure returns 503. A failure core already acknowledged can be retried by an operator through the replay service, which resumes the flow at the failed node (I21) |
 | L3 | One process, one set of destination credentials | A bug in any flow's handling can reach every destination the process can write to. Deploy split by trust domain when that blast radius matters. Named `connections` do not change this, but they make the full set enumerable in one block — see [Configuration § Blast radius](configuration.md#blast-radius) |
 | L4 | No in-process TLS | Terminate TLS at an ingress, ALB, or sidecar |

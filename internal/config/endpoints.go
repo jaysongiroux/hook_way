@@ -16,12 +16,14 @@ const (
 )
 
 type SQSEndpointOptions struct {
-	VisibilityTimeout time.Duration
-	MessageRetention  time.Duration
+	QueueOwnerAccountID string
+	VisibilityTimeout   time.Duration
+	MessageRetention    time.Duration
 }
 
 type SNSEndpointOptions struct {
-	Subject string
+	TopicARN string
+	Subject  string
 }
 
 // RedisEndpointOptions are per-route options for redis_* destinations.
@@ -203,17 +205,18 @@ type ExpandedRoute struct {
 }
 
 type EndpointDestinationConfig struct {
-	Destination     string                  `yaml:"destination"`
-	Target          string                  `yaml:"target"`
-	Create          bool                    `yaml:"create"`
-	QueueOptions    RabbitMQQueueOptions    `yaml:"queue_options"`
-	SQSOptions      SQSEndpointOptions      `yaml:"sqs_options"`
-	SNSOptions      SNSEndpointOptions      `yaml:"sns_options"`
-	RedisOptions    RedisEndpointOptions    `yaml:"redis_options"`
-	KafkaOptions    KafkaEndpointOptions    `yaml:"kafka_options"`
-	TemporalOptions TemporalEndpointOptions `yaml:"temporal_options"`
-	FIFO            *FIFOConfig             `yaml:"fifo"`
-	Filters         []FilterConditionConfig `yaml:"filters"`
+	BrokerAttributes map[string]string       `yaml:"broker_attributes,omitempty"`
+	Destination      string                  `yaml:"destination"`
+	Target           string                  `yaml:"target"`
+	Create           bool                    `yaml:"create"`
+	QueueOptions     RabbitMQQueueOptions    `yaml:"queue_options"`
+	SQSOptions       SQSEndpointOptions      `yaml:"sqs_options"`
+	SNSOptions       SNSEndpointOptions      `yaml:"sns_options"`
+	RedisOptions     RedisEndpointOptions    `yaml:"redis_options"`
+	KafkaOptions     KafkaEndpointOptions    `yaml:"kafka_options"`
+	TemporalOptions  TemporalEndpointOptions `yaml:"temporal_options"`
+	FIFO             *FIFOConfig             `yaml:"fifo"`
+	Filters          []FilterConditionConfig `yaml:"filters"`
 }
 
 // FilterConditionConfig is one condition in an endpoint or route filter chain.

@@ -3,6 +3,7 @@ package flowconfig
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -15,16 +16,21 @@ import (
 )
 
 type transformNode struct {
-	id     string
-	opts   TransformOptions
-	logger *slog.Logger
+	id        string
+	opts      TransformOptions
+	logger    *slog.Logger
+	validator *transform.Validator
 }
 
 func newTransformNode(id string, opts TransformOptions, logger *slog.Logger) graph.Node {
-	return transformNode{id: id, opts: opts, logger: logger}
+	n := transformNode{id: id, opts: opts, logger: logger}
+	if opts.Kind == "json_schema" {
+		n.validator, _ = transform.NewValidator(opts.JSONSchema, opts.Coercions)
+	}
+	return n
 }
 
-func (n transformNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
+func (n transformNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
 	env, ok := in.(graph.Envelope)
 	if !ok {
 		return nil, graph.NodeError{
@@ -35,9 +41,32 @@ func (n transformNode) Run(_ context.Context, in graph.Payload) (graph.Payload, 
 	switch n.opts.Kind {
 	case "changed_fields":
 		return n.changedFields(env)
+	case "changed_fields_js":
+		paths, err := transform.ChangedFieldsOriginal(ctx, env.V.Raw.Body, strings.TrimPrefix(n.opts.From, "body."), strings.TrimPrefix(n.opts.To, "body."))
+		if err != nil {
+			return nil, graph.NodeError{NodeID: n.id, Status: 400, Err: errors.New("changed-fields original JSON selection failed")}
+		}
+		raw, _ := json.Marshal(paths)
+		return n.changedFieldsValue(env, string(raw)), nil
+	case "json_schema", "strip_fields":
+		var body any
+		var err error
+		if n.opts.Kind == "json_schema" {
+			if n.validator == nil {
+				return nil, graph.NodeError{NodeID: n.id, Status: 500, Err: errors.New("schema is not compiled")}
+			}
+			body, err = n.validator.Validate(env.Body)
+		} else {
+			body, err = transform.StripFields(env.Body, n.opts.Fields)
+		}
+		if err != nil {
+			return nil, graph.NodeError{NodeID: n.id, Status: 400, Err: err}
+		}
+		env.Body = body
+		return env, nil
 	case "field_map":
 		return n.fieldMap(env)
-	case "xml_prune":
+	case "xml_prune", "xml_ordered_prune":
 		return n.xmlPrune(env)
 	default:
 		return nil, graph.NodeError{
@@ -67,7 +96,13 @@ func (n transformNode) xmlPrune(env graph.Envelope) (graph.Payload, error) {
 			"duration", d,
 		)
 	}
-	next, err := transform.Prune(doc, n.opts.Rules, log)
+	var next transform.Document
+	var err error
+	if n.opts.XMLAdapter != nil {
+		next, err = transform.PruneOrdered(doc, *n.opts.XMLAdapter, log)
+	} else {
+		next, err = transform.Prune(doc, n.opts.Rules, log)
+	}
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusInternalServerError, Err: err}
 	}
@@ -102,6 +137,9 @@ func (n transformNode) changedFields(env graph.Envelope) (graph.Payload, error) 
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusInternalServerError, Err: err}
 	}
+	return n.changedFieldsValue(env, encoded), nil
+}
+func (n transformNode) changedFieldsValue(env graph.Envelope, encoded string) graph.Envelope {
 	name := n.opts.Name
 	if name == "" {
 		name = "changed_fields"
@@ -113,7 +151,7 @@ func (n transformNode) changedFields(env graph.Envelope) (graph.Payload, error) 
 	}
 	vars[name] = encoded
 	env.Vars = vars
-	return env, nil
+	return env
 }
 
 func (n transformNode) fieldMap(env graph.Envelope) (graph.Payload, error) {

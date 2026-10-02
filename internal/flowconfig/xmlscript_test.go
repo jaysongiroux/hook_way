@@ -1,6 +1,7 @@
 package flowconfig
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jaysongiroux/hook_way/internal/transform"
@@ -12,7 +13,7 @@ import (
 const hardXML = `<MESSAGE xmlns:ns="http://example.test/ns"><ORDER id="O1" ns:kind="primary">lead text<Amount>500</Amount><Amount>600</Amount></ORDER></MESSAGE>`
 
 func TestXMLScriptRoundTripPreservesDocument(t *testing.T) {
-	original, err := transform.ParseXML([]byte(hardXML))
+	original, err := transform.ParseXMLWithLimits([]byte(hardXML), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestXMLScriptRoundTripPreservesDocument(t *testing.T) {
 }
 
 func TestXMLToScriptShapeIsPlainJSONValues(t *testing.T) {
-	doc, err := transform.ParseXML([]byte(hardXML))
+	doc, err := transform.ParseXMLWithLimits([]byte(hardXML), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestScriptToXMLStringifiesScalarText(t *testing.T) {
 // on its own cannot tell ns:kind from kind and cannot represent the xmlns:ns
 // declaration at all -- a read-and-return script would strip both.
 func TestXMLScriptCarriesAttributeNamespaces(t *testing.T) {
-	original, err := transform.ParseXML([]byte(hardXML))
+	original, err := transform.ParseXMLWithLimits([]byte(hardXML), transform.XMLLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +161,93 @@ func TestScriptToXMLLeavesAttributesWithoutAttrnsUnnamespaced(t *testing.T) {
 			if a.Name.Space != "http://example.test/ns" {
 				t.Fatalf("spaced attribute space = %q, want the URI", a.Name.Space)
 			}
+		}
+	}
+}
+
+func TestXMLScriptPreservesMixedContentAndDuplicateLocalAttributes(t *testing.T) {
+	raw := `<?xml version="1.0"?><!--before--><R xmlns="urn:sample" xmlns:p="urn:other" key="plain" p:key="namespaced">before<C/>between<?note value?><!--comment--><p:C/>after</R><!--after-->`
+	original, err := transform.ParseXMLWithLimits([]byte(raw), transform.XMLLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := xmlToScript(original)
+	roundtrip, err := scriptToXML(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := transform.SerializeXML(roundtrip)
+	if err != nil || string(encoded) != raw {
+		t.Fatalf("roundtrip %s: %v", encoded, err)
+	}
+	root := script["root"].(map[string]any)
+	// The ordered representation can edit a namespaced attribute without collapsing its plain sibling.
+	attrs := root["attributes"].([]any)
+	for _, a := range attrs {
+		attr := a.(map[string]any)
+		if attr["name"] == "key" && attr["ns"] == "urn:other" {
+			attr["value"] = "changed"
+		}
+	}
+	root["text"] = "updated"
+	edited, err := scriptToXML(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err = transform.SerializeXML(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `key="plain" p:key="changed"`) || !strings.Contains(string(encoded), `updated<C/><?note value?><!--comment--><p:C/>`) {
+		t.Fatalf("edit lost content: %s", encoded)
+	}
+	if original.Root.Text != "beforebetweenafter" {
+		t.Fatal("script mutated original")
+	}
+}
+
+func TestXMLScriptOrderedTextEditsSurvive(t *testing.T) {
+	doc, err := transform.ParseXMLWithLimits([]byte(`<R>before<C/>after</R>`), transform.XMLLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := xmlToScript(doc)
+	root := script["root"].(map[string]any)
+	root["content"].([]any)[2].(map[string]any)["text"] = "changed"
+	edited, err := scriptToXML(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := transform.SerializeXML(edited)
+	if err != nil || string(wire) != `<R>before<C/>changed</R>` || edited.Root.Text != "beforechanged" {
+		t.Fatalf("ordered edit lost: %s, %v", wire, err)
+	}
+}
+
+func TestXMLScriptRejectsMarkupInNamesAndContent(t *testing.T) {
+	for _, edit := range []func(map[string]any){
+		func(root map[string]any) { root["name"] = `R><Injected` },
+		func(root map[string]any) { root["attr"].(map[string]any)[`key\" injected=\"value`] = "value" },
+		func(root map[string]any) { root["prefix"] = `p><Injected` },
+		func(root map[string]any) {
+			root["content"] = []any{map[string]any{"kind": "comment", "text": "--><Injected/><!--"}}
+		},
+		func(root map[string]any) {
+			root["content"] = []any{map[string]any{"kind": "pi", "target": "note", "text": "?><Injected/>"}}
+		},
+	} {
+		doc, err := transform.ParseXMLWithLimits([]byte(`<R key="value"/>`), transform.XMLLimits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		script := xmlToScript(doc)
+		edit(script["root"].(map[string]any))
+		edited, err := scriptToXML(script)
+		if err == nil {
+			_, err = transform.SerializeXML(edited)
+		}
+		if err == nil {
+			t.Fatal("accepted markup injection")
 		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/routing"
 	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
@@ -24,7 +25,7 @@ import (
 // failed node's input without copying it (docs/invariants.md I19).
 func TestI19_NodesDoNotMutateTheirInput(t *testing.T) {
 	cases := nodeInputCases(t)
-	reg, err := flowconfig.NewRegistry()
+	reg, err := flowconfig.NewRegistryWithOptions(flowconfig.RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,18 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 	lookups := func(flowconfig.LookupOptions) flowconfig.LookupFunc {
 		return func(context.Context, string) (string, bool, error) { return "r1", true, nil }
 	}
+	registry, err := routing.NewRegistry(routing.Config{Profiles: map[string]routing.Profile{"sample": {AccountID: "000000000000", CredentialMode: "sample"}}, Environments: map[string]routing.Environment{"sample": {Profiles: []string{"sample"}, Accounts: []string{"000000000000"}, DestinationPrefix: "sample"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	return map[string]nodeInputCase{
+		"batch": {typ: "batch", options: "mode: shared\nprofile: sample\nenvironment_path: environment\nevent_id_path: event_id\nchild:\n  entry: node.send\n  nodes: [{id: node.send, type: publish, destination: primary, target: sample}]\n  edges: []\n", opts: flowconfig.RegistryOptions{RoutingRegistry: registry}, input: func() graph.Payload { e := inputEnvelope(); e.Body = []any{}; return e }},
+		"register_route": {typ: "register_route", options: "mode: after_create\nstore: primary\nprofile: sample\nenvironment_variable: route\nid_source: upstream\nid_path: created_id\nid_type: record_a\n", opts: flowconfig.RegistryOptions{ValidateOnly: true, RoutingRegistry: registry}, input: func() graph.Payload {
+			e := inputEnvelope()
+			e.Upstream = &graph.UpstreamResponse{Status: 201, Header: http.Header{}, Body: []byte(`{"id":"42"}`), Values: map[string]string{"created_id": "42"}}
+			return e
+		}},
+		"route":        {typ: "route", options: "profile: sample\nfixed: sample\n", opts: flowconfig.RegistryOptions{RoutingRegistry: registry}, input: func() graph.Payload { return inputEnvelope() }},
 		"loop_guard":   {typ: "loop_guard", options: "max_hops: 3\n", input: func() graph.Payload { return inputHead() }},
 		"ip_allowlist": {typ: "ip_allowlist", options: "cidrs: [10.0.0.0/8]\n", input: func() graph.Payload { return inputHead() }},
 		"rate_limit":   {typ: "rate_limit", options: "rpm: 600\nburst: 10\nkey_by: source_ip\n", input: func() graph.Payload { return inputHead() }},
@@ -130,7 +142,7 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 		"transform/xml_prune": {
 			typ: "transform", options: "kind: xml_prune\n",
 			input: func() graph.Payload {
-				doc, err := transform.ParseXML([]byte("<order><id> 42 </id><note></note></order>"))
+				doc, err := transform.ParseXMLWithLimits([]byte("<order><id> 42 </id><note></note></order>"), transform.XMLLimits{})
 				if err != nil {
 					t.Fatal(err)
 				}

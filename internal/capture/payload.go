@@ -30,7 +30,13 @@ func RenderPayload(dest config.DestinationConfig, msg queue.Message) (Payload, e
 	case dest.Type == "webhook" && dest.Webhook.Auth.Type == "proxy":
 		return Payload{Bytes: msg.RawBody, ContentType: msg.OrigHeaders.Get("Content-Type")}, nil
 	}
-	b, err := json.Marshal(msg)
+	var b []byte
+	var err error
+	if dest.Type == "sqs" || dest.Type == "sns" {
+		b, err = queue.BrokerBody(msg)
+	} else {
+		b, err = json.Marshal(msg)
+	}
 	if err != nil {
 		return Payload{}, fmt.Errorf("render payload: %w", err)
 	}

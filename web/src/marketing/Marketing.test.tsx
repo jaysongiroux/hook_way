@@ -22,10 +22,19 @@ test("the hero states what Hookway does and offers both calls to action", () => 
   const heading = screen.getByRole("heading", { level: 1 });
   expect(heading).toHaveTextContent(/receive, verify, and route webhooks/i);
   const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/verify the request by wire format, then publish/i);
-  expect(main).toHaveTextContent(/the builder exports that YAML; it does not talk to a running process/i);
-  expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute("href", "/");
-  expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+  expect(main).toHaveTextContent(
+    /check who sent each request, prepare its data/i,
+  );
+  expect(main).toHaveTextContent(
+    /the builder does not connect to or manage your running server/i,
+  );
+  expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute(
+    "href",
+    "/",
+  );
+  expect(
+    screen.getByRole("navigation", { name: "Primary" }),
+  ).toBeInTheDocument();
 
   const builderCta = screen.getByRole("link", { name: /open the builder/i });
   expect(builderCta).toHaveAttribute("href", "/builder");
@@ -36,16 +45,21 @@ test("the hero states what Hookway does and offers both calls to action", () => 
 
 test("features lead with publish and verify, then bodies, branch, and transform", () => {
   wrap();
-  const section = screen.getByRole("heading", { level: 2, name: "Configure the full request path" }).closest("section");
+  const section = screen
+    .getByRole("heading", { level: 2, name: "From incoming webhook to delivered event" })
+    .closest("section");
   expect(section).not.toBeNull();
   const text = section!.textContent ?? "";
-  expect(text).toMatch(/verification fails closed on an unknown scheme/i);
+  expect(text).toMatch(/invalid credentials and unknown schemes are rejected/i);
   const marks = [
-    "Publish to 14 destination types",
-    "Verify 11 wire-format schemes",
-    "JSON, XML, multipart, and raw bodies",
-    "Branch on request data",
-    "field_map",
+    "Send events to the systems you run",
+    "Verify who sent each request",
+    "Handle events and file uploads",
+    "Decide which events go where",
+    "Prepare data for the next service",
+    "Route to the right environment",
+    "Call APIs and return their responses",
+    "Process batches with limits",
   ];
   let at = -1;
   for (const mark of marks) {
@@ -54,14 +68,13 @@ test("features lead with publish and verify, then bodies, branch, and transform"
     at = next;
   }
   expect(text).toMatch(/HTTP Basic/);
-  expect(text).toMatch(/exact header/);
-  expect(text).toMatch(/publish\.payload: object/);
+  expect(text).toMatch(/exact tokens/);
   expect(text).toMatch(/named connections/i);
-  expect(text).toMatch(/if\/else for two outcomes/i);
-  expect(text).toMatch(/switch for the first matching labelled route/i);
-  expect(text).toMatch(/changed_fields/);
-  expect(text).toMatch(/xml_prune/);
-  expect(text).toMatch(/http_request/);
+  expect(text).toMatch(/DynamoDB/);
+  expect(text).toMatch(/JSON schemas/);
+  expect(text).toMatch(/ordered XML/);
+  expect(text).toMatch(/batch size, concurrency/);
+  expect(text).toMatch(/managed credential profiles/);
   expect(text).not.toMatch(/HMAC, static header, or JWT/);
 });
 
@@ -75,10 +88,16 @@ test("the destination marquee states the Temporal YAML limitation", () => {
 test("the overview points to dynamic-routing use cases and the sourced comparison", () => {
   wrap();
   const main = screen.getByRole("main");
-  expect(main).toHaveTextContent(/variables can come from a path, JSON body, or filtered header/i);
+  expect(main).toHaveTextContent(
+    /variables can come from a path, JSON body, or filtered header/i,
+  );
   expect(main).toHaveTextContent(/\{envName\}-events/);
-  expect(screen.getByRole("link", { name: "Explore use cases" })).toHaveAttribute("href", "/use-cases");
-  expect(screen.getByRole("link", { name: "View the comparison" })).toHaveAttribute("href", "/compare");
+  expect(
+    screen.getByRole("link", { name: "Explore use cases" }),
+  ).toHaveAttribute("href", "/use-cases");
+  expect(
+    screen.getByRole("link", { name: "View the comparison" }),
+  ).toHaveAttribute("href", "/compare");
 });
 
 test("the overview uses concrete product language instead of generic hype", () => {
@@ -96,8 +115,24 @@ test("the overview uses concrete product language instead of generic hype", () =
     "all-in-one",
     "transform your",
   ]) {
-    expect(copy, `marketing copy must not use generic hype ("${phrase}")`).not.toContain(phrase);
+    expect(
+      copy,
+      `marketing copy must not use generic hype ("${phrase}")`,
+    ).not.toContain(phrase);
   }
+});
+
+test("performance measurements include hardware and synthetic workload limits", () => {
+  wrap();
+  const section = screen
+    .getByRole("heading", { level: 2, name: "Control load, monitor delivery, and recover failures" })
+    .closest("section");
+  expect(section).toHaveTextContent(/measured: 5,000 requests\/s/i);
+  expect(section).toHaveTextContent(/three 20-second bursts on two replicas/i);
+  expect(section).toHaveTextContent(/2 vCPU and 4 GiB/i);
+  expect(section).toHaveTextContent(/synthetic destination/i);
+  expect(screen.getByRole("link", { name: "Results and methodology" }))
+    .toHaveAttribute("href", `${GITHUB_REPO}/blob/main/docs/performance.md`);
 });
 
 test("a real config sample is shown rather than described", () => {
@@ -111,8 +146,17 @@ test("a real config sample is shown rather than described", () => {
 
 test("every destination type the builder supports is listed", () => {
   wrap();
-  for (const t of ["rabbitmq", "sqs", "kafka", "temporal", "redis_stream", "webhook"]) {
-    expect(screen.getAllByText(destinationPresentation(t).label).length).toBeGreaterThanOrEqual(2);
+  for (const t of [
+    "rabbitmq",
+    "sqs",
+    "kafka",
+    "temporal",
+    "redis_stream",
+    "webhook",
+  ]) {
+    expect(
+      screen.getAllByText(destinationPresentation(t).label).length,
+    ).toBeGreaterThanOrEqual(2);
   }
 });
 
@@ -135,13 +179,7 @@ test("the page does not restate the documentation it links to", () => {
   // It exists to keep the page a signpost: docs/configuration.md alone is
   // ~95KB, and the site must not duplicate it.
   //
-  // The "~4,300 after the bento rewrite" note that used to sit here went stale:
-  // the marquee, the Explore band and the compare links landed afterwards and
-  // took the page to ~5,450, i.e. 50 characters off the bound. Correcting the
-  // retry/metrics/enablement claims made the honest copy longer still, so
-  // redundant prose was trimmed to pay for it rather than raising the bound.
-  // Leading with publish and verify, and stating the Temporal YAML limit on
-  // the marquee, was paid for the same way (shorter bodies, code-band, and
-  // production leads). It now sits at 5,459. If you need more room, cut something.
-  expect(copy.length).toBeLessThan(5500);
+  // Include the ingress-adapter guide and its native capabilities, while
+  // retaining a compact overview rather than duplicating the reference.
+  expect(copy.length).toBeLessThan(8000);
 });

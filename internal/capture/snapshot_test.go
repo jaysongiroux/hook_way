@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -9,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
 	"github.com/jaysongiroux/hook_way/internal/deliverysnapshot"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/jsoncanon"
 	"github.com/jaysongiroux/hook_way/internal/queue"
 	"github.com/jaysongiroux/hook_way/internal/webhook"
 )
@@ -19,6 +22,7 @@ import (
 func richEnvelope() graph.Envelope {
 	b64 := "eyJhIjoxfQ=="
 	return graph.Envelope{
+		Publish: richPublish(),
 		V: graph.Verified{
 			Raw: graph.RawRequest{
 				Head: graph.RequestHead{
@@ -36,7 +40,7 @@ func richEnvelope() graph.Envelope {
 		Body:       map[string]any{"a": 1.0, "size": int64(9), "tags": []string{"x"}},
 		BodyFormat: "json",
 		Vars:       map[string]string{"route": "orders"},
-		Upstream:   &graph.UpstreamResponse{Status: 202, Header: http.Header{"X-Up": {"1"}}, Body: []byte("up")},
+		Upstream:   &graph.UpstreamResponse{Values: map[string]string{"created_id": "sample-1"}, SelectionError: "missing_field", Status: 202, Header: http.Header{"X-Up": {"1"}}, Body: []byte("up")},
 		Extra: flowconfig.CapturedEvent{Event: webhook.Envelope{
 			SchemaVersion: "1.0", ID: "evt", IdempotencyKey: "idem-evt", RequestID: "req", TraceID: "trace", Traceparent: "00-abc-def-01",
 			Endpoint: "/webhooks/orders", DestinationQueueID: "orders-dest", Queue: "orders-queue", ReceivedAt: time.Date(2026, 9, 23, 12, 0, 0, 123, time.UTC),
@@ -85,6 +89,23 @@ func TestEnvelopeRoundTripIsExact(t *testing.T) {
 	}
 }
 
+func TestSnapshotDropsRequestLocalRepresentation(t *testing.T) {
+	env := richEnvelope()
+	prepared, err := jsoncanon.Prepare(context.Background(), env.V.Raw.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.V.OriginalJSON = prepared
+	got := roundTripEnvelope(t, env)
+	if got.V.OriginalJSON != nil {
+		t.Fatal("request-local metadata escaped into snapshot")
+	}
+	env.V.OriginalJSON = nil
+	if !reflect.DeepEqual(got, env) {
+		t.Fatal("dropping transient representation changed persisted delivery contract")
+	}
+}
+
 func TestZeroEnvelopeRoundTripsToZero(t *testing.T) {
 	if got := roundTripEnvelope(t, graph.Envelope{}); !reflect.DeepEqual(got, graph.Envelope{}) {
 		t.Fatalf("round trip = %#v, want the zero Envelope", got)
@@ -100,6 +121,7 @@ func TestEnvelopeRejectsUnknownExtra(t *testing.T) {
 func richMessage() queue.Message {
 	b64 := "cmF3"
 	return queue.Message{
+		Publish:       richPublish(),
 		SchemaVersion: "1.0", ID: "evt", IdempotencyKey: "idem", RequestID: "req", TraceID: "trace", Traceparent: "00-a-b-01",
 		Endpoint: "/w", DestinationQueueID: "hook", Queue: "orders",
 		ReceivedAt: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC),
@@ -195,4 +217,9 @@ func TestSnapshotRejectsInvalidUTF8OutsideTheBody(t *testing.T) {
 			t.Fatalf("SnapshotFromMessage = %v, want an ErrUnsupported UTF-8 error", err)
 		}
 	})
+}
+
+func richPublish() *deliverymeta.Publish {
+	delay := int32(10)
+	return &deliverymeta.Publish{GroupID: "standard-group", DelaySeconds: &delay, Subject: "sample", MessageStructure: "json", NodeID: "out", Destination: "broker", Target: "events.fifo", WireBody: "json_js", Body: []byte(`{"k":1}`), FIFO: &deliverymeta.FIFO{GroupID: "group", DeduplicationID: "dedup", ContentBased: true}, Retry: &deliverymeta.Retry{MaxAttempts: 3, InitialBackoff: 100, MaxBackoff: 200}}
 }

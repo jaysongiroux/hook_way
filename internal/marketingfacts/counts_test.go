@@ -207,7 +207,7 @@ func TestQuotedWebhookRetryDefaultsMatchPublisher(t *testing.T) {
 }
 
 func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
-	const quoted = "45"
+	const quoted = "55"
 	src := readRepoFile(t, "internal/metrics/metrics.go")
 	names := uniqueMatches(t, regexp.MustCompile(`"(hookway_[a-z0-9_]+)"`), src)
 	if strconv.Itoa(len(names)) != quoted {
@@ -218,19 +218,36 @@ func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
 }
 
 func TestQuotedSchemeCountMatchesRegistry(t *testing.T) {
-	const quoted = "11"
-	if got := len(auth.Schemes()); strconv.Itoa(got) != quoted {
-		t.Fatalf("auth registry has %d schemes but %s quotes %s", got, productionCopyPath, quoted)
+	const quoted = "13"
+	// no_auth is an explicit bypass, not an authentication format.
+	authenticated := 0
+	for _, scheme := range auth.Schemes() {
+		if scheme != "no_auth" {
+			authenticated++
+		}
 	}
-	// Deliberately "verification schemes", not "signature schemes": of the 11,
-	// two are header-exact comparisons and one is no_auth, which verifies
-	// nothing. /compare says "wire-format schemes" for the same reason.
-	copySrc := readRepoFile(t, productionCopyPath)
-	requireTileValue(t, copySrc, quoted, "the registered scheme count")
-	if strings.Contains(copySrc, "signature schemes") {
-		t.Fatalf("%s calls the %s registry entries \"signature schemes\". "+
-			"no_auth verifies nothing and two schemes are plain header comparisons, "+
-			"so the honest label is \"verification schemes\".", productionCopyPath, quoted)
+	if got := strconv.Itoa(authenticated); got != quoted {
+		t.Fatalf("auth registry has %d authentication formats but the site quotes %s", authenticated, quoted)
+	}
+	requireTileValue(t, readRepoFile(t, productionCopyPath), quoted, "the authentication format count")
+	requireCopyContains(t, readRepoFile(t, productionCopyPath), "authentication formats", "the authentication count label")
+	compareSrc := readRepoFile(t, compareCopyPath)
+	if !strings.Contains(compareSrc, quoted+" authentication formats") {
+		t.Fatalf("%s must agree with the registry count of %s authentication formats", compareCopyPath, quoted)
+	}
+	var catalog map[string]struct {
+		AuthSchemes map[string]json.RawMessage `json:"auth_schemes"`
+	}
+	if err := json.Unmarshal([]byte(readRepoFile(t, "web/src/graph/nodeSchema.json")), &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(catalog["auth"].AuthSchemes); got != authenticated {
+		t.Fatalf("builder catalog has %d authentication formats, registry has %d", got, authenticated)
+	}
+	// The features page renders the generated count, so it stays current.
+	featuresSrc := readRepoFile(t, featuresCopyPath)
+	if !strings.Contains(featuresSrc, "Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length") {
+		t.Fatalf("%s no longer derives its authentication count from the catalog", featuresCopyPath)
 	}
 }
 

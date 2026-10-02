@@ -42,18 +42,20 @@ type ConnectionRef struct {
 // decoded directly because durations are strings on disk and defaults are
 // applied during conversion.
 type rawServerConfig = struct {
-	Addr                string `yaml:"addr"`
-	ReadTimeout         string `yaml:"read_timeout"`
-	WriteTimeout        string `yaml:"write_timeout"`
-	IdleTimeout         string `yaml:"idle_timeout"`
-	ShutdownTimeout     string `yaml:"shutdown_timeout"`
-	PublishTimeout      string `yaml:"publish_timeout"`
-	MaxBodyBytes        int64  `yaml:"max_body_bytes"`
-	MaxInflightRequests int    `yaml:"max_inflight_requests"`
-	FanoutConcurrency   int    `yaml:"fanout_concurrency"`
-	ReadinessInterval   string `yaml:"readiness_interval"`
-	ReadinessTimeout    string `yaml:"readiness_timeout"`
-	ReadinessRequireAll bool   `yaml:"readiness_require_all"`
+	Addr                 string `yaml:"addr"`
+	ReadTimeout          string `yaml:"read_timeout"`
+	WriteTimeout         string `yaml:"write_timeout"`
+	IdleTimeout          string `yaml:"idle_timeout"`
+	ShutdownTimeout      string `yaml:"shutdown_timeout"`
+	PublishTimeout       string `yaml:"publish_timeout"`
+	MaxBodyBytes         int64  `yaml:"max_body_bytes"`
+	MaxInflightRequests  int    `yaml:"max_inflight_requests"`
+	MaxPendingRequests   int    `yaml:"max_pending_requests"`
+	AdmissionWaitTimeout string `yaml:"admission_wait_timeout"`
+	FanoutConcurrency    int    `yaml:"fanout_concurrency"`
+	ReadinessInterval    string `yaml:"readiness_interval"`
+	ReadinessTimeout     string `yaml:"readiness_timeout"`
+	ReadinessRequireAll  bool   `yaml:"readiness_require_all"`
 }
 
 type rawSharedConfig struct {
@@ -296,6 +298,11 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 	issues = appendNonEmptyIssue(issues, issue)
 	publish, issue := parsePositiveDefaultDuration("server.publish_timeout", raw.Server.PublishTimeout, 10*time.Second)
 	issues = appendNonEmptyIssue(issues, issue)
+	admissionWait := time.Duration(0)
+	if raw.Server.AdmissionWaitTimeout != "" {
+		admissionWait, issue = parsePositiveDefaultDuration("server.admission_wait_timeout", raw.Server.AdmissionWaitTimeout, 0)
+		issues = appendNonEmptyIssue(issues, issue)
+	}
 	readinessInterval, issue := parsePositiveDefaultDuration("server.readiness_interval", raw.Server.ReadinessInterval, 10*time.Second)
 	issues = appendNonEmptyIssue(issues, issue)
 	readinessTimeout, issue := parsePositiveDefaultDuration("server.readiness_timeout", raw.Server.ReadinessTimeout, 5*time.Second)
@@ -311,8 +318,9 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 			IdleTimeout: idle, ShutdownTimeout: shutdown, PublishTimeout: publish,
 			MaxBodyBytes:        raw.Server.MaxBodyBytes,
 			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests),
-			FanoutConcurrency:   raw.Server.FanoutConcurrency,
-			ReadinessInterval:   readinessInterval, ReadinessTimeout: readinessTimeout,
+			MaxPendingRequests:  raw.Server.MaxPendingRequests, AdmissionWaitTimeout: admissionWait,
+			FanoutConcurrency: raw.Server.FanoutConcurrency,
+			ReadinessInterval: readinessInterval, ReadinessTimeout: readinessTimeout,
 			ReadinessRequireAll: raw.Server.ReadinessRequireAll,
 		},
 		Security:     raw.Security,

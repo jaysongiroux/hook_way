@@ -87,7 +87,11 @@ func TestRouteFiltersUseTopologyMetrics(t *testing.T) {
 
 func TestRequestLevelPanelsDoNotUseRouteFilters(t *testing.T) {
 	d := loadDashboard(t)
-	want := map[string]bool{"HTTP Requests": false, "Request Duration": false}
+	want := map[string]bool{
+		"HTTP Requests": false, "Request Duration": false,
+		"Pre-publish Rejections": false, "Filtered Deliveries": false,
+		"Flow Outcomes": false, "Admission Wait Outcomes": false,
+	}
 	for _, panel := range d.Panels {
 		if _, ok := want[panel.Title]; !ok {
 			continue
@@ -103,6 +107,55 @@ func TestRequestLevelPanelsDoNotUseRouteFilters(t *testing.T) {
 		if !found {
 			t.Errorf("missing panel %q", title)
 		}
+	}
+}
+
+func TestIngressAdmissionAndAdapterPanels(t *testing.T) {
+	d := loadDashboard(t)
+	want := map[string]string{ // #nosec G101 -- Public metric names and dashboard titles, not credential values.
+		"Admitted Requests":                 "hookway_admitted_requests",
+		"Admission Utilization":             "hookway_admission_capacity",
+		"Admission Waiting":                 "hookway_admission_waiting_requests",
+		"Admission Wait Outcomes":           "hookway_admission_wait_total",
+		"Admission Wait Duration":           "hookway_admission_wait_duration_seconds_bucket",
+		"Admission Modes":                   "hookway_admission_servers",
+		"Flow Outcomes":                     "hookway_flow_outcomes_total",
+		"Routing and Registration Outcomes": "hookway_routing_total",
+		"Credential Operations":             "hookway_credentials_total",
+		"Batch Child Outcomes":              "hookway_batch_children_total",
+	}
+	for _, panel := range d.Panels {
+		metric, ok := want[panel.Title]
+		if !ok {
+			continue
+		}
+		var joined string
+		for _, target := range panel.Targets {
+			joined += target.Expr
+			if strings.Contains(target.Expr, "destination_queue_id=") || strings.Contains(target.Expr, "queue=") {
+				t.Errorf("ingress panel %q applies unsupported route filters: %s", panel.Title, target.Expr)
+			}
+			switch panel.Title {
+			case "Routing and Registration Outcomes", "Credential Operations", "Batch Child Outcomes":
+				if strings.Contains(target.Expr, "flow=") || strings.Contains(target.Expr, "endpoint=") {
+					t.Errorf("panel %q filters a metric with no flow label: %s", panel.Title, target.Expr)
+				}
+			}
+		}
+		if !strings.Contains(joined, metric) {
+			t.Errorf("panel %q must query %s", panel.Title, metric)
+		}
+		if panel.Title == "Admission Utilization" &&
+			(!strings.Contains(joined, `mode="bounded"`) || !strings.Contains(joined, "> 0")) {
+			t.Error("utilization must exclude unlimited mode and zero capacity")
+		}
+		if panel.Title == "Flow Outcomes" && strings.Contains(joined, "hookway_http_requests_total") {
+			t.Error("execution outcomes must be independent of HTTP success")
+		}
+		delete(want, panel.Title)
+	}
+	for title := range want {
+		t.Errorf("missing panel %q", title)
 	}
 }
 

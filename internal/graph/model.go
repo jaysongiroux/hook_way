@@ -12,8 +12,9 @@ import (
 
 // FlowConfig is one entry under the top-level flows mapping.
 type FlowConfig struct {
-	Nodes []NodeConfig `yaml:"nodes"`
-	Edges []string     `yaml:"edges"`
+	Responses map[string]ResponsePolicy `yaml:"responses,omitempty"`
+	Nodes     []NodeConfig              `yaml:"nodes"`
+	Edges     []string                  `yaml:"edges"`
 	// DeliveryFailurePolicy is stop_on_failure (default) or skip_failed.
 	// It applies when a node fans out to destination (Detached) successors.
 	DeliveryFailurePolicy string `yaml:"delivery_failure_policy,omitempty"`

@@ -1,7 +1,16 @@
 import { useState } from "react";
-import { Button, Divider, Group, Select, Stack, Text, TextInput } from "@mantine/core";
+import {
+  Button,
+  Divider,
+  Group,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import { CONN_TYPES, connSchema } from "./nodeSchema";
 import { destFieldHelp } from "./help";
+import { clearDraftBranch } from "./formDrafts";
 import { SchemaForm } from "./SchemaForm";
 import { destinationPresentation } from "../marketing/destinationIdentity";
 import { DARK } from "../tokens";
@@ -20,7 +29,14 @@ export interface ConnectionEditorProps {
  * One connection, full width. The caller keys this on the connection name so
  * the name draft below resets by remount when the selection moves.
  */
-export function ConnectionEditor({ name, entry, taken, onRename, onChange, onRemove }: ConnectionEditorProps) {
+export function ConnectionEditor({
+  name,
+  entry,
+  taken,
+  onRename,
+  onChange,
+  onRemove,
+}: ConnectionEditorProps) {
   const type = String(entry.type ?? CONN_TYPES[0]);
   const schema = connSchema(type) ?? connSchema(CONN_TYPES[0]);
   const { label, icon: Icon } = destinationPresentation(type);
@@ -31,6 +47,7 @@ export function ConnectionEditor({ name, entry, taken, onRename, onChange, onRem
   const { type: _omitted, ...fields } = entry;
 
   const changeType = (next: string) => {
+    clearDraftBranch(`connection/${name}`);
     // Nothing carries over between connection types: field names overlap (url,
     // tls) but their meaning and legal values do not, and a stale key exports
     // as config the validator rejects for the new type.
@@ -67,9 +84,12 @@ export function ConnectionEditor({ name, entry, taken, onRename, onChange, onRem
         />
       </Group>
       <SchemaForm
+        scope={`connection/${name}`}
         schema={schema}
         value={fields}
-        onChange={(next) => onChange({ type, ...(next as Record<string, unknown>) })}
+        onChange={(next) =>
+          onChange({ type, ...(next as Record<string, unknown>) })
+        }
         fieldHelp={destFieldHelp}
         groupObjects
       />
@@ -80,7 +100,15 @@ export function ConnectionEditor({ name, entry, taken, onRename, onChange, onRem
 // Renaming commits on blur rather than per keystroke: connections are held in
 // a plain object keyed by name, so an eager rename deletes and re-adds the key
 // on every character, walking the row down the rail while you type in it.
-function NameField({ name, taken, onRename }: { name: string; taken: string[]; onRename: (next: string) => void }) {
+function NameField({
+  name,
+  taken,
+  onRename,
+}: {
+  name: string;
+  taken: string[];
+  onRename: (next: string) => void;
+}) {
   const [draft, setDraft] = useState(name);
   const [error, setError] = useState("");
 
@@ -88,7 +116,8 @@ function NameField({ name, taken, onRename }: { name: string; taken: string[]; o
   // Stricter than a destination id, which also allows dots. Issue field paths
   // are resolved segment by segment, so a dot in a connection name makes them
   // ambiguous; internal/config rejects it too.
-  const malformed = (value: string) => value !== "" && !/^[a-zA-Z0-9_-]{1,128}$/.test(value);
+  const malformed = (value: string) =>
+    value !== "" && !/^[a-zA-Z0-9_-]{1,128}$/.test(value);
 
   return (
     <TextInput
@@ -100,7 +129,8 @@ function NameField({ name, taken, onRename }: { name: string; taken: string[]; o
         const next = e.currentTarget.value;
         setDraft(next);
         if (collides(next.trim())) setError("That connection already exists.");
-        else if (malformed(next.trim())) setError("Use letters, numbers, underscore, or hyphen only.");
+        else if (malformed(next.trim()))
+          setError("Use letters, numbers, underscore, or hyphen only.");
         else setError("");
       }}
       onBlur={() => {

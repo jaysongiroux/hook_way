@@ -80,7 +80,7 @@ function Inspector({ x }: { x: number }) {
     <g>
       <line x1={x - 20} y1={0} x2={x - 20} y2={LAYOUT.height} stroke={DARK.border} strokeWidth={1} />
       <text x={x} y={22} fontSize={10} fill={DARK.muted} letterSpacing={1}>
-        HTTP_TRIGGER
+        HTTP endpoint
       </text>
       {rows.map((r, i) => {
         const top = 46 + i * 52;

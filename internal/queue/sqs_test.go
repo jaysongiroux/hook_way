@@ -20,6 +20,7 @@ type fakeSQS struct {
 	urls     map[string]string
 	attrs    map[string]map[string]string // url -> attributes
 	setCalls []*sqs.SetQueueAttributesInput
+	lookups  []*sqs.GetQueueUrlInput
 	// attrErrors is kept for Ready probe tests
 	attrErrors map[string]error // url -> error returned by GetQueueAttributes
 }
@@ -34,6 +35,7 @@ func newFakeSQS() *fakeSQS {
 }
 
 func (f *fakeSQS) GetQueueUrl(ctx context.Context, in *sqs.GetQueueUrlInput, _ ...func(*sqs.Options)) (*sqs.GetQueueUrlOutput, error) {
+	f.lookups = append(f.lookups, in)
 	url, ok := f.urls[aws.ToString(in.QueueName)]
 	if !ok {
 		return nil, &sqstypes.QueueDoesNotExist{}

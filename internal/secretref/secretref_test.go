@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -322,4 +323,64 @@ func (f *fakeSecretsAPI) GetSecretValue(_ context.Context, in *secretsmanager.Ge
 	}
 	s := string(v)
 	return &secretsmanager.GetSecretValueOutput{SecretString: &s}, nil
+}
+
+func TestBundleSelectionValidatedRefreshKeepsLastGoodAndOverlap(t *testing.T) {
+	fetch := &fakeFetcher{v: []byte(`{"signing_key":"first","unrelated":"ignored"}`)}
+	clk := &clock{t: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	failures := 0
+	ref := Ref{Provider: "env", Name: "SAMPLE", JSONField: "signing_key", Refresh: time.Hour, Overlap: time.Minute, Validate: func(value []byte) error {
+		if string(value) == "bad" {
+			return errors.New("sensitive value must not be logged")
+		}
+		return nil
+	}}
+	c, err := newCached(context.Background(), ref, fetch, slog.New(slog.DiscardHandler), func() { failures++ }, clk.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	for _, value := range []string{`{"signing_key":"bad"}`, `{"other":"missing"}`, `{"signing_key":42}`, `not JSON`} {
+		fetch.set([]byte(value), nil)
+		c.refreshOnce(context.Background())
+		keys, _ := c.Secrets(context.Background())
+		if len(keys) != 1 || string(keys[0]) != "first" {
+			t.Fatalf("bad refresh replaced valid key: %q", keys)
+		}
+	}
+	if failures != 4 {
+		t.Fatalf("refresh failures=%d", failures)
+	}
+	fetch.set([]byte(`{"signing_key":"second"}`), nil)
+	c.refreshOnce(context.Background())
+	keys, _ := c.Secrets(context.Background())
+	if len(keys) != 2 || string(keys[0]) != "second" || string(keys[1]) != "first" {
+		t.Fatalf("overlap=%q", keys)
+	}
+	clk.advance(time.Minute)
+	keys, _ = c.Secrets(context.Background())
+	if len(keys) != 1 {
+		t.Fatal("expired old key retained")
+	}
+	fetch.set([]byte(`{"signing_key":"bad"}`), nil)
+	if _, err := newCached(context.Background(), ref, fetch, slog.New(slog.DiscardHandler), nil, clk.Now); err == nil || strings.Contains(err.Error(), "sensitive") {
+		t.Fatalf("initial invalid key not safely rejected: %v", err)
+	}
+}
+
+func TestExactAWSSelectionSkipsListing(t *testing.T) {
+	fake := &fakeSecretsAPI{values: map[string][]byte{"configured": []byte("exact-value")}}
+	f := awsFetcher{client: fake, name: "configured", exact: true}
+	v, e := f.Fetch(context.Background())
+	if e != nil || string(v) != "exact-value" || fake.listCalls != 0 {
+		t.Fatal(string(v), e, fake.listCalls)
+	}
+}
+
+func TestExplicitNewestMatchingDoesNotSilentlyFallBack(t *testing.T) {
+	fake := &fakeSecretsAPI{values: map[string][]byte{"configured": []byte("wrong-fallback")}}
+	f := awsFetcher{client: fake, name: "configured", strictMatching: true}
+	if _, err := f.Fetch(context.Background()); err == nil {
+		t.Fatal("explicit matching silently selected an exact fallback")
+	}
 }

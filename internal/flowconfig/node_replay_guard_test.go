@@ -12,7 +12,7 @@ import (
 
 func mustReplayGuard(t *testing.T, body string) *replayGuardNode {
 	t.Helper()
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

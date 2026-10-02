@@ -6,9 +6,19 @@ import type { GraphDocument } from "./model";
 
 const DEBOUNCE_MS = 400;
 const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
-  "nodes", "edges", "serverConfig", "coreReplayConfig", "replayServiceConfig",
-  "configExtra", "connections", "destinations", "activeFlow", "otherFlows",
-  "deliveryFailurePolicy", "flowExtra",
+  "formDrafts",
+  "nodes",
+  "edges",
+  "serverConfig",
+  "coreReplayConfig",
+  "replayServiceConfig",
+  "configExtra",
+  "connections",
+  "destinations",
+  "activeFlow",
+  "otherFlows",
+  "deliveryFailurePolicy",
+  "flowExtra",
 ];
 
 export function usePersistence(): void {
@@ -23,12 +33,17 @@ export function usePersistence(): void {
 
     const scheduleSave = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void saveGraph(useGraphStore.getState().document()), DEBOUNCE_MS);
+      timer = setTimeout(
+        () => void saveGraph(useGraphStore.getState().document()),
+        DEBOUNCE_MS,
+      );
     };
 
     const unsub = useGraphStore.subscribe((state) => {
       const document = state.document();
-      const changed = DOCUMENT_FIELDS.some((field) => document[field] !== previousDocument[field]);
+      const changed = DOCUMENT_FIELDS.some(
+        (field) => document[field] !== previousDocument[field],
+      );
       previousDocument = document;
       if (!changed) return;
       if (!hydrated) changedDuringLoad = true;

@@ -1,5 +1,5 @@
 import { expect, test, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { InspectorModal } from "./InspectorModal";
@@ -31,7 +31,13 @@ test("keeps the accessible name 'Inspector' while showing the selected node", ()
 
   const dialog = screen.getByRole("dialog", { name: "Inspector" });
   expect(dialog).toBeInTheDocument();
-  expect(screen.getByLabelText("Id")).toHaveValue("http_trigger_1");
+  expect(
+    within(dialog).getByRole("button", { name: "Identity and description" }),
+  ).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(
+    within(dialog).getByRole("button", { name: "Identity and description" }),
+  );
+  expect(screen.getByLabelText("Node ID")).toHaveValue("http_trigger_1");
 });
 
 test("reports a close when the close button is pressed", () => {
@@ -43,13 +49,31 @@ test("reports a close when the close button is pressed", () => {
   expect(onClose).toHaveBeenCalled();
 });
 
+test("caps the scrollport so a form taller than the dialog can be reached", () => {
+  wrap(true);
+  const viewport = document.querySelector(
+    ".mantine-ScrollArea-viewport",
+  ) as HTMLElement;
+  expect(
+    viewport,
+    "the inspector modal should own a scroll viewport",
+  ).not.toBeNull();
+  // max-height on the root clips; it has to land on the viewport to scroll.
+  expect(viewport.style.maxHeight).toBe("70vh");
+});
+
 test("scrolls back to the top when the selection changes", () => {
   const a = createNode("http_trigger", { x: 0, y: 0 });
   const b = createNode("publish", { x: 200, y: 0 });
   useGraphStore.setState({ nodes: [a, b], edges: [], selectedId: a.id });
   const { container } = wrap(true);
-  const viewport = container.ownerDocument.querySelector(".mantine-ScrollArea-viewport") as HTMLElement;
-  expect(viewport, "the inspector modal should own a scroll viewport").not.toBeNull();
+  const viewport = container.ownerDocument.querySelector(
+    ".mantine-ScrollArea-viewport",
+  ) as HTMLElement;
+  expect(
+    viewport,
+    "the inspector modal should own a scroll viewport",
+  ).not.toBeNull();
   viewport.scrollTop = 180;
 
   act(() => useGraphStore.getState().setSelected(b.id));

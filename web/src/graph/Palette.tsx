@@ -1,4 +1,4 @@
-import { Box, Group, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Box, Button, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { NODE_SCHEMAS, NODE_TYPES, nodeLabel } from "./nodeSchema";
 import { nodeHelp, PALETTE_GROUP_HELP } from "./help";
 import { PALETTE_ITEM_CLASS } from "./builderStyles";
@@ -17,12 +17,37 @@ const TABS: { value: PaletteTab; label: string }[] = [
 ];
 
 const GROUPS: { title: string; types: string[] }[] = [
-  { title: "Trigger", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "None") },
-  { title: "Request head", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "RequestHead") },
-  { title: "Raw body", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "RawRequest") },
-  { title: "Verified", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "Verified") },
-  { title: "Envelope", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "Envelope" && !NODE_SCHEMAS[t].detached && NODE_SCHEMAS[t].output !== "Terminal") },
-  { title: "Terminal", types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].output === "Terminal" || NODE_SCHEMAS[t].detached) },
+  {
+    title: "Receive requests",
+    types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "None"),
+  },
+  {
+    title: "Check requests",
+    types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "RequestHead"),
+  },
+  {
+    title: "Verify the sender",
+    types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "RawRequest"),
+  },
+  {
+    title: "Prepare the event",
+    types: NODE_TYPES.filter((t) => NODE_SCHEMAS[t].input === "Verified"),
+  },
+  {
+    title: "Process the event",
+    types: NODE_TYPES.filter(
+      (t) =>
+        NODE_SCHEMAS[t].input === "Envelope" &&
+        !NODE_SCHEMAS[t].detached &&
+        NODE_SCHEMAS[t].output !== "Terminal",
+    ),
+  },
+  {
+    title: "Deliver and respond",
+    types: NODE_TYPES.filter(
+      (t) => NODE_SCHEMAS[t].output === "Terminal" || NODE_SCHEMAS[t].detached,
+    ),
+  },
 ];
 
 /**
@@ -31,7 +56,13 @@ const GROUPS: { title: string; types: string[] }[] = [
  * which is why it is a separate export from Palette instead of part of it, and
  * why the active tab is controlled by the panel rather than held here.
  */
-export function PaletteTabs({ value, onChange }: { value: PaletteTab; onChange: (tab: PaletteTab) => void }) {
+export function PaletteTabs({
+  value,
+  onChange,
+}: {
+  value: PaletteTab;
+  onChange: (tab: PaletteTab) => void;
+}) {
   return (
     <Group role="tablist" aria-label="Palette sections" gap={4} wrap="nowrap">
       {TABS.map((tab) => {
@@ -54,7 +85,13 @@ export function PaletteTabs({ value, onChange }: { value: PaletteTab; onChange: 
               border: `1px solid ${active ? DARK.border : "transparent"}`,
             }}
           >
-            <Text fw={600} size="xs" tt="uppercase" c={active ? DARK.text : DARK.muted} style={{ letterSpacing: "0.08em" }}>
+            <Text
+              fw={600}
+              size="xs"
+              tt="uppercase"
+              c={active ? DARK.text : DARK.muted}
+              style={{ letterSpacing: "0.08em" }}
+            >
               {tab.label}
             </Text>
           </UnstyledButton>
@@ -64,17 +101,44 @@ export function PaletteTabs({ value, onChange }: { value: PaletteTab; onChange: 
   );
 }
 
-function PaletteItem({ label, help, onDragStart }: { label: string; help: string; onDragStart: (e: React.DragEvent) => void }) {
+function PaletteItem({
+  label,
+  help,
+  onDragStart,
+  onAdd,
+}: {
+  label: string;
+  help: string;
+  onDragStart: (e: React.DragEvent) => void;
+  onAdd?: () => void;
+}) {
   return (
-    <Box className={PALETTE_ITEM_CLASS} draggable onDragStart={onDragStart}>
-      <Box px={10} py={8}>
-        <Text size="sm" fw={600} c={DARK.text}>
+    <Box
+      className={PALETTE_ITEM_CLASS}
+      p={10}
+      draggable
+      onDragStart={onDragStart}
+    >
+      <Group align="flex-start" justify="space-between" wrap="nowrap" gap="sm">
+        <Text size="sm" fw={600} c={DARK.text} style={{ minWidth: 0, flex: 1 }}>
           {label}
         </Text>
-        <Text size="xs" c={DARK.muted} lh={1.4}>
-          {help}
-        </Text>
-      </Box>
+        {onAdd && (
+          <Button
+            size="compact-xs"
+            variant="subtle"
+            color="brand"
+            aria-label={`Add ${label}`}
+            style={{ flexShrink: 0, minWidth: 40 }}
+            onClick={onAdd}
+          >
+            Add
+          </Button>
+        )}
+      </Group>
+      <Text size="xs" c={DARK.muted} lh={1.4} mt={4}>
+        {help}
+      </Text>
     </Box>
   );
 }
@@ -83,7 +147,15 @@ function PaletteItem({ label, help, onDragStart }: { label: string; help: string
  * The palette body. Only the active tab's entries are rendered: a hidden tab
  * must not leave draggable elements in the DOM for a stray drag to pick up.
  */
-export function Palette({ tab }: { tab: PaletteTab }) {
+export function Palette({
+  tab,
+  onAddNode,
+  onAddTemplate,
+}: {
+  tab: PaletteTab;
+  onAddNode?: (type: string) => void;
+  onAddTemplate?: (id: string) => void;
+}) {
   if (tab === "templates") {
     return (
       <Stack gap={8}>
@@ -95,6 +167,7 @@ export function Palette({ tab }: { tab: PaletteTab }) {
             key={def.id}
             label={def.label}
             help={def.help}
+            onAdd={onAddTemplate ? () => onAddTemplate(def.id) : undefined}
             onDragStart={(e) => {
               e.dataTransfer.setData(DND_TEMPLATE_MIME, def.id);
               e.dataTransfer.effectAllowed = "move";
@@ -110,7 +183,13 @@ export function Palette({ tab }: { tab: PaletteTab }) {
         group.types.length === 0 ? null : (
           <Stack key={group.title} gap={8}>
             <div>
-              <Text fw={600} size="xs" tt="uppercase" c={DARK.muted} style={{ letterSpacing: "0.08em" }}>
+              <Text
+                fw={600}
+                size="xs"
+                tt="uppercase"
+                c={DARK.muted}
+                style={{ letterSpacing: "0.08em" }}
+              >
                 {group.title}
               </Text>
               {PALETTE_GROUP_HELP[group.title] && (
@@ -124,6 +203,7 @@ export function Palette({ tab }: { tab: PaletteTab }) {
                 key={type}
                 label={nodeLabel(type)}
                 help={nodeHelp(type)}
+                onAdd={onAddNode ? () => onAddNode(type) : undefined}
                 onDragStart={(e) => {
                   e.dataTransfer.setData(DND_MIME, type);
                   e.dataTransfer.effectAllowed = "move";

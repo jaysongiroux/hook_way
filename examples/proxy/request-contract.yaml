@@ -1,0 +1,31 @@
+# Binary-safe fixed proxy: XML, PDF, DOCX, multipart and base64 JSON stay byte-exact.
+# Set UPSTREAM_BASE to an operator-controlled origin with no trailing slash.
+# The 20 MiB wire budget accommodates a 12,000,000-byte document plus encoding overhead.
+# No file decoding, document validation or credentials management happens here.
+server:
+  addr: ":8080"
+  max_body_bytes: 20971520
+  max_inflight_requests: 16
+flows:
+  file_proxy:
+    nodes:
+      - {id: in, type: http_trigger, description: "Accepts ordinary HTTP methods under a fixed proxy prefix.", path: "/proxy/files/{rest...}", methods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]}
+      - {id: rate, type: rate_limit, rpm: 1200, burst: 20}
+      - {id: body, type: read_body, description: "Allows empty requests and bounds the original wire bytes.", max_bytes: 20971520, allow_empty: true}
+      - {id: auth, type: auth, scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, description: "Keeps files outside JSON parsing and the script runtime.", body_format: raw}
+      - id: up
+        type: http_request
+        description: "Forwards raw files, repeated query values and approved headers; only network failures on GET/HEAD are retried."
+        url: "${UPSTREAM_BASE}/{rest}"
+        forward_method: true
+        forward_query: true
+        query_mode: all
+        body_methods: [POST, PUT, PATCH, DELETE]
+        remove_headers: [X-Auth]
+        forward_headers: [Content-Type, Content-Encoding, Accept, Accept-Encoding, Range, If-None-Match, If-Modified-Since, X-Request-ID]
+        max_response_bytes: 20971520
+        timeout: 10s
+        retry: {max_attempts: 3, on: network, methods: [GET, HEAD], total_timeout: 20s, initial_backoff: 100ms, max_backoff: 1s}
+      - {id: reply, type: respond, description: "Relays upstream status and representation; cookies require a separate explicit opt-in.", passthrough: true}
+    edges: [in>rate, rate>body, body>auth, auth>env, env>up, up>reply]

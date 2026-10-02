@@ -324,7 +324,11 @@ func TestDeliverChecksTheSnapshotBeforeRedriving(t *testing.T) {
 		status   int
 		code     string
 	}{
-		"newer version": {func() replaywire.DeliverRequest { r := validRequest(snap); r.SnapshotVersion = 2; return r }(), snap, 422, replaywire.BlockUnsupportedSnapshotVersion},
+		"newer version": {func() replaywire.DeliverRequest {
+			r := validRequest(snap)
+			r.SnapshotVersion = deliverysnapshot.Version + 1
+			return r
+		}(), snap, 422, replaywire.BlockUnsupportedSnapshotVersion},
 		"digest mismatch": {func() replaywire.DeliverRequest {
 			r := validRequest(snap)
 			r.SnapshotSHA256 = digest([]byte("other"))

@@ -11,7 +11,7 @@ import (
 )
 
 func TestIfElseRoutesOnCombinator(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestIfElseRoutesOnCombinator(t *testing.T) {
 }
 
 func TestIfElseDeclaresBothPorts(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestIfElseDeclaresBothPorts(t *testing.T) {
 }
 
 func TestIfElseRejectsNonEnvelope(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestIfElseRejectsNonEnvelope(t *testing.T) {
 }
 
 func TestIfElseOptionValidation(t *testing.T) {
-	reg, err := NewRegistry()
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

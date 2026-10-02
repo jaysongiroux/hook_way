@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 // zeroFields lists every exported field reachable from v that holds its zero
@@ -28,6 +30,11 @@ func zeroFields(v reflect.Value, path string, out *[]string) {
 		}
 		for i := range v.NumField() {
 			f := v.Type().Field(i)
+			// Only this field is transient serialization metadata; its omission
+			// is checked explicitly by TestSnapshotDropsRequestLocalRepresentation.
+			if v.Type() == reflect.TypeOf(graph.Verified{}) && f.Name == "OriginalJSON" {
+				continue
+			}
 			if f.IsExported() {
 				zeroFields(v.Field(i), path+"."+f.Name, out)
 			}
