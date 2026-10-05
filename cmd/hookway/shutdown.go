@@ -56,12 +56,12 @@ func (r servingResources) drain(ctx context.Context) error {
 			continue
 		}
 		wg.Add(1)
-		go func() {
+		go func(i int, srv shutdowner) {
 			defer wg.Done()
 			if err := srv.Shutdown(listenerCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				shutdownErrs[i] = err
 			}
-		}()
+		}(i, srv)
 	}
 	listenersDone := make(chan struct{})
 	go func() { wg.Wait(); close(listenersDone) }()

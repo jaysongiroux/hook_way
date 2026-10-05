@@ -97,6 +97,28 @@ func TestDrainShutsDownEveryListenerIncludingMain(t *testing.T) {
 	}
 }
 
+type errShutdown struct{ err error }
+
+func (s errShutdown) Shutdown(context.Context) error { return s.err }
+
+func TestDrainReportsEveryListenerShutdownError(t *testing.T) {
+	// Distinct errors per index: if the shutdown goroutine captured the loop
+	// index by reference, both would land on the final slot and one message
+	// would be lost from the joined result.
+	res := servingResources{servers: []shutdowner{
+		errShutdown{errors.New("main drain failed")},
+		errShutdown{errors.New("aux drain failed")},
+	}}
+	err := res.drain(context.Background())
+	if err == nil {
+		t.Fatal("drain = nil, want joined listener errors")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "main drain failed") || !strings.Contains(msg, "aux drain failed") {
+		t.Fatalf("joined errors = %v, want both listener failures", err)
+	}
+}
+
 func mustListen(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
