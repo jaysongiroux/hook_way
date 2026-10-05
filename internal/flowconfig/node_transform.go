@@ -22,12 +22,16 @@ type transformNode struct {
 	validator *transform.Validator
 }
 
-func newTransformNode(id string, opts TransformOptions, logger *slog.Logger) graph.Node {
+func newTransformNode(id string, opts TransformOptions, logger *slog.Logger) (graph.Node, error) {
 	n := transformNode{id: id, opts: opts, logger: logger}
 	if opts.Kind == "json_schema" {
-		n.validator, _ = transform.NewValidator(opts.JSONSchema, opts.Coercions)
+		var err error
+		n.validator, err = transform.NewValidator(opts.JSONSchema, opts.Coercions)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return n
+	return n, nil
 }
 
 func (n transformNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
@@ -55,7 +59,7 @@ func (n transformNode) Run(ctx context.Context, in graph.Payload) (graph.Payload
 			if n.validator == nil {
 				return nil, graph.NodeError{NodeID: n.id, Status: 500, Err: errors.New("schema is not compiled")}
 			}
-			body, err = n.validator.Validate(env.Body)
+			body, err = validateJSONEnvelope(n.validator, env)
 		} else {
 			body, err = transform.StripFields(env.Body, n.opts.Fields)
 		}

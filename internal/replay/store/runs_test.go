@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -247,5 +248,24 @@ func TestStatsCountsStatusesAndUsage(t *testing.T) {
 	if st.RecordsByStatus[StatusOpen] != 1 || st.RecordsByStatus[StatusRetrying] != 1 || st.UsageRecords != 2 ||
 		st.UsageBytes != int64(len(a.Snapshot)+len(a.Payload)+len(b.Snapshot)+len(b.Payload)) || st.SchemaVersion != LatestSchemaVersion() {
 		t.Fatalf("stats = %+v", st)
+	}
+}
+
+func TestNewRetryRejectsExpiredRecordButRepeatsAcceptedRequest(t *testing.T) {
+	s := newTestStore(t, defaultLimits())
+	f := testFailure(t, nil)
+	mustIngest(t, s, f)
+	first, err := retry(s, f.Metadata.ID, "before-expiry", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.now = func() time.Time { return testNow.Add(defaultLimits().TTL) }
+	repeated, err := retry(s, f.Metadata.ID, "before-expiry", false)
+	if err != nil || repeated.RunID != first.RunID {
+		t.Fatalf("repeat: %+v %v", repeated, err)
+	}
+	_, err = retry(s, f.Metadata.ID, "new-after-expiry", false)
+	if !errors.Is(err, ErrExpired) {
+		t.Fatalf("new retry: %v", err)
 	}
 }

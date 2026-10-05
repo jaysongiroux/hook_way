@@ -1,14 +1,5 @@
-// Copy for the production bento. Each tile headlines one verifiable number and
-// one line; the long form stays in docs/ so there is a single source of truth.
-//
-// Nothing here is aspirational. Items listed as gaps in
-// docs/production-readiness.md are deliberately absent: no readiness withdrawal, no
-// durable ingest spool, no automatic re-drive, no config hot reload, no scoped
-// core admin tokens, or OpenTelemetry export. throughput measurements
-// carry their workload and synthetic-destination qualification separately.
-//
-// Write for the reader, not the code: "the sender already got its 2xx" says
-// what "an acknowledged failure" means to someone who runs webhooks.
+// Operational defaults; Go tests check the quoted counts against their sources.
+// Performance measurements describe a dated workload, not a capacity guarantee.
 
 export interface ProductionCard {
   id: string;
@@ -22,7 +13,7 @@ export interface ProductionCard {
 }
 
 export const PERFORMANCE_SUMMARY =
-  "Measured: 5,000 requests/s in three 20-second bursts on two replicas, each with 2 vCPU and 4 GiB, against a synthetic destination.";
+  "Measured: 5,000 requests/s in three 20-second bursts on two replicas, each with 2 vCPU and 4 GiB, against a synthetic destination (2026-10-01 ingress benchmark; shared protection and replay require separate sizing).";
 
 export const PRODUCTION_CARDS: ProductionCard[] = [
   {
@@ -42,29 +33,29 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "metrics",
     title: "Exports Prometheus metrics",
-    value: "55",
-    valueLabel: "Prometheus metrics exported",
-    line: "Enable Prometheus metrics to track requests, failures, and delivery latency. The repository includes a Grafana dashboard.",
+    value: "63",
+    valueLabel: "core Prometheus metrics exported",
+    line: "Enable Prometheus metrics to track requests, failures, and delivery latency. Grafana dashboards are included.",
   },
   {
     id: "controls",
     title: "Set access rules for each flow",
-    value: "13",
+    value: "14",
     valueLabel: "authentication formats",
-    line: "Reject invalid credentials, limit request rates, and block duplicate requests. Rate limits and duplicate caches are local to each replica.",
+    line: "Reject invalid senders and duplicates. Use memory for one replica, or Redis/PostgreSQL for shared protection.",
   },
   {
     id: "packaging",
-    title: "Ships as one binary",
+    title: "Core runs as one binary",
     value: "1",
     valueLabel: "static binary, non-root",
-    line: "A scratch image; outbound TLS is 1.2 or newer. Nothing else to run unless you add replay.",
+    line: "A scratch image with outbound TLS 1.2 or newer. Add Redis or PostgreSQL for shared protection. No replay service is required unless you add replay.",
   },
   {
     id: "replay",
     title: "Keeps what a destination missed",
     value: "7",
-    valueLabel: "days a missed delivery is kept",
-    line: "The sender already got its 2xx, so the optional replay service holds the event for you to retry.",
+    valueLabel: "days of replay retention by default",
+    line: "After the sender gets its 2xx, use the optional replay console or API to inspect failures, retry a destination, and investigate uncertain delivery.",
   },
 ];

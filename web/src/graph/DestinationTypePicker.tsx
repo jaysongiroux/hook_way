@@ -1,6 +1,6 @@
 import { Box, SimpleGrid, Stack, Text, UnstyledButton } from "@mantine/core";
 import { DEST_TYPES } from "./nodeSchema";
-import { destinationPresentation } from "../marketing/destinationIdentity";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import { DEST_TILE_CLASS } from "./builderStyles";
 
 /**

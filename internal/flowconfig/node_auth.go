@@ -107,8 +107,9 @@ func (n *authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, er
 	if err == nil && n.opts.BodyRepresentation == "json_js" {
 		request = request.WithCanonicalCache()
 	}
+	var identity auth.VerifiedIdentity
 	if err == nil {
-		err = n.verify(ctx, request)
+		identity, err = n.verifyIdentity(ctx, request)
 	}
 	if err != nil {
 		status, reason := http.StatusUnauthorized, "auth_error"
@@ -117,7 +118,7 @@ func (n *authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, er
 		}
 		return nil, graph.NodeError{NodeID: n.id, Status: status, Reason: reason, Err: err}
 	}
-	return graph.Verified{Raw: raw, Identity: n.opts.Scheme, OriginalJSON: request.PreparedRepresentation()}, nil
+	return graph.Verified{Raw: raw, Identity: n.opts.Scheme, CredentialID: n.opts.CredentialID, Subject: identity.Subject, Tenant: identity.Tenant, Issuer: identity.Issuer, TrustScope: authTrustScope(n.opts), OriginalJSON: request.PreparedRepresentation()}, nil
 }
 
 var errAuthUnavailable = errors.New("authentication key unavailable")
@@ -151,34 +152,37 @@ func (n *authNode) verifiers(values [][]byte) ([]auth.Verifier, error) {
 	n.cached = current // bounded to the active rotation window
 	return out, nil
 }
-func (n *authNode) verify(ctx context.Context, in auth.Input) error {
+func (n *authNode) verifyIdentity(ctx context.Context, in auth.Input) (auth.VerifiedIdentity, error) {
 	verifiers := []auth.Verifier{n.verifier}
 	if n.secrets != nil {
 		values, err := n.secrets(ctx)
 		if err != nil {
-			return errAuthUnavailable
+			return auth.VerifiedIdentity{}, errAuthUnavailable
 		}
 		verifiers, err = n.verifiers(values)
 		if err != nil {
-			return err
+			return auth.VerifiedIdentity{}, err
 		}
 	}
 	now := time.Now()
 	var last error
 	for _, v := range verifiers {
-		if typed, ok := v.(auth.RequestVerifier); ok {
+		identity := auth.VerifiedIdentity{}
+		if typed, ok := v.(auth.IdentityVerifier); ok {
+			identity, last = typed.VerifyIdentity(in.Signature, in.Body, now, n.opts.TenantClaim)
+		} else if typed, ok := v.(auth.RequestVerifier); ok {
 			last = typed.VerifyRequest(ctx, in, now)
 		} else {
 			last = v.Verify(in.Signature, in.Body, now)
 		}
 		if last == nil {
-			return nil
+			return identity, nil
 		}
 		if errors.Is(last, auth.ErrVerificationUnavailable) {
-			return last // Retrying representation work with another key cannot help.
+			return auth.VerifiedIdentity{}, last // Retrying representation work with another key cannot help.
 		}
 	}
-	return last
+	return auth.VerifiedIdentity{}, last
 }
 func (n *authNode) credential(raw graph.RawRequest) (string, error) {
 	var values []string

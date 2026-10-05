@@ -1,9 +1,11 @@
-.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test bench-replay lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check run docker-build vuln-scan release-check dev-up dev-down unit race fmt-check diff-check coverage observability-check golangci-lint govulncheck
+.PHONY: deadcode web-knip test test-all test-race test-examples conformance integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test bench-replay lint validate validate-examples build wasm wasm-harness web-install web-dev web-test web-e2e web-build ui ui-check node-schema node-schema-check api-schema api-schema-check console-build console-ui console-e2e run docker-build vuln-scan release-check dev-up dev-down unit race fmt-check diff-check coverage observability-check golangci-lint govulncheck
 
 GO ?= go
+.PHONY: docs-check
 CONFIG ?= examples/config.yaml
 IMAGE ?= hookway:local
 REPLAY_IMAGE ?= hookway-replay:local
+CONSOLE_IMAGE ?= hookway-console:local
 
 # VERSION/COMMIT are baked into the binary via -ldflags so `hookway version`
 # and the hookway_build_info metric identify the build they came from. Both
@@ -17,6 +19,9 @@ LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway ./cmd/hookway
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/hookway-replay ./cmd/hookway-replay
+
+docs-check:
+	python3 scripts/check-doc-links.py
 
 wasm:
 	mkdir -p internal/editor/assets web/public
@@ -34,22 +39,18 @@ wasm-harness: wasm
 	@echo "Serving harness on http://localhost:8091 (Ctrl-C to stop)"
 	cd cmd/hookway-wasm/harness && python3 -m http.server 8091
 
-# node-schema regenerates JSON catalogs from the Go runtime contracts. Build and
-# parse every temporary output before replacing any catalog, so a failed command
-# never truncates a working catalog. Workspace schemas come from the full schema.
+# Check targets generate into temporary directories and never modify sources.
 node-schema:
-	@set -eu; task_schema_dir=$$(mktemp -d); trap 'rm -rf "$$task_schema_dir"' 0; \
-	$(GO) run ./cmd/hookway schema --nodes > "$$task_schema_dir/nodeSchema.json"; \
-	$(GO) run ./cmd/hookway schema --destinations > "$$task_schema_dir/destinationSchema.json"; \
-	$(GO) run ./cmd/hookway schema --connections > "$$task_schema_dir/connectionSchema.json"; \
-	$(GO) run ./cmd/hookway schema > "$$task_schema_dir/fullSchema.json"; \
-	python3 -c 'import json, pathlib, sys; root = pathlib.Path(sys.argv[1]); catalogs = ["nodeSchema.json", "destinationSchema.json", "connectionSchema.json"]; [json.loads((root / name).read_text()) for name in catalogs]; full = json.loads((root / "fullSchema.json").read_text()); (root / "workspaceSchema.json").write_text(json.dumps({key: full["properties"][key] for key in ["routing", "credentials"]}, indent=2) + "\n")' "$$task_schema_dir"; \
-	for task_catalog in nodeSchema destinationSchema connectionSchema workspaceSchema; do \
-		mv "$$task_schema_dir/$$task_catalog.json" "web/src/graph/$$task_catalog.json"; \
-	done
+	GO=$(GO) python3 scripts/generate-ui-contracts.py nodes
 
-node-schema-check: node-schema
-	@git diff --exit-code -- web/src/graph/nodeSchema.json web/src/graph/destinationSchema.json web/src/graph/connectionSchema.json web/src/graph/workspaceSchema.json
+node-schema-check:
+	GO=$(GO) python3 scripts/generate-ui-contracts.py nodes --check
+
+api-schema:
+	GO=$(GO) python3 scripts/generate-ui-contracts.py api
+
+api-schema-check:
+	GO=$(GO) python3 scripts/generate-ui-contracts.py api --check
 
 web-install:
 	cd web && npm install
@@ -73,6 +74,15 @@ web-e2e: wasm
 
 web-build:
 	cd web && npm run build
+
+console-build:
+	cd web && npm run build:console
+
+console-ui: wasm
+	$(MAKE) console-build
+
+console-e2e: console-ui
+	cd web && npm run test:console
 
 # ui assembles the embed bundle: build the WASM validator (Milestone 1) and the
 # SPA, then stage both into internal/editor/webui/ for go:embed.
@@ -115,10 +125,12 @@ COVERAGE_PROFILE ?= coverage.out
 COVERAGE_FLOOR ?= 80.9
 # internal/replay/store and its container harness are measured by
 # replay-integration-test instead: under -short they have nothing to run.
-COVER_PKGS := $(shell $(GO) list ./... | grep -v '/scripts/' | grep -v '/internal/replay/store$$' | grep -v '/internal/replay/replaytest$$')
+# Instrument the whole selected set so shared code exercised by another
+# package's contract/conformance tests contributes to the aggregate report.
+COVER_PKGS := $(shell $(GO) list ./... | grep -v '/internal/replay/store$$' | grep -v '/internal/replay/replaytest$$')
 
 coverage:
-	$(GO) test $(UNIT_FLAGS) -covermode=atomic -coverprofile=$(COVERAGE_PROFILE) $(COVER_PKGS)
+	$(GO) test $(UNIT_FLAGS) -covermode=atomic -coverpkg=$$(printf '%s\n' $(COVER_PKGS) | paste -sd, -) -coverprofile=$(COVERAGE_PROFILE) $(COVER_PKGS)
 	@$(GO) tool cover -func=$(COVERAGE_PROFILE) | tee coverage.txt
 	@total="$$($(GO) tool cover -func=$(COVERAGE_PROFILE) | awk '/^total:/ { print substr($$3, 1, length($$3)-1) }')"; \
 	floor="$(COVERAGE_FLOOR)"; \
@@ -137,8 +149,8 @@ $(PROMTOOL):
 	curl -fsSL $(PROM_URL) | tar -xz --strip-components=1 -C $(PROM_DIR)
 
 observability-check: $(PROMTOOL)
-	$(GO) test ./grafana/dashboards ./deploy
-	$(GO) run ./scripts/promrule2groups deploy/alerts.yaml | $(PROMTOOL) check rules /dev/stdin
+	$(GO) test ./metrics/... ./internal/ci
+	$(PROMTOOL) check rules metrics/prometheus/alerts.yaml
 
 GOLANGCI_LINT_VERSION ?= v2.13.2
 golangci-lint:
@@ -199,6 +211,9 @@ replay-acceptance-test:
 # the Dockerfile instead (CI does).
 COMPOSE_E2E_BUILD ?= binaries
 
+ifeq ($(COMPOSE_E2E_BUILD),binaries)
+compose-e2e-test: console-ui
+endif
 compose-e2e-test:
 	HOOKWAY_COMPOSE_E2E=1 HOOKWAY_COMPOSE_E2E_BUILD=$(COMPOSE_E2E_BUILD) $(GO) test ./internal/composee2e -count=1 -timeout 20m -v
 
@@ -264,6 +279,8 @@ validate-examples:
 		JWT_PUBLIC_KEY=dummy \
 		REDIS_URL=redis://localhost:6379 \
 		POSTGRES_URL=postgres://localhost:5432/db \
+		PROTECTION_DATABASE_URL=postgres://localhost:5432/protection \
+		PROTECTION_REDIS_URL=redis://localhost:6379 \
 		MONGODB_URI=mongodb://localhost:27017 \
 		KAFKA_BROKER_1=localhost:9092 \
 		KAFKA_BROKER_2=localhost:9092 \
@@ -294,10 +311,11 @@ validate-examples:
 		REPLAY_CONTROL_TOKEN=control-token-0123456789abcdefghij \
 		REPLAY_OPERATOR_TOKEN=operator-token-0123456789abcdefghi \
 		REPLAY_METRICS_TOKEN=metrics-token-0123456789abcdefghijk \
+		REPLAY_CONSOLE_ORIGIN=http://localhost:8082 \
 		REPLAY_DATABASE_URL=postgres://localhost:5432/replay; \
-	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/routing/*.yaml examples/proxy/*.yaml examples/credentials/*.yaml examples/adapters/*.yaml examples/templates/*.yaml; do \
+	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/routing/*.yaml examples/proxy/*.yaml examples/credentials/*.yaml examples/adapters/*.yaml examples/templates/*.yaml examples/providers/*.yaml examples/protection/*.yaml; do \
 		echo "validating $$f"; \
-		case $$f in examples/auth/jwt.yaml) opts="--no-env" ;; *) opts="" ;; esac; \
+		case $$f in examples/auth/jwt.yaml|examples/providers/*.yaml) opts="--no-env" ;; *) opts="" ;; esac; \
 		$(GO) run ./cmd/hookway validate $$opts --config $$f || exit 1; \
 	done; \
 	for f in examples/showcase/*.yaml; do \
@@ -322,15 +340,17 @@ test-examples:
 run:
 	HOOKWAY_CONFIG=$(CONFIG) $(GO) run ./cmd/hookway
 
-# The deployable core and replay images need only Go. .dockerignore excludes
+# Core and replay need only Go; the standalone frontend builds its own WASM. .dockerignore excludes
 # generated editor assets even when `make ui` ran in the local checkout.
 docker-build:
 	docker build --target core --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 	docker build --target replay --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(REPLAY_IMAGE) .
+	docker build -f web/Dockerfile --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(CONSOLE_IMAGE) .
 
 vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(IMAGE)
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(REPLAY_IMAGE)
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(CONSOLE_IMAGE)
 
 # Mirrors the required CI gate (.github/workflows/reusable-ci.yml `success`).
 # Keep these two lists in sync: a green release-check should predict a green CI.

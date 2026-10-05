@@ -26,6 +26,8 @@ linters:
             - "$all"
             - "!**/internal/replay/**"
             - "!**/cmd/hookway-replay/**"
+            # Native contract generation intentionally reads both API packages.
+            - "!**/cmd/hookway-openapi/**"
             - "!**/internal/redrivecontract/**"
             - "!**/internal/acceptance/**"
             - "!**/internal/editor/**"

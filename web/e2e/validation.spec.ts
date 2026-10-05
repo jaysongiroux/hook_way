@@ -2,15 +2,9 @@ import { test, expect } from "@playwright/test";
 import { BuilderPage } from "./builder";
 import { exampleYaml } from "./examples";
 
-/**
- * The builder validates configs client-side by running the real Go validator
- * compiled to WebAssembly. These tests exist because that wiring fails
- * *silently*: validate.ts swallows a load failure and falls back to a
- * /validate fetch the static dev server does not answer, leaving `issues`
- * null so neither the pass nor the fail banner renders. Asserting the asset
- * is served (below) turns a missing `make wasm` into an explicit failure
- * instead of a suite that passes without ever validating anything.
- */
+/** Verify the real Go bridge and its contract in a browser. A static dev server
+ * cannot answer the editor API fallback, so this test also catches a missing
+ * WASM artifact before validation assertions become misleading. */
 test("the WASM validator is served and instantiated", async ({ page }) => {
   const response = await page.request.get("/hookway.wasm");
   // Deliberately not asserting response.ok(): the dev server answers unknown
@@ -33,6 +27,29 @@ test("the WASM validator is served and instantiated", async ({ page }) => {
       timeout: 15_000,
     })
     .toBe("function");
+  const bridge = await page.evaluate(() => {
+    const wasm = window as unknown as {
+      hookwayContractInfo: () => string;
+      hookwayValidate: (yaml: string) => string;
+      hookwayReplayValidate: (yaml: string) => string;
+      hookwayReplayActionValidate: (json: string) => string;
+    };
+    return {
+      info: JSON.parse(wasm.hookwayContractInfo()),
+      core: JSON.parse(wasm.hookwayValidate("not: valid: yaml: [")),
+      replay: JSON.parse(wasm.hookwayReplayValidate("not: valid: yaml: [")),
+      action: JSON.parse(wasm.hookwayReplayActionValidate(JSON.stringify({ idempotency_key: "bad key" }))),
+    };
+  });
+  expect(bridge.info).toMatchObject({ contract_version: 1 });
+  expect(bridge.info.capabilities).toEqual(expect.arrayContaining([
+    "core_yaml_validate", "replay_yaml_validate", "replay_action_input",
+  ]));
+  expect(bridge.core.issues.length).toBeGreaterThan(0);
+  expect(bridge.replay.issues.length).toBeGreaterThan(0);
+  expect(bridge.action.issues).toEqual(expect.arrayContaining([
+    expect.objectContaining({ field: "idempotency_key" }),
+  ]));
 });
 
 test("a config that only warns reports valid with warnings", async ({ page }) => {

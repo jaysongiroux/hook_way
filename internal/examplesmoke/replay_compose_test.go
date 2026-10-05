@@ -108,6 +108,9 @@ func checkReplayStack(t *testing.T, st replayStack) map[string]composeService {
 	}
 
 	var core struct {
+		Server struct {
+			ShutdownTotalTimeout string `yaml:"shutdown_total_timeout"`
+		} `yaml:"server"`
 		Replay struct {
 			URL     string `yaml:"url"`
 			Control struct {
@@ -117,6 +120,9 @@ func checkReplayStack(t *testing.T, st replayStack) map[string]composeService {
 	}
 	readYAML(t, filepath.Join(dir, st.coreCfg), &core)
 	var replay struct {
+		Workers struct {
+			Lease string `yaml:"lease"`
+		} `yaml:"workers"`
 		Server struct {
 			Addr string `yaml:"addr"`
 		} `yaml:"server"`
@@ -139,10 +145,23 @@ func checkReplayStack(t *testing.T, st replayStack) map[string]composeService {
 			t.Errorf("%s does not mount ./%s: %v", name, cfg, s[name].Volumes)
 		}
 	}
-	// docker compose stop must give core time to finish its redrives
-	// (replay's execution_timeout plus core's shutdown_timeout) and replay
-	// time to finish its runs.
-	for name, min := range map[string]time.Duration{st.core: 60 * time.Second, "replay": 45 * time.Second} {
+	// Leave margin beyond core's complete shutdown budget and replay's
+	// run lease (snapshot retrieval, delivery and finalization).
+	coreTotal := 60 * time.Second
+	if core.Server.ShutdownTotalTimeout != "" {
+		coreTotal, err = time.ParseDuration(core.Server.ShutdownTotalTimeout)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	replayLease := 60 * time.Second
+	if replay.Workers.Lease != "" {
+		replayLease, err = time.ParseDuration(replay.Workers.Lease)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, min := range map[string]time.Duration{st.core: coreTotal + 10*time.Second, "replay": max(30*time.Second, replayLease) + 10*time.Second} {
 		if d, err := time.ParseDuration(s[name].StopGracePeriod); err != nil || d < min {
 			t.Errorf("%s stop_grace_period = %q, want at least %v", name, s[name].StopGracePeriod, min)
 		}

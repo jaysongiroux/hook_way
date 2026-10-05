@@ -14,6 +14,7 @@ import (
 	"go.temporal.io/sdk/converter"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/testenv"
 )
 
@@ -81,13 +82,43 @@ func TestTemporalIntegrationStartWorkflowRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = ops.Close() })
 	ctx := context.Background()
 
-	targets := []TemporalTarget{
-		{
-			TaskQueue: "order-events", WorkflowType: "OrderWorkflow", IDReusePolicy: "reject_duplicate",
-			WorkflowID: WorkflowIDSettings{Source: "body", Path: "account.id", Prefix: "acct-"},
-		},
-		{TaskQueue: "audit-events", WorkflowType: "AuditWorkflow", Input: "body"},
+	// Use the same standalone YAML decoder and destination projection as the
+	// server and exported builder configs, rather than injecting target options.
+	cfg, issues := flowconfig.LoadBytes([]byte(fmt.Sprintf(`
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations:
+  orchestrator:
+    type: temporal
+    temporal: {host_port: %q, namespace: default}
+flows:
+  orders:
+    nodes:
+      - {id: in, type: http_trigger, path: /orders}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope}
+      - id: out
+        type: publish
+        destination: orchestrator
+        target: order-events
+        temporal:
+          workflow_type: OrderWorkflow
+          id_reuse_policy: reject_duplicate
+          workflow_id: {source: body, path: account.id, prefix: acct-}
+          execution_timeout: 1h
+          run_timeout: 30m
+          task_timeout: 2m
+      - id: audit
+        type: publish
+        destination: orchestrator
+        target: audit-events
+        temporal: {workflow_type: AuditWorkflow, input: body}
+    edges: [in>body, body>auth, auth>env, env>out, env>audit]
+`, hostPort)), "temporal integration", false)
+	if len(issues) != 0 {
+		t.Fatalf("standalone config: %+v", issues)
 	}
+	targets := collectTemporalTargets(cfg.ServingConfig(), "orchestrator")
 	pub := NewTemporalPublisher(ops, TemporalPublisherConfig{DestinationID: "orchestrator", StartTimeout: 10 * time.Second, Targets: targets})
 	if err := pub.Ready(ctx); err != nil {
 		t.Fatalf("Ready: %v", err)
@@ -114,6 +145,10 @@ func TestTemporalIntegrationStartWorkflowRoundTrip(t *testing.T) {
 	info := desc.GetWorkflowExecutionInfo()
 	if info.GetType().GetName() != "OrderWorkflow" || info.GetTaskQueue() != "order-events" {
 		t.Fatalf("unexpected execution info: type=%q queue=%q", info.GetType().GetName(), info.GetTaskQueue())
+	}
+	settings := desc.GetExecutionConfig()
+	if settings.GetWorkflowExecutionTimeout().AsDuration() != time.Hour || settings.GetWorkflowRunTimeout().AsDuration() != 30*time.Minute || settings.GetDefaultWorkflowTaskTimeout().AsDuration() != 2*time.Minute {
+		t.Fatalf("workflow deadlines did not reach Temporal: %+v", settings)
 	}
 	firstRunID := info.GetExecution().GetRunId()
 

@@ -151,7 +151,9 @@ func (b *Builder) fromFailure(flow string, head graph.RequestHead, status int, e
 			m.ReceivedAt = ce.Event.ReceivedAt.UTC()
 		}
 	}
-	if b.creationOnly[flow] {
+	if b.creationOnly[flow] || ev.NodeType == "lookup" {
+		// Lookup providers are live external state, not included in NodeConfigHash.
+		// Do not replay a failed lookup against an unverified provider binding.
 		// A proxy timeout can already have created an object. Capturing an
 		// automatic resume would repeat creation, or require persisting caller keys.
 		sanitize(&m)

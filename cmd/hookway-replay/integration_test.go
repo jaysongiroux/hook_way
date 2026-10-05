@@ -89,10 +89,10 @@ func TestServeRefusesAnUnmigratedDatabase(t *testing.T) {
 func TestServeEndToEnd(t *testing.T) {
 	addr := freeAddr(t)
 	path := writeConfig(t, testConfig(replaytest.Database(t), addr, "metrics: {enabled: true, path: /metrics}\n"))
-	if code, stdout, stderr := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is at version 1") {
+	if code, stdout, stderr := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is at version 2") {
 		t.Fatalf("migrate = %d %q %q", code, stdout, stderr)
 	}
-	if code, stdout, _ := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is current at version 1") {
+	if code, stdout, _ := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is current at version 2") {
 		t.Fatalf("second migrate = %d %q", code, stdout)
 	}
 
@@ -154,6 +154,11 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	if status, data := call(t, "GET", base+"/v1/retries/"+queued.RunID, opsToken, nil, nil); status != 200 || !strings.Contains(string(data), `"status":"queued"`) {
 		t.Fatalf("run = %d %s", status, data)
+	}
+	for _, route := range []string{"/", "/console", "/console/", "/console/hookway.wasm", "/console/wasm_exec.js", "/console/assets/main.js", "/test/reset"} {
+		if status, _ := call(t, "GET", base+route, "", nil, nil); status != 404 {
+			t.Fatalf("native route %s = %d", route, status)
+		}
 	}
 	if status, _ := call(t, "GET", base+"/metrics", "", nil, nil); status != 401 {
 		t.Fatalf("metrics without a token = %d, want 401 (a key has the metrics scope)", status)

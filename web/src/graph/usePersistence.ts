@@ -5,6 +5,9 @@ import { starterDocument } from "./starter";
 import type { GraphDocument } from "./model";
 
 const DEBOUNCE_MS = 400;
+// Route changes reuse the live graph; rehydrating an older debounced snapshot
+// would overwrite edits made just before leaving the builder.
+let hydratedInMemory = false;
 const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
   "formDrafts",
   "nodes",
@@ -21,12 +24,12 @@ const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
   "flowExtra",
 ];
 
-export function usePersistence(): void {
+export function usePersistence(preserveLive = false): void {
   const setGraph = useGraphStore((s) => s.setGraph);
 
   useEffect(() => {
     let cancelled = false;
-    let hydrated = false;
+    let hydrated = preserveLive && hydratedInMemory;
     let changedDuringLoad = false;
     let previousDocument = useGraphStore.getState().document();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -50,9 +53,10 @@ export function usePersistence(): void {
       else scheduleSave();
     });
 
-    void loadGraph().then((graph) => {
+    if (!hydrated) void loadGraph().then((graph) => {
       if (cancelled) return;
       hydrated = true;
+      if (preserveLive) hydratedInMemory = true;
       if (changedDuringLoad) {
         scheduleSave();
       } else {
@@ -62,8 +66,11 @@ export function usePersistence(): void {
 
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+        void saveGraph(useGraphStore.getState().document());
+      }
       unsub();
     };
-  }, [setGraph]);
+  }, [setGraph, preserveLive]);
 }

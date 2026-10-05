@@ -83,20 +83,20 @@ func docSections(t *testing.T, path string) map[string]string {
 	return sections
 }
 
-// docs/cli.md has a section for every command, and each section names every
+// docs/reference/cli.md has a section for every command, and each section names every
 // flag the command's help lists.
 func TestCLIDocsCoverEveryCommandAndFlag(t *testing.T) {
-	sections := docSections(t, "../../docs/cli.md")
+	sections := docSections(t, "../../docs/reference/cli.md")
 	for _, name := range commandNames {
 		body, ok := sections["hookway-replay "+name]
 		if !ok {
-			t.Errorf("docs/cli.md has no \"### hookway-replay %s\" section", name)
+			t.Errorf("docs/reference/cli.md has no \"### hookway-replay %s\" section", name)
 			continue
 		}
 		_, help, _ := runCmd(name, "-h")
 		for _, f := range flagsIn(help) {
 			if !strings.Contains(body, "`"+strings.TrimSpace(f)) {
-				t.Errorf("docs/cli.md § hookway-replay %s does not document %s", name, strings.TrimSpace(f))
+				t.Errorf("docs/reference/cli.md § hookway-replay %s does not document %s", name, strings.TrimSpace(f))
 			}
 		}
 	}

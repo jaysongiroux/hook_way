@@ -66,11 +66,13 @@ id_rsa*
 /MONETIZATION.md
 docs/superpowers/
 docs/scratch/
+/docs/local-plans/
 *.log
 !**/testdata/**
 .superpowers/brainstorm/
 
 # Per-machine agent instructions and settings stay out of this repository.
+.agents/
 .claude/
 .codex/
 .cursor/
@@ -120,3 +122,9 @@ node_modules/
 # scratch build output
 tmp/
 /bin/
+
+# Python build and verification-tool bytecode
+__pycache__/
+*.py[cod]
+
+/web/dist-console/

@@ -1,9 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { theme } from "../theme";
 import { FlowDiagram } from "./FlowDiagram";
+import { BuilderFrame } from "./BuilderFrame";
 import { FLOW_EDGES, FLOW_NODES, LAYOUT } from "./flowGraph";
 
 // jsdom reports no media match, so the component renders its narrow-screen
@@ -85,8 +86,23 @@ test("the wide and narrow layouts label the same nodes", () => {
   }
 });
 
-test("the diagram has no travelling-edge animation", () => {
+test("the supporting diagram stays static", () => {
   matchWide();
   const { container } = wrap();
-  expect(container.querySelectorAll(".hookway-pulse")).toHaveLength(0);
+  expect(container.querySelectorAll(".hookway-flow-event")).toHaveLength(0);
+});
+
+
+test("visitors can pause and resume the hero diagram", () => {
+  const { container } = render(
+    <MantineProvider theme={theme}>
+      <BuilderFrame />
+    </MantineProvider>,
+  );
+  const diagram = container.querySelector(".hookway-hero-diagram")!;
+  fireEvent.click(screen.getByRole("button", { name: "Pause diagram motion" }));
+  expect(diagram).toHaveAttribute("data-running", "false");
+  expect(screen.getByRole("button", { name: "Resume diagram motion" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Resume diagram motion" }));
+  expect(diagram).toHaveAttribute("data-running", "true");
 });

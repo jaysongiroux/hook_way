@@ -100,7 +100,7 @@ flows:
           return {
             body: {
               // Object key layout: uploads/yyyy/mm/dd/<timestamp>-<id>[-<filename>]
-              // under destinations.archive.s3.bucket (see docs/configuration.md § S3).
+              // under destinations.archive.s3.bucket (see docs/reference/configuration.md § S3).
               archive_prefix: 'uploads',
               fields: (input.vars && input.vars.fields) || {},
               files: {

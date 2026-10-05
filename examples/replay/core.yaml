@@ -4,7 +4,7 @@
 # can then retry it once the destination is back. Demonstrates partial fan-out
 # failure capture and destination-only redrive across two core replicas;
 # the private control listener is reachable only inside the Compose network.
-# See docs/replay-service.md.
+# See docs/operations/replay-service.md.
 server:
   addr: ":8080"
   max_body_bytes: 1048576

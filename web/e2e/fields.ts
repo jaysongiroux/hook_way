@@ -340,6 +340,21 @@ export async function expectNodeOptions(
     await scalar("default", "Default output port");
     return;
   }
+  if (type === "json_validate" || (type === "transform" && options.kind === "json_schema")) {
+    if (type === "transform")
+      await expectLabeled(root, "Transform operation", "json_schema", 0);
+    await expectYamlValue(root, type === "json_validate" ? "schema" : "json_schema",
+      options[type === "json_validate" ? "schema" : "json_schema"], 0, "JSON Schema");
+    if (Array.isArray(options.coercions)) {
+      for (let i = 0; i < options.coercions.length; i++) {
+        const rule = options.coercions[i];
+        if (!isRecord(rule)) throw new Error("Expected a conversion object");
+        await expect(root.getByLabel(`Property path ${i + 1}`, { exact: true })).toHaveValue(String(rule.path));
+        await expect(root.getByLabel(`Convert to ${i + 1}`, { exact: true })).toHaveValue(String(rule.type));
+      }
+    }
+    return;
+  }
   if (type === "transform") {
     await expectLabeled(root, "Transform operation", String(options.kind), 0);
     const fields = String(options.kind).startsWith("changed_fields")
@@ -355,7 +370,9 @@ export async function expectNodeOptions(
               : [];
     for (const key of fields) await scalar(key);
     if (options.kind === "xml_ordered_prune" && isRecord(options.xml_adapter)) {
-      const adapter = root.getByRole("group", { name: /^XML cleanup selectors/ });
+      const adapter = root.getByRole("group", {
+        name: /^XML cleanup selectors/,
+      });
       await expectYamlValue(
         adapter,
         "sequence_attribute",
@@ -393,17 +410,33 @@ export async function expectNodeOptions(
     const backend = String(destination.type ?? "");
     await scalar(
       "target",
-      backend === "sqs"
-        ? "Queue name"
-        : backend === "sns"
-          ? "Topic name"
-          : backend === "s3"
-            ? "Object key"
-            : backend === "webhook"
-              ? "Target path"
-              : "Target",
+      backend === "temporal"
+        ? "Task queue"
+        : backend === "sqs"
+          ? "Queue name"
+          : backend === "sns"
+            ? "Topic name"
+            : backend === "s3"
+              ? "Object key"
+              : backend === "webhook"
+                ? "Target path"
+                : "Target",
     );
     await scalar("create");
+    if (backend === "temporal" && isRecord(options.temporal)) {
+      for (const [key, label] of Object.entries({
+        workflow_type: "Workflow type",
+        input: "Workflow input",
+        id_reuse_policy: "Workflow ID reuse policy",
+        execution_timeout: "Total execution timeout",
+        run_timeout: "Single run timeout",
+        task_timeout: "Workflow task timeout",
+      })) {
+        if (options.temporal[key] !== undefined)
+          await expectYamlValue(root, key, options.temporal[key], 0, label);
+      }
+    }
+
     if (backend === "sqs" || backend === "sns") {
       const fifo = String(options.target).endsWith(".fifo");
       await expectLabeled(
@@ -578,7 +611,7 @@ export async function expectNodeOptions(
     },
     ip_allowlist: { cidrs: "Allowed IPs and networks" },
     loop_guard: { max_hops: "Maximum forwarded hops" },
-    replay_guard: { ttl: "Cache lifetime", key: "Request key template" },
+    replay_guard: { ttl: "Duplicate window", key: "Duplicate identity" },
     lookup: {
       provider: "Custom provider name",
       key: "Lookup key",
@@ -606,12 +639,12 @@ export async function expectNodeOptions(
     if (type === "rate_limit")
       await expectLabeled(
         root,
-        "Rate limit key",
+        "Rate-limit identity",
         String(options.key_by ?? "source_ip").startsWith("header.")
           ? "Request header"
           : options.key_by && options.key_by !== "source_ip"
-            ? "Imported unrecognized key"
-            : "Source IP (default)",
+            ? String(options.key_by)
+            : "Source IP",
         0,
       );
     return;

@@ -2,6 +2,7 @@ package flowconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -39,6 +40,30 @@ func TestEnvelopeJSONParsesBody(t *testing.T) {
 	body, ok := env.Body.(map[string]any)
 	if !ok || body["action"] != "opened" {
 		t.Fatalf("Body = %#v", env.Body)
+	}
+}
+
+func TestCapturedEventCloneKeepsExactJSONNumbers(t *testing.T) {
+	node := mustEnvelopeNode(t, "body_format: json\n")
+	raw := []byte(`{"id":9007199254740993,"large":1e309,"fraction":0.123456789012345678901}`)
+	out, err := node.Run(context.Background(), graph.Verified{Raw: graph.RawRequest{Body: raw}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := out.(graph.Envelope).Extra.(CapturedEvent)
+	copy, err := captured.CloneBody()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := copy.(CapturedEvent).Event.Body.(map[string]any)
+	for key, want := range map[string]string{"id": "9007199254740993", "large": "1e309", "fraction": "0.123456789012345678901"} {
+		if body[key] != json.Number(want) {
+			t.Fatalf("clone %s=%#v, want exact %s", key, body[key], want)
+		}
+	}
+	body["id"] = json.Number("1")
+	if captured.Event.Body.(map[string]any)["id"] != json.Number("9007199254740993") {
+		t.Fatal("clone shares captured body map")
 	}
 }
 
@@ -225,7 +250,7 @@ func TestEnvelopeJSONAndRawUnaffected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json envelope = %v", err)
 	}
-	if body, ok := out.(graph.Envelope).Body.(map[string]any); !ok || body["n"] != float64(1) {
+	if body, ok := out.(graph.Envelope).Body.(map[string]any); !ok || body["n"] != json.Number("1") {
 		t.Fatalf("json body = %#v", out.(graph.Envelope).Body)
 	}
 	rawNode := mustEnvelopeNode(t, "body_format: raw\n")

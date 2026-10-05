@@ -55,7 +55,7 @@ func (n *lookupNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 	}
 	value, found, err := n.resolve(ctx, key)
 	if err != nil {
-		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: err}
+		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: fmt.Errorf("lookup %q: provider unavailable", n.id)}
 	}
 	if !found {
 		if n.opts.Fallback != "" {

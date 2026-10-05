@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Button,
   Group,
   Select,
@@ -9,7 +10,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { useGraphStore } from "./store";
-import { NODE_SCHEMAS, nodeLabel } from "./nodeSchema";
+import { nodeMeta, nodeLabel } from "./nodeSchema";
 import { nodeHelp, portLabel } from "./help";
 import { FlowResponseEditor } from "./FlowResponseEditor";
 import { NodeReadiness } from "./NodeReadiness";
@@ -17,6 +18,7 @@ import { NodeOptionsForm } from "./NodeOptionsForm";
 import { nodeScope } from "./formDrafts";
 import { Sections, type SectionSpec } from "./InspectorSections";
 import { yamlIdOf } from "./model";
+import { DARK } from "../tokens";
 
 export function Inspector() {
   const selectedId = useGraphStore((s) => s.selectedId);
@@ -29,6 +31,7 @@ export function Inspector() {
   const nodes = useGraphStore((s) => s.nodes);
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
+  const captureFailures = useGraphStore((s) => s.flowExtra?.capture_failures);
   const setDeliveryFailurePolicy = useGraphStore(
     (s) => s.setDeliveryFailurePolicy,
   );
@@ -95,6 +98,24 @@ export function Inspector() {
           onChange={(v) => setDeliveryFailurePolicy(v ?? "")}
         />
         <FlowResponseEditor />
+        {deliveryFailurePolicy === "skip_failed" && (
+          <Alert
+            color="orange"
+            title="Partial delivery can return success"
+            styles={{ title: { color: DARK.text } }}
+          >
+            With the default response policy, one successful publication is
+            enough for HTTP 202. Failed destinations may miss the event. Replay
+            capture is best effort; sender retries can repeat successful
+            deliveries.
+          </Alert>
+        )}
+        {captureFailures === false && (
+          <Text size="sm" c="dimmed">
+            Replay capture is disabled for this flow. Plan recovery separately;
+            batch flows do not support replay capture.
+          </Text>
+        )}
         {nodes.length > 0 && (
           <Stack gap={6}>
             <Text
@@ -142,7 +163,7 @@ export function Inspector() {
     );
   }
 
-  const meta = NODE_SCHEMAS[node.data.nodeType];
+  const meta = nodeMeta(node.data.nodeType, node.data.options);
   const description = node.data.description ?? "";
   const setOptions = (options: Record<string, unknown>) =>
     updateNodeData(node.id, { options });
@@ -192,7 +213,10 @@ export function Inspector() {
         </Text>
       )}
       <Text size="xs" c="dimmed">
-        YAML type: <Text component="code" inherit>{node.data.nodeType}</Text>
+        YAML type:{" "}
+        <Text component="code" inherit>
+          {node.data.nodeType}
+        </Text>
         {meta ? ` · ${portLabel(meta.input)} → ${portLabel(meta.output)}` : ""}
         {meta?.detached ? " · delivery step" : ""}
       </Text>

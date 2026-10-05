@@ -1,6 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import type { Edge } from "@xyflow/react";
-import { NODE_SCHEMAS } from "./nodeSchema";
+import { nodeMeta } from "./nodeSchema";
 import type { FlowSnapshot, GraphDocument, HookwayNode } from "./model";
 import { NODE_SIZE } from "../tokens";
 
@@ -36,7 +36,7 @@ export function layout(nodes: HookwayNode[], edges: Edge[]): HookwayNode[] {
   g.setGraph({ rankdir: "LR", nodesep: NODE_SEP, ranksep: RANK_SEP });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of nodes) {
-    const meta = NODE_SCHEMAS[n.data.nodeType];
+    const meta = nodeMeta(n.data.nodeType, n.data.options);
     const rank = PORT_RANK[meta?.output ?? "Envelope"] ?? 3;
     g.setNode(n.id, { ...sizeOf(n), rank });
   }

@@ -2,19 +2,22 @@ package flowconfig
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/invopop/jsonschema"
+
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
 
 func TestNodeSchemasMatchCatalogAndRoundTrip(t *testing.T) {
 	schemas := NodeSchemas()
-	if len(schemas) != len(wantedCatalog) {
-		t.Fatalf("schemas=%d, want %d", len(schemas), len(wantedCatalog))
+	if len(schemas) != len(nodeFixtures) {
+		t.Fatalf("schemas=%d, want %d", len(schemas), len(nodeFixtures))
 	}
-	for name, want := range wantedCatalog {
+	for name, want := range nodeFixtures {
 		got, ok := schemas[name]
-		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != allowsOnError(name, want.in) || got.Schema == nil {
+		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != (name != "http_trigger" && name != "read_body" && name != "no_auth" && name != "if_else") || got.Schema == nil {
 			t.Errorf("%s schema metadata = %+v, found=%v", name, got, ok)
 		}
 		if got.Schema != nil && got.Schema.Type != "object" {
@@ -79,4 +82,66 @@ func propertyType(schema *jsonschema.Schema, field string) string {
 		return ""
 	}
 	return property.Type
+}
+
+// Keep these expectations independent of the catalog: generated authoring
+// metadata must not silently widen the runtime's child admission rules.
+func TestBatchChildSchemaMatchesAdmission(t *testing.T) {
+	order := map[string]int{"transform": 1, "code": 2, "filter": 3, "if_else": 4, "switch": 5, "publish": 6}
+	schemas := NodeSchemas()
+	types := []string{"unknown"}
+	for name := range nodeFixtures {
+		types = append(types, name)
+	}
+	for _, name := range types {
+		t.Run(name, func(t *testing.T) {
+			want := order[name]
+			if schemas[name].BatchChildOrder != want {
+				t.Fatalf("batch order=%d, want %d", schemas[name].BatchChildOrder, want)
+			}
+			opts := batchTestOptions("shared")
+			if name != "publish" {
+				opts.Child.Nodes = append(opts.Child.Nodes, map[string]any{"id": "batch.child", "type": name})
+			}
+			err := validateBatch(opts)
+			if want > 0 && err != nil {
+				t.Fatalf("allowed child rejected: %v", err)
+			}
+			if want == 0 && (err == nil || !strings.Contains(err.Error(), "batch children support only")) {
+				t.Fatalf("forbidden child admission: %v", err)
+			}
+		})
+	}
+}
+
+func TestStagePortsMatchSchemaAndPreserveFallback(t *testing.T) {
+	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, ok := reg.Lookup("rate_limit")
+	if !ok || spec.ResolvePorts == nil {
+		t.Fatal("rate_limit must resolve option-dependent ports")
+	}
+	stages := NodeSchemas()["rate_limit"].StagePorts
+	if len(stages) != 2 {
+		t.Fatalf("stage ports=%v", stages)
+	}
+	for _, stage := range []string{"", "request_head", "verified", "unsupported"} {
+		want := graph.PortRequestHead
+		if stage == "verified" {
+			want = graph.PortVerified
+		}
+		nc := nodeConfigFromYAML(t, "rate_limit", "stage: "+stage+"\n")
+		in, out, err := spec.ResolvePorts(nc)
+		if err != nil || in != want || out != want {
+			t.Fatalf("stage %q ports=(%v, %v), err=%v", stage, in, out, err)
+		}
+		if metadata, ok := stages[stage]; ok && (metadata.Input != in.String() || metadata.Output != out.String()) {
+			t.Fatalf("stage %q schema=%v, runtime=(%v, %v)", stage, metadata, in, out)
+		}
+	}
+	if _, _, err := spec.ResolvePorts(nodeConfigFromYAML(t, "rate_limit", "stage: [verified]\n")); err == nil {
+		t.Fatal("malformed stage must retain strict decoding")
+	}
 }

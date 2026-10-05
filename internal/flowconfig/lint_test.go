@@ -15,7 +15,7 @@ func TestLint(t *testing.T) {
 		}
 	})
 	t.Run("missing rate_limit is a warning", func(t *testing.T) {
-		src := strings.ReplaceAll(cleanLintYAML, "      - {id: rl, type: rate_limit, rpm: 60}\n", "")
+		src := strings.ReplaceAll(cleanLintYAML, "      - {id: rl, type: rate_limit, store: test, rpm: 60}\n", "")
 		src = strings.ReplaceAll(src, "in>rl, rl>body", "in>body")
 		assertLint(t, mustLoad(t, src), config.SeverityWarning, "unthrottled")
 	})
@@ -80,14 +80,15 @@ func TestLint(t *testing.T) {
 }
 
 const cleanLintYAML = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
-  primary: {type: webhook, webhook: {url: "https://example.test"}}
+  primary: {type: webhook, webhook: {url: "https://example.test", delivery_mode: sync}}
 flows:
   demo:
     nodes:
       - {id: in, type: http_trigger, path: /w, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1024}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: s, signature_header: X-S}
       - {id: env, type: envelope, body_format: json}
@@ -144,6 +145,13 @@ func TestBodyFormatGuardRejectsUnreadableBodyCombinations(t *testing.T) {
 		flow    string
 		wantErr string
 	}{
+		{
+			name: "json_validate after a raw envelope",
+			flow: `
+      - {id: env, type: envelope, body_format: raw}
+      - {id: filt, type: json_validate, schema: {type: object}}`,
+			wantErr: "json_validate requires a JSON envelope",
+		},
 		{
 			name: "body filter after a raw envelope",
 			flow: `

@@ -157,6 +157,12 @@ func validationIssues(c Config) []ValidationIssue {
 	if c.Server.AdmissionWaitTimeout > 0 && (c.Server.AdmissionWaitTimeout >= c.Server.ReadTimeout || c.Server.AdmissionWaitTimeout >= c.Server.WriteTimeout || c.Server.AdmissionWaitTimeout >= c.Server.ShutdownTimeout) {
 		issues = append(issues, validationError("server.admission_wait_timeout", "must be shorter than read, write and shutdown timeouts", "reserve time after waiting to read, process and respond"))
 	}
+	if c.Server.ShutdownDelay < 0 {
+		issues = append(issues, validationError("server.shutdown_delay", "must be zero or a positive duration", "use zero for immediate drain or a delay such as 5s for load-balancer withdrawal"))
+	}
+	if c.Server.ShutdownTotalTimeout < 0 || (c.Server.ShutdownTotalTimeout > 0 && (c.Server.ShutdownDelay >= c.Server.ShutdownTotalTimeout || c.Server.ShutdownTimeout >= c.Server.ShutdownTotalTimeout-c.Server.ShutdownDelay)) {
+		issues = append(issues, validationError("server.shutdown_total_timeout", "must exceed shutdown_delay plus shutdown_timeout", "reserve additional time for replay redrives, sequential asynchronous publisher drains, and replay capture cleanup"))
+	}
 	if c.Server.FanoutConcurrency < 0 {
 		issues = append(issues, validationError("server.fanout_concurrency", "must be zero (default) or a positive integer", "set a bound such as 8"))
 	}
@@ -1385,9 +1391,12 @@ func redisOptionsValidationIssues(fieldPrefix string, opts RedisEndpointOptions,
 // block for a route that targets a temporal destination. field is the route
 // prefix (endpoints.<name>.destinations[<i>]).
 func temporalOptionsValidationIssues(field string, destination EndpointDestinationConfig) []ValidationIssue {
+	return TemporalOptionsValidationIssues(field+".temporal_options", destination.Target, destination.TemporalOptions)
+}
+
+// TemporalOptionsValidationIssues is shared by flow and embedded route validation.
+func TemporalOptionsValidationIssues(prefix, target string, opts TemporalEndpointOptions) []ValidationIssue {
 	var issues []ValidationIssue
-	opts := destination.TemporalOptions
-	prefix := field + ".temporal_options"
 	if opts.WorkflowType == "" {
 		issues = append(issues, validationError(prefix+".workflow_type", "workflow_type is required for temporal routes", "set temporal_options.workflow_type to the registered workflow type name"))
 	}
@@ -1405,8 +1414,19 @@ func temporalOptionsValidationIssues(field string, destination EndpointDestinati
 	if opts.ExecutionTimeout > 0 && opts.RunTimeout > opts.ExecutionTimeout {
 		issues = append(issues, validationError(prefix+".run_timeout", "must not exceed execution_timeout", "lower run_timeout or raise execution_timeout"))
 	}
-	if strings.HasSuffix(destination.Target, ".fifo") {
-		issues = append(issues, validationError(field+".target", "temporal task queue names must not end in .fifo", "rename the target; FIFO semantics do not apply to temporal task queues"))
+	for _, timeout := range []struct {
+		name  string
+		value time.Duration
+	}{{"execution_timeout", opts.ExecutionTimeout}, {"run_timeout", opts.RunTimeout}, {"task_timeout", opts.TaskTimeout}} {
+		if timeout.value < 0 {
+			issues = append(issues, validationError(prefix+"."+timeout.name, "must not be negative", "omit for the Temporal default or use a positive duration"))
+		}
+	}
+	if opts.TaskTimeout > 2*time.Minute {
+		issues = append(issues, validationError(prefix+".task_timeout", "must not exceed 2m", "Temporal limits workflow task timeouts to two minutes"))
+	}
+	if strings.HasSuffix(target, ".fifo") {
+		issues = append(issues, validationError(strings.TrimSuffix(prefix, ".temporal_options")+".target", "temporal task queue names must not end in .fifo", "rename the target; FIFO semantics do not apply to temporal task queues"))
 	}
 	return issues
 }

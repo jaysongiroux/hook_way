@@ -69,6 +69,15 @@ func TestExampleSmoke(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	setExampleEnv(t, jwtPEM, upstream.URL)
+	t.Setenv("PROTECTION_DATABASE_URL", "postgres://example:example@127.0.0.1:5432/hookway?sslmode=disable")
+	t.Setenv("PROTECTION_REDIS_URL", "redis://127.0.0.1:6379/0")
+	for _, provider := range []string{"GITHUB", "STRIPE", "PADDLE", "SLACK"} {
+		path := filepath.Join(t.TempDir(), "signing-secret")
+		if err := os.WriteFile(path, []byte("provider-smoke-secret"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(provider+"_SECRET_FILE", path)
+	}
 
 	valid, invalid := discoverExamples(t)
 	if len(valid) < 20 {
@@ -100,6 +109,11 @@ func TestExampleSmoke(t *testing.T) {
 			issues = append(issues, flowconfig.StandaloneIssues(cfg)...)
 			if blocking := blocking(issues); len(blocking) > 0 {
 				t.Fatalf("serve-path issues: %v", blocking)
+			}
+			for _, store := range cfg.StateStores {
+				if store.Memory == nil {
+					t.Skip("shared Redis/PostgreSQL protection stores have adapter conformance and integration coverage; offline validation already passed")
+				}
 			}
 
 			if rel == "routing/shared.yaml" || rel == "routing/registration.yaml" {
@@ -330,6 +344,14 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey, 
 	if path == "/webhooks/shared" {
 		body = []byte(`{"x_env_name":"staging"}`)
 	}
+	if path == "/orders" {
+		for _, node := range fc.Nodes {
+			if node.Type == "json_validate" {
+				body = []byte(`{"order_id":9007199254740993,"customer":{"email":"dev@example.com"}}`)
+				break
+			}
+		}
+	}
 	req := httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-GitHub-Event", "push")
@@ -442,7 +464,7 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 			}
 			secret := authSecret(t, opts)
 			switch scheme {
-			case auth.SchemeHMACSHA256HeadersDot, auth.SchemeHMACSHA256TSDotMulti, auth.SchemeECDSAP256SHA256Headers:
+			case auth.SchemeHMACSHA256SlackV0, auth.SchemeHMACSHA256HeadersDot, auth.SchemeHMACSHA256TSDotMulti, auth.SchemeECDSAP256SHA256Headers:
 				ts := strconv.FormatInt(time.Now().Unix(), 10)
 				if opts.TimestampUnit == "milliseconds" {
 					ts = strconv.FormatInt(time.Now().UnixMilli(), 10)
@@ -459,7 +481,11 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 				if scheme == auth.SchemeECDSAP256SHA256Headers {
 					separator = ""
 				}
-				payload := append([]byte(ts+separator), signed...)
+				prefix := ts + separator
+				if scheme == auth.SchemeHMACSHA256SlackV0 {
+					prefix = "v0:" + ts + ":"
+				}
+				payload := append([]byte(prefix), signed...)
 				var signature string
 				if scheme == auth.SchemeECDSAP256SHA256Headers {
 					digest := sha256.Sum256(payload)
@@ -472,6 +498,9 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 					mac := hmac.New(sha256.New, []byte(secret))
 					mac.Write(payload)
 					signature = hex.EncodeToString(mac.Sum(nil))
+				}
+				if scheme == auth.SchemeHMACSHA256SlackV0 {
+					signature = "v0=" + signature
 				}
 				if scheme == auth.SchemeHMACSHA256TSDotMulti {
 					label := opts.SignatureLabel
@@ -512,6 +541,13 @@ func authSecret(t *testing.T, opts flowconfig.AuthOptions) string {
 	}
 	if opts.SecretRef == nil {
 		t.Fatal("auth node has neither secret nor secret_ref")
+	}
+	if opts.SecretRef.Provider == "file" {
+		data, err := os.ReadFile(opts.SecretRef.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(data))
 	}
 	if opts.SecretRef.Provider != "env" {
 		t.Fatalf("smoke signer does not resolve secret_ref provider %q", opts.SecretRef.Provider)

@@ -8,7 +8,7 @@
 # The flow uses skip_failed, so when notify-sink is down RabbitMQ still gets
 # the event and GitHub still gets its 202. Core hands the missed delivery to
 # the replay service, where it waits for you to retry it.
-# docs/local-development.md walks through it.
+# docs/development/local-development.md walks through it.
 server:
   addr: ":8080"
   max_body_bytes: 1048576

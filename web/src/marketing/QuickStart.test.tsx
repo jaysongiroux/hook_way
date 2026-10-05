@@ -4,7 +4,7 @@ import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { QuickStart } from "./QuickStart";
 import { QUICK_START_COMMAND } from "./quickStartCommand";
-import { GITHUB_REPO } from "./links";
+import { GITHUB_REF, GITHUB_REPO } from "./links";
 
 function wrap() {
   return render(
@@ -18,6 +18,7 @@ function wrap() {
 // rest of the site links to, so it cannot drift from where the code lives.
 test("the command clones the repo the site points at", () => {
   expect(QUICK_START_COMMAND).toContain(`${GITHUB_REPO}.git`);
+  expect(QUICK_START_COMMAND).toContain(`--branch ${GITHUB_REF}`);
   expect(QUICK_START_COMMAND).toContain("make dev-up");
 });
 

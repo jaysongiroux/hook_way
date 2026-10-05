@@ -17,7 +17,7 @@ test("the section covers six themes as compact tiles", () => {
 // Each headline value is a count a reader could verify in the repo.
 test("every tile headlines a real number", () => {
   const values = PRODUCTION_CARDS.map((c) => c.value);
-  expect(values).toEqual(["256", "3", "55", "13", "1", "7"]);
+  expect(values).toEqual(["256", "3", "63", "14", "1", "7"]);
 });
 
 // Retry blocks exist for rabbitmq, kafka, and webhook only.
@@ -88,15 +88,9 @@ test("the copy claims nothing the project does not implement", () => {
 });
 
 // The replay service is optional and operator-driven. Say that it is a full
-// service, and state the absences (no product UI, no automatic re-drive)
+// service, and state the operator console and absence of automatic re-drive
 // rather than marking the cell partial. Never claim exactly-once delivery.
-const overclaims = [
-  /automatic/i,
-  /\bUI\b/,
-  /dashboard/i,
-  /exactly/i,
-  /guarantee/i,
-];
+const overclaims = [/automatic/i, /exactly/i, /guarantee/i];
 
 test("the replay comparison describes the full optional service", () => {
   const row = COMPARE_ROWS.find((r) => r.id === "replay")!;
@@ -109,14 +103,12 @@ test("the replay comparison describes the full optional service", () => {
   expect(hookway.detail).toMatch(/download/i);
   expect(hookway.detail).toMatch(/retry/i);
   expect(hookway.detail).toMatch(/dismiss/i);
-  expect(hookway.detail).toMatch(/max_record_bytes 16 MiB/);
+  expect(COMPARE_ROWS.find((r) => r.id === "payload-retention")!.values.hookway.detail).toMatch(/max_record_bytes defaults to 16 MiB/);
   expect(hookway.detail).toMatch(/resumes at the failed node/i);
   expect(hookway.detail).toMatch(/\bAPI\b/);
-  expect(hookway.detail).toMatch(/no product UI/i);
+  expect(hookway.detail).toMatch(/scoped operations console/i);
   expect(hookway.detail).toMatch(/no automatic re-drive/i);
-  const positive = hookway.detail
-    .replace(/no product UI/gi, "")
-    .replace(/no automatic re-drive/gi, "");
+  const positive = hookway.detail.replace(/no automatic re-drive/gi, "");
   for (const re of overclaims) expect(positive).not.toMatch(re);
 });
 

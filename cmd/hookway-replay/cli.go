@@ -4,7 +4,7 @@ import "github.com/jaysongiroux/hook_way/internal/cli"
 
 // program is hookway-replay's help: `hookway-replay help`,
 // `hookway-replay help <command>`, and `hookway-replay <command> -h`.
-// docs/cli.md is the long form; a test keeps the two listing the same
+// docs/reference/cli.md is the long form; a test keeps the two listing the same
 // commands and flags.
 var program = cli.Program{
 	Name:    "hookway-replay",
@@ -22,7 +22,7 @@ drains the API and waits for running retries to finish.
 API: GET /v1/failures, GET /v1/failures/{id}, GET /v1/failures/{id}/payload,
 POST /v1/failures/{id}/retries, POST /v1/failures/{id}/dismiss,
 POST /v1/retries (batch), GET /v1/retries/{run_id}. Each needs a key with the
-matching scope; see docs/replay-service.md.
+matching scope; see docs/operations/replay-service.md.
 
 Refuses to start when the database schema is behind this binary: run migrate
 first. Any number of replicas can share one database. Logs are JSON on stdout.`,
@@ -91,5 +91,5 @@ Environment:
   HOOKWAY_LOG_LEVEL      overrides logging.level at start: debug, info, warn, error
 
 Exit codes: 0 success, 1 failure, 2 bad command line.
-Docs: docs/cli.md (commands), docs/replay-service.md (API, config, operations).`,
+Docs: docs/reference/cli.md (commands), docs/operations/replay-service.md (API, config, operations).`,
 }

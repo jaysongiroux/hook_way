@@ -6,7 +6,8 @@ export function fromReplayYaml(text: string): Record<string, unknown> {
 }
 
 export function toReplayYaml(config: Record<string, unknown>): string {
-  return toYaml(pruneUndefined(config) as Record<string, unknown>);
+  const { console: _removedConsoleSetting, ...serviceConfig } = config;
+  return toYaml(pruneUndefined(serviceConfig) as Record<string, unknown>);
 }
 
 function pruneUndefined(value: unknown): unknown {

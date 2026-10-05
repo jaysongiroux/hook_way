@@ -3,7 +3,7 @@ package main
 import "github.com/jaysongiroux/hook_way/internal/cli"
 
 // program is hookway's help: `hookway help`, `hookway help <command>`, and
-// `hookway <command> -h`. docs/cli.md is the long form; a test keeps the two
+// `hookway <command> -h`. docs/reference/cli.md is the long form; a test keeps the two
 // listing the same commands and flags.
 var program = cli.Program{
 	Name:    "hookway",
@@ -11,12 +11,30 @@ var program = cli.Program{
 	Default: "serve",
 	Commands: []cli.Command{
 		{
+			Name:    "state-store",
+			Args:    "migrate|status|gc|policy-update --config FILE --store NAME [--timeout DURATION] [--policy ID --expected-fingerprint HASH]",
+			Summary: "administer shared protection state",
+			Help: `Requires a config (--config or HOOKWAY_CONFIG) and --store. migrate explicitly applies PostgreSQL migrations;
+serving never migrates. status prints schema and actual/desired policy fingerprints
+without registering policies. gc removes a bounded batch of expired state.
+
+policy-update selects the desired policy from the config using --policy and performs
+an explicit compare-and-swap with --expected-fingerprint from status. Quota state
+and existing guard expiry survive compatible numeric changes. The policy fails
+closed while bounded update batches run. An interrupted update can be resumed
+using the same target config and original expected fingerprint. Identity/strategy
+changes require an explicit state transition. The default operation budget is 30s.
+Memory state is private to the server process and cannot be administered here.`,
+			Examples: []string{"hookway state-store migrate --config core.yaml --store shared_pg", "hookway state-store status --config core.yaml --store shared_pg", "hookway state-store gc --config core.yaml --store shared_pg", "hookway state-store policy-update --config core.yaml --store shared_pg --policy quota --expected-fingerprint HASH"},
+		},
+		{
 			Name:    "serve",
 			Args:    "[--config FILE]",
 			Summary: "serve webhooks",
 			Help: `Loads and validates the config, connects every destination, and serves the
-flows on server.addr until SIGINT or SIGTERM. Shutdown stops taking requests
-and drains the ones in flight for server.shutdown_timeout.
+flows on server.addr until SIGINT or SIGTERM. Shutdown withdraws readiness for server.shutdown_delay, stops taking requests,
+and drains HTTP requests for server.shutdown_timeout. The complete sequence,
+including redrives and cleanup, is bounded by server.shutdown_total_timeout.
 
 metrics.addr gives /metrics its own listener. A replay block adds the control
 listener the replay service retries through. Failing to bind any of them
@@ -117,5 +135,5 @@ Environment:
   HOOKWAY_LOG_LEVEL  overrides logging.level at start: debug, info, warn, error
 
 Exit codes: 0 success, 1 failure, 2 bad command line.
-Docs: docs/cli.md (commands), docs/configuration.md (the config file).`,
+Docs: docs/reference/cli.md (commands), docs/reference/configuration.md (the config file).`,
 }

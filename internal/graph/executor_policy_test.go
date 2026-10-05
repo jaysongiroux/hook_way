@@ -74,8 +74,8 @@ func TestSkipFailedAttemptsEveryDestination(t *testing.T) {
 	if !containsID(rec.entries(), "a") || !containsID(rec.entries(), "b") {
 		t.Fatalf("skip_failed must attempt both dests: %v", rec.entries())
 	}
-	if !NeedsCompensation(term, err) {
-		t.Fatal("partial skip_failed must need compensation (I17)")
+	if NeedsCompensation(term, err) {
+		t.Fatal("partial delivery must retain the guard after accepted or uncertain effects")
 	}
 }
 
@@ -177,7 +177,7 @@ func TestCompileRejectsUnknownDeliveryFailurePolicy(t *testing.T) {
 // TestSkipFailedRunsDestinationsConcurrently: with skip_failed no destination
 // gates another, so four 100ms publishes must take ~100ms, not ~400ms.
 // Serialising them makes request latency the SUM of destination latencies,
-// which is what docs/configuration.md promises it is not.
+// which is what docs/reference/configuration.md promises it is not.
 func TestSkipFailedRunsDestinationsConcurrently(t *testing.T) {
 	const dests = 4
 	started := make(chan struct{}, dests)

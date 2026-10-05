@@ -530,6 +530,16 @@ function reconcileConfigExtraDrafts(
     }
     result = pruneRemovedFieldDrafts(result, oldEntry, entry, scope, path);
   }
+  for (const category of ["lookups", "state_stores"]) {
+    const oldEntries = asRecord(previous[category]), entries = asRecord(next[category]);
+    result = reconcileNamedDrafts(result, oldEntries, entries, category, {
+      encodeNames: true, pathPrefix: category,
+    });
+    for (const [oldName, name] of namedEntryPairs(oldEntries, entries)) {
+      result = pruneRemovedFieldDrafts(result, asRecord(oldEntries[oldName]), asRecord(entries[name]),
+        `${category}/${encodeURIComponent(name)}`, `${category}.${name}`);
+    }
+  }
   const oldRouting = asRecord(previous.routing),
     routing = asRecord(next.routing);
   for (const category of ["profiles", "environments", "stores"]) {

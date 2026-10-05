@@ -9,10 +9,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/invopop/jsonschema"
 	"gopkg.in/yaml.v3"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/protection"
 	"github.com/jaysongiroux/hook_way/internal/routing"
 )
 
@@ -66,7 +68,7 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 	if !expand {
 		return Validate(data)
 	}
-	expanded, missing := config.ExpandEnvLenient(string(data))
+	expanded, missing := flowconfig.ExpandConfigEnv(string(data), config.ExpandEnvLenient)
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range config.MissingEnvIssues(missing) {
 		out.Issues = append(out.Issues, Issue{
@@ -203,7 +205,21 @@ func Schema() ([]byte, error) {
 	routingSchema := reflector.Reflect(&routing.Config{})
 	if properties != nil {
 		properties["credentials"] = credentials
+		properties["lookups"] = reflector.Reflect(&map[string]flowconfig.LookupProviderConfig{})
 		properties["routing"] = routingSchema
+		stores := reflector.Reflect(&map[string]protection.Config{})
+		store := stores.AdditionalProperties
+		backends := []string{"memory", "redis", "postgres"}
+		for _, backend := range backends {
+			var others []*jsonschema.Schema
+			for _, other := range backends {
+				if other != backend {
+					others = append(others, &jsonschema.Schema{Required: []string{other}})
+				}
+			}
+			store.OneOf = append(store.OneOf, &jsonschema.Schema{Required: []string{backend}, Not: &jsonschema.Schema{AnyOf: others}})
+		}
+		properties["state_stores"] = stores
 	}
 	return json.MarshalIndent(schema, "", "  ")
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -338,5 +339,26 @@ func TestNewRequiresProviderAndWrapsTimeout(t *testing.T) {
 	}
 	if _, err := New(context.Background(), Options{Name: "x", HTTP: &HTTPOptions{URL: "http://h/{key}", ValuePath: "v"}}, nil); err != nil {
 		t.Fatalf("http provider should construct without I/O: %v", err)
+	}
+}
+
+func TestHTTPLookupRejectsAuthorityKeysAndOversizedResponses(t *testing.T) {
+	for _, raw := range []string{"https://{key}.example.com/value", "https://user:secret@example.com/{key}", "https://example.com/value#{key}"} {
+		if _, err := newHTTP(HTTPOptions{URL: raw, ValuePath: "value"}); err == nil {
+			t.Fatalf("unsafe URL accepted: %s", raw)
+		}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"value":"ok"}`))
+		_, _ = w.Write([]byte(strings.Repeat(" ", maxHTTPResponse)))
+	}))
+	defer srv.Close()
+	provider, err := newHTTP(HTTPOptions{URL: srv.URL + "/{key}", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = provider.Close() }()
+	if _, _, err := provider.Lookup(t.Context(), "a"); err == nil {
+		t.Fatal("oversized body accepted after truncation")
 	}
 }

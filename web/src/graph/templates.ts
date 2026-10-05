@@ -34,14 +34,14 @@ export const TEMPLATES: TemplateDef[] = [
   {
     id: "stripe-ingest",
     label: "Stripe webhook",
-    help: "Receive Stripe webhooks, verify Stripe-Signature, limit requests, reject duplicates, and parse JSON. Connect a destination to deliver the events.",
+    help: "Receive Stripe webhooks, verify Stripe-Signature, limit requests, reject duplicates, and parse JSON. Choose a protection store and connect a destination to deliver the events.",
     nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
     yaml: stripeYaml,
   },
   {
     id: "paddle-ingest",
     label: "Paddle webhook",
-    help: "Receive Paddle webhooks, verify Paddle-Signature, limit requests, reject duplicates, and parse JSON. Connect a destination to deliver the events.",
+    help: "Receive Paddle webhooks, verify Paddle-Signature, limit requests, reject duplicates, and parse JSON. Choose a protection store and connect a destination to deliver the events.",
     nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
     yaml: paddleYaml,
   },
@@ -87,7 +87,12 @@ export function templateSubgraph(id: string): TemplateSubgraph | undefined {
   // is the flow every template file declares.
   const doc = fromYaml(def.yaml);
   const wanted = new Set(def.nodeIds);
-  const nodes = doc.nodes.filter((n) => wanted.has(n.id));
+  const nodes = doc.nodes.filter((n) => wanted.has(n.id)).map((node) => {
+    // A subgraph does not import workspace stores. Require an explicit choice
+    // rather than accidentally binding an existing store with the same name.
+    if (!["rate_limit", "replay_guard"].includes(node.data.nodeType)) return node;
+    return { ...node, data: { ...node.data, options: { ...node.data.options, store: "" } } };
+  });
   const missing = def.nodeIds.filter((want) => !nodes.some((n) => n.id === want));
   if (missing.length > 0) {
     throw new Error(`template ${def.id} names nodes missing from its config: ${missing.join(", ")}`);

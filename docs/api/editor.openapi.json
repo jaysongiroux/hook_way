@@ -1,0 +1,596 @@
+{
+  "components": {
+    "schemas": {
+      "ContractInfo": {
+        "additionalProperties": true,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "contract_version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "contract_version",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "Issue": {
+        "additionalProperties": true,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message",
+          "severity"
+        ],
+        "type": "object"
+      },
+      "JSONSampleIssue": {
+        "additionalProperties": true,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "keyword": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "path",
+          "keyword",
+          "message"
+        ],
+        "type": "object"
+      },
+      "JSONSampleValidationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "coercions": {
+            "items": {
+              "$ref": "#/components/schemas/ScalarCoercion"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "sample": {
+            "type": "string"
+          },
+          "schema": {
+            "additionalProperties": {},
+            "type": "object"
+          }
+        },
+        "required": [
+          "schema",
+          "sample"
+        ],
+        "type": "object"
+      },
+      "JSONSampleValidationResult": {
+        "additionalProperties": true,
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/JSONSampleIssue"
+            },
+            "type": "array"
+          },
+          "output": {
+            "type": "string"
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "issues"
+        ],
+        "type": "object"
+      },
+      "ScalarCoercion": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "type"
+        ],
+        "type": "object"
+      },
+      "ValidateResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "issues"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "description": "Optional configured editor API key; authentication is disabled when no key is configured.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Hookway editor API",
+    "version": "1"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "openapi": "3.1.0",
+  "paths": {
+    "/contract": {
+      "get": {
+        "description": "Version and capabilities shared with the WASM bridge. Requires the editor key when configured.",
+        "operationId": "contractInfo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractInfo"
+                }
+              }
+            },
+            "description": "UI contract metadata."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/json-sample-validation": {
+      "post": {
+        "description": "Validates and explicitly coerces one JSON sample with the runtime's bounded, offline JSON Schema engine (Draft 7 by default). Schema and sample issues return 200 with valid=false. The sample is at most 1 MiB and schema at most 256 KiB; the escaped request envelope is at most 8 MiB. No external references or environment expansion. Output is compact JSON text of at most 2 MiB to preserve exact numbers.",
+        "operationId": "jsonSampleValidation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JSONSampleValidationInput"
+              }
+            }
+          },
+          "description": "Strict JSON object containing schema, optional scalar coercions and raw sample JSON text. Content-Type is not enforced.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONSampleValidationResult"
+                }
+              }
+            },
+            "description": "Structured validation result. Output is present only when valid."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unreadable body or malformed JSON request (including unknown fields, missing schema/sample or multiple values)."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          },
+          "413": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Escaped request body exceeds 8 MiB."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 8388608,
+        "x-max-output-bytes": 2097152,
+        "x-max-sample-bytes": 1048576,
+        "x-max-schema-bytes": 262144
+      }
+    },
+    "/node-schema": {
+      "get": {
+        "description": "Requires the editor bearer key when one is configured.",
+        "operationId": "nodeSchemas",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Map of node type to JSON option schema."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Schema generation failed."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/replay-schema": {
+      "get": {
+        "description": "Requires the editor bearer key when one is configured.",
+        "operationId": "replaySchema",
+        "responses": {
+          "200": {
+            "content": {
+              "application/schema+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "JSON Schema for YAML configuration."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Schema generation failed."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/schema": {
+      "get": {
+        "description": "Requires the editor bearer key when one is configured.",
+        "operationId": "coreSchema",
+        "responses": {
+          "200": {
+            "content": {
+              "application/schema+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "JSON Schema for YAML configuration."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Schema generation failed."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/validate": {
+      "post": {
+        "description": "Validates raw YAML without expanding environment variables. Validation issues return 200; body read failures return plain text 400. Maximum body is 5 MiB.",
+        "operationId": "validateCore",
+        "requestBody": {
+          "content": {
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Raw YAML bytes. Content-Type is not enforced.",
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResponse"
+                }
+              }
+            },
+            "description": "Validation issues (empty array when valid)."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Request body too large or unreadable."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 5242880
+      }
+    },
+    "/validate-replay": {
+      "post": {
+        "description": "Validates raw YAML without expanding environment variables. Validation issues return 200; body read failures return plain text 400. Maximum body is 5 MiB.",
+        "operationId": "validateReplay",
+        "requestBody": {
+          "content": {
+            "application/yaml": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Raw YAML bytes. Content-Type is not enforced.",
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResponse"
+                }
+              }
+            },
+            "description": "Validation issues (empty array when valid)."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Request body too large or unreadable."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing or incorrect configured editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 5242880
+      }
+    }
+  }
+}

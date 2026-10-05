@@ -20,6 +20,7 @@ import { DARK } from "../tokens";
 import { type JSONSchema, schemaProperties } from "./nodeSchema";
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
+import { VALIDATOR_RETRY_EVENT } from "../shared/wasm/validationMode";
 import { loadReplaySchema } from "./validate";
 
 const SCOPES = ["capture", "read", "payload", "retry", "metrics"];
@@ -130,6 +131,11 @@ export function ReplaySettingsPanel({
   const addReplayConfiguration = useGraphStore((s) => s.addReplayConfiguration);
   const [schema, setSchema] = useState<JSONSchema>();
   const [schemaFailed, setSchemaFailed] = useState(false);
+  useEffect(() => {
+    const retry = () => setSchemaFailed(false);
+    window.addEventListener(VALIDATOR_RETRY_EVENT, retry);
+    return () => window.removeEventListener(VALIDATOR_RETRY_EVENT, retry);
+  }, []);
 
   useEffect(() => {
     if (!opened || schema || schemaFailed) return;
@@ -223,7 +229,10 @@ export function ReplaySettingsPanel({
                       replay:
                     </Text>
                     . Core uses these to capture failures and accept private
-                    retry callbacks.
+                    retry callbacks. Capture is best effort and only covers
+                    eligible failures after a 2xx response. It cannot recover
+                    jobs lost in a process crash or replace a durable queue.
+                    Batch capture is unsupported.
                   </Text>
                   <SchemaForm
                     scope="core/replay"
@@ -247,8 +256,7 @@ export function ReplaySettingsPanel({
                 />
               ) : schemaFailed ? (
                 <Alert color="red" title="Replay schema unavailable">
-                  Reload the builder to restore structured replay settings.
-                  Imported YAML is still preserved.
+                  Retry local validation in the builder to restore structured replay settings. Imported YAML is still preserved.
                 </Alert>
               ) : !schema ? (
                 <Stack gap="xs" aria-label="Loading replay settings">

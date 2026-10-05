@@ -66,11 +66,50 @@ func replaySchema(_ js.Value, _ []js.Value) any {
 	return out
 }
 
+func contractInfo(_ js.Value, _ []js.Value) any {
+	out, err := bridge.ContractInfo()
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
+}
+
+func replayActionValidate(_ js.Value, args []js.Value) any {
+	if len(args) < 1 || args[0].Type() != js.TypeString {
+		return errJSON("hookwayReplayActionValidate: expected 1 string argument (json)")
+	}
+	out, err := bridge.ReplayActionValidate(args[0].String())
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
+}
+
 func main() {
 	js.Global().Set("hookwayValidate", js.FuncOf(validate))
 	js.Global().Set("hookwaySchema", js.FuncOf(schema))
 	js.Global().Set("hookwayNodeSchemas", js.FuncOf(nodeSchemas))
 	js.Global().Set("hookwayReplayValidate", js.FuncOf(replayValidate))
 	js.Global().Set("hookwayReplaySchema", js.FuncOf(replaySchema))
+	js.Global().Set("hookwayContractInfo", js.FuncOf(contractInfo))
+	js.Global().Set("hookwayReplayActionValidate", js.FuncOf(replayActionValidate))
+	js.Global().Set("hookwayJSONSampleValidate", js.FuncOf(jsonSampleValidate))
+	// The runtime installs this callback before starting Go.run. Register it
+	// last so JS cannot mistake partially installed functions for readiness.
+	ready := js.Global().Get("hookwayWasmReady")
+	if ready.Type() == js.TypeFunction {
+		ready.Invoke()
+	}
 	select {} // block forever so the exported functions stay callable
+}
+
+func jsonSampleValidate(_ js.Value, args []js.Value) any {
+	if len(args) < 1 || args[0].Type() != js.TypeString {
+		return errJSON("hookwayJSONSampleValidate: expected 1 string argument (json)")
+	}
+	out, err := bridge.JSONSampleValidate(args[0].String())
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
 }

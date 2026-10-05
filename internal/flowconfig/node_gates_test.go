@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoopGuardRejectsAtMaxHops(t *testing.T) {
-	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestLoopGuardRejectsAtMaxHops(t *testing.T) {
 }
 
 func TestIPAllowlistRejectsUnknownIP(t *testing.T) {
-	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,12 +50,12 @@ func TestIPAllowlistRejectsUnknownIP(t *testing.T) {
 }
 
 func TestRateLimitIndependentKeysAndBurst(t *testing.T) {
-	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec, _ := reg.Lookup("rate_limit")
-	node, err := spec.New(nodeConfigFromYAML(t, "rate_limit", "rpm: 60\nburst: 1\nkey_by: source_ip\n"))
+	node, err := spec.New(nodeConfigFromYAML(t, "rate_limit", "store: test\nrpm: 60\nburst: 1\nkey_by: source_ip\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestRateLimitIndependentKeysAndBurst(t *testing.T) {
 }
 
 func TestGatesPassCompliantRequestThrough(t *testing.T) {
-	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestGatesPassCompliantRequestThrough(t *testing.T) {
 	for _, tc := range []struct{ typ, yaml string }{
 		{"loop_guard", "max_hops: 3\n"},
 		{"ip_allowlist", "cidrs: [10.0.0.0/8]\n"},
-		{"rate_limit", "rpm: 60\nburst: 10\n"},
+		{"rate_limit", "store: test\nrpm: 60\nburst: 10\n"},
 	} {
 		spec, _ := reg.Lookup(tc.typ)
 		node, err := spec.New(nodeConfigFromYAML(t, tc.typ, tc.yaml))
@@ -98,5 +98,34 @@ func TestGatesPassCompliantRequestThrough(t *testing.T) {
 		if got.SourceIP != head.SourceIP || got.Hops != head.Hops {
 			t.Errorf("%s mutated head: %+v", tc.typ, got)
 		}
+	}
+}
+
+func TestRateLimitCapacityConfiguration(t *testing.T) {
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("rate_limit")
+	for _, value := range []string{"0", "-1"} {
+		if _, err := spec.New(nodeConfigFromYAML(t, "rate_limit", "store: test\nrpm: 60\nmax_keys: "+value+"\n")); err == nil {
+			t.Fatalf("invalid max_keys %s accepted", value)
+		}
+	}
+	node, err := spec.New(nodeConfigFromYAML(t, "rate_limit", "store: test\nrpm: 60\nmax_keys: 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := node.Run(context.Background(), graph.RequestHead{SourceIP: "192.0.2.1"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = node.Run(context.Background(), graph.RequestHead{SourceIP: "192.0.2.2"})
+	var ne graph.NodeError
+	if !errors.As(err, &ne) || ne.Status != http.StatusServiceUnavailable {
+		t.Fatalf("full limiter should return 503: %v", err)
+	}
+	property, ok := NodeSchemas()["rate_limit"].Schema.Properties.Get("max_keys")
+	if !ok || property.Default != 10000 {
+		t.Fatalf("schema max_keys default = %+v", property)
 	}
 }

@@ -35,7 +35,7 @@ export function FlowResponseEditor() {
   return (
     <Textarea
       label="HTTP response policy"
-      description='Optional JSON object keyed by outcome: responded, published, dropped, publish_error, partial_failure, auth_error, body_error, lookup_error, payload_too_large or error. Each entry has status, optional body and headers. Example: {"published":{"status":200,"body":"ok"}}. Delivery metrics record the execution outcome regardless of HTTP status.'
+      description='Optional JSON object keyed by outcome: responded, published, dropped, publish_error, partial_failure, auth_error, body_error, lookup_error, payload_too_large or error. Each entry has status, optional body and headers. Example: {"published":{"status":200,"body":"ok"}}. Returning 2xx for an error tells the sender the request succeeded and can stop its retries. Delivery metrics retain the actual outcome.'
       autosize
       minRows={3}
       maxRows={18}

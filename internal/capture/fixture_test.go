@@ -30,9 +30,9 @@ func zeroFields(v reflect.Value, path string, out *[]string) {
 		}
 		for i := range v.NumField() {
 			f := v.Type().Field(i)
-			// Only this field is transient serialization metadata; its omission
-			// is checked explicitly by TestSnapshotDropsRequestLocalRepresentation.
-			if v.Type() == reflect.TypeOf(graph.Verified{}) && f.Name == "OriginalJSON" {
+			// These fields are request-local authorization/ownership metadata;
+			// dedicated omission tests ensure redrive never inherits reservations.
+			if v.Type() == reflect.TypeOf(graph.Verified{}) && (f.Name == "OriginalJSON" || f.Name == "CredentialID" || f.Name == "Subject" || f.Name == "Tenant" || f.Name == "Issuer" || f.Name == "TrustScope" || f.Name == "Reservations") {
 				continue
 			}
 			if f.IsExported() {

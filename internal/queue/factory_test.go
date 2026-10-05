@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 func TestFactoryCreatesRabbitMQPublishersForMessageQueues(t *testing.T) {
@@ -828,5 +832,82 @@ func TestFactoryCreatesTemporalPublisherWithTargets(t *testing.T) {
 	}
 	if gotTargets[1] != want {
 		t.Fatalf("bad target[1]:\n got %#v\nwant %#v", gotTargets[1], want)
+	}
+}
+
+func TestTargetCollectorsPreserveRouteAndDeadLetterPolicies(t *testing.T) {
+	cfg := config.Config{
+		Destinations: map[string]config.DestinationConfig{
+			"notify":  {Type: "webhook", Webhook: config.WebhookConfig{DeadLetter: config.WebhookDeadLetterConfig{Destination: "primary", Target: "b-dlq"}}},
+			"overlap": {Type: "webhook", Webhook: config.WebhookConfig{DeadLetter: config.WebhookDeadLetterConfig{Destination: "primary", Target: "z-direct"}}},
+			"unused":  {Type: "webhook", Webhook: config.WebhookConfig{DeadLetter: config.WebhookDeadLetterConfig{Destination: "primary", Target: "ignored-dlq"}}},
+		},
+		Endpoints: map[string]config.EndpointConfig{
+			"enabled": {Enabled: true,
+				Variables: map[string]config.VariableConfig{
+					"env": {Values: []string{"qa", "prod"}}, "tenant": {Pattern: "^[a-z]+$"},
+				},
+				Destinations: []config.EndpointDestinationConfig{
+					{Destination: "primary", Target: "z-direct", Create: true, BrokerAttributes: map[string]string{"policy": "original"}},
+					{Destination: "primary", Target: "z-direct"}, // The first route's settings win.
+					{Destination: "primary", Target: "a-direct"},
+					{Destination: "primary", Target: "{env}-{tenant}"},
+					{Destination: "other", Target: "wrong-destination"},
+					{Destination: "notify", Target: "send"}, {Destination: "overlap", Target: "send"},
+				}},
+			"disabled": {Enabled: false, Destinations: []config.EndpointDestinationConfig{{Destination: "primary", Target: "disabled"}, {Destination: "unused", Target: "send"}}},
+		},
+	}
+	for _, tc := range []struct {
+		name, nameField string
+		collect         func(config.Config, string) any
+		includeDLQ      bool
+	}{
+		{"sqs", "Name", func(c config.Config, id string) any { return collectSQSTargets(c, id) }, true},
+		{"sns", "Name", func(c config.Config, id string) any { return collectSNSTargets(c, id) }, true},
+		{"lambda", "Name", func(c config.Config, id string) any { return collectLambdaTargets(c, id) }, true},
+		{"s3", "Name", func(c config.Config, id string) any { return collectS3Targets(c, id) }, true},
+		{"postgres", "Name", func(c config.Config, id string) any { return collectPostgresTargets(c, id) }, true},
+		{"mongo", "Name", func(c config.Config, id string) any { return collectMongoTargets(c, id) }, true},
+		{"kafka", "Topic", func(c config.Config, id string) any { return collectKafkaTargets(c, id) }, true},
+		{"temporal", "TaskQueue", func(c config.Config, id string) any { return collectTemporalTargets(c, id) }, false},
+		{"redis", "Name", func(c config.Config, id string) any { return collectRedisTargets(c, id) }, true},
+		{"webhook", "Name", func(c config.Config, id string) any { return collectWebhookTargets(c, id) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := []string{"a-direct", "prod-{tenant}", "qa-{tenant}", "z-direct"}
+			if tc.includeDLQ {
+				want = append(want, "b-dlq")
+				sort.Strings(want)
+			}
+			got := reflect.ValueOf(tc.collect(cfg, "primary"))
+			names := make([]string, got.Len())
+			for i := 0; i < got.Len(); i++ {
+				target := got.Index(i)
+				name := target.FieldByName(tc.nameField).String()
+				names[i] = name
+				matcher := target.FieldByName("Template").Interface().(vars.Matcher)
+				if strings.Contains(name, "{tenant}") && (!matcher.Match(strings.ReplaceAll(name, "{tenant}", "acme")) || matcher.Match(strings.ReplaceAll(name, "{tenant}", "ACME"))) {
+					t.Errorf("target %q lost its bounded matcher", name)
+				}
+				if name == "z-direct" {
+					if create := target.FieldByName("Create"); create.IsValid() && !create.Bool() {
+						t.Error("duplicate or DLQ overwrote the direct route's create flag")
+					}
+					if attrs := target.FieldByName("Attributes"); attrs.IsValid() {
+						attrs.Interface().(map[string]string)["policy"] = "changed"
+						if cfg.Endpoints["enabled"].Destinations[0].BrokerAttributes["policy"] != "original" {
+							t.Error("collector no longer clones broker attributes")
+						}
+					}
+				}
+			}
+			if !reflect.DeepEqual(names, want) {
+				t.Fatalf("target names=%v, want %v", names, want)
+			}
+			if empty := reflect.ValueOf(tc.collect(config.Config{}, "primary")); !empty.IsNil() {
+				t.Fatalf("empty targets=%v, want nil", empty.Interface())
+			}
+		})
 	}
 }

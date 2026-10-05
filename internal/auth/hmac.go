@@ -30,6 +30,7 @@ func (e sigEncoding) decode(s string) ([]byte, error) {
 // parsedSig is what a scheme extracts from its signature header.
 type parsedSig struct {
 	signature    string
+	candidates   []string
 	timestamp    int64
 	hasTimestamp bool
 }
@@ -50,7 +51,7 @@ type hmacVerifier struct {
 }
 
 func (v hmacVerifier) Verify(header string, rawBody []byte, now time.Time) error {
-	if v.secret == "" {
+	if v.secret == "" || len(header) > MaxCredentialBytes {
 		return ErrUnauthorized
 	}
 	p, err := v.scheme.parseHeader(header)
@@ -69,17 +70,17 @@ func (v hmacVerifier) Verify(header string, rawBody []byte, now time.Time) error
 	mac := hmac.New(v.scheme.newHash, []byte(v.secret))
 	mac.Write(v.scheme.buildPayload(p, rawBody))
 	expected := mac.Sum(nil)
-	got, err := v.scheme.encoding.decode(p.signature)
-	if err != nil {
-		return ErrUnauthorized
+	candidates := p.candidates
+	if len(candidates) == 0 {
+		candidates = []string{p.signature}
 	}
-	if len(got) != v.scheme.newHash().Size() {
-		return ErrUnauthorized
+	for _, candidate := range candidates {
+		got, err := v.scheme.encoding.decode(candidate)
+		if err == nil && len(got) == v.scheme.newHash().Size() && hmac.Equal(expected, got) {
+			return nil
+		}
 	}
-	if !hmac.Equal(expected, got) {
-		return ErrUnauthorized
-	}
-	return nil
+	return ErrUnauthorized
 }
 
 // bodyOnlyPayload signs the exact raw body, used by the non-timestamped schemes.
@@ -107,36 +108,51 @@ func prefixHeaderParser(prefix string) func(string) (parsedSig, error) {
 	}
 }
 
-// parseTSColonHeader parses a labeled `ts=<unix>;h1=<hex>` header
-// (semicolon-delimited, order-free), rejecting duplicate keys.
-func parseTSColonHeader(header string) (parsedSig, error) {
-	if header == "" {
-		return parsedSig{}, errors.New("missing signature")
+// parseTimestampedHeader accepts bounded signature candidates during provider
+// key rotation. The timestamp must occur exactly once; repeated signatures
+// are valid, repeated timestamps are ambiguous and fail closed.
+func parseTimestampedHeader(header, separator, timestampLabel, signatureLabel string) (parsedSig, error) {
+	if len(header) == 0 || len(header) > MaxCredentialBytes {
+		return parsedSig{}, errors.New("missing or oversized signature")
 	}
-	values := map[string]string{}
-	for _, part := range strings.Split(header, ";") {
+	parts := strings.Split(header, separator)
+	if len(parts) > MaxSignatureCandidates+8 {
+		return parsedSig{}, errors.New("too many signature fields")
+	}
+	var timestamp string
+	var candidates []string
+	for _, part := range parts {
 		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
 		if !ok || key == "" || value == "" {
 			return parsedSig{}, errors.New("malformed signature")
 		}
-		if _, exists := values[key]; exists {
-			return parsedSig{}, errors.New("duplicate signature key")
+		if key == timestampLabel {
+			if timestamp != "" {
+				return parsedSig{}, errors.New("duplicate timestamp")
+			}
+			timestamp = value
 		}
-		values[key] = value
+		if key == signatureLabel {
+			candidates = append(candidates, value)
+		}
 	}
-	tsValue, ok := values["ts"]
-	if !ok {
-		return parsedSig{}, errors.New("missing ts")
+	if timestamp == "" || len(candidates) == 0 || len(candidates) > MaxSignatureCandidates {
+		return parsedSig{}, errors.New("missing timestamp or invalid signature count")
 	}
-	h1, ok := values["h1"]
-	if !ok {
-		return parsedSig{}, errors.New("missing h1")
+	for _, c := range timestamp {
+		if c < '0' || c > '9' {
+			return parsedSig{}, errors.New("malformed timestamp")
+		}
 	}
-	ts, err := strconv.ParseInt(tsValue, 10, 64)
-	if err != nil {
-		return parsedSig{}, err
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || ts > 253402300799 {
+		return parsedSig{}, errors.New("timestamp out of range")
 	}
-	return parsedSig{signature: h1, timestamp: ts, hasTimestamp: true}, nil
+	return parsedSig{signature: candidates[0], candidates: candidates, timestamp: ts, hasTimestamp: true}, nil
+}
+
+func parseTSColonHeader(header string) (parsedSig, error) {
+	return parseTimestampedHeader(header, ";", "ts", "h1")
 }
 
 func hmacSHA256TSColonScheme() hmacScheme {
@@ -156,36 +172,9 @@ func hmacSHA256HexScheme() hmacScheme {
 	}
 }
 
-// parseTSDotHeader parses a labeled `t=<unix>,v1=<hex>,...` comma-delimited
-// header. Only `t` and the first `v1` are used; any other pairs are ignored.
-// A missing `t` or `v1` is an error.
+// parseTSDotHeader accepts every v1 signature during Stripe secret rotation.
 func parseTSDotHeader(header string) (parsedSig, error) {
-	if strings.TrimSpace(header) == "" {
-		return parsedSig{}, errors.New("missing signature")
-	}
-	var tsValue, v1 string
-	for _, part := range strings.Split(header, ",") {
-		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok || value == "" {
-			continue
-		}
-		switch key {
-		case "t":
-			tsValue = value
-		case "v1":
-			if v1 == "" {
-				v1 = value
-			}
-		}
-	}
-	if tsValue == "" || v1 == "" {
-		return parsedSig{}, errors.New("missing t or v1")
-	}
-	ts, err := strconv.ParseInt(tsValue, 10, 64)
-	if err != nil {
-		return parsedSig{}, err
-	}
-	return parsedSig{signature: v1, timestamp: ts, hasTimestamp: true}, nil
+	return parseTimestampedHeader(header, ",", "t", "v1")
 }
 
 func hmacSHA256TSDotScheme() hmacScheme {

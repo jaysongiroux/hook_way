@@ -110,13 +110,13 @@ func TestRun_SchemaNodesListsCatalog(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
 		t.Fatalf("node schema output not valid JSON: %v", err)
 	}
-	for _, name := range []string{"http_trigger", "publish", "respond", "auth", "read_body"} {
+	for _, name := range []string{"http_trigger", "publish", "respond", "auth", "read_body", "json_validate"} {
 		if _, ok := doc[name]; !ok {
 			t.Errorf("schema --nodes missing %s", name)
 		}
 	}
-	if len(doc) != 21 {
-		t.Fatalf("schema --nodes listed %d types, want 21", len(doc))
+	if len(doc) != 22 {
+		t.Fatalf("schema --nodes listed %d types, want 22", len(doc))
 	}
 }
 
@@ -195,7 +195,8 @@ func assertCommittedSchema(t *testing.T, rel string, args []string) {
 func TestRunValidateRejectsLegacyEndpointsKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "endpoints.yaml")
-	body := `server:
+	body := `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -276,7 +277,8 @@ func TestRunValidateShowcaseExamples(t *testing.T) {
 func TestEditorAPIKeyFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := `server:
+	body := `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 security:
@@ -290,7 +292,7 @@ flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
@@ -323,7 +325,8 @@ func TestEditorAPIKeyNoConfigIsUnauthenticated(t *testing.T) {
 // configMissingEnvVarYAML is otherwise-valid except its rabbitmq url
 // references an environment variable that is (deliberately) never set in
 // these tests.
-const configMissingEnvVarYAML = `server:
+const configMissingEnvVarYAML = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -338,7 +341,7 @@ flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
@@ -485,7 +488,8 @@ func TestRunServe_MetricsBindFailureIsFatal(t *testing.T) {
 	_ = free.Close()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
-	body := fmt.Sprintf(`server:
+	body := fmt.Sprintf(`state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: %q
   max_body_bytes: 1048576
 metrics:

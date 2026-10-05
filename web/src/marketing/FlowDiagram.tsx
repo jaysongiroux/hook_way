@@ -1,4 +1,5 @@
 import { Card, Stack, Text } from "@mantine/core";
+import type { CSSProperties } from "react";
 import { useMediaQuery } from "@mantine/hooks";
 import {
   FLOW_EDGES,
@@ -49,7 +50,7 @@ function DiagramSvg() {
 }
 
 /** Shared graph used by the section diagram and the hero builder frame. */
-export function FlowGraphSvg({ selectedId, markerId = "hookway-edge" }: { selectedId?: string; markerId?: string }) {
+export function FlowGraphSvg({ selectedId, markerId = "hookway-edge", animate = false }: { selectedId?: string; markerId?: string; animate?: boolean }) {
   const nodeById = (id: string) => FLOW_NODES.find((n) => n.id === id)!;
   return (
     <>
@@ -66,6 +67,21 @@ export function FlowGraphSvg({ selectedId, markerId = "hookway-edge" }: { select
           stroke={EDGE.line}
           strokeWidth={1.5}
           markerEnd={`url(#${markerId})`}
+        />
+      ))}
+      {animate && FLOW_EDGES.map((e) => (
+        <path
+          key={`event-${e.from}-${e.to}`}
+          className="hookway-flow-event"
+          d={edgePath(nodeById(e.from), nodeById(e.to))}
+          pathLength={1}
+          fill="none"
+          stroke={DARK.accent}
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeDasharray="0.07 1.93"
+          aria-hidden="true"
+          style={{ "--flow-delay": `${nodeById(e.from).column * 2.5}s` } as CSSProperties}
         />
       ))}
       {FLOW_NODES.map((n) => (

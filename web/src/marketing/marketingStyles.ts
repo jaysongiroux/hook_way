@@ -20,6 +20,54 @@ export const EXPLORE_PRIMARY_CLASS = "hookway-explore-primary";
 export const EXPLORE_SECONDARY_CLASS = "hookway-explore-secondary";
 
 export const MARKETING_CSS = `
+.hookway-overview-hero {
+  padding: 72px 0 48px;
+}
+.hookway-hero-intro {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 64px;
+  align-items: start;
+  margin-bottom: 40px;
+}
+.hookway-hero-title {
+  font-size: clamp(36px, 4.2vw, 58px);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+.hookway-hero-lead {
+  font-size: 20px;
+  line-height: 1.6;
+  max-width: 48ch;
+}
+.hookway-hero-caption {
+  margin-top: 16px;
+  max-width: 76ch;
+  line-height: 1.5;
+}
+.hookway-hero-canvas { overflow-x: auto; }
+.hookway-flow-scroll-hint { display: none; }
+.hookway-hero-canvas:focus-visible {
+  outline: 2px solid ${DARK.accent};
+  outline-offset: -2px;
+}
+.hookway-flow-event {
+  opacity: 0;
+  pointer-events: none;
+  animation: hookway-flow-send 5s linear infinite;
+  animation-delay: var(--flow-delay, 0s);
+}
+.hookway-hero-diagram[data-running="false"] .hookway-flow-event {
+  animation-play-state: paused;
+}
+@keyframes hookway-flow-send {
+  0% { stroke-dashoffset: 0.07; opacity: 0; }
+  8% { opacity: 1; }
+  44% { stroke-dashoffset: -1; opacity: 1; }
+  50%, 100% { stroke-dashoffset: -1; opacity: 0; }
+}
 .${BENTO_CLASS} {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -63,8 +111,13 @@ export const MARKETING_CSS = `
 }
 .${MARQUEE_SHELL_CLASS} {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+.hookway-marquee-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
   gap: 32px;
 }
 .${MARQUEE_VIEWPORT_CLASS} {
@@ -136,6 +189,11 @@ export const MARKETING_CSS = `
 }
 .${COMPARE_TABLE_CLASS} :is(th, td):not(:first-child) {
   min-width: 240px;
+}
+@media (max-width: 48em) {
+  .${COMPARE_TABLE_CLASS} :is(th, td):first-child {
+    position: static;
+  }
 }
 .${COMPARE_TABLE_CLASS} :is(th, td)[data-product="hookway"] {
   background: #EEF3F8;
@@ -223,10 +281,7 @@ export const MARKETING_CSS = `
   gap: 16px;
 }
 @media (max-width: 62em) {
-  .${MARQUEE_SHELL_CLASS} {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
+  .hookway-hero-intro { gap: 32px; }
   .hookway-compare-products {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -235,6 +290,13 @@ export const MARKETING_CSS = `
   }
 }
 @media (max-width: 48em) {
+  .hookway-overview-hero { padding: 40px 0 32px; }
+  .hookway-hero-intro { grid-template-columns: minmax(0, 1fr); gap: 24px; margin-bottom: 32px; }
+  .hookway-hero-title { font-size: clamp(34px, 6vw, 48px); }
+  .hookway-hero-lead { font-size: 18px; }
+  .hookway-hero-canvas svg { min-width: 780px; }
+  .hookway-flow-scroll-hint { display: block; border-top: 1px solid ${DARK.border}; }
+  .hookway-marquee-heading { flex-direction: column; align-items: start; gap: 12px; }
   .${EXPLORE_GRID_CLASS} {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -257,6 +319,8 @@ export const MARKETING_CSS = `
   .${SITE_NAV_CLASS} a { font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .hookway-flow-event { animation: none; display: none; }
+  .hookway-flow-motion-control { display: none; }
   .${LIFT_CLASS} { transition: none; }
   .${USE_CASE_REVEAL_CLASS} { animation: none; }
   .${COMPARE_TABLE_CLASS} tbody tr { transition: none; }

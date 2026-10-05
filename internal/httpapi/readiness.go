@@ -26,12 +26,12 @@ const (
 // stalenessFactor multiplies the probe interval to decide when a cached
 // readiness result is too old to trust. A result older than
 // stalenessFactor×interval means the prober is wedged or has not run recently,
-// which is treated as not-ready so a stuck pod fails its readiness probe rather
+// which is treated as not-ready so a stuck instance fails its readiness probe rather
 // than serving a stale "ready".
 const stalenessFactor = 3
 
 // errNotProbed is the cached-readiness error before the prober's first probe
-// has completed. The initial state is deliberately not-ready: a pod must prove
+// has completed. The initial state is deliberately not-ready: an instance must prove
 // its destinations are reachable at least once before receiving traffic.
 var errNotProbed = errors.New("readiness not yet probed")
 
@@ -57,7 +57,7 @@ type readinessByID interface {
 // readinessProber periodically probes destination readiness in the background
 // and caches the aggregate result so per-request readiness checks (/ready,
 // /readyz) are served from memory rather than triggering a live destination
-// fan-out on every kubelet probe.
+// fan-out on every platform health check.
 type readinessProber struct {
 	publisher queue.Publisher
 	metrics   *metrics.Metrics
@@ -70,7 +70,7 @@ type readinessProber struct {
 	// recently triggered the "reported unhealthy due to staleness" warning
 	// (see status). A stale result's checkedAt never changes until a new
 	// probe replaces it, so comparing against this lets status log once per
-	// staleness episode instead of once per /ready request while the pod
+	// staleness episode instead of once per /ready request while the instance
 	// stays stuck on the same wedged result.
 	staleLoggedAt atomic.Pointer[time.Time]
 }
@@ -102,7 +102,7 @@ func newReadinessProber(publisher queue.Publisher, appMetrics *metrics.Metrics, 
 // 503 can tell "the prober itself is stuck" apart from "a destination is
 // down." It's logged at most once per staleness episode (i.e. once per
 // distinct cached result's checkedAt) rather than once per /ready request,
-// since kubelet polls /ready frequently and the underlying cached result does
+// since health checks poll /ready frequently and the underlying cached result does
 // not change again until the next successful probe.
 func (p *readinessProber) destinationSnapshot(now time.Time) (dest map[string]error, ready bool, err error) {
 	res := p.result.Load()

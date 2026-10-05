@@ -1,11 +1,14 @@
 package graph
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 )
+
+var ErrAdmissionRecovery = errors.New("outbound recovery after protection denial")
 
 // CompileError aggregates every problem found in one flow, so a single
 // `hookway validate` run reports all of them rather than the first.
@@ -133,6 +136,14 @@ func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, er
 			ce.addNodeProblem(nc.ID, fmt.Sprintf("node %q (%s): %v", nc.ID, nc.Type, err))
 			continue
 		}
+		if spec.ResolvePorts != nil {
+			spec.In, spec.Out, err = spec.ResolvePorts(nc)
+			if err != nil || spec.In == PortNone || spec.Out == PortNone || spec.In >= PortTerminal || spec.Out >= PortTerminal {
+				invalidNodes = true
+				ce.addNodeProblem(nc.ID, "invalid configured node ports")
+				continue
+			}
+		}
 		target, err := configuredTarget(node)
 		if err != nil {
 			invalidNodes = true
@@ -169,6 +180,45 @@ func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, er
 			}
 		}
 		return nil, ce
+	}
+	// Admission denial may render a local response, but its recovery path must
+	// never dispatch work that bypasses the failed protection decision. Inspect
+	// raw edges here as well: later checks still report malformed/unknown edges.
+	allEdges, _ := ParseEdges(fc.Edges)
+	adj := map[string][]string{}
+	for _, edge := range allEdges {
+		adj[edge.From] = append(adj[edge.From], edge.To)
+	}
+	for _, edge := range allEdges {
+		if edge.FromPort != "on_error" || f.nodes[edge.From] == nil {
+			continue
+		}
+		if _, guarded := f.nodes[edge.From].node.(AdmissionGuard); !guarded {
+			continue
+		}
+		visited := map[string]bool{}
+		var check func(string)
+		check = func(id string) {
+			if visited[id] {
+				return
+			}
+			visited[id] = true
+			b := f.nodes[id]
+			if b == nil {
+				return
+			}
+			_, outbound := b.node.(SideEffectTracker)
+			_, child := b.node.(ChildExecutionNode)
+			if b.spec.Detached || outbound || child {
+				ce.Causes = append(ce.Causes, ErrAdmissionRecovery)
+				ce.addNodeProblem(edge.From, fmt.Sprintf("protection on_error recovery must produce a local response; outbound node %q cannot bypass admission", id))
+				return
+			}
+			for _, next := range adj[id] {
+				check(next)
+			}
+		}
+		check(edge.To)
 	}
 
 	// (3): exactly one trigger.

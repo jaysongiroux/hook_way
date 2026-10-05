@@ -96,12 +96,11 @@ func validateBatch(o BatchOptions) error {
 	}
 	publishes := 0
 	for _, node := range fc.Nodes {
-		switch node.Type {
-		case "transform", "code", "filter", "if_else", "switch":
-		case "publish":
-			publishes++
-		default:
+		if validationCatalog[node.Type].batchChildOrder <= 0 {
 			return errors.New("batch children support only envelope transforms, filters, selectors and one publish; nested batches, triggers and responses are forbidden")
+		}
+		if node.Type == "publish" {
+			publishes++
 		}
 	}
 	if publishes != 1 {

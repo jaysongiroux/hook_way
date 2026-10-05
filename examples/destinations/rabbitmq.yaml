@@ -1,3 +1,8 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # examples/destinations/rabbitmq.yaml
 #
 # Reference config showing the full RabbitMQ destination option surface.
@@ -81,10 +86,10 @@ flows:
     delivery_failure_policy: "stop_on_failure"
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/paddle, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 500, burst: 1000, key_by: source_ip}
+      - {id: rl, type: rate_limit, store: local, rpm: 500, burst: 1000, key_by: source_ip}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${PADDLE_WEBHOOK_SECRET}", signature_header: Paddle-Signature, timestamp_tolerance: "5m"}
-      - {id: guard, type: replay_guard, ttl: "10m", max_entries: 50000}
+      - {id: guard, type: replay_guard, store: local, ttl: "10m", max_entries: 50000}
       - {id: env, type: envelope, body_format: json}
       # queue_options (primary: message_ttl 72h, max_length 500000,
       # dead_letter_routing_key paddle.dead; audit: message_ttl 168h) are not

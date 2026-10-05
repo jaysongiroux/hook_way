@@ -13,6 +13,10 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
 
+type captureResponse struct {
+	ID string `json:"id"`
+}
+
 // ingest stores one captured failure (POST /v1/failures). 201 creates it,
 // 200 acknowledges a re-send of the same record.
 func (a *api) ingest(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +49,7 @@ func (a *api) ingest(w http.ResponseWriter, r *http.Request) {
 			a.metrics.CaptureArtifactBytes(replaywire.PartPayload, len(f.Payload))
 		}
 	}
-	writeJSON(w, status, map[string]string{"id": f.Metadata.ID})
+	writeJSON(w, status, captureResponse{ID: f.Metadata.ID})
 }
 
 func rejectionOutcome(err error) string {

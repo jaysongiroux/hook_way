@@ -134,7 +134,7 @@ func New() *Metrics {
 		Name: "hookway_replay_http_request_duration_seconds", Help: "HTTP request latency, by route pattern and method.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"route", "method"})
-	m.authFailures = counterVec("hookway_replay_auth_failures_total", "Rejected API requests, by reason (missing, invalid, scope).", "reason")
+	m.authFailures = counterVec("hookway_replay_auth_failures_total", "Rejected API requests, by reason (missing, invalid, scope, throttled).", "reason")
 	m.captures = counterVec("hookway_replay_captures_total", "Ingest requests, by outcome.", "outcome")
 	m.artifactBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: "hookway_replay_capture_artifact_bytes", Help: "Size of stored artifacts, by artifact (snapshot, payload).",
@@ -186,7 +186,7 @@ func New() *Metrics {
 	for _, s := range recordStatuses {
 		m.records.WithLabelValues(s)
 	}
-	for _, r := range []string{"missing", "invalid", "scope"} {
+	for _, r := range []string{"missing", "invalid", "scope", "throttled"} {
 		m.authFailures.WithLabelValues(r)
 	}
 	for _, o := range []string{CaptureCreated, CaptureDuplicate, CaptureConflict, CaptureCapacity, CaptureTooLarge, CaptureInvalid} {

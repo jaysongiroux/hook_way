@@ -1,3 +1,8 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # TEMPLATE: accept a signed XML webhook, branch on its content, prune it, and
 # forward it as XML.
 #
@@ -29,7 +34,7 @@
 #
 # The `rules` on the prune node are the five fixed document-shaping rules; they
 # are not a rule language. Drop the ones you do not want rather than trying to
-# express a predicate. See docs/configuration.md § XML bodies.
+# express a predicate. See docs/reference/configuration.md § XML bodies.
 server:
   addr: ":8080"
   read_timeout: "5s"
@@ -56,7 +61,7 @@ flows:
     nodes:
       - {id: in, type: http_trigger, description: "Where the source system posts its XML document.", path: /webhooks/xml-ingest, methods: [POST]}
       - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
-      - {id: rl, type: rate_limit, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
       - {id: body, type: read_body, description: "Buffers the raw bytes so the signature can be verified before parsing.", max_bytes: 1048576}
       - id: auth
         type: auth
@@ -64,7 +69,7 @@ flows:
         scheme: hmac_sha256_hex
         secret_ref: {provider: env, name: XML_SOURCE_SECRET, refresh: 15m, overlap: 5m}
         signature_header: X-Hub-Signature-256
-      - {id: replay, type: replay_guard, description: "Drops a document already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
+      - {id: replay, type: replay_guard, store: local, description: "Drops a document already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
       - {id: env, type: envelope, description: "Parses the verified bytes into an XML element tree.", body_format: xml}
       # Filter paths address elements below the root by local name, with a
       # leading @ for an attribute. Namespace prefixes are ignored, and

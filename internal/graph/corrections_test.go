@@ -371,6 +371,11 @@ func TestCollectedCompensationsAreReversed(t *testing.T) {
 	if len(term.Compensations) != 2 || term.Compensations[0].NodeID != "second" {
 		t.Fatalf("%+v", term.Compensations)
 	}
+	// This test exercises callback order only. Accepted destinations cannot
+	// authorize compensation; use the collected callbacks after a known local
+	// failure with no dispatch evidence.
+	term.SideEffects = false
+	term.Deliveries = nil
 	if err := RunCompensations(context.Background(), term, nil, time.Second); err != nil {
 		t.Fatal(err)
 	}

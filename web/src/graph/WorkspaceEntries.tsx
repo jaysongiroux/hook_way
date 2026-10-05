@@ -1,3 +1,4 @@
+import { EmptyState } from "../shared/ui/States";
 import { useState, type ReactNode } from "react";
 import {
   Alert,
@@ -95,9 +96,9 @@ export function WorkspaceEntries({
         </Button>
       </Group>
       {names.length === 0 ? (
-        <Text size="sm" c={DARK.muted}>
+        <EmptyState>
           No {label}s configured. Add one above to make it available to nodes.
-        </Text>
+        </EmptyState>
       ) : (
         <>
           <Select

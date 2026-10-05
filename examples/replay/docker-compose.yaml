@@ -3,7 +3,7 @@
 # stand in for the destinations (`docker compose stop audit-sink` makes the
 # audit publish fail while orders still succeeds, so the failure is captured). Docker's service DNS round-robins "core" and
 # "replay" across their replicas, so each side reaches the other through one
-# name. See docs/replay-service.md.
+# name. See docs/operations/replay-service.md.
 #
 #   docker compose -f examples/replay/docker-compose.yaml up --build
 #
@@ -13,6 +13,7 @@ x-replay-env: &replay-env
   REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:-dev-control-token-0123456789abcdef}
   REPLAY_OPERATOR_TOKEN: ${REPLAY_OPERATOR_TOKEN:-dev-operator-token-0123456789abcde}
   REPLAY_METRICS_TOKEN: ${REPLAY_METRICS_TOKEN:-dev-metrics-token-0123456789abcdefg}
+  REPLAY_CONSOLE_ORIGIN: ${REPLAY_CONSOLE_ORIGIN:-http://localhost:8082}
   REPLAY_DATABASE_URL: postgres://replay:replay@postgres:5432/replay?sslmode=disable
 
 services:
@@ -49,7 +50,7 @@ services:
       target: replay
     command: ["serve", "--config", "/etc/hookway-replay/replay.yaml"]
     # Longer than workers.execution_timeout, so in-flight runs finalize.
-    stop_grace_period: 45s
+    stop_grace_period: 70s
     deploy:
       replicas: 2
     environment: *replay-env
@@ -66,9 +67,9 @@ services:
       context: ../..
       dockerfile: Dockerfile
       target: core
-    # replay's execution_timeout plus core's shutdown_timeout: the control
-    # listener waits for in-flight redrives before publishers close.
-    stop_grace_period: 60s
+    # Exceed core server.shutdown_total_timeout (60s), including redrives,
+    # publisher drains and capture cleanup.
+    stop_grace_period: 70s
     deploy:
       replicas: 2
     environment:
@@ -95,3 +96,13 @@ services:
   audit-sink:
     image: hashicorp/http-echo:1.0
     command: ["-listen=:8080", "-text=ok"]
+
+  console:
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+    environment:
+      # Browser-reachable URL, never Docker service DNS. No API keys here.
+      REPLAY_API_URL: ${REPLAY_API_URL:-http://localhost:8090}
+    ports:
+      - "8082:8080"

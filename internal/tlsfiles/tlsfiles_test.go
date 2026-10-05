@@ -1,6 +1,9 @@
 package tlsfiles
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -35,5 +38,25 @@ func TestBuildErrorsNameTheBlock(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "core tls") {
 			t.Errorf("%s: Build = %v, want an error naming the core tls block", name, err)
 		}
+	}
+}
+
+func TestBuildPreservesExistingAndAdapterCAPathSemantics(t *testing.T) {
+	path := t.TempDir() + "/./missing-ca.pem"
+	for _, tc := range []struct {
+		name     string
+		options  []BuildOptions
+		wantPath string
+	}{
+		{"existing consumers clean", nil, filepath.Clean(path)},
+		{"adapters keep exact path", []BuildOptions{{PreserveCAPath: true}}, path},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (Files{CACert: path}).Build("client tls", tc.options...)
+			var pathErr *os.PathError
+			if !errors.As(err, &pathErr) || pathErr.Path != tc.wantPath {
+				t.Fatalf("Build error = %v, want filesystem path %q", err, tc.wantPath)
+			}
+		})
 	}
 }

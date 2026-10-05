@@ -1,3 +1,8 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # Binary-safe fixed proxy: XML, PDF, DOCX, multipart and base64 JSON stay byte-exact.
 # Set UPSTREAM_BASE to an operator-controlled origin with no trailing slash.
 # The 20 MiB wire budget accommodates a 12,000,000-byte document plus encoding overhead.
@@ -10,7 +15,7 @@ flows:
   file_proxy:
     nodes:
       - {id: in, type: http_trigger, description: "Accepts ordinary HTTP methods under a fixed proxy prefix.", path: "/proxy/files/{rest...}", methods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]}
-      - {id: rate, type: rate_limit, rpm: 1200, burst: 20}
+      - {id: rate, type: rate_limit, store: local, rpm: 1200, burst: 20}
       - {id: body, type: read_body, description: "Allows empty requests and bounds the original wire bytes.", max_bytes: 20971520, allow_empty: true}
       - {id: auth, type: auth, scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
       - {id: env, type: envelope, description: "Keeps files outside JSON parsing and the script runtime.", body_format: raw}

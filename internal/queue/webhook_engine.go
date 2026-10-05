@@ -24,6 +24,10 @@ var ErrWebhookQueueFull = errors.New("webhook: delivery queue full")
 
 var errWebhookEngineClosing = errors.New("webhook: engine closing")
 
+// ErrWebhookDrainTimeout means workers still own dependent publishers/capture.
+// Shutdown callers must leave those resources open and exit unsuccessfully.
+var ErrWebhookDrainTimeout = errors.New("webhook: drain timed out with deliveries pending")
+
 // webhookDelivery is the resolved per-destination delivery config (built by the publisher).
 // (WebhookMetrics interface is defined in publisher.go)
 type webhookDelivery struct {
@@ -59,6 +63,7 @@ type webhookDeliveryEngine struct {
 	mu           sync.RWMutex
 	closed       bool
 	closeOnce    sync.Once
+	closeErr     error
 	drainTimeout time.Duration
 	metrics      WebhookMetrics
 	logger       *slog.Logger
@@ -193,10 +198,11 @@ func (e *webhookDeliveryEngine) Close() error {
 		select {
 		case <-done:
 		case <-time.After(e.drainTimeout):
+			e.closeErr = ErrWebhookDrainTimeout
 			e.logger.Warn("webhook engine drain timed out with deliveries still pending")
 		}
 	})
-	return nil
+	return e.closeErr
 }
 
 // deliver runs one job to completion on a worker: attempt the delivery (with

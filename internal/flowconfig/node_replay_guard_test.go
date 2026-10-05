@@ -12,12 +12,12 @@ import (
 
 func mustReplayGuard(t *testing.T, body string) *replayGuardNode {
 	t.Helper()
-	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec, _ := reg.Lookup("replay_guard")
-	node, err := spec.New(nodeConfigFromYAML(t, "replay_guard", body))
+	node, err := spec.New(nodeConfigFromYAML(t, "replay_guard", "store: test\n"+body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,9 +56,11 @@ func TestReplayGuardRejectsDuplicateWithinTTL(t *testing.T) {
 func TestReplayGuardCompensateReleasesReservation(t *testing.T) {
 	n := mustReplayGuard(t, "ttl: 1m\nmax_entries: 100\n")
 	v := graph.Verified{Raw: graph.RawRequest{Body: []byte(`{"id":1}`)}}
-	if _, err := n.Run(context.Background(), v); err != nil {
+	out, err := n.Run(context.Background(), v)
+	if err != nil {
 		t.Fatal(err)
 	}
+	v = out.(graph.Verified)
 	if err := n.Compensate(context.Background(), v, errors.New("publish failed")); err != nil {
 		t.Fatal(err)
 	}

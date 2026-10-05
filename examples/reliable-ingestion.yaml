@@ -1,0 +1,39 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+# Reliable-ingestion starting point: a 202 follows RabbitMQ publisher confirm.
+# Configure broker replication/retention and downstream deduplication separately.
+# No early acknowledgement, partial-success policy or volatile async queue.
+# See docs/operations/delivery-guarantees.md for failure windows and sender recovery.
+# Requires RABBITMQ_URL and GITHUB_WEBHOOK_SECRET.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  publish_timeout: 5s
+  write_timeout: 10s
+security:
+  forwarded_header_allowlist: [Content-Type, X-GitHub-Delivery, X-GitHub-Event]
+destinations:
+  events:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: hookway.webhooks
+      exchange_type: direct
+      durable: true
+      declare_queues: true
+      publish_timeout: 5s
+flows:
+  github:
+    delivery_failure_policy: stop_on_failure
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: limit, type: rate_limit, store: local, rpm: 600, burst: 100, key_by: source_ip}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: event, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: github-webhooks, create: true}
+    edges: [in>limit, limit>body, body>auth, auth>event, event>out]

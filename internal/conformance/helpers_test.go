@@ -140,6 +140,7 @@ func flowYAML(extraNodes, afterEnv, serverLines string) string {
 		afterEnv = ", env>out"
 	}
 	return `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
 ` + serverLines + `
 destinations:
@@ -153,10 +154,10 @@ flows:
       - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
       - {id: loop, type: loop_guard, max_hops: 3}
       - {id: allow, type: ip_allowlist, cidrs: ["0.0.0.0/0", "::/0"]}
-      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: rl, type: rate_limit, store: test, rpm: 6000, burst: 6000}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
-      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: replay, type: replay_guard, store: test, ttl: 5m, max_entries: 100}
       - {id: env, type: envelope, body_format: json}
 ` + extraNodes + `
       - {id: out, type: publish, destination: primary, target: github-webhooks}

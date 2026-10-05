@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/jaysongiroux/hook_way/internal/capture"
+	"github.com/jaysongiroux/hook_way/internal/problem"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
 
@@ -90,21 +91,9 @@ func writeParts(result []byte, kids []capture.Record) ([]byte, string, error) {
 	return buf.Bytes(), w.FormDataContentType(), nil
 }
 
-type problem struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail,omitempty"`
-	Code   string `json:"code"`
-}
-
 // writeProblem sends an RFC 9457 problem; replay's executor switches on code.
 func writeProblem(w http.ResponseWriter, status int, code, detail string) {
-	h := w.Header()
-	h.Set("Content-Type", "application/problem+json")
-	h.Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(problem{Type: "about:blank", Title: http.StatusText(status), Status: status, Detail: detail, Code: code})
+	problem.Write(w, status, code, detail)
 }
 
 // writeNotStarted is the only answer after which replay may resend: core

@@ -1,11 +1,9 @@
-// Competitive comparison copy for /compare.
-//
-// Claims are feature and integration only — no pricing or subscription tiers.
-// Sources are public docs checked while writing this page; re-verify before
-// expanding a cell. Hookdeck Outpost is noted separately: it is an outbound
-// event delivery product, not an inbound webhook gateway.
+// Feature comparison, checked against linked vendor documentation on 2026-10-05.
+// Compare Event Gateway separately from the outbound Outpost product.
 
 import { GITHUB_REPO, repoBlob } from "./links";
+
+export const COMPARE_CHECKED_ON = "2026-10-05";
 
 export type SupportLevel = "yes" | "partial" | "no" | "n/a";
 type CompetitorId = "hookway" | "hookdeck" | "convoy";
@@ -24,12 +22,13 @@ export interface CompareRow {
   id: string;
   capability: string;
   note?: string;
-  values: Record<CompetitorId, { level: SupportLevel; detail: string }>;
+  sources: Record<CompetitorId, string>;
+  values: Record<CompetitorId, { level: SupportLevel; detail: string; count?: number }>;
 }
 
 export const COMPARE_INTRO = {
   title: "How Hookway compares",
-  lead: "Compare how these gateways receive, verify, and deliver webhooks. Hookway runs in your infrastructure and sends events directly to queues, streams, databases, and object storage. Its optional replay service lets you inspect and retry missed deliveries through an API. Each claim links to product docs or this repository.",
+  lead: "Compare how these gateways receive, verify, and deliver webhooks. Hookway runs in your infrastructure and sends events directly to queues, streams, databases, and object storage. Its optional replay service lets you inspect and retry missed deliveries through a scoped operations console or API. The table explains different delivery boundaries and links to the docs behind each claim.",
 } as const;
 
 export const COMPARE_DIFFERS = {
@@ -38,7 +37,7 @@ export const COMPARE_DIFFERS = {
     {
       title: "Native destinations",
       detail:
-        "Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — 14 catalog types. Temporal workflow settings are not yet exposed in standalone YAML.",
+        "Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — 14 catalog types. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.",
     },
     {
       title: "Object and file publish",
@@ -48,7 +47,7 @@ export const COMPARE_DIFFERS = {
     {
       title: "Optional hookway-replay",
       detail:
-        "List, inspect, download, retry, and dismiss missed deliveries over HTTP, then resume at the failed node. API-only — no product UI and no automatic re-drive. Default max_record_bytes is 16 MiB.",
+        "Inspect missed deliveries in the scoped console or API. Retry from the failed node or confirm an uncertain outcome with evidence. Capture is best effort; recovery is operator initiated.",
     },
   ],
 } as const;
@@ -57,7 +56,7 @@ export const COMPETITORS: Competitor[] = [
   {
     id: "hookway",
     name: "Hookway",
-    role: "Self-hosted inbound gateway: one binary, one YAML config, native publishes into your infrastructure.",
+    role: "Self-hosted inbound gateway. Core is one binary configured in YAML; replay and the frontend are optional separate services.",
     sourceHref: GITHUB_REPO,
     sourceLabel: "hook_way repository",
     mark: "This product",
@@ -81,6 +80,7 @@ export const COMPETITORS: Competitor[] = [
 export const COMPARE_ROWS: CompareRow[] = [
   {
     id: "deploy",
+    sources: { hookway: repoBlob("docs/dockerhub/README.md"), hookdeck: "https://hookdeck.com/event-gateway", convoy: "https://www.getconvoy.io/docs/home/introduction" },
     capability: "Deployment model",
     values: {
       hookway: {
@@ -90,12 +90,13 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookdeck: { level: "yes", detail: "Managed SaaS Event Gateway" },
       convoy: {
         level: "yes",
-        detail: "Self-hosted (API, workers, Postgres, Redis) or Convoy Cloud",
+        detail: "Self-hosted API/workers with PostgreSQL and Redis, or Convoy Cloud",
       },
     },
   },
   {
     id: "config",
+    sources: { hookway: repoBlob("docs/reference/configuration.md"), hookdeck: "https://hookdeck.com/docs/connections", convoy: "https://www.getconvoy.io/docs/home/quickstart" },
     capability: "Primary config surface",
     values: {
       hookway: {
@@ -108,12 +109,13 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "verify",
+    sources: { hookway: repoBlob("docs/reference/security.md#auth-schemes"), hookdeck: "https://hookdeck.com/docs/sources", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
     capability: "Inbound signature verification",
     values: {
       hookway: {
         level: "yes",
         detail:
-          "13 authentication formats: HMAC signatures, ECDSA P-256 request signatures, HTTP Basic, exact tokens, and JWT HS256/RS256/ES256. A separate no_auth node permits unauthenticated access. Unknown schemes are rejected",
+          "14 authentication formats: HMAC, ECDSA P-256, HTTP Basic, exact tokens, and JWT HS256/RS256/ES256. Unknown schemes are rejected; unauthenticated flows use an explicit no_auth node",
       },
       hookdeck: {
         level: "yes",
@@ -121,12 +123,13 @@ export const COMPARE_ROWS: CompareRow[] = [
       },
       convoy: {
         level: "yes",
-        detail: "Provider verification on incoming HTTP sources",
+        detail: "HMAC, Basic auth, API keys, and provider-specific incoming source verification",
       },
     },
   },
   {
     id: "bodies",
+    sources: { hookway: repoBlob("docs/reference/configuration.md#envelope-and-publish"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
     capability: "Body formats",
     values: {
       hookway: {
@@ -140,26 +143,30 @@ export const COMPARE_ROWS: CompareRow[] = [
       },
       convoy: {
         level: "partial",
-        detail: "JSON event payloads; transforms available on ingest",
+        detail: "JSON event payloads and JavaScript transformations; no equivalent ordered XML or multipart-file parser is documented",
       },
     },
   },
   {
     id: "destinations",
+    sources: { hookway: repoBlob("docs/reference/configuration.md#destinations"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
     capability: "Native delivery destinations",
-    note: "What the product writes to after verification — not brokers used only as ingest sources. Temporal workflow settings are not yet exposed in standalone YAML.",
+    note: "Counts are catalog destination types, not provider brands. Hookway counts Redis modes separately; Event Gateway includes CLI and Mock API. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.",
     values: {
       hookway: {
         level: "yes",
+        count: 14,
         detail:
-          "14 catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, plus Temporal task-queue wiring whose workflow settings are not yet exposed in standalone YAML",
+          "14 catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, and Temporal workflow starts with configurable input, IDs and timeouts",
       },
       hookdeck: {
-        level: "partial",
-        detail: "HTTP, CLI (local), and Mock API only",
+        level: "yes",
+        count: 3,
+        detail: "HTTP, CLI for local testing, and Mock API. Hookdeck Outpost is a separate outbound product with 11 destination types",
       },
       convoy: {
-        level: "partial",
+        level: "yes",
+        count: 1,
         detail:
           "HTTP/HTTPS webhook endpoints; Kafka/SQS/Pub/Sub/RabbitMQ are ingest sources for outgoing projects",
       },
@@ -167,6 +174,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "object-store",
+    sources: { hookway: repoBlob("docs/reference/configuration.md#publish-payload-modes"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/retention-policy" },
     capability: "Multipart / decoded file → object storage",
     values: {
       hookway: {
@@ -177,17 +185,18 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookdeck: {
         level: "no",
         detail:
-          "Event Gateway destinations are HTTP, CLI, and Mock API only. Outpost is a separate product",
+          "HTTP delivery can call your own upload handler; no native decoded-file publish. Outpost is a separate product",
       },
       convoy: {
         level: "no",
         detail:
-          "Delivery targets are HTTP endpoints. An S3 retention archive is not inbound object publish of decoded file bytes",
+          "HTTP endpoints can implement uploads themselves. An S3 retention archive stores webhook history, not decoded multipart files",
       },
     },
   },
   {
     id: "fanout",
+    sources: { hookway: repoBlob("docs/operations/delivery-guarantees.md#fan-out-and-acknowledged-failures"), hookdeck: "https://hookdeck.com/docs/connections", convoy: "https://www.getconvoy.io/docs/product-manual/subscriptions" },
     capability: "Fan-out to multiple destinations",
     values: {
       hookway: {
@@ -205,65 +214,81 @@ export const COMPARE_ROWS: CompareRow[] = [
     },
   },
   {
+    id: "protection",
+    sources: { hookway: repoBlob("docs/guides/protection-stores.md"), hookdeck: "https://hookdeck.com/docs/deduplication", convoy: "https://www.getconvoy.io/docs/product-manual/rate-limits" },
+    capability: "Traffic controls",
+    note: "Inbound admission and downstream delivery pacing protect different parts of a system.",
+    values: {
+      hookway: { level: "yes", detail: "Inbound token buckets, approximate rolling quotas, and duplicate reservations; memory, Redis, or PostgreSQL. Verified caller/tenant identities are supported" },
+      hookdeck: { level: "yes", detail: "Queued delivery pacing per destination and configurable deduplication rules" },
+      convoy: { level: "yes", detail: "Redis-backed ingest/API rate limits and per-endpoint delivery rate limits" },
+    },
+  },
+  {
     id: "transform",
+    sources: { hookway: repoBlob("docs/guides/ingress-adapters.md"), hookdeck: "https://hookdeck.com/docs/transformations", convoy: "https://www.getconvoy.io/docs/product-manual/functions" },
     capability: "Payload transform",
     values: {
       hookway: {
         level: "yes",
         detail:
-          "field_map, changed_fields, JSON Schema validation/coercion, XML pruning and ordered edits, sandboxed JavaScript code node, bounded batch processing",
+          "Field mapping, JSON changes and schema validation, explicit conversions, ordered XML edits, sandboxed JavaScript, and bounded batches",
       },
       hookdeck: {
         level: "yes",
         detail: "JavaScript transformations on connections",
       },
-      convoy: { level: "yes", detail: "Transform functions on ingest" },
+      convoy: { level: "yes", detail: "JavaScript functions on incoming subscriptions and outgoing broker sources" },
     },
   },
   {
     id: "replay",
+    sources: { hookway: repoBlob("docs/operations/replay-service.md"), hookdeck: "https://hookdeck.com/docs/retries", convoy: "https://www.getconvoy.io/docs/api-reference/event-deliveries/retry-event-delivery" },
     capability: "Inspect and retry failed deliveries",
     values: {
       hookway: {
         level: "yes",
         detail:
-          "Optional hookway-replay: list/inspect, download payload, retry (single or batch), dismiss via HTTP API; captures destination misses after the sender already got its 2xx when no error path or dead letter handled them; resumes at the failed node (an async webhook re-sends the prepared message). API-only — no product UI, no automatic re-drive. Default max_record_bytes 16 MiB (oversize → metadata-only, not retryable)",
+          "Optional hookway-replay: inspect, download, retry individually or in batches, dismiss, and investigate via scoped operations console or API. Best-effort recovery of eligible misses after the sender’s 2xx; resumes at the failed node. No automatic re-drive",
       },
       hookdeck: {
         level: "yes",
         detail:
-          "Persisted requests/events with dashboard and API retry/replay (incl. bulk replay of requests); automatic retries up to 50. Default inbound payload 10 MiB — oversize returns 413 and the body is not stored, so that request cannot be meaningfully replayed",
+          "Stored requests/events with dashboard and API retry, including bulk replay of requests. Automatic retries and manual recovery are both available",
       },
       convoy: {
         level: "yes",
         detail:
-          "Event and delivery logs with dashboard and API manual retry (resend delivery); configurable automatic retries (linear or exponential). Delivery targets remain HTTP endpoints. Docs advise keeping webhook payloads small (ideally ~1–5 MB) and avoiding large binary in the payload",
+          "Event/delivery logs and dashboard/API resend. Automatic retries use configurable linear or exponential backoff",
       },
     },
   },
   {
     id: "payload-retention",
-    capability: "Payload size retained for inspect/replay",
+    sources: { hookway: repoBlob("docs/operations/replay-service.md#what-gets-captured"), hookdeck: "https://hookdeck.com/docs/limits", convoy: "https://www.getconvoy.io/docs/guides/best-practices-for-generating-webhook-events" },
+    capability: "Payload limits",
+    note: "Ingress size, retained artifact size, and searchable size are separate limits; these numbers are not durability guarantees.",
     values: {
       hookway: {
         level: "yes",
         detail:
-          "Default max_record_bytes is 16 MiB and is configurable. Over that limit the artifact is metadata-only and not retryable",
+          "Ingress is bounded by each read_body.max_bytes. Replay max_record_bytes defaults to 16 MiB per artifact; larger artifacts become metadata-only and cannot be retried",
       },
       hookdeck: {
         level: "partial",
         detail:
-          "Default inbound ingest is 10 MiB. An oversize body is not stored. Dashboard search stops at 2.5 MB",
+          "Default Developer-plan inbound limit: 10 MiB; oversize requests get 413. Body search limit: 2.5 MB, separate from storage and delivery. Larger ingest limits need arrangement",
       },
       convoy: {
-        level: "partial",
+        level: "n/a",
         detail:
-          "Docs advise keeping payloads small (ideally ~1–5 MB) and avoiding large files embedded in the body",
+          "The linked guidance does not state an enforced payload-size ceiling. Check the configuration and deployment you plan to use",
       },
     },
   },
   {
     id: "ops",
+    sources: { hookway: repoBlob("docs/reference/configuration.md#metrics"), hookdeck: "https://hookdeck.com/docs/metrics", convoy: "https://www.getconvoy.io/docs/product-manual/metrics" },
     capability: "Operator observability",
     values: {
       hookway: {
@@ -284,7 +309,7 @@ export const COMPARE_ROWS: CompareRow[] = [
 
 export const COMPARE_OUTPOST_NOTE = {
   title: "About Hookdeck Outpost",
-  body: "Hookdeck also publishes Outpost, a separate open-source outbound event delivery service with native destinations such as webhooks, SQS, S3, RabbitMQ, and Kafka. Outpost solves sending events to your customers’ endpoints and brokers. Hookway solves receiving third-party webhooks into your own infrastructure. They are complementary problem spaces, not drop-in substitutes.",
+  body: "Hookdeck Outpost is a separate outbound delivery service with 11 destination types, including SQS, S3, EventBridge, Kinesis, RabbitMQ, Kafka, and webhooks. It sends your application’s events to customer destinations. Hookway receives third-party webhooks into your infrastructure. This table compares Hookway with Event Gateway; it does not attribute Outpost’s features to Event Gateway.",
   href: "https://hookdeck.com/docs/outpost/overview",
   label: "Hookdeck Outpost overview",
 } as const;
@@ -342,6 +367,6 @@ export const COMPARE_SOURCES = [
     href: "https://www.getconvoy.io/docs/product-manual/retention-policy",
     label: "Convoy retention policy",
   },
-  { href: repoBlob("docs/replay-service.md"), label: "Hookway replay service" },
+  { href: repoBlob("docs/operations/replay-service.md"), label: "Hookway replay service" },
   { href: GITHUB_REPO, label: "Hookway repository" },
 ] as const;

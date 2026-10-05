@@ -55,7 +55,19 @@ type Verified struct {
 	OriginalJSON *jsoncanon.Representation `json:"-"`
 	Raw          RawRequest
 	Identity     string
+	// CredentialID is operator-configured and stable across credential rotation.
+	// JWT selectors are populated only by the verifier after signature, expiry,
+	// issuer and audience checks; no_auth leaves them empty.
+	CredentialID string `json:"-"`
+	Subject      string `json:"-"`
+	Tenant       string `json:"-"`
+	Issuer       string `json:"-"`
+	TrustScope   string `json:"-"`
+	// Reservations is request-local compensation metadata; it is neither
+	// persisted nor exposed to user scripts. Only the owner can release a guard.
+	Reservations map[string]GuardReservation `json:"-"`
 }
+type GuardReservation struct{ Key, Owner string }
 
 func (Verified) PortType() PortType { return PortVerified }
 
@@ -115,6 +127,9 @@ type UpstreamResponse struct {
 // caller needs Deliveries to decide whether to compensate (see
 // NeedsCompensation).
 type Terminal struct {
+	// SideEffects is monotonic request-local evidence: an outbound operation
+	// succeeded or may have reached its destination. Such requests retain guards.
+	SideEffects bool
 	// DropReason is finite, configuration-supplied filter metadata.
 	DropReason string
 	Response   *Response
@@ -140,7 +155,10 @@ type Response struct {
 // "{route}-applicationServiceQueue"), never the rendered value -- see
 // scalability rule R3. The rendered value belongs in logs and span attributes.
 type Delivery struct {
-	NodeID string
+	// NoEffect means dispatch was known not to have started. A delivery error
+	// without this evidence may represent an uncertain remote acceptance.
+	NoEffect bool
+	NodeID   string
 	// RenderedTarget is delivery metadata for responses/replay, never a metric label.
 	RenderedTarget string
 	Target         string

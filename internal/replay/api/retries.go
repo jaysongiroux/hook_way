@@ -2,11 +2,11 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/jaysongiroux/hook_way/internal/replay/auth"
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
+	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 type retryBody struct {
@@ -26,15 +26,28 @@ type batchItem struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
+type retryResponse struct {
+	RunID string `json:"run_id"`
+}
+type batchResponse struct {
+	Results []batchItem `json:"results" openapi:"nonnullable"`
+}
+
 // idempotencyKey reads the required Idempotency-Key header: 1-255 printable
 // ASCII characters without spaces.
 func idempotencyKey(r *http.Request) (string, error) {
-	key := r.Header.Get("Idempotency-Key")
-	if key == "" {
-		return "", newError(http.StatusBadRequest, "idempotency_key_required", "the Idempotency-Key header is required")
+	values := r.Header.Values("Idempotency-Key")
+	if len(values) > 1 {
+		return "", newError(http.StatusBadRequest, "invalid_request", "Idempotency-Key must appear once")
 	}
-	if len(key) > maxKeyLen || strings.IndexFunc(key, func(c rune) bool { return c < 0x21 || c > 0x7e }) >= 0 {
-		return "", newError(http.StatusBadRequest, "invalid_request", "Idempotency-Key must be 1-%d printable ASCII characters without spaces", maxKeyLen)
+	key := r.Header.Get("Idempotency-Key")
+	issues := uicontract.ValidateReplayAction(uicontract.ReplayActionInput{IdempotencyKey: key}).Issues
+	if len(issues) > 0 {
+		code := "invalid_request"
+		if key == "" {
+			code = "idempotency_key_required"
+		}
+		return "", newError(http.StatusBadRequest, code, "%s", issues[0].Message)
 	}
 	return key, nil
 }
@@ -61,7 +74,7 @@ func (a *api) retry(w http.ResponseWriter, r *http.Request) {
 	if res.Created {
 		a.metrics.RunsCreated(metrics.ModeSingle, 1)
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"run_id": res.RunID})
+	writeJSON(w, http.StatusAccepted, retryResponse{RunID: res.RunID})
 }
 
 // retryBatch requests a run for each listed record. Each item gets its own
@@ -78,17 +91,14 @@ func (a *api) retryBatch(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	if n := len(body.FailureIDs); n == 0 || n > maxBatchSize {
-		a.fail(w, r, newError(http.StatusBadRequest, "invalid_request", "failure_ids must list 1 to %d record ids", maxBatchSize))
+	ids := body.FailureIDs
+	if ids == nil {
+		ids = []string{}
+	} // nil means a single action to the shared input validator
+	issues := uicontract.ValidateReplayAction(uicontract.ReplayActionInput{IdempotencyKey: key, FailureIDs: ids}).Issues
+	if len(issues) > 0 {
+		a.fail(w, r, newError(http.StatusBadRequest, "invalid_request", "%s", issues[0].Message))
 		return
-	}
-	seen := map[string]bool{}
-	for _, id := range body.FailureIDs {
-		if seen[id] {
-			a.fail(w, r, newError(http.StatusBadRequest, "invalid_request", "failure_ids lists %q more than once", id))
-			return
-		}
-		seen[id] = true
 	}
 	items := make([]batchItem, 0, len(body.FailureIDs))
 	created := 0
@@ -112,7 +122,7 @@ func (a *api) retryBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, batchItem{FailureID: id, Status: http.StatusAccepted, RunID: res.RunID})
 	}
-	writeJSON(w, http.StatusOK, map[string][]batchItem{"results": items})
+	writeJSON(w, http.StatusOK, batchResponse{Results: items})
 }
 
 func (a *api) getRun(w http.ResponseWriter, r *http.Request) {

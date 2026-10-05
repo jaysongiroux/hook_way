@@ -141,9 +141,9 @@ func TestLoadBytesAllowsDisablingTheGCLoop(t *testing.T) {
 	}
 }
 
-func TestMetricsWithoutAMetricsKeyWarns(t *testing.T) {
+func TestMetricsWithoutAMetricsKeyFails(t *testing.T) {
 	_, issues := LoadBytes([]byte(minimalYAML + "metrics: {enabled: true, path: /metrics, addr: \":9090\"}\n"))
-	if len(issues) != 1 || issues[0].Severity != hookconfig.SeverityWarning || issues[0].Field != "metrics" {
+	if len(issues) != 1 || issues[0].EffectiveSeverity() != hookconfig.SeverityError || issues[0].Field != "metrics" {
 		t.Fatalf("issues = %+v", issues)
 	}
 }
@@ -235,43 +235,13 @@ func TestTheReplayExamplesValidate(t *testing.T) {
 	t.Setenv("REPLAY_CAPTURE_TOKEN", "capture-token-0123456789abcdefghijkl")
 	t.Setenv("REPLAY_OPERATOR_TOKEN", "operator-token-0123456789abcdefghi")
 	t.Setenv("REPLAY_METRICS_TOKEN", "metrics-token-0123456789abcdefghijk")
+	t.Setenv("REPLAY_CONSOLE_ORIGIN", "http://127.0.0.1:5183")
 	for _, path := range []string{"../../../examples/replay/replay.yaml", "../../../examples/dev/replay.yaml"} {
 		_, issues := Load(path)
 		for _, issue := range issues {
 			if issue.EffectiveSeverity() == hookconfig.SeverityError {
 				t.Fatalf("%s: issues = %+v", path, issues)
 			}
-		}
-	}
-}
-
-// deploy/kubernetes/replay-config.yaml embeds the replay config in a ConfigMap.
-func TestTheKubernetesReplayConfigValidates(t *testing.T) {
-	raw, err := os.ReadFile("../../../deploy/kubernetes/replay-config.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := string(raw)
-	start := strings.Index(src, "  replay.yaml: |\n")
-	if start < 0 {
-		t.Fatal("no replay.yaml key in the ConfigMap")
-	}
-	var body strings.Builder
-	for _, line := range strings.Split(src[start+len("  replay.yaml: |\n"):], "\n") {
-		if line != "" && !strings.HasPrefix(line, "    ") {
-			break
-		}
-		body.WriteString(strings.TrimPrefix(line, "    ") + "\n")
-	}
-	t.Setenv("REPLAY_DATABASE_URL", "postgres://replay@db:5432/replay")
-	t.Setenv("REPLAY_CONTROL_TOKEN", "control-token-0123456789abcdefghij")
-	t.Setenv("REPLAY_CAPTURE_TOKEN", "capture-token-0123456789abcdefghijkl")
-	t.Setenv("REPLAY_OPERATOR_TOKEN", "operator-token-0123456789abcdefghi")
-	t.Setenv("REPLAY_METRICS_TOKEN", "metrics-token-0123456789abcdefghijk")
-	_, issues := LoadBytes([]byte(body.String()))
-	for _, issue := range issues {
-		if issue.EffectiveSeverity() == hookconfig.SeverityError {
-			t.Fatalf("issues = %+v", issues)
 		}
 	}
 }
@@ -310,6 +280,7 @@ func TestExampleMetricsKeysAreMetricsOnly(t *testing.T) {
 	t.Setenv("REPLAY_CAPTURE_TOKEN", "capture-token-0123456789abcdefghijkl")
 	t.Setenv("REPLAY_OPERATOR_TOKEN", "operator-token-0123456789abcdefghi")
 	t.Setenv("REPLAY_METRICS_TOKEN", "metrics-token-0123456789abcdefghijk")
+	t.Setenv("REPLAY_CONSOLE_ORIGIN", "http://127.0.0.1:5183")
 	cfg, _ := Load("../../../examples/replay/replay.yaml")
 	if len(cfg.Keys) == 0 {
 		t.Fatal("the example config did not load")

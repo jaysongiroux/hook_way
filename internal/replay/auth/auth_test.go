@@ -102,13 +102,6 @@ func TestRequireRejects(t *testing.T) {
 	}
 }
 
-func TestAnyKeyHas(t *testing.T) {
-	a, _ := testAuth(t)
-	if !a.AnyKeyHas(ScopeCapture) || a.AnyKeyHas(ScopeMetrics) {
-		t.Fatal("AnyKeyHas does not reflect the configured scopes")
-	}
-}
-
 func TestNilFailureCallbackIsSafe(t *testing.T) {
 	a := New([]Key{{Name: "ops", Token: opsToken, Scopes: []Scope{ScopeRead}}}, nil)
 	if rec, _ := call(t, a.Require(ScopeRead, actorEcho()), ""); rec.Code != http.StatusUnauthorized {

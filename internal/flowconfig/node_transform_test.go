@@ -10,12 +10,15 @@ import (
 )
 
 func TestTransformChangedFieldsBindsJSONArrayVar(t *testing.T) {
-	node := newTransformNode("diff", TransformOptions{
+	node, err := newTransformNode("diff", TransformOptions{
 		Kind: "changed_fields",
 		From: "body.data.previousObject",
 		To:   "body.data.object",
 		Name: "diff",
 	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := node.Run(context.Background(), graph.Envelope{
 		Body: map[string]any{
 			"data": map[string]any{
@@ -38,13 +41,16 @@ func TestTransformChangedFieldsBindsJSONArrayVar(t *testing.T) {
 }
 
 func TestTransformFieldMapCopiesPath(t *testing.T) {
-	node := newTransformNode("map", TransformOptions{
+	node, err := newTransformNode("map", TransformOptions{
 		Kind: "field_map",
 		Mappings: []FieldMappingOptions{
 			{From: "body.data.object.id", To: "vars.application_id"},
 			{From: "body.data.object.id", To: "body.mapped.id"},
 		},
 	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := node.Run(context.Background(), graph.Envelope{
 		Body: map[string]any{"data": map[string]any{"object": map[string]any{"id": "abc"}}},
 		Vars: map[string]string{},
@@ -67,7 +73,10 @@ func TestTransformXMLPruneRewritesEnvelopeBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node := newTransformNode("prune", TransformOptions{Kind: "xml_prune"}, nil)
+	node, err := newTransformNode("prune", TransformOptions{Kind: "xml_prune"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := node.Run(context.Background(), graph.Envelope{Body: doc})
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +91,11 @@ func TestTransformXMLPruneRewritesEnvelopeBody(t *testing.T) {
 }
 
 func TestTransformXMLPruneRejectsJSONBody(t *testing.T) {
-	node := newTransformNode("prune", TransformOptions{Kind: "xml_prune"}, nil)
-	_, err := node.Run(context.Background(), graph.Envelope{Body: map[string]any{"a": 1}})
+	node, err := newTransformNode("prune", TransformOptions{Kind: "xml_prune"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = node.Run(context.Background(), graph.Envelope{Body: map[string]any{"a": 1}})
 	if err == nil || !strings.Contains(err.Error(), "not XML") {
 		t.Fatalf("err = %v, want not XML", err)
 	}

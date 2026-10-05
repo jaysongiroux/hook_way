@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -107,7 +108,9 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 	}
 	if !opts.SkipBodyParsing {
 		var parsed any
-		if err := json.Unmarshal(opts.RawBody, &parsed); err == nil {
+		decoder := json.NewDecoder(bytes.NewReader(opts.RawBody))
+		decoder.UseNumber()
+		if err := decoder.Decode(&parsed); err == nil && json.Valid(opts.RawBody) {
 			env.Body = parsed
 		} else {
 			encoded := base64.StdEncoding.EncodeToString(opts.RawBody)

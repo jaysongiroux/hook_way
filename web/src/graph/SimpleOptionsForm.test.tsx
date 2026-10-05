@@ -1,9 +1,9 @@
+import { NodeOptionsForm } from "./NodeOptionsForm";
 import { useState } from "react";
 import { expect, test, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import {
-  SimpleOptionsForm,
   SIMPLE_NODE_TYPES,
   CODE_EXAMPLE,
 } from "./SimpleOptionsForm";
@@ -15,7 +15,7 @@ function setup(nodeType: string, initial: Record<string, unknown>) {
     const [value, setValue] = useState(initial);
     return (
       <MantineProvider>
-        <SimpleOptionsForm
+        <NodeOptionsForm
           nodeType={nodeType}
           value={value}
           scope={`simple-test/${nodeType}`}
@@ -35,8 +35,11 @@ function setup(nodeType: string, initial: Record<string, unknown>) {
 test("simple forms cover precisely the remaining runtime catalog types", () => {
   const dedicated = [
     "auth",
+    "rate_limit",
+    "replay_guard",
     "no_auth",
     "transform",
+    "json_validate",
     "envelope",
     "filter",
     "if_else",
@@ -53,13 +56,30 @@ test("simple forms cover precisely the remaining runtime catalog types", () => {
   );
 });
 
+test("rate limit capacity can be edited without resetting the quota or identity source", () => {
+  const change = setup("rate_limit", {
+    rpm: 60,
+    burst: 10,
+    key_by: "header.X-Tenant-ID",
+  });
+  fireEvent.change(screen.getByLabelText("Maximum tracked identities"), {
+    target: { value: "2000" },
+  });
+  expect(change).toHaveBeenLastCalledWith({
+    rpm: 60,
+    burst: 10,
+    key_by: "header.X-Tenant-ID",
+    max_keys: 2000,
+  });
+});
+
 test.each([
   ["http_trigger", "Request path"],
   ["read_body", "Body read limit (bytes)"],
   ["ip_allowlist", "Allowed IPs and networks"],
   ["loop_guard", "Maximum forwarded hops"],
-  ["replay_guard", "Cache lifetime"],
-  ["lookup", "Custom provider name"],
+  ["replay_guard", "Duplicate window"],
+  ["lookup", "Lookup provider"],
   ["code", "JavaScript function body"],
   ["rate_limit", "Requests per minute"],
 ])("%s leads with useful primary setup", (type, label) => {
@@ -101,7 +121,9 @@ test("code example uses the actual input/return contract and preserves other opt
     custom: "retained",
     script: CODE_EXAMPLE,
   });
-  expect(screen.getByLabelText("JavaScript function body")).toHaveValue(CODE_EXAMPLE);
+  expect(screen.getByLabelText("JavaScript function body")).toHaveValue(
+    CODE_EXAMPLE,
+  );
   fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
   expect(screen.getByLabelText("Timeout")).toHaveValue("2s");
   expect(screen.getByLabelText("max input bytes")).toHaveAttribute(
@@ -127,36 +149,38 @@ test("replay invalid duration receives actionable inline feedback and keeps its 
     ttl: "5m",
     key: "{header.X-Event-Id}",
   });
-  fireEvent.change(screen.getByLabelText("Cache lifetime"), {
+  fireEvent.change(screen.getByLabelText("Duplicate window"), {
     target: { value: "five minutes" },
   });
   expect(screen.getByText(/Use a Go duration/)).toBeInTheDocument();
-  expect(screen.getByLabelText("Cache lifetime")).toHaveValue("five minutes");
+  expect(screen.getByLabelText("Duplicate window")).toHaveValue("five minutes");
   expect(change).toHaveBeenLastCalledWith({
     ttl: "five minutes",
     key: "{header.X-Event-Id}",
   });
 });
 
-test("lookup makes the embedding prerequisite prominent", () => {
+test("lookup exposes a missing provider and links to workspace configuration", () => {
   setup("lookup", { provider: "custom", key: "{body.record_id}" });
-  expect(screen.getByText("Requires a custom embedding application")).toBeInTheDocument();
   expect(
-    screen.getByText(/embedding application must supply the lookup provider/),
+    screen.getByText("This reference is missing or incompatible."),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Manage lookups" }),
   ).toBeInTheDocument();
   expect(
     screen.getByText("Result variable defaults to sample."),
   ).toBeInTheDocument();
 });
 
-test("rate-limit unrecognized imports remain visible with actual fallback behavior", () => {
+test("rate-limit unrecognized imports remain visible with a repair error", () => {
   const change = setup("rate_limit", {
     rpm: 60,
     key_by: "legacy-key",
     future: "keep",
   });
   expect(
-    screen.getByText(/runtime falls back to source IP/),
+    screen.getByText(/Choose a supported identity for this stage/),
   ).toBeInTheDocument();
   expect(change).not.toHaveBeenCalled();
 });
@@ -168,9 +192,9 @@ test("rate-limit header choice needs a meaningful header name", () => {
     future: "keep",
   });
   expect(
-    screen.getByText("Enter the request header name."),
+    screen.getByText("Enter the header name."),
   ).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Key header name"), {
+  fireEvent.change(screen.getByLabelText("Rate-limit header"), {
     target: { value: "X-Client-Id" },
   });
   expect(change).toHaveBeenLastCalledWith({

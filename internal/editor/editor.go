@@ -32,18 +32,16 @@ const maxValidateBytes = 5 << 20 // 5 MiB
 // a wrong method for a known API path, defeating net/http's automatic 405.
 func Handler(apiKey string) http.Handler {
 	api := http.NewServeMux()
-	api.Handle("GET /schema", apikey.Middleware(apiKey, http.HandlerFunc(handleSchema)))
-	api.Handle("GET /node-schema", apikey.Middleware(apiKey, http.HandlerFunc(handleNodeSchema)))
-	api.Handle("POST /validate", apikey.Middleware(apiKey, http.HandlerFunc(handleValidate)))
-	api.Handle("GET /replay-schema", apikey.Middleware(apiKey, http.HandlerFunc(handleReplaySchema)))
-	api.Handle("POST /validate-replay", apikey.Middleware(apiKey, http.HandlerFunc(handleValidateReplay)))
-
+	handlers := map[string]http.HandlerFunc{"coreSchema": handleSchema, "nodeSchemas": handleNodeSchema, "validateCore": validationHandler(configapi.Validate), "replaySchema": handleReplaySchema, "validateReplay": validationHandler(replayconfigapi.Validate), "contractInfo": handleContract, "jsonSampleValidation": handleJSONSampleValidation}
 	mux := http.NewServeMux()
-	mux.Handle("/schema", api)
-	mux.Handle("/node-schema", api)
-	mux.Handle("/validate", api)
-	mux.Handle("/replay-schema", api)
-	mux.Handle("/validate-replay", api)
+	for _, route := range Routes() {
+		handler := handlers[route.OperationID]
+		if handler == nil {
+			panic("editor route has no handler: " + route.OperationID)
+		}
+		api.Handle(route.Pattern(), apikey.Middleware(apiKey, handler))
+		mux.Handle(route.Path, api)
+	}
 	mux.Handle("/", uiHandler())
 	return withCORS(mux)
 }
@@ -81,15 +79,18 @@ func handleNodeSchema(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func handleValidate(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxValidateBytes))
-	if err != nil {
-		http.Error(w, "request body too large or unreadable", http.StatusBadRequest)
-		return
+// validationHandler shares bounded YAML transport while keeping each
+// validator's typed response and configuration semantics separate.
+func validationHandler[T any](validate func([]byte) T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxValidateBytes))
+		if err != nil {
+			http.Error(w, "request body too large or unreadable", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(w, validate(body))
 	}
-	resp := configapi.Validate(body)
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, resp)
 }
 
 func handleReplaySchema(w http.ResponseWriter, r *http.Request) {
@@ -102,18 +103,8 @@ func handleReplaySchema(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
-func handleValidateReplay(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxValidateBytes))
-	if err != nil {
-		http.Error(w, "request body too large or unreadable", http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, replayconfigapi.Validate(body))
-}
-
-// withCORS allows any origin. These endpoints expose no secrets: the schema
-// routes are public and the validation routes only return validation issues.
+// withCORS allows any origin. These endpoints never load server configuration
+// or environment secrets. Explicit API-key guards still apply to every route.
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

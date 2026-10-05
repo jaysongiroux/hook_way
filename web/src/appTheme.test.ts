@@ -15,7 +15,9 @@ test("the document carries the canvas and colour scheme", () => {
 });
 
 test("the app forces the light colour scheme for the builder too", () => {
-  expect(read("src/main.tsx")).toContain('forceColorScheme="light"');
+  expect(read("src/main.tsx")).toContain("<UIProvider>");
+  expect(read("src/console/main.tsx")).toContain("<UIProvider>");
+  expect(read("src/shared/ui/UIProvider.tsx")).toContain('forceColorScheme="light"');
 });
 
 test("the builder canvas runs in light colour mode", () => {

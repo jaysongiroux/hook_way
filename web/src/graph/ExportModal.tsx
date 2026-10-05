@@ -1,9 +1,10 @@
+import { IssueAlert } from "../shared/ui/IssueAlert";
+import { LoadingState } from "../shared/ui/States";
 import {
   Alert,
   Button,
   Code,
   Group,
-  List,
   Modal,
   ScrollArea,
   Stack,
@@ -250,9 +251,7 @@ function DocumentExport({
         </Alert>
       )}
       {!issues && !validationUnavailable && (
-        <Text size="sm" role="status">
-          Checking configuration…
-        </Text>
+        <LoadingState>Checking configuration…</LoadingState>
       )}
       {validationUnavailable && (
         <Alert
@@ -260,7 +259,7 @@ function DocumentExport({
           title="Validation unavailable"
           data-testid="validation-unavailable"
         >
-          The browser validator and editor API could not check this document.
+          Validation could not check this document. Retry local validation in the builder.
           Run{" "}
           <Text span ff="monospace">
             {command}
@@ -274,7 +273,18 @@ function DocumentExport({
           title="Validation errors"
           issues={blocking}
           testId="validation-errors"
-          onIssue={onIssue}
+          action={
+            onIssue
+              ? (issue) =>
+                  issue.field.startsWith("flows.") &&
+                  issue.field.includes(".nodes")
+                    ? {
+                        label: "Open affected node",
+                        onClick: () => onIssue(issue.field),
+                      }
+                    : undefined
+              : undefined
+          }
         />
       )}
       {issues && blocking.length === 0 && warnings.length > 0 && (
@@ -283,7 +293,18 @@ function DocumentExport({
           title="Valid with warnings"
           issues={warnings}
           testId="validation-warnings"
-          onIssue={onIssue}
+          action={
+            onIssue
+              ? (issue) =>
+                  issue.field.startsWith("flows.") &&
+                  issue.field.includes(".nodes")
+                    ? {
+                        label: "Open affected node",
+                        onClick: () => onIssue(issue.field),
+                      }
+                    : undefined
+              : undefined
+          }
         />
       )}
       {issues && blocking.length === 0 && warnings.length === 0 && (
@@ -335,46 +356,5 @@ function DocumentExport({
         </Button>
       </Group>
     </Stack>
-  );
-}
-
-function IssueAlert({
-  color,
-  title,
-  issues,
-  testId,
-  onIssue,
-}: {
-  onIssue?: (field: string) => void;
-  color: "red" | "yellow";
-  title: string;
-  issues: ValidationIssue[];
-  testId: string;
-}) {
-  return (
-    <Alert color={color} title={title} data-testid={testId}>
-      <List size="sm">
-        {issues.map((issue, index) => (
-          <List.Item key={`${issue.field}-${index}`}>
-            <Text span ff="monospace">
-              {issue.field}
-            </Text>
-            : {issue.message}
-            {issue.suggestion && <Text size="sm">{issue.suggestion}</Text>}
-            {onIssue &&
-              issue.field.startsWith("flows.") &&
-              issue.field.includes(".nodes") && (
-                <Button
-                  size="compact-xs"
-                  variant="subtle"
-                  onClick={() => onIssue(issue.field)}
-                >
-                  Open affected node
-                </Button>
-              )}
-          </List.Item>
-        ))}
-      </List>
-    </Alert>
   );
 }

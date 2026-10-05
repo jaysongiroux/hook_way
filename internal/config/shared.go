@@ -47,6 +47,8 @@ type rawServerConfig = struct {
 	WriteTimeout         string `yaml:"write_timeout"`
 	IdleTimeout          string `yaml:"idle_timeout"`
 	ShutdownTimeout      string `yaml:"shutdown_timeout"`
+	ShutdownDelay        string `yaml:"shutdown_delay"`
+	ShutdownTotalTimeout string `yaml:"shutdown_total_timeout"`
 	PublishTimeout       string `yaml:"publish_timeout"`
 	MaxBodyBytes         int64  `yaml:"max_body_bytes"`
 	MaxInflightRequests  int    `yaml:"max_inflight_requests"`
@@ -294,7 +296,22 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 	issues = appendNonEmptyIssue(issues, issue)
 	idle, issue := parsePositiveDefaultDuration("server.idle_timeout", raw.Server.IdleTimeout, 60*time.Second)
 	issues = appendNonEmptyIssue(issues, issue)
+	delay, issue := parseDuration("server.shutdown_delay", raw.Server.ShutdownDelay, 0)
+	issues = appendNonEmptyIssue(issues, issue)
 	shutdown, issue := parsePositiveDefaultDuration("server.shutdown_timeout", raw.Server.ShutdownTimeout, 10*time.Second)
+	issues = appendNonEmptyIssue(issues, issue)
+	// Preserve existing long HTTP drain settings when introducing the total
+	// bound. Saturate instead of overflowing malicious duration combinations.
+	defaultTotal := 60 * time.Second
+	const maxDuration = time.Duration(1<<63 - 1)
+	if delay >= 0 && shutdown > 0 {
+		if delay > maxDuration-shutdown || delay+shutdown > maxDuration-30*time.Second {
+			defaultTotal = maxDuration
+		} else {
+			defaultTotal = max(defaultTotal, delay+shutdown+30*time.Second)
+		}
+	}
+	totalShutdown, issue := parsePositiveDefaultDuration("server.shutdown_total_timeout", raw.Server.ShutdownTotalTimeout, defaultTotal)
 	issues = appendNonEmptyIssue(issues, issue)
 	publish, issue := parsePositiveDefaultDuration("server.publish_timeout", raw.Server.PublishTimeout, 10*time.Second)
 	issues = appendNonEmptyIssue(issues, issue)
@@ -316,6 +333,7 @@ func convertShared(raw rawSharedConfig) (SharedConfig, []ValidationIssue) {
 		Server: ServerConfig{
 			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
 			IdleTimeout: idle, ShutdownTimeout: shutdown, PublishTimeout: publish,
+			ShutdownDelay: delay, ShutdownTotalTimeout: totalShutdown,
 			MaxBodyBytes:        raw.Server.MaxBodyBytes,
 			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests),
 			MaxPendingRequests:  raw.Server.MaxPendingRequests, AdmissionWaitTimeout: admissionWait,

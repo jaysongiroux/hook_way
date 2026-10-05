@@ -1,4 +1,4 @@
-import { Box, Button, Group, Modal, Stack, Text } from "@mantine/core";
+import { Alert, Box, Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { useDisclosure, useDocumentTitle, useMediaQuery } from "@mantine/hooks";
 import { useEffect, useRef, useState } from "react";
 import { Palette, PaletteTabs, type PaletteTab } from "./graph/Palette";
@@ -17,9 +17,13 @@ import { BUILDER_CSS } from "./graph/builderStyles";
 import { usePersistence } from "./graph/usePersistence";
 import { useGraphStore } from "./graph/store";
 import { clearGraph } from "./graph/persistence";
+import { retryWasm } from "./shared/wasm/loader";
+import { VALIDATOR_RETRY_EVENT } from "./shared/wasm/validationMode";
 import { loadValidator } from "./graph/validate";
 import { starterDocument } from "./graph/starter";
 import { RoutingPanel } from "./graph/RoutingPanel";
+import { LookupsPanel } from "./graph/LookupsPanel";
+import { StateStoresPanel } from "./graph/StateStoresPanel";
 import { CredentialsPanel } from "./graph/CredentialsPanel";
 import {
   WorkspaceActions,
@@ -33,12 +37,19 @@ import { createNode } from "./graph/model";
 import { templateSubgraph } from "./graph/templates";
 import { DARK } from "./tokens";
 
-export default function App() {
+export default function App({ product = false }: { product?: boolean }) {
+  const [validator, setValidator] = useState<"loading" | "ready" | "error">("loading");
+  const initializeValidator = async (retry = false) => {
+    setValidator("loading");
+    try {
+      await (retry ? retryWasm() : loadValidator());
+      setValidator("ready");
+      if (retry) window.dispatchEvent(new Event(VALIDATOR_RETRY_EVENT));
+    } catch { setValidator("error"); }
+  };
   useDocumentTitle("Hookway Config");
-  usePersistence();
-  useEffect(() => {
-    void loadValidator();
-  }, []);
+  usePersistence(product);
+  useEffect(() => { void initializeValidator(); }, []);
   const [importOpen, { open: openImport, close: closeImport }] =
     useDisclosure(false);
   const [exportOpen, { open: openExport, close: closeExport }] =
@@ -53,7 +64,10 @@ export default function App() {
     useDisclosure(false);
   const [credentialsOpen, { open: openCredentials, close: closeCredentials }] =
     useDisclosure(false);
+  const [lookupsOpen, { open: openLookups, close: closeLookups }] =
+    useDisclosure(false);
   const [connOpen, { open: openConn, close: closeConn }] = useDisclosure(false);
+  const [stateStoresOpen, { open: openStateStores, close: closeStateStores }] = useDisclosure(false);
   const [clearOpen, { open: openClear, close: closeClear }] =
     useDisclosure(false);
   const [inspectorOpen, { open: openInspector, close: closeInspector }] =
@@ -93,6 +107,8 @@ export default function App() {
     setReturnToInspector(true);
     closeInspector();
     ({
+      lookups: openLookups,
+      state_stores: openStateStores,
       routing: openRouting,
       credentials: openCredentials,
       destinations: openDest,
@@ -109,7 +125,7 @@ export default function App() {
         <Box
           className="hookway-builder-root"
           style={{
-            height: "100vh",
+            height: product ? "calc(100dvh - 60px)" : "100dvh",
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
@@ -133,6 +149,8 @@ export default function App() {
             onConnections={openConn}
             onRouting={openRouting}
             onCredentials={openCredentials}
+            onLookups={openLookups}
+            onStateStores={openStateStores}
             onEnv={openEnv}
             onServer={openServer}
             onReplay={openReplay}
@@ -141,6 +159,11 @@ export default function App() {
             }
             onClear={openClear}
           />
+
+          {product && validator === "error" && <Alert color="red" title="Local validation unavailable" m="sm">
+            This configuration has not been validated. Editing, imports and exports remain available. Restore the matching WASM assets and retry.
+            <Button variant="light" size="xs" ml="sm" onClick={() => void initializeValidator(true)}>Retry local validation</Button>
+          </Alert>}
 
           <Box
             ref={bodyRef}
@@ -211,6 +234,11 @@ export default function App() {
             opened={routingOpen}
             onClose={() => closeWorkspace(closeRouting)}
           />
+          <LookupsPanel
+            opened={lookupsOpen}
+            onClose={() => closeWorkspace(closeLookups)}
+          />
+          <StateStoresPanel opened={stateStoresOpen} onClose={() => closeWorkspace(closeStateStores)} />
           <CredentialsPanel
             opened={credentialsOpen}
             onClose={() => closeWorkspace(closeCredentials)}

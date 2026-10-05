@@ -1,3 +1,8 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # TEMPLATE: accept a Paddle Billing webhook and build the event envelope.
 #
 # This file has two jobs. It is a complete, runnable config so that
@@ -64,7 +69,7 @@ flows:
     nodes:
       - {id: in, type: http_trigger, description: "Paddle posts notification deliveries here.", path: /webhooks/paddle, methods: [POST]}
       - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
-      - {id: rl, type: rate_limit, description: "Caps inbound Paddle retries per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound Paddle retries per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
       - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
       - id: auth
         type: auth
@@ -73,7 +78,7 @@ flows:
         secret_ref: {provider: env, name: PADDLE_WEBHOOK_SECRET, refresh: 15m, overlap: 5m}
         signature_header: Paddle-Signature
         timestamp_tolerance: "5m"
-      - {id: replay, type: replay_guard, description: "Drops a delivery Paddle already succeeded within the TTL.", ttl: 24h, max_entries: 100000}
+      - {id: replay, type: replay_guard, store: local, description: "Drops a delivery Paddle already succeeded within the TTL.", ttl: 24h, max_entries: 100000}
       - {id: env, type: envelope, description: "Decodes the JSON event (`event_type`, `data`, …).", body_format: json}
       - {id: out, type: publish, description: "Wrapper publish so this file is a complete config. Not part of the inserted template.", destination: events, target: paddle-events}
     edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>out]

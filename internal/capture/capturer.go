@@ -60,7 +60,7 @@ type Options struct {
 
 // Capturer records failures core acknowledged to their sender and uploads
 // them to the replay service. It never blocks a request and never touches a
-// response or readiness (docs/invariants.md I15).
+// response or readiness (docs/development/invariants.md I15).
 type Capturer struct {
 	builder  *Builder
 	uploader *Uploader

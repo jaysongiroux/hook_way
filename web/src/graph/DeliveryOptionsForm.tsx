@@ -1,8 +1,10 @@
 import { Alert, Fieldset, Select, Stack, Text } from "@mantine/core";
 import { useGraphStore } from "./store";
 import { schemaProperties, NODE_SCHEMAS, type JSONSchema } from "./nodeSchema";
+import { clearDraftBranch } from "./formDrafts";
 import { SchemaForm } from "./SchemaForm";
 import { nodeFieldHelp } from "./help";
+import { WebhookDeliveryNotice } from "./WebhookDeliveryNotice";
 import {
   changeMode,
   Fields,
@@ -36,7 +38,8 @@ export function PublishOptionsForm(props: OptionsProps) {
         ...(type === "sqs" ? ["sns"] : ["sqs"]),
         ...(fifo ? ["group_id"] : ["fifo"]),
       ]
-    : BROKER_FIELDS;
+    : BROKER_FIELDS.slice();
+  brokerInactive.push(...(type === "temporal" ? ["create"] : ["temporal"]));
   const schema = schemaProperties(NODE_SCHEMAS.publish.schema);
   const set = (key: string, v: unknown) => onChange({ ...value, [key]: v });
   const changeDestination = (destination: string) => {
@@ -50,6 +53,7 @@ export function PublishOptionsForm(props: OptionsProps) {
             ? ["sns"]
             : ["sqs"]),
         ...(nextType !== type ? ["resource_attributes"] : []),
+        ...(nextType !== "temporal" ? ["temporal"] : []),
         ...(!["s3", "redis_kv"].includes(nextType) ? ["payload"] : []),
       ],
       { destination },
@@ -69,26 +73,37 @@ export function PublishOptionsForm(props: OptionsProps) {
       />
       <Fields
         {...props}
-        fields={["target", "create"]}
+        fields={type === "temporal" ? ["target"] : ["target", "create"]}
         required={["target"]}
         labels={{
           target:
-            type === "sqs"
-              ? "Queue name"
-              : type === "sns"
-                ? "Topic name"
-                : type === "s3"
-                  ? "Object key"
-                  : type === "webhook"
-                    ? "Target path"
-                    : "Target",
+            type === "temporal"
+              ? "Task queue"
+              : type === "sqs"
+                ? "Queue name"
+                : type === "sns"
+                  ? "Topic name"
+                  : type === "s3"
+                    ? "Object key"
+                    : type === "webhook"
+                      ? "Target path"
+                      : "Target",
         }}
       />
       {type === "webhook" && (
-        <Text size="xs" c="dimmed">
-          This path is appended to the destination base URL. Configure the base
-          URL in Destinations.
-        </Text>
+        <Stack gap="xs">
+          <Text size="xs" c="dimmed">
+            This path is appended to the destination base URL. Configure the
+            base URL in Destinations.
+          </Text>
+          <WebhookDeliveryNotice
+            deliveryMode={
+              object(
+                object(destinations[String(value.destination ?? "")]).webhook,
+              ).delivery_mode
+            }
+          />
+        </Stack>
       )}
       <InactiveSettings
         value={value}
@@ -270,7 +285,8 @@ export function PublishOptionsForm(props: OptionsProps) {
           </Text>
         </>
       )}
-      {!broker && (
+      {type === "temporal" && <TemporalOptions {...props} />}
+      {!broker && type !== "temporal" && (
         <Fields
           {...props}
           fields={[
@@ -281,6 +297,115 @@ export function PublishOptionsForm(props: OptionsProps) {
         />
       )}
     </Stack>
+  );
+}
+function TemporalOptions(props: OptionsProps) {
+  const value = object(props.value.temporal);
+  const schema = schemaProperties(NODE_SCHEMAS.publish.schema).temporal;
+  const id = object(value.workflow_id);
+  const source = String(id.source ?? "");
+  const idSchema = schemaProperties(schema).workflow_id;
+  const idFields = [
+    "source",
+    "prefix",
+    ...(source === "static"
+      ? ["value"]
+      : ["body", "header"].includes(source)
+        ? ["path"]
+        : []),
+  ];
+  const update = (next: Options) =>
+    props.onChange({ ...props.value, temporal: next });
+  return (
+    <Fieldset legend="Temporal workflow" p="sm">
+      <Stack gap="sm">
+        <Text size="sm">
+          Success means Temporal accepted the workflow start. A worker must poll
+          this task queue; workflow completion happens after the webhook
+          response.
+        </Text>
+        <SchemaForm
+          schema={schema}
+          value={value}
+          onChange={(next) => update(object(next))}
+          scope={props.scope}
+          path="temporal"
+          hideFields={["workflow_id"]}
+          order={[
+            "workflow_type",
+            "input",
+            "id_reuse_policy",
+            "execution_timeout",
+            "run_timeout",
+            "task_timeout",
+          ]}
+          labels={{
+            workflow_type: "Workflow type",
+            input: "Workflow input",
+            id_reuse_policy: "Workflow ID reuse policy",
+            execution_timeout: "Total execution timeout",
+            run_timeout: "Single run timeout",
+            task_timeout: "Workflow task timeout",
+          }}
+          fieldHelp={(path) =>
+            ({
+              workflow_type:
+                "Exact workflow type registered by your Temporal worker.",
+              input:
+                "Envelope includes Hookway metadata and the event. Body passes the decoded JSON event body; non-JSON falls back to the envelope.",
+              id_reuse_policy:
+                "Controls completed workflows with the same ID. Reject duplicate protects a stable provider event ID; allow duplicate permits another run. Terminate if running can stop an existing workflow.",
+              execution_timeout:
+                "Maximum lifetime across retries and continue-as-new. Use a positive Go duration, such as 24h.",
+              run_timeout: "Maximum duration of one workflow run, such as 1h.",
+              task_timeout:
+                "Maximum duration of a workflow task, up to 2m. Omitted uses Temporal's default.",
+            })[path.split(".").at(-1) ?? path]
+          }
+        />
+        <Select
+          label="Workflow ID source"
+          value={source || "generated"}
+          allowDeselect={false}
+          description="Use a stable provider event ID to control duplicates. Omitted uses the Hookway event ID, retained on replay. New ingress requests have new event IDs."
+          data={[
+            { value: "generated", label: "Use the Hookway event ID" },
+            { value: "header", label: "Request header" },
+            { value: "body", label: "Event body field" },
+            { value: "static", label: "Fixed ID" },
+            { value: "endpoint", label: "Flow name" },
+          ]}
+          onChange={(next) => {
+            if (!next) return;
+            clearDraftBranch(props.scope, "temporal.workflow_id");
+            const updated = { ...value };
+            if (next === "generated") delete updated.workflow_id;
+            else updated.workflow_id = { source: next };
+            update(updated);
+          }}
+        />
+        <SchemaForm
+          schema={{
+            type: "object",
+            properties: Object.fromEntries(
+              idFields
+                .filter((key) => key !== "source")
+                .map((key) => [key, schemaProperties(idSchema)[key]]),
+            ),
+          }}
+          value={id}
+          onChange={(next) => update({ ...value, workflow_id: next })}
+          scope={props.scope}
+          path="temporal.workflow_id"
+          labels={{
+            path:
+              source === "header" ? "Event ID header" : "Event ID body path",
+            value: "Fixed workflow ID",
+            prefix: "Workflow ID prefix",
+          }}
+        />
+      </Stack>
+    </Fieldset>
   );
 }
 function filteredBrokerSchema(

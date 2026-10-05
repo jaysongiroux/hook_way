@@ -1,0 +1,34 @@
+# Local demonstration: go run ./cmd/hookway serve --config examples/json-validation.yaml
+# POST /orders with: {"order_id":9007199254740993,"customer":{"email":"dev@example.com"}}
+# This example accepts public traffic; put an auth node before envelope in production.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+flows:
+  orders:
+    nodes:
+      - {id: in, type: http_trigger, path: /orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: public_demo, type: no_auth}
+      - {id: event, type: envelope, body_format: json}
+      - id: check
+        type: json_validate
+        schema:
+          $schema: http://json-schema.org/draft-07/schema#
+          type: object
+          required: [order_id, customer]
+          additionalProperties: false
+          properties:
+            order_id: {type: integer, minimum: 1}
+            customer: {$ref: '#/definitions/customer'}
+          definitions:
+            customer:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email}
+              additionalProperties: false
+        # Strict by default. Enable only when this conversion is intentional:
+        # coercions: [{path: order_id, type: integer}]
+      - {id: accepted, type: respond, status: 200, body: "Valid order"}
+    edges: [in>body, body>public_demo, public_demo>event, event>check, check>accepted]

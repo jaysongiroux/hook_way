@@ -16,7 +16,7 @@ import (
 const malformedPlaceholder = "{bad-name}"
 
 func TestMalformedTemplatesRejectedAtValidateAndCompile(t *testing.T) {
-	reg, err := NewRegistryWithOptions(RegistryOptions{})
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestMalformedTemplatesRejectedAtValidateAndCompile(t *testing.T) {
 		{"publish", "destination: primary\ntarget: '" + malformedPlaceholder + "'\n"},
 		{"respond", "status: 200\nbody: '" + malformedPlaceholder + "'\n"},
 		{"lookup", "provider: dynamodb\nkey: '" + malformedPlaceholder + "'\nname: route\n"},
-		{"replay_guard", "ttl: 1m\nkey: '" + malformedPlaceholder + "'\n"},
+		{"replay_guard", "store: test\nttl: 1m\nkey: '" + malformedPlaceholder + "'\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.typ, func(t *testing.T) {

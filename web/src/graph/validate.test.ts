@@ -1,7 +1,9 @@
-import { afterEach, expect, test, vi } from "vitest";
-import { loadReplaySchema, validateReplayYaml, validateYaml } from "./validate";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+
+beforeEach(() => { vi.resetModules(); });
 
 afterEach(() => {
+  delete window.hookwayContractInfo;
   delete window.hookwayValidate;
   delete window.hookwayReplayValidate;
   delete window.hookwayReplaySchema;
@@ -9,50 +11,68 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function mockContract(capabilities: string[]) {
+  window.hookwayContractInfo = () => JSON.stringify({ contract_version: 1, capabilities });
+}
+
 test("replay schema and validation use the editor API when the WASM bridge fails", async () => {
-  window.hookwayValidate = () => JSON.stringify({ issues: [] });
+  mockContract(["replay_schema", "replay_yaml_validate"]);
   window.hookwayReplaySchema = () => "invalid JSON";
   window.hookwayReplayValidate = () => "invalid JSON";
-  const fetch = vi.fn(async (url: string) => ({
-    ok: true,
-    json: async () => ({ type: "object", properties: { server: { type: "object" } } }),
-    text: async () => JSON.stringify({ issues: [{ field: "keys", message: "required", severity: "error" }] }),
-    url,
-  }));
+  const fetch = vi.fn(async (request: Request) => new Response(JSON.stringify(
+    request.url.endsWith("/replay-schema")
+      ? { type: "object", properties: { server: { type: "object" } } }
+      : { issues: [{ field: "keys", message: "required", severity: "error" }] },
+  ), { headers: { "Content-Type": "application/json" } }));
   vi.stubGlobal("fetch", fetch);
+  const { loadReplaySchema, validateReplayYaml } = await import("./validate");
 
   expect(await loadReplaySchema()).toMatchObject({ type: "object" });
   expect(await validateReplayYaml("keys: []")).toEqual([{ field: "keys", message: "required", severity: "error" }]);
-  expect(fetch.mock.calls.map(([url]) => url)).toEqual(["/replay-schema", "/validate-replay"]);
+  expect(fetch.mock.calls.map(([request]) => new URL(request.url).pathname)).toEqual(["/replay-schema", "/validate-replay"]);
 });
 
 test("core validation uses the editor API when the WASM bridge throws", async () => {
+  mockContract(["core_yaml_validate"]);
   window.hookwayValidate = () => { throw new Error("bridge failed"); };
-  const fetch = vi.fn(async () => ({
-    ok: true,
-    text: async () => JSON.stringify({ issues: [{ field: "flows", message: "invalid", severity: "error" }] }),
+  const fetch = vi.fn(async (_request: Request) => new Response(JSON.stringify({ issues: [{ field: "flows", message: "invalid", severity: "error" }] }), {
+    headers: { "Content-Type": "application/json" },
   }));
   vi.stubGlobal("fetch", fetch);
+  const { validateYaml } = await import("./validate");
 
   expect(await validateYaml("flows: {}"))
     .toEqual([{ field: "flows", message: "invalid", severity: "error" }]);
-  expect(fetch).toHaveBeenCalledWith("/validate", expect.objectContaining({ method: "POST" }));
+  expect(fetch.mock.calls[0][0]).toMatchObject({ method: "POST" });
+  expect(new URL(fetch.mock.calls[0][0].url).pathname).toBe("/validate");
 });
 
-test("a failed WASM load can be retried", async () => {
-  window.Go = class {
-    importObject = {};
-    async run() {}
-  };
-  const fetch = vi.fn()
-    .mockRejectedValueOnce(new Error("temporary network failure"))
-    .mockResolvedValueOnce({ ok: true });
+test("legacy globals without contract metadata use the editor API", async () => {
+  window.hookwayValidate = () => JSON.stringify({ issues: [] });
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ issues: [{ field: "flows", message: "API", severity: "error" }] }), {
+    headers: { "Content-Type": "application/json" },
+  }));
   vi.stubGlobal("fetch", fetch);
-  vi.stubGlobal("WebAssembly", { instantiateStreaming: vi.fn(async () => ({ instance: {} })) });
-  vi.resetModules();
-  const { loadValidator } = await import("./validate");
+  const { validateYaml } = await import("./validate");
+  setTimeout(() => document.querySelector('script[src$="wasm_exec.js"]')?.dispatchEvent(new Event("error")), 0);
+  // WASM startup cannot complete in this test host, so the editor API wins.
+  expect(await validateYaml("flows: {}"))
+    .toEqual([{ field: "flows", message: "API", severity: "error" }]);
+});
 
-  await loadValidator();
-  await loadValidator();
-  expect(fetch).toHaveBeenCalledTimes(2);
+
+test("deployed product never sends builder validation to an editor API", async () => {
+  mockContract(["core_yaml_validate", "replay_yaml_validate", "replay_schema"]);
+  window.hookwayValidate = () => { throw new Error("bridge failed"); };
+  window.hookwayReplayValidate = () => { throw new Error("bridge failed"); };
+  window.hookwayReplaySchema = () => "invalid JSON";
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const { configureEditorValidation } = await import("../shared/wasm/validationMode");
+  configureEditorValidation("local");
+  const { validateYaml, validateReplayYaml, loadReplaySchema } = await import("./validate");
+  expect(await validateYaml("flows: {}")).toBeNull();
+  expect(await validateReplayYaml("keys: []")).toBeNull();
+  expect(await loadReplaySchema()).toBeNull();
+  expect(fetch).not.toHaveBeenCalled();
 });

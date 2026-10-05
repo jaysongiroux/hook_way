@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import {
+  BATCH_CHILD_TYPES,
   NODE_SCHEMAS,
   NODE_TYPES,
   DEST_TYPES,
@@ -13,7 +14,7 @@ import {
 } from "./nodeSchema";
 
 test("every catalog node type has palette metadata", () => {
-  expect(NODE_TYPES).toHaveLength(21);
+  expect(NODE_TYPES).toHaveLength(22);
   for (const type of NODE_TYPES) {
     const meta = NODE_SCHEMAS[type];
     expect(meta.input, type).toBeTruthy();
@@ -122,4 +123,15 @@ test("connOwnedPaths walks into nested blocks", () => {
   // tls.enabled is a redis/kafka/temporal field; postgres TLS follows the DSN.
   expect(pg).not.toContain("tls.enabled");
   expect(connOwnedPaths("redis")).toContain("tls.enabled");
+});
+
+test("generated batch capabilities preserve the supported children and their order", () => {
+  expect(BATCH_CHILD_TYPES).toEqual([
+    "transform",
+    "code",
+    "filter",
+    "if_else",
+    "switch",
+    "publish",
+  ]);
 });

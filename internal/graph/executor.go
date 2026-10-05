@@ -76,12 +76,14 @@ func (f *Flow) Run(ctx context.Context, in Payload, opts RunOptions) (term Termi
 	if err != nil {
 		return term, err
 	}
+	ctx, effects := effectContext(ctx)
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
 	err = e.node(ctx, f.root, seed)
 	if err != nil {
 		e.recordUnattempted(nil)
 	}
 	slices.Reverse(e.term.Compensations)
+	e.term.SideEffects = effects.Load()
 	return e.term, err
 }
 
@@ -143,6 +145,7 @@ func (f *Flow) RunFrom(ctx context.Context, nodeID string, in Payload, opts RunO
 	// Marking the context as already inside a publish budget makes every
 	// detached node reuse this one instead of starting a fresh PublishTimeout.
 	bctx = context.WithValue(bctx, publishBudgetKey{}, struct{}{})
+	bctx, effects := effectContext(bctx)
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
 	err = e.node(bctx, nodeID, seed)
 	if err != nil {
@@ -151,6 +154,7 @@ func (f *Flow) RunFrom(ctx context.Context, nodeID string, in Payload, opts RunO
 		e.recordUnattempted(reachable)
 	}
 	e.term.Compensations = nil
+	e.term.SideEffects = effects.Load()
 	return e.term, err
 }
 
@@ -283,6 +287,11 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		}
 	}
 	started := time.Now()
+	if b.spec.Detached {
+		if _, tracked := b.node.(SideEffectTracker); !tracked {
+			MarkSideEffect(nctx)
+		}
+	}
 	out, runErr := invoke(nctx, b.node, in, e.opts)
 	var pe PanicError
 	if errors.As(runErr, &pe) {
@@ -304,6 +313,9 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		}
 	}
 	if isTerminal {
+		if terminal.SideEffects {
+			MarkSideEffect(nctx)
+		}
 		if terminal.Response != nil && !b.spec.Detached {
 			if setErr := e.setResponse(terminal.Response); setErr != nil {
 				err = errors.Join(err, setErr)
@@ -315,6 +327,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 				// A destination controls only its outcome error.
 				d := e.delivery(b, outcome.Err, false)
 				d.RenderedTarget = outcome.RenderedTarget
+				d.NoEffect = outcome.NoEffect
 				if d.Err == nil && runErr != nil {
 					d.Err = runErr
 				}
@@ -338,6 +351,15 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err, Target: b.target, Dropped: isTerminal && b.spec.Type == "filter" && err == nil, DropReason: terminal.DropReason})
 	// A successful reservation must be released even when its output is malformed.
 	if runErr == nil && isComp {
+		if capture, ok := comp.(CompensationInput); ok {
+			captured, captureErr := capture.CompensationInput(in, out)
+			if captureErr == nil {
+				saved, captureErr = clonePayload(captured)
+			}
+			if captureErr != nil {
+				return fmt.Errorf("node %q compensation ownership: %w", id, captureErr)
+			}
+		}
 		e.addCompensation(Compensation{NodeID: id, Node: comp, Input: saved})
 	}
 	if err != nil {
@@ -346,6 +368,11 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 		// not own the budget; their on_error sees the exhausted deadline.
 		if ownsBudget {
 			cancel()
+		}
+		var denied NodeError
+		if errors.As(err, &denied) && denied.AbortRecovery {
+			observeFailure(e.opts.OnFailure, FailureEvent{NodeID: id, NodeType: b.spec.Type, Input: in, Err: err})
+			return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
 		}
 		if handled := e.followOnError(ctx, id, errorInput); handled == nil {
 			return nil
@@ -624,6 +651,12 @@ func labelledSuccessors(edges []Edge) bool {
 type Compensator interface {
 	Compensate(context.Context, Payload, error) error
 }
+
+// CompensationInput lets a successful reservation capture request-local
+// ownership returned by Run, instead of reconstructing an unowned key.
+type CompensationInput interface {
+	CompensationInput(Payload, Payload) (Payload, error)
+}
 type Compensation struct {
 	NodeID string
 	Node   Compensator
@@ -631,6 +664,9 @@ type Compensation struct {
 }
 
 func NeedsCompensation(term Terminal, err error) bool {
+	if potentialSideEffects(term) {
+		return false
+	}
 	if err != nil {
 		return true
 	}
@@ -645,6 +681,9 @@ func NeedsCompensation(term Terminal, err error) bool {
 // RunCompensations consumes the reverse execution order returned by Run. Context
 // detachment retains request values, with one deadline bounding the release batch.
 func RunCompensations(ctx context.Context, term Terminal, reason error, timeout time.Duration) error {
+	if potentialSideEffects(term) {
+		return nil
+	}
 	if len(term.Compensations) == 0 {
 		return nil
 	}
@@ -683,6 +722,7 @@ func (f *Flow) RunChild(ctx context.Context, in Envelope, opts RunOptions) (Term
 	ctx, cancel := context.WithTimeout(ctx, opts.PublishTimeout)
 	defer cancel()
 	ctx = context.WithValue(ctx, publishBudgetKey{}, struct{}{})
+	ctx, effects := effectContext(ctx)
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
 	if err := ctx.Err(); err != nil {
 		e.recordUnattempted(nil)
@@ -696,5 +736,6 @@ func (f *Flow) RunChild(ctx context.Context, in Envelope, opts RunOptions) (Term
 	if err != nil {
 		e.recordUnattempted(nil)
 	}
+	e.term.SideEffects = effects.Load()
 	return e.term, err
 }

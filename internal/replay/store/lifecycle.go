@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jaysongiroux/hook_way/internal/replayresult"
 )
 
 // Run statuses after the claim.
@@ -173,7 +174,7 @@ func (s *Store) FinalizeRun(ctx context.Context, o RunOutcome) (FinalizeResult, 
 			case err != nil:
 				return err
 			}
-			return appendEvent(ctx, tx, failureID, EventLateResult, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status})
+			return appendEvent(ctx, tx, failureID, EventLateResult, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status, "result": o.Result})
 		}
 		if err != nil {
 			return err
@@ -182,7 +183,7 @@ func (s *Store) FinalizeRun(ctx context.Context, o RunOutcome) (FinalizeResult, 
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE failures SET status = $2 WHERE id = $1`, failureID, next); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE failures SET status = $2, resolution_source = $3 WHERE id = $1`, failureID, next, resolutionSource(next)); err != nil {
 			return err
 		}
 		if err := appendEvent(ctx, tx, failureID, EventRunFinished, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status}); err != nil {
@@ -223,14 +224,18 @@ func (s *Store) FinalizeRun(ctx context.Context, o RunOutcome) (FinalizeResult, 
 // may run it at once: each skips runs another is expiring.
 func (s *Store) ExpireLeases(ctx context.Context, actor string) ([]string, error) {
 	var expired []string
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	result, err := json.Marshal(replayresult.Result{Reason: replayresult.ReasonLeaseExpired})
+	if err != nil {
+		return nil, err
+	}
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		expired = nil
 		now := s.now().UTC()
 		rows, err := tx.Query(ctx, `UPDATE retry_runs SET status = $1, finished_at = $2, result = $3
 			WHERE run_id IN (SELECT run_id FROM retry_runs WHERE status = $4 AND lease_expires_at < $2
 			                 ORDER BY lease_expires_at LIMIT $5 FOR UPDATE SKIP LOCKED)
 			RETURNING run_id::text, failure_id::text`,
-			RunUnknown, now, []byte(`{"reason":"lease_expired"}`), RunRunning, expireBatch)
+			RunUnknown, now, result, RunRunning, expireBatch)
 		if err != nil {
 			return err
 		}
@@ -259,4 +264,11 @@ func (s *Store) ExpireLeases(ctx context.Context, actor string) ([]string, error
 		return nil, err
 	}
 	return expired, nil
+}
+
+func resolutionSource(status string) string {
+	if status == StatusResolved {
+		return ResolutionRetry
+	}
+	return ""
 }

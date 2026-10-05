@@ -23,6 +23,7 @@ type requestGate struct {
 	active, pending chan struct{}
 	done            chan struct{}
 	once            sync.Once
+	mu              sync.Mutex // linearizes immediate admission with close
 	wait            time.Duration
 }
 
@@ -40,19 +41,24 @@ func (g *requestGate) acquire(ctx context.Context, onWait func()) gateResult {
 	if ctx.Err() != nil {
 		return gateCanceled
 	}
+	g.mu.Lock()
 	select {
 	case <-g.done:
+		g.mu.Unlock()
 		return gateClosing
 	default:
 	}
 	if g.active == nil {
+		g.mu.Unlock()
 		return gateAdmitted
 	}
 	select {
 	case g.active <- struct{}{}:
+		g.mu.Unlock()
 		return gateAdmitted
 	default:
 	}
+	g.mu.Unlock()
 	if g.pending == nil {
 		return gateFull
 	}
@@ -95,4 +101,8 @@ func (g *requestGate) release() {
 		<-g.active
 	}
 }
-func (g *requestGate) close() { g.once.Do(func() { close(g.done) }) }
+func (g *requestGate) close() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.once.Do(func() { close(g.done) })
+}

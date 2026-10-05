@@ -2,14 +2,17 @@ import { test, expect, type Page } from "@playwright/test";
 import { BuilderPage } from "./builder";
 import { parse } from "yaml";
 
-const fixture = `server: {addr: ':8080', max_body_bytes: 1048576}
+const fixture = `
+state_stores:
+  local: {namespace: browser-tests, memory: {}}
+server: {addr: ':8080', max_body_bytes: 1048576}
 destinations:
   queue: {type: sqs, sqs: {region: us-east-1}}
 flows:
   incoming:
     nodes:
       - {id: in, type: http_trigger, path: /hooks/incoming, methods: [POST]}
-      - {id: limit, type: rate_limit, rpm: 60}
+      - {id: limit, type: rate_limit, store: local, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: verify, type: auth, scheme: hmac_sha256_hex, source: {kind: header, key: X-Signature}, secret_ref: {provider: env, name: WEBHOOK_SECRET}}
       - {id: decode, type: envelope, body_format: json}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/auth"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/protection"
 	"github.com/jaysongiroux/hook_way/internal/routing"
 	"github.com/jaysongiroux/hook_way/internal/transform"
 	"github.com/jaysongiroux/hook_way/internal/vars"
@@ -35,9 +36,16 @@ type IPAllowlistOptions struct {
 	CIDRs []string `yaml:"cidrs" json:"cidrs" jsonschema:"required,minItems=1"`
 }
 type RateLimitOptions struct {
-	RPM   int    `yaml:"rpm" json:"rpm" jsonschema:"required,minimum=1"`
-	Burst int    `yaml:"burst,omitempty" json:"burst,omitempty" jsonschema:"minimum=0"`
-	KeyBy string `yaml:"key_by,omitempty" json:"key_by,omitempty"`
+	Store    string `yaml:"store" json:"store" jsonschema:"required"`
+	PolicyID string `yaml:"policy_id,omitempty" json:"policy_id,omitempty"`
+	Stage    string `yaml:"stage,omitempty" json:"stage,omitempty" jsonschema:"enum=request_head,enum=verified"`
+	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"enum=token_bucket,enum=sliding_window_counter"`
+	Limit    int    `yaml:"limit,omitempty" json:"limit,omitempty" jsonschema:"minimum=1"`
+	Window   string `yaml:"window,omitempty" json:"window,omitempty"`
+	RPM      int    `yaml:"rpm,omitempty" json:"rpm,omitempty" jsonschema:"minimum=1"`
+	Burst    int    `yaml:"burst,omitempty" json:"burst,omitempty" jsonschema:"minimum=0"`
+	KeyBy    string `yaml:"key_by,omitempty" json:"key_by,omitempty"`
+	MaxKeys  *int   `yaml:"max_keys,omitempty" json:"max_keys,omitempty" jsonschema:"minimum=1"`
 }
 type ReadBodyOptions struct {
 	AllowEmpty bool  `yaml:"allow_empty,omitempty" json:"allow_empty,omitempty"`
@@ -56,6 +64,8 @@ type AuthSourceOptions struct {
 	Key  string `yaml:"key" json:"key" jsonschema:"required"`
 }
 type AuthOptions struct {
+	CredentialID       string             `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
+	TenantClaim        string             `yaml:"tenant_claim,omitempty" json:"tenant_claim,omitempty"`
 	TimestampHeader    string             `yaml:"timestamp_header,omitempty" json:"timestamp_header,omitempty"`
 	TimestampUnit      string             `yaml:"timestamp_unit,omitempty" json:"timestamp_unit,omitempty" jsonschema:"enum=seconds,enum=milliseconds"`
 	TimestampPolicy    string             `yaml:"timestamp_policy,omitempty" json:"timestamp_policy,omitempty" jsonschema:"enum=symmetric,enum=age,enum=unchecked"`
@@ -75,6 +85,8 @@ type AuthOptions struct {
 }
 type NoAuthOptions struct{}
 type ReplayGuardOptions struct {
+	Store      string `yaml:"store" json:"store" jsonschema:"required"`
+	PolicyID   string `yaml:"policy_id,omitempty" json:"policy_id,omitempty"`
 	TTL        string `yaml:"ttl,omitempty" json:"ttl,omitempty"`
 	MaxEntries int    `yaml:"max_entries,omitempty" json:"max_entries,omitempty" jsonschema:"minimum=1"`
 	Key        string `yaml:"key,omitempty" json:"key,omitempty"`
@@ -157,8 +169,12 @@ type FieldMappingOptions struct {
 	From string `yaml:"from" json:"from" jsonschema:"required"`
 	To   string `yaml:"to" json:"to" jsonschema:"required"`
 }
+type JSONValidateOptions struct {
+	Schema    transform.JSONSchema       `yaml:"schema" json:"schema" jsonschema:"required"`
+	Coercions []transform.ScalarCoercion `yaml:"coercions,omitempty" json:"coercions,omitempty"`
+}
 type TransformOptions struct {
-	JSONSchema map[string]any               `yaml:"json_schema,omitempty" json:"json_schema,omitempty"`
+	JSONSchema transform.JSONSchema         `yaml:"json_schema,omitempty" json:"json_schema,omitempty"`
 	Coercions  []transform.ScalarCoercion   `yaml:"coercions,omitempty" json:"coercions,omitempty"`
 	Fields     []string                     `yaml:"fields,omitempty" json:"fields,omitempty"`
 	XMLAdapter *transform.XMLAdapterOptions `yaml:"xml_adapter,omitempty" json:"xml_adapter,omitempty"`
@@ -302,6 +318,7 @@ type PublishSNSOptions struct {
 	MessageStructure string `yaml:"message_structure,omitempty" json:"message_structure,omitempty" jsonschema:"enum=json"`
 }
 type PublishOptions struct {
+	Temporal           *PublishTemporalOptions `yaml:"temporal,omitempty" json:"temporal,omitempty"`
 	GroupID            *PublishIdentityOptions `yaml:"group_id,omitempty" json:"group_id,omitempty"`
 	SQS                *PublishSQSOptions      `yaml:"sqs,omitempty" json:"sqs,omitempty"`
 	SNS                *PublishSNSOptions      `yaml:"sns,omitempty" json:"sns,omitempty"`
@@ -330,12 +347,47 @@ type RespondOptions struct {
 }
 
 type nodeDefinition struct {
-	name                string
-	in, out             graph.PortType
-	detached            bool
+	name       string
+	in, out    graph.PortType
+	detached   bool
+	newOptions func() any
+	newNode    func(graph.NodeConfig) (graph.Node, error)
+	nodeMetadata
+}
+
+// Node-specific authoring and placement rules live beside the constructor.
+// Zero metadata uses reflected options and ordinary error edges; exceptional
+// rules opt in here without adding another switch over node names.
+type nodeMetadata struct {
+	noErrorEdge         bool
 	successContinuation bool
-	newOptions          func() any
-	newNode             func(graph.NodeConfig) (graph.Node, error)
+	// Positive values permit batch children and preserve their editor order.
+	batchChildOrder int
+	formDefaults    map[string]any
+	configureSchema func(*NodeSchema)
+	stagePorts      map[string]nodePorts
+	stage           func(graph.NodeConfig) (string, error)
+	bodyFormat      func(graph.NodeConfig) string
+	checkBodyFormat bodyFormatCheck
+}
+
+type nodePorts struct{ in, out graph.PortType }
+
+func (d nodeDefinition) withMetadata(metadata nodeMetadata) nodeDefinition {
+	d.nodeMetadata = metadata
+	return d
+}
+
+// The validation lookup is read-only after package initialization. Building it
+// does not construct runtime nodes or open native providers.
+var validationCatalog map[string]nodeDefinition
+
+func init() {
+	definitions := catalog(RegistryOptions{})
+	validationCatalog = make(map[string]nodeDefinition, len(definitions))
+	for _, def := range definitions {
+		validationCatalog[def.name] = def
+	}
 }
 
 func define[T any](name string, in, out graph.PortType, detached bool, validate func(T) error, build func(string, T) graph.Node) nodeDefinition {
@@ -370,6 +422,10 @@ func defineErr[T any](name string, in, out graph.PortType, detached bool, valida
 // RegistryOptions customizes runtime node constructors used when compiling
 // flows for serving. Validation uses the zero value.
 type RegistryOptions struct {
+	Protection         func(string) protection.Store
+	StateStores        map[string]protection.Config
+	ProtectionPolicies map[string][]protection.Policy
+	FlowID             string
 	BatchSlots         chan struct{}
 	BatchObservation   func(string, string)
 	Credentials        map[string]CredentialProvider
@@ -400,23 +456,29 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 				return errors.New("max_hops must be >= 0")
 			}
 			return nil
-		}, newLoopGuard),
+		}, newLoopGuard).withMetadata(nodeMetadata{
+			formDefaults: map[string]any{"max_hops": newLoopGuard("schema", LoopGuardOptions{}).(loopGuardNode).maxHops},
+		}),
 		define("ip_allowlist", graph.PortRequestHead, graph.PortRequestHead, false, validateIPAllowlist, newIPAllowlist),
-		define("rate_limit", graph.PortRequestHead, graph.PortRequestHead, false, func(o RateLimitOptions) error {
-			if o.RPM <= 0 {
-				return errors.New("rpm must be positive")
-			}
-			if o.Burst < 0 {
-				return errors.New("burst must be >= 0")
-			}
-			return nil
-		}, newRateLimit),
+		defineErr("rate_limit", graph.PortRequestHead, graph.PortRequestHead, false, validateRateLimit, func(id string, o RateLimitOptions) (graph.Node, error) {
+			return bindRateLimit(id, o, opts)
+		}).withMetadata(nodeMetadata{
+			formDefaults: map[string]any{"stage": "request_head", "strategy": "token_bucket", "key_by": "source_ip", "max_keys": protection.DefaultRateLimitMaxKeys},
+			stagePorts: map[string]nodePorts{
+				"request_head": {graph.PortRequestHead, graph.PortRequestHead},
+				"verified":     {graph.PortVerified, graph.PortVerified},
+			},
+			stage: func(nc graph.NodeConfig) (string, error) {
+				o, err := decodeOptions[RateLimitOptions](nc)
+				return o.Stage, err
+			},
+		}),
 		define("read_body", graph.PortRequestHead, graph.PortRawRequest, false, func(o ReadBodyOptions) error {
 			if o.MaxBytes <= 0 {
 				return errors.New("max_bytes must be positive")
 			}
 			return nil
-		}, newReadBody),
+		}, newReadBody).withMetadata(nodeMetadata{noErrorEdge: true}), // A failed read consumes the body.
 		defineErr("auth", graph.PortRawRequest, graph.PortVerified, false, validateAuth, func(id string, o AuthOptions) (graph.Node, error) {
 			if opts.ValidateOnly {
 				return stubNode{name: "auth validation only"}, nil
@@ -436,21 +498,34 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 				secrets = fn
 			}
 			return newAuthNode(id, o, secrets)
+		}).withMetadata(nodeMetadata{
+			configureSchema: func(meta *NodeSchema) {
+				meta.AuthSchemes = authSchemeSchemas(meta.Schema)
+				meta.Schema.OneOf = exclusivePropertyContract("secret", "secret_ref")
+			},
 		}),
 		define[NoAuthOptions]("no_auth", graph.PortRawRequest, graph.PortVerified, false, nil, func(id string, _ NoAuthOptions) graph.Node {
 			return newNoAuthNode(id, opts.Logger)
+		}).withMetadata(nodeMetadata{noErrorEdge: true}), // no_auth never fails a well-typed request.
+		defineErr("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, func(id string, o ReplayGuardOptions) (graph.Node, error) { return newReplayGuard(id, o, opts) }).withMetadata(nodeMetadata{
+			formDefaults: map[string]any{"ttl": "5m", "max_entries": 1024},
 		}),
-		defineErr("replay_guard", graph.PortVerified, graph.PortVerified, false, validateReplayGuard, newReplayGuard),
 		define("envelope", graph.PortVerified, graph.PortEnvelope, false, validateEnvelope, func(id string, o EnvelopeOptions) graph.Node {
 			n := newEnvelopeNode(id, o, opts.HeaderAllowlist, opts.HeaderDenylist).(envelopeNode)
 			n.queryDenylist = opts.QueryDenylist
 			return n
+		}).withMetadata(nodeMetadata{formDefaults: envelopeFormDefaults(), bodyFormat: envelopeBodyFormat}),
+		defineErr("batch", graph.PortEnvelope, graph.PortTerminal, false, validateBatch, func(id string, o BatchOptions) (graph.Node, error) { return newBatchNode(id, o, opts) }).withMetadata(nodeMetadata{
+			formDefaults: batchFormDefaults(), checkBodyFormat: jsonBodyFormatIssue,
 		}),
-		defineErr("batch", graph.PortEnvelope, graph.PortTerminal, false, validateBatch, func(id string, o BatchOptions) (graph.Node, error) { return newBatchNode(id, o, opts) }),
-		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode),
+		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode).withMetadata(nodeMetadata{
+			batchChildOrder: 3, formDefaults: map[string]any{"on_no_match": "drop"}, checkBodyFormat: conditionBodyFormatIssue,
+		}),
 		defineErr("register_route", graph.PortEnvelope, graph.PortEnvelope, false, validateRegisterRoute, func(id string, o RegisterRouteOptions) (graph.Node, error) { return newRegisterRouteNode(id, o, opts) }),
 		defineErr("route", graph.PortEnvelope, graph.PortEnvelope, false, validateRoute, func(id string, o RouteOptions) (graph.Node, error) {
 			return newRouteNode(id, o, opts)
+		}).withMetadata(nodeMetadata{
+			configureSchema: func(meta *NodeSchema) { meta.Schema.OneOf = exclusivePropertyContract("fixed", "candidates") },
 		}),
 		defineErr("lookup", graph.PortEnvelope, graph.PortEnvelope, false, validateLookup, func(id string, o LookupOptions) (graph.Node, error) {
 			var fn LookupFunc
@@ -459,9 +534,10 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			}
 			return newLookupNode(id, o, fn)
 		}),
-		define("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) graph.Node {
+		defineErr("json_validate", graph.PortEnvelope, graph.PortEnvelope, false, nil, newJSONValidateNode).withMetadata(nodeMetadata{checkBodyFormat: jsonBodyFormatIssue}),
+		defineErr("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) (graph.Node, error) {
 			return newTransformNode(id, o, opts.Logger)
-		}),
+		}).withMetadata(nodeMetadata{batchChildOrder: 1, checkBodyFormat: transformBodyFormatIssue}),
 		defineErr("code", graph.PortEnvelope, graph.PortEnvelope, false, validateCode, func(id string, o CodeOptions) (graph.Node, error) {
 			n, err := newCodeNode(id, o)
 			if err != nil {
@@ -471,9 +547,24 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			code.allowlist, code.denylist = opts.HeaderAllowlist, opts.HeaderDenylist
 			code.queryDenylist = opts.QueryDenylist
 			return code, nil
+		}).withMetadata(nodeMetadata{
+			batchChildOrder: 2,
+			formDefaults:    map[string]any{"timeout": defaultCodeTimeout.String(), "max_call_stack": defaultCodeStack, "max_input_bytes": defaultCodeInputSize, "max_output_bytes": defaultCodeOutputSize},
 		}),
-		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode),
-		define("if_else", graph.PortEnvelope, graph.PortEnvelope, false, validateIfElse, newIfElseNode),
+		define("switch", graph.PortEnvelope, graph.PortEnvelope, false, validateSwitch, newSwitchNode).withMetadata(nodeMetadata{
+			batchChildOrder: 5, checkBodyFormat: conditionBodyFormatIssue,
+			configureSchema: func(meta *NodeSchema) {
+				// Exclusivity belongs to each case: when and conditions are two
+				// spellings of one rule, rather than two fields to fill in.
+				if cases, ok := meta.Schema.Properties.Get("cases"); ok && cases.Items != nil {
+					cases.Items.OneOf = exclusivePropertyContract("when", "conditions")
+				}
+			},
+		}),
+		define("if_else", graph.PortEnvelope, graph.PortEnvelope, false, validateIfElse, newIfElseNode).withMetadata(nodeMetadata{
+			// A condition that does not hold takes the false branch, without error.
+			noErrorEdge: true, batchChildOrder: 4, checkBodyFormat: conditionBodyFormatIssue,
+		}),
 		defineErr("http_request", graph.PortEnvelope, graph.PortEnvelope, false, validateHTTPRequest, func(id string, o HTTPRequestOptions) (graph.Node, error) {
 			value, err := newHTTPRequestNodeWithRegistry(id, o, opts.HeaderAllowlist, opts.HeaderDenylist, opts.RoutingRegistry, opts.ValidateOnly)
 			if err != nil {
@@ -496,21 +587,21 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 				}
 			}
 			return n, nil
+		}).withMetadata(nodeMetadata{
+			formDefaults:    map[string]any{"method": "POST", "timeout": defaultHTTPRequestTimeout.String(), "retry.initial_backoff": "500ms", "retry.max_backoff": "30s"},
+			configureSchema: func(meta *NodeSchema) { meta.Schema.OneOf = exclusivePropertyContract("url", "upstream") },
 		}),
 		defineErr("publish", graph.PortEnvelope, graph.PortEnvelope, true, validatePublish, func(id string, o PublishOptions) (graph.Node, error) {
 			return newPublishNode(id, o, opts.Publishers)
-		}).withSuccessContinuation(),
-		defineErr("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode),
+		}).withMetadata(nodeMetadata{successContinuation: true, batchChildOrder: 6, formDefaults: publishFormDefaults()}),
+		defineErr("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode).withMetadata(nodeMetadata{
+			configureSchema: func(meta *NodeSchema) { meta.Schema.OneOf = exclusivePropertyContract("status", "passthrough") },
+		}),
 	}
 }
 
-func (d nodeDefinition) withSuccessContinuation() nodeDefinition {
-	d.successContinuation = true
-	return d
-}
-
 func (d nodeDefinition) spec() graph.NodeSpec {
-	return graph.NodeSpec{
+	spec := graph.NodeSpec{
 		Type:                d.name,
 		In:                  d.in,
 		Out:                 d.out,
@@ -518,6 +609,19 @@ func (d nodeDefinition) spec() graph.NodeSpec {
 		SuccessContinuation: d.successContinuation,
 		New:                 d.newNode,
 	}
+	if d.stage != nil {
+		spec.ResolvePorts = func(nc graph.NodeConfig) (graph.PortType, graph.PortType, error) {
+			stage, err := d.stage(nc)
+			if err != nil {
+				return 0, 0, err
+			}
+			if ports, ok := d.stagePorts[stage]; ok {
+				return ports.in, ports.out, nil
+			}
+			return d.in, d.out, nil
+		}
+	}
+	return spec
 }
 
 type stubNode struct{ name string }
@@ -586,6 +690,12 @@ func require(name, value string) error {
 }
 
 func validateAuth(o AuthOptions) error {
+	if o.CredentialID != "" && (!graph.ValidID(o.CredentialID) || len(o.CredentialID) > 255) {
+		return errors.New("credential_id must be a stable printable ID of at most 255 bytes")
+	}
+	if o.TenantClaim != "" && (len(o.TenantClaim) > 128 || strings.ContainsAny(o.TenantClaim, "\x00\r\n") || !auth.SchemeAllowedForAuthType(auth.AuthTypeJWT, defaultAuthScheme(o.Scheme))) {
+		return errors.New("tenant_claim must be a bounded JWT claim name and requires a JWT scheme")
+	}
 	for _, header := range []string{o.SignatureHeader, o.TimestampHeader} {
 		if header != "" && !validAuthHeader(header) {
 			return errors.New("authentication header must be a valid HTTP field name")
@@ -693,13 +803,25 @@ func validateIPAllowlist(o IPAllowlistOptions) error {
 	return nil
 }
 func validateReplayGuard(o ReplayGuardOptions) error {
+	if len(o.Key) > 4096 {
+		return errors.New("key template must be at most 4096 bytes")
+	}
+	if o.Store == "" {
+		return errors.New("store is required; select a named state_stores backend")
+	}
 	if o.MaxEntries < 0 {
 		return errors.New("max_entries must be >= 1")
 	}
 	if err := validateDuration("ttl", o.TTL, false); err != nil {
 		return err
 	}
-	return validateTemplate("key", o.Key)
+	if _, err := parseGuardKey(o.Key); err != nil {
+		return fmt.Errorf("key: %w", err)
+	}
+	if guardPolicy("validation", "node", o).Validate() != nil {
+		return errors.New("replay guard policy ID, TTL or capacity outside supported bounds")
+	}
+	return nil
 }
 func validateEnvelope(o EnvelopeOptions) error {
 	x := o.XML
@@ -1016,6 +1138,11 @@ func validatePublish(o PublishOptions) error {
 	if err := validateTemplate("target", o.Target); err != nil {
 		return err
 	}
+	if o.Temporal != nil {
+		if err := validatePublishTemporal(*o.Temporal, o.Target); err != nil {
+			return err
+		}
+	}
 	switch o.Payload {
 	case "", "envelope", "object":
 		return validatePublishDelivery(o)
@@ -1075,6 +1202,9 @@ func validAuthHeader(s string) bool {
 }
 
 func nodeBuildError(name string, err error) error {
+	if err != nil && (name == "rate_limit" || name == "replay_guard") {
+		return fmt.Errorf("%w: %w", ErrProtectionConfiguration, err)
+	}
 	if err != nil && name == "auth" {
 		return fmt.Errorf("%w: %w", ErrAuthConfiguration, err)
 	}

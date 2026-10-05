@@ -73,7 +73,7 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("env path: %d", code)
 	}
 	warn := writeConfig(t, strings.Replace(testConfig(unreachableDB, ":8080", "metrics: {enabled: true, path: /metrics}\n"), ", metrics]", "]", 1))
-	if code, _, stderr := runCmd("validate", "--config", warn); code != 0 || !strings.Contains(stderr, "warning: metrics") {
+	if code, _, stderr := runCmd("validate", "--config", warn); code != 1 || !strings.Contains(stderr, "metrics") {
 		t.Fatalf("warning: %d %q", code, stderr)
 	}
 	bad := writeConfig(t, strings.Replace(testConfig(unreachableDB, ":8080", ""), controlToken, "short", 1))
@@ -131,6 +131,9 @@ func TestServeShutsDownOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var backgroundStopped atomic.Bool
 	srv := newServer("127.0.0.1:0", http.NotFoundHandler())
+	if srv.MaxHeaderBytes != 16<<10 {
+		t.Fatalf("MaxHeaderBytes = %d", srv.MaxHeaderBytes)
+	}
 	done := make(chan int, 1)
 	go func() {
 		done <- serve(ctx, slog.New(slog.DiscardHandler), []*http.Server{srv}, func(bg context.Context) {

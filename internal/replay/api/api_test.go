@@ -29,6 +29,7 @@ const (
 // fakeStore records calls; an unset function panics, which the handler's
 // panic recovery turns into a 500 the test will see.
 type fakeStore struct {
+	resolve      func(store.ResolveRequest) (store.ResolveResult, error)
 	ingest       func(store.NewFailure) (store.IngestResult, error)
 	list         func(store.Filter) (store.Page, error)
 	get          func(string) (store.Detail, error)
@@ -55,6 +56,9 @@ func (f *fakeStore) RequestRetry(_ context.Context, r store.RetryRequest) (store
 func (f *fakeStore) GetRun(_ context.Context, id string) (store.Run, error) { return f.getRun(id) }
 func (f *fakeStore) Dismiss(_ context.Context, id, actor string) (store.Failure, error) {
 	return f.dismiss(id, actor)
+}
+func (f *fakeStore) ResolveUnknown(_ context.Context, r store.ResolveRequest) (store.ResolveResult, error) {
+	return f.resolve(r)
 }
 func (f *fakeStore) Ready(context.Context) error { return f.ready() }
 
@@ -115,6 +119,9 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 
 func notFoundStore() *fakeStore {
 	return &fakeStore{
+		resolve: func(store.ResolveRequest) (store.ResolveResult, error) {
+			return store.ResolveResult{}, store.ErrNotFound
+		},
 		ingest:       func(store.NewFailure) (store.IngestResult, error) { return 0, store.ErrNotFound },
 		list:         func(store.Filter) (store.Page, error) { return store.Page{}, nil },
 		get:          func(string) (store.Detail, error) { return store.Detail{}, store.ErrNotFound },
@@ -131,6 +138,9 @@ func TestRoutesRequireTheirScope(t *testing.T) {
 		method, target string
 		scope          auth.Scope
 	}{
+		{"GET", "/v1/me", auth.ScopeRead},
+		{"POST", "/v1/actions/validate", auth.ScopeRead},
+		{"POST", "/v1/failures/" + testID + "/resolve", auth.ScopeRetry},
 		{"POST", "/v1/failures", auth.ScopeCapture},
 		{"GET", "/v1/failures", auth.ScopeRead},
 		{"GET", "/v1/failures/" + testID, auth.ScopeRead},
@@ -145,8 +155,8 @@ func TestRoutesRequireTheirScope(t *testing.T) {
 		readToken:    {auth.ScopeRead},
 		opsToken:     {auth.ScopeRead, auth.ScopePayload, auth.ScopeRetry},
 	}
-	h := newHarness(t, notFoundStore())
 	for _, r := range routes {
+		h := newHarness(t, notFoundStore())
 		if rec := h.do(t, r.method, r.target, "", nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s without a token = %d, want 401", r.method, r.target, rec.Code)
 		}
@@ -228,10 +238,20 @@ func TestUnexpectedStoreErrorsWithholdDetail(t *testing.T) {
 
 func TestMetricsCanShareTheAPIListener(t *testing.T) {
 	h := newHarness(t, notFoundStore(), func(o *Options) {
+		o.Auth = auth.New([]auth.Key{{Name: "metrics", Token: opsToken, Scopes: []auth.Scope{auth.ScopeMetrics}}, {Name: "reader", Token: readToken, Scopes: []auth.Scope{auth.ScopeRead}}}, nil)
 		o.MetricsPath = "/metrics"
 		o.MetricsHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("metrics")) })
 	})
-	if rec := h.do(t, "GET", "/metrics", "", nil, nil); rec.Code != 200 || rec.Body.String() != "metrics" {
-		t.Fatalf("metrics = %d %q", rec.Code, rec.Body.String())
+	for token, want := range map[string]int{"": 401, readToken: 403, opsToken: 200} {
+		if rec := h.do(t, "GET", "/metrics", token, nil, nil); rec.Code != want {
+			t.Fatalf("metrics = %d %q", rec.Code, rec.Body.String())
+		}
+	}
+	noKeys := newHarness(t, notFoundStore(), func(o *Options) {
+		o.MetricsPath = "/metrics"
+		o.MetricsHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { t.Error("unguarded metrics invoked") })
+	})
+	if rec := noKeys.do(t, "GET", "/metrics", "", nil, nil); rec.Code != 401 {
+		t.Fatal(rec.Code)
 	}
 }

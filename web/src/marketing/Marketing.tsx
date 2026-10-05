@@ -9,6 +9,7 @@ import { FlowDiagram } from "./FlowDiagram";
 import { Hero } from "./Hero";
 import { MarketingShell } from "./MarketingShell";
 import { Production } from "./Production";
+import { ReplayOperations } from "./ReplayOperations";
 
 // Marketing is the public overview served at /. It explains what Hookway is
 // and hands off to the builder or to the docs on GitHub; it never restates
@@ -24,6 +25,7 @@ export function Marketing() {
       <CodeBand />
       <FlowDiagram />
       <Production />
+      <ReplayOperations />
       <Explore />
       <DocsLinks />
       <CtaBand />

@@ -16,10 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/problem"
 	"github.com/jaysongiroux/hook_way/internal/replay/auth"
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
-	"github.com/jaysongiroux/hook_way/internal/replay/problem"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
+	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 // Store is the persistence the API needs; *store.Store implements it.
@@ -31,6 +32,7 @@ type Store interface {
 	RequestRetry(ctx context.Context, req store.RetryRequest) (store.RetryResult, error)
 	GetRun(ctx context.Context, runID string) (store.Run, error)
 	Dismiss(ctx context.Context, id, actor string) (store.Failure, error)
+	ResolveUnknown(ctx context.Context, req store.ResolveRequest) (store.ResolveResult, error)
 	Ready(ctx context.Context) error
 }
 
@@ -45,14 +47,15 @@ type Options struct {
 	// endpoint on this handler (metrics.addr empty).
 	MetricsPath    string
 	MetricsHandler http.Handler
+	AllowedOrigins []string
 }
 
 const (
 	readyTimeout     = 2 * time.Second
 	maxMetadataBytes = 1 << 20
 	maxJSONBodyBytes = 64 << 10
-	maxBatchSize     = 100
-	maxKeyLen        = 255
+	maxBatchSize     = uicontract.MaxBatchSize
+	maxKeyLen        = uicontract.MaxIdempotencyKeyLength
 )
 
 type api struct {
@@ -69,23 +72,26 @@ func New(opts Options) http.Handler {
 		a.logger = slog.Default()
 	}
 	mux := http.NewServeMux()
-	route := func(pattern string, scope auth.Scope, h http.HandlerFunc) {
-		mux.Handle(pattern, opts.Auth.Require(scope, h))
+	operatorRoutes := http.NewServeMux()
+	handlers := map[string]http.HandlerFunc{"validateAction": a.validateAction, "whoAmI": a.me, "resolveFailure": a.resolve, "captureFailure": a.ingest, "listFailures": a.list, "getFailure": a.get, "downloadPayload": a.payload, "retryFailure": a.retry, "dismissFailure": a.dismiss, "retryFailures": a.retryBatch, "getRetry": a.getRun, "health": a.healthz, "ready": a.readyz}
+	for _, route := range Routes() {
+		handler := handlers[route.OperationID]
+		if handler == nil {
+			panic("replay route has no handler: " + route.OperationID)
+		}
+		if route.Scope != "" && route.Scope != string(auth.ScopeCapture) {
+			operatorRoutes.Handle(route.Pattern(), handler)
+		}
+		if route.Scope != "" {
+			mux.Handle(route.Pattern(), opts.Auth.Require(auth.Scope(route.Scope), handler))
+		} else {
+			mux.Handle(route.Pattern(), handler)
+		}
 	}
-	route("POST /v1/failures", auth.ScopeCapture, a.ingest)
-	route("GET /v1/failures", auth.ScopeRead, a.list)
-	route("GET /v1/failures/{id}", auth.ScopeRead, a.get)
-	route("GET /v1/failures/{id}/payload", auth.ScopePayload, a.payload)
-	route("POST /v1/failures/{id}/retries", auth.ScopeRetry, a.retry)
-	route("POST /v1/failures/{id}/dismiss", auth.ScopeRetry, a.dismiss)
-	route("POST /v1/retries", auth.ScopeRetry, a.retryBatch)
-	route("GET /v1/retries/{run_id}", auth.ScopeRead, a.getRun)
-	mux.HandleFunc("GET /healthz", a.healthz)
-	mux.HandleFunc("GET /readyz", a.readyz)
 	if opts.MetricsPath != "" && opts.MetricsHandler != nil {
-		mux.Handle(opts.MetricsPath, opts.MetricsHandler)
+		mux.Handle(opts.MetricsPath, opts.Auth.Require(auth.ScopeMetrics, opts.MetricsHandler))
 	}
-	return a.instrument(mux)
+	return a.instrument(operatorCORS(mux, operatorRoutes, opts.AllowedOrigins))
 }
 
 var knownMethods = map[string]bool{
@@ -167,6 +173,10 @@ var storeErrors = []struct {
 	status int
 	code   string
 }{
+	{store.ErrNotResolvable, http.StatusUnprocessableEntity, "not_resolvable"},
+	{store.ErrResolutionConflict, http.StatusConflict, "resolution_conflict"},
+	{store.ErrInvalidResolution, http.StatusBadRequest, "invalid_resolution"},
+	{store.ErrExpired, http.StatusGone, "record_expired"},
 	{store.ErrNotFound, http.StatusNotFound, "not_found"},
 	{store.ErrConflict, http.StatusConflict, "conflict"},
 	{store.ErrCapacity, http.StatusInsufficientStorage, "capacity_exceeded"},

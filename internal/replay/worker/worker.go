@@ -13,7 +13,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
-	"github.com/jaysongiroux/hook_way/internal/replaywire"
+	"github.com/jaysongiroux/hook_way/internal/replayresult"
 )
 
 const (
@@ -141,12 +141,6 @@ func (w *Worker) expireLoop(ctx context.Context) {
 	}
 }
 
-type runResult struct {
-	Reason  string                    `json:"reason,omitempty"`
-	Detail  string                    `json:"detail,omitempty"`
-	Deliver *replaywire.DeliverResult `json:"deliver,omitempty"`
-}
-
 // process executes and finalizes one run. A panic is recovered and the run
 // left running, so its lease expires it to unknown: whether core delivered
 // is not known.
@@ -170,7 +164,7 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 		defer cancel()
 	}
 	out := w.execute(deliveryCtx, run)
-	result, err := json.Marshal(runResult{Reason: out.Reason, Detail: out.Detail, Deliver: out.Result})
+	result, err := json.Marshal(replayresult.Result{Reason: out.Reason, Detail: out.Detail, Deliver: out.Result})
 	if err != nil {
 		result = []byte(`{}`)
 	}

@@ -22,7 +22,7 @@ import (
 // input and compares that input with a freshly built copy afterwards. A node
 // may return a changed payload, but it must never write into the maps,
 // slices, or documents of the payload it was given: failure capture keeps the
-// failed node's input without copying it (docs/invariants.md I19).
+// failed node's input without copying it (docs/development/invariants.md I19).
 func TestI19_NodesDoNotMutateTheirInput(t *testing.T) {
 	cases := nodeInputCases(t)
 	reg, err := flowconfig.NewRegistryWithOptions(flowconfig.RegistryOptions{})
@@ -94,7 +94,7 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 		"route":        {typ: "route", options: "profile: sample\nfixed: sample\n", opts: flowconfig.RegistryOptions{RoutingRegistry: registry}, input: func() graph.Payload { return inputEnvelope() }},
 		"loop_guard":   {typ: "loop_guard", options: "max_hops: 3\n", input: func() graph.Payload { return inputHead() }},
 		"ip_allowlist": {typ: "ip_allowlist", options: "cidrs: [10.0.0.0/8]\n", input: func() graph.Payload { return inputHead() }},
-		"rate_limit":   {typ: "rate_limit", options: "rpm: 600\nburst: 10\nkey_by: source_ip\n", input: func() graph.Payload { return inputHead() }},
+		"rate_limit":   {typ: "rate_limit", options: "store: test\nrpm: 600\nburst: 10\nkey_by: source_ip\n", input: func() graph.Payload { return inputHead() }},
 		"read_body": {
 			typ: "read_body", options: "max_bytes: 1024\n",
 			ctx: func() context.Context {
@@ -114,7 +114,7 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 		"no_auth": {typ: "no_auth", input: func() graph.Payload {
 			return graph.RawRequest{Head: inputHead(), Body: append([]byte(nil), body...)}
 		}},
-		"replay_guard": {typ: "replay_guard", options: "ttl: 1m\nmax_entries: 100\n", input: func() graph.Payload {
+		"replay_guard": {typ: "replay_guard", options: "store: test\nttl: 1m\nmax_entries: 100\n", input: func() graph.Payload {
 			return graph.Verified{Raw: graph.RawRequest{Head: inputHead(), Body: append([]byte(nil), body...)}, Identity: "hmac"}
 		}},
 		"envelope": {typ: "envelope", options: "body_format: json\n", input: func() graph.Payload {
@@ -133,6 +133,11 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 		"transform/changed_fields": {
 			typ: "transform", options: "kind: changed_fields\nfrom: body.previous\nto: body.current\nname: changed_fields\n",
 			input: func() graph.Payload { return inputEnvelope() },
+		},
+		"json_validate/coercion": {
+			typ:     "json_validate",
+			options: "schema: {type: object, properties: {id: {type: integer}}}\ncoercions: [{path: id, type: integer}]\n",
+			input:   func() graph.Payload { return inputEnvelope() },
 		},
 		"transform/field_map": {
 			typ:     "transform",
@@ -233,7 +238,7 @@ func buildCatalogNode(t *testing.T, typ, options string, opts flowconfig.Registr
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	reg, err := flowconfig.NewRegistryWithOptions(opts)
+	reg, err := flowconfig.NewRegistryWithOptions(bindFixtureProtection(t, opts))
 	if err != nil {
 		t.Fatal(err)
 	}

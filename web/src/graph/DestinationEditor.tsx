@@ -18,9 +18,10 @@ import {
 import { destFieldHelp } from "./help";
 import { clearDraftBranch } from "./formDrafts";
 import { SchemaForm } from "./SchemaForm";
-import { destinationPresentation } from "../marketing/destinationIdentity";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import { useGraphStore } from "./store";
 import { DARK } from "../tokens";
+import { WebhookDeliveryNotice } from "./WebhookDeliveryNotice";
 
 /** The Connection select's "no connection" option. */
 const INLINE = "__inline";
@@ -154,6 +155,9 @@ export function DestinationEditor({
           onChange={(v) => changeConnection(v ?? INLINE)}
         />
       )}
+      {type === "webhook" && (
+        <WebhookDeliveryNotice deliveryMode={blockValue.delivery_mode} />
+      )}
       <SchemaForm
         scope={`destination/${name}`}
         schema={spec.schema}
@@ -166,6 +170,9 @@ export function DestinationEditor({
           })
         }
         fieldHelp={destFieldHelp}
+        enums={
+          type === "webhook" ? { delivery_mode: ["async", "sync"] } : undefined
+        }
         groupObjects
         hideFields={ownedByConnection}
       />

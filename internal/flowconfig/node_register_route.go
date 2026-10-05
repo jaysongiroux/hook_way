@@ -151,6 +151,7 @@ func (n registerRouteNode) Run(ctx context.Context, in graph.Payload) (graph.Pay
 		if n.writer == nil {
 			err = errors.New("writer unavailable")
 		} else {
+			graph.MarkSideEffect(ctx)
 			err = n.writer.Put(ctx, record)
 		}
 		if err == nil {
@@ -192,3 +193,5 @@ func (n registerRouteNode) outcome(ctx context.Context, env graph.Envelope, know
 	}
 	return env, nil
 }
+
+func (*registerRouteNode) TracksSideEffects() {}

@@ -29,7 +29,7 @@ import (
 )
 
 // TestI1_LoopHopCheckRunsBeforeBodyRead asserts invariant I1 from
-// docs/invariants.md I1: the loop-hop check runs before the body is
+// docs/development/invariants.md I1: the loop-hop check runs before the body is
 // buffered, so a terminal 4xx stops a webhook loop cheaply.
 func TestI1_LoopHopCheckRunsBeforeBodyRead(t *testing.T) {
 	srv := newServer(t, gatedYAML(), nil)
@@ -126,6 +126,7 @@ func TestI4_RateLimitRunsBeforeBodyRead(t *testing.T) {
 // cannot consume RawRequest, so wiring it directly to read_body cannot load.
 func TestI5_NothingActsOnUnverifiedPayload(t *testing.T) {
 	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -160,6 +161,7 @@ func TestI6_AuthVerifiesRawBytes(t *testing.T) {
 // consumes Verified, so wiring it before auth cannot load.
 func TestI7_ReplayReservationAfterAuth(t *testing.T) {
 	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -168,7 +170,7 @@ flows:
     nodes:
       - {id: in, type: http_trigger, path: /w, methods: [POST]}
       - {id: body, type: read_body, max_bytes: 1024}
-      - {id: replay, type: replay_guard}
+      - {id: replay, type: replay_guard, store: test}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: s, signature_header: X-S}
       - {id: env, type: envelope}
       - {id: out, type: publish, destination: primary, target: t}
@@ -192,12 +194,12 @@ func TestI8_FiltersRunBeforeVariableResolution(t *testing.T) {
 
 	cfg := loadCfg(t, src)
 	calls := 0
-	reg, err := flowconfig.NewRegistryWithOptions(flowconfig.RegistryOptions{Lookups: func(flowconfig.LookupOptions) flowconfig.LookupFunc {
+	reg, err := flowconfig.NewRegistryWithOptions(bindFixtureProtection(t, flowconfig.RegistryOptions{Lookups: func(flowconfig.LookupOptions) flowconfig.LookupFunc {
 		return func(context.Context, string) (string, bool, error) {
 			calls++
 			return "", false, errors.New("must not resolve")
 		}
-	}})
+	}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,6 +253,7 @@ func TestI10_PublishDetachedFromRequestContext(t *testing.T) {
 func TestI10a_PublishSuccessContinuationSharesDetachedBudget(t *testing.T) {
 	pub := &orderedPublisher{entered: make(chan struct{}, 2)}
 	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -380,6 +383,7 @@ func TestI12_BrokenFilterChainFailsClosed(t *testing.T) {
 // build still answers its path with 500, not 404.
 func TestI13_BrokenFlowRegistersPathWith500Not404(t *testing.T) {
 	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -441,9 +445,8 @@ type panicReadCloser struct{}
 func (panicReadCloser) Read([]byte) (int, error) { panic("boom") }
 func (panicReadCloser) Close() error             { return nil }
 
-// TestI17_ReservationReleasedOnRetryableFailure: a publish failure must be
-// accepted again immediately, not 409'd.
-func TestI17_ReservationReleasedOnRetryableFailure(t *testing.T) {
+// An attempted publish can have reached the broker despite its returned error.
+func TestI17_ReservationRetainedOnUncertainPublishFailure(t *testing.T) {
 	pub := &testPublisher{err: errors.New("broker down")}
 	srv := newServer(t, gatedYAML(), pub)
 	body := []byte(`{"action":"opened"}`)
@@ -454,11 +457,8 @@ func TestI17_ReservationReleasedOnRetryableFailure(t *testing.T) {
 	pub.err = nil
 	pub.mu.Unlock()
 	rec := post(srv, signedRequest(http.MethodPost, "/webhooks/github", body))
-	if rec.Code == http.StatusConflict {
-		t.Fatal("I17: retry after publish failure was rejected 409; reservation was not released")
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("retry = %d, want 202", rec.Code)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("uncertain publish retry = %d, want retained guard 409", rec.Code)
 	}
 }
 

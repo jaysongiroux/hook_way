@@ -10,6 +10,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/configapi"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
+	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 // Validate must be a byte-identical pass-through of configapi.Validate for any
@@ -112,6 +113,64 @@ keys: [{name: core, token: "${REPLAY_CAPTURE_TOKEN}", scopes: [capture]}]
 	}
 }
 
+func TestContractInfoAndReplayActionInput(t *testing.T) {
+	got, err := bridge.ContractInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := json.Marshal(uicontract.Info())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Fatalf("contract mismatch: %s", got)
+	}
+
+	got, err = bridge.ReplayActionValidate(`{"idempotency_key":"bad key","failure_ids":["unknown","unknown"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result uicontract.ReplayActionResult
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) != 2 {
+		t.Fatalf("unexpected action issues: %+v", result.Issues)
+	}
+	if _, err := bridge.ReplayActionValidate("{"); err == nil {
+		t.Fatal("malformed JSON accepted")
+	}
+}
+
+func TestJSONSampleValidateMatchesSharedContract(t *testing.T) {
+	for _, raw := range []string{
+		`{"schema":{"type":"integer"},"sample":"9007199254740993"}`,
+		`{"schema":{"type":"integer"},"sample":"\"private-value\""}`,
+		`{"schema":{"$ref":"https://private-value.invalid/schema"},"sample":"{}"}`,
+	} {
+		input, err := uicontract.DecodeJSONSampleInput([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := json.Marshal(uicontract.ValidateJSONSample(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := bridge.JSONSampleValidate(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != string(want) {
+			t.Fatalf("JSON sample contract drift: %s", got)
+		}
+	}
+	for _, raw := range []string{"{", `{"schema":{},"sample":"{}","unknown":"private-value"}`} {
+		if _, err := bridge.JSONSampleValidate(raw); err == nil || strings.Contains(err.Error(), "private-value") {
+			t.Fatalf("malformed request: %v", err)
+		}
+	}
+}
+
 func TestRequestSignatureProtocolsValidateOffline(t *testing.T) {
 	original, err := os.ReadFile("../../../examples/auth/request-signatures.yaml")
 	if err != nil {
@@ -209,6 +268,29 @@ func TestProxyContractOfflineValidation(t *testing.T) {
 			if failed != invalid {
 				t.Fatalf("%s invalid=%v: %s", example, invalid, result)
 			}
+		}
+	}
+}
+
+func TestResolutionWASMMatchesPureContract(t *testing.T) {
+	for _, input := range []uicontract.ReplayActionInput{
+		{Action: "resolve", IdempotencyKey: "receipt-1", Note: "Verified upstream receipt", Reference: "INC-42"},
+		{Action: "resolve", IdempotencyKey: "receipt-1", Note: "\x00"},
+	} {
+		raw, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := bridge.ReplayActionValidate(string(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := json.Marshal(uicontract.ValidateReplayAction(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != string(want) {
+			t.Fatalf("%s != %s", got, want)
 		}
 	}
 }

@@ -386,7 +386,9 @@ test("registration after-create mode removes direct-only headers and selects ups
     id_source: "upstream",
   });
   expect(change.mock.calls.at(-1)?.[0]).not.toHaveProperty("require_headers");
-  expect(screen.getByText(/preceding Call an HTTP API node/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/preceding Call an HTTP API node/),
+  ).toBeInTheDocument();
 });
 
 test("response fixed/upstream switches preserve common headers and clear inactive response fields", () => {
@@ -565,4 +567,47 @@ test("webhook publication describes an appended target path", () => {
   expect(
     screen.getByText(/path is appended to the destination base URL/),
   ).toBeInTheDocument();
+});
+
+test("Temporal settings are editable and switching destinations removes only incompatible options", () => {
+  useGraphStore
+    .getState()
+    .setDestinations({
+      ...useGraphStore.getState().destinations,
+      workflows: {
+        type: "temporal",
+        temporal: { host_port: "localhost:7233" },
+      },
+    });
+  const { change } = setup("publish", {
+    destination: "workflows",
+    target: "orders",
+    temporal: {
+      workflow_type: "OrderWorkflow",
+      workflow_id: { source: "body", path: "id" },
+    },
+  });
+  expect(screen.getByLabelText("Task queue")).toHaveValue("orders");
+  fireEvent.change(screen.getByLabelText("Workflow type"), {
+    target: { value: "InvoiceWorkflow" },
+  });
+  expect(change.mock.calls.at(-1)?.[0].temporal.workflow_type).toBe(
+    "InvoiceWorkflow",
+  );
+  fireEvent.click(screen.getByRole("textbox", { name: "Workflow ID source" }));
+  fireEvent.click(screen.getByRole("option", { name: "Request header" }));
+  expect(change.mock.calls.at(-1)?.[0].temporal.workflow_id).toEqual({
+    source: "header",
+  });
+  fireEvent.change(screen.getByLabelText("Event ID header"), {
+    target: { value: "X-Event-ID" },
+  });
+  expect(change.mock.calls.at(-1)?.[0].temporal.workflow_id).toEqual({
+    source: "header",
+    path: "X-Event-ID",
+  });
+  fireEvent.click(screen.getByLabelText("Destination"));
+  fireEvent.click(screen.getByRole("option", { name: "standard" }));
+  expect(change.mock.calls.at(-1)?.[0]).not.toHaveProperty("temporal");
+  expect(change.mock.calls.at(-1)?.[0].target).toBe("orders");
 });

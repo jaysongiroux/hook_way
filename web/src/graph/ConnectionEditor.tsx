@@ -12,7 +12,7 @@ import { CONN_TYPES, connSchema } from "./nodeSchema";
 import { destFieldHelp } from "./help";
 import { clearDraftBranch } from "./formDrafts";
 import { SchemaForm } from "./SchemaForm";
-import { destinationPresentation } from "../marketing/destinationIdentity";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import { DARK } from "../tokens";
 
 export interface ConnectionEditorProps {

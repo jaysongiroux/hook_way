@@ -1,107 +1,95 @@
-export interface ValidationIssue {
-  field: string;
-  message: string;
-  suggestion?: string;
-  severity: string;
+import { editorAPIFallbackEnabled } from "../shared/wasm/validationMode";
+import { createEditorClient } from "../shared/contracts/editorClient";
+import type { components } from "../shared/contracts/generated/editor";
+import { hasWasmCapability, invokeWasm, loadWasm } from "../shared/wasm/loader";
+
+export type ValidationIssue = components["schemas"]["Issue"];
+const editor = createEditorClient();
+
+// Kept as the graph's public entry point while callers migrate to the shared
+// bridge. Load errors remain observable by callers and getWasmState().
+export async function loadValidator(): Promise<void> {
+  await loadWasm();
 }
 
-declare global {
-  interface Window {
-    hookwayValidate?: (yaml: string) => string;
-    hookwayReplayValidate?: (yaml: string) => string;
-    hookwayReplaySchema?: () => string;
-    hookwayNodeSchemas?: () => string;
-    Go?: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
-  }
-}
-
-let loading: Promise<void> | null = null;
-
-export function loadValidator(): Promise<void> {
-  if (typeof window === "undefined") return Promise.resolve();
-  if (window.hookwayValidate) return Promise.resolve();
-  if (!loading) loading = instantiateWasm().catch(() => { loading = null; });
-  return loading;
-}
-
-async function instantiateWasm(): Promise<void> {
-  if (!window.Go) {
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "/wasm_exec.js";
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error("wasm_exec.js failed to load"));
-      document.head.appendChild(script);
-    });
-  }
-  if (!window.Go) throw new Error("Go WASM runtime missing");
-  const go = new window.Go();
-  const response = await fetch("/hookway.wasm");
-  if (!response.ok) throw new Error("hookway.wasm not found");
-  const result = await WebAssembly.instantiateStreaming(response, go.importObject);
-  void go.run(result.instance);
-}
-
-export async function validateYaml(yaml: string): Promise<ValidationIssue[] | null> {
-  await loadValidator();
-  if (typeof window !== "undefined" && window.hookwayValidate) {
-    try {
-      return parseIssues(window.hookwayValidate(yaml));
-    } catch {
-      // A stale or broken WASM bridge should still allow the editor API path.
-    }
-  }
+async function fromWasm(
+  capability: "core_yaml_validate" | "replay_yaml_validate",
+  yaml: string,
+): Promise<ValidationIssue[] | null> {
   try {
-    const resp = await fetch("/validate", { method: "POST", headers: { "Content-Type": "application/yaml" }, body: yaml });
-    if (!resp.ok) return null;
-    return parseIssues(await resp.text());
+    await loadWasm();
+    if (hasWasmCapability(capability))
+      return parseIssues(invokeWasm(capability, yaml));
   } catch {
-    return null;
+    // The editor API is the authoritative fallback; the loader retains the
+    // concrete startup or contract error in its public state.
   }
+  return null;
 }
 
-export async function validateReplayYaml(yaml: string): Promise<ValidationIssue[] | null> {
-  await loadValidator();
-  if (typeof window !== "undefined" && window.hookwayReplayValidate) {
-    try {
-      return parseIssues(window.hookwayReplayValidate(yaml));
-    } catch {
-      // A stale or broken WASM bridge should still allow the editor API path.
-    }
-  }
+export async function validateYaml(
+  yaml: string,
+): Promise<ValidationIssue[] | null> {
+  const issues = await fromWasm("core_yaml_validate", yaml);
+  if (issues) return issues;
+  if (!editorAPIFallbackEnabled()) return null;
   try {
-    const resp = await fetch("/validate-replay", {
-      method: "POST",
-      headers: { "Content-Type": "application/yaml" },
+    const { data } = await editor.POST("/validate", {
       body: yaml,
+      bodySerializer: (body) => body,
+      headers: { "Content-Type": "application/yaml" },
     });
-    if (!resp.ok) return null;
-    return parseIssues(await resp.text());
+    return data ? (data.issues ?? []) : null;
   } catch {
     return null;
   }
 }
 
-export async function loadReplaySchema(): Promise<Record<string, unknown> | null> {
-  await loadValidator();
-  if (typeof window !== "undefined" && window.hookwayReplaySchema) {
-    try {
-      return JSON.parse(window.hookwayReplaySchema()) as Record<string, unknown>;
-    } catch {
-      // A stale or broken WASM bridge should still allow the editor API path.
-    }
-  }
+export async function validateReplayYaml(
+  yaml: string,
+): Promise<ValidationIssue[] | null> {
+  const issues = await fromWasm("replay_yaml_validate", yaml);
+  if (issues) return issues;
+  if (!editorAPIFallbackEnabled()) return null;
   try {
-    const resp = await fetch("/replay-schema");
-    if (!resp.ok) return null;
-    return (await resp.json()) as Record<string, unknown>;
+    const { data } = await editor.POST("/validate-replay", {
+      body: yaml,
+      bodySerializer: (body) => body,
+      headers: { "Content-Type": "application/yaml" },
+    });
+    return data ? (data.issues ?? []) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadReplaySchema(): Promise<Record<
+  string,
+  unknown
+> | null> {
+  try {
+    await loadWasm();
+    if (hasWasmCapability("replay_schema")) {
+      return JSON.parse(invokeWasm("replay_schema")) as Record<string, unknown>;
+    }
+  } catch {
+    // A stale bridge can fail parsing; the editor API remains available.
+  }
+  if (!editorAPIFallbackEnabled()) return null;
+  try {
+    const { data } = await editor.GET("/replay-schema");
+    return data ?? null;
   } catch {
     return null;
   }
 }
 
 function parseIssues(raw: string): ValidationIssue[] {
-  const parsed = JSON.parse(raw) as { error?: string; issues?: ValidationIssue[] };
-  if (parsed.error) return [{ field: "config", message: parsed.error, severity: "error" }];
+  const parsed = JSON.parse(raw) as {
+    error?: string;
+    issues?: ValidationIssue[];
+  };
+  if (parsed.error)
+    return [{ field: "config", message: parsed.error, severity: "error" }];
   return parsed.issues ?? [];
 }

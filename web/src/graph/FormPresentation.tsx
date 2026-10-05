@@ -1,12 +1,17 @@
 import { createContext, useContext } from "react";
-import { Alert, Button, Select, Stack } from "@mantine/core";
+import { ReferenceField } from "../shared/ui/ReferenceField";
 import { NODE_SCHEMAS, schemaProperties, type JSONSchema } from "./nodeSchema";
 import { SchemaForm, type SchemaFormProps } from "./SchemaForm";
 import { nodeFieldHelp, nodeFieldLabels } from "./help";
 import { clearDraftBranch } from "./formDrafts";
 
 export type Options = Record<string, unknown>;
-export type WorkspacePanel = "routing" | "credentials" | "destinations";
+export type WorkspacePanel =
+  | "routing"
+  | "credentials"
+  | "destinations"
+  | "state_stores"
+  | "lookups";
 export const WorkspaceActions = createContext<(panel: WorkspacePanel) => void>(
   () => {},
 );
@@ -79,30 +84,7 @@ export function changeMode(
   }
   onChange({ ...next, ...patch });
 }
-export function InactiveSettings({
-  value,
-  fields,
-  onRemove,
-}: {
-  value: Options;
-  fields: string[];
-  onRemove: () => void;
-}) {
-  const present = fields.filter(
-    (k) => value[k] !== undefined && value[k] !== "" && value[k] !== false,
-  );
-  return present.length ? (
-    <Alert color="yellow" title="Imported settings need attention">
-      <Stack gap="xs">
-        These settings do not apply to this mode: {present.join(", ")}. They are
-        retained until you change modes or remove them.
-        <Button size="xs" variant="light" onClick={onRemove}>
-          Remove inactive settings
-        </Button>
-      </Stack>
-    </Alert>
-  ) : null;
-}
+export { InactiveSettings } from "../shared/ui/InactiveSettings";
 export function ReferenceSelect({
   label,
   value,
@@ -121,30 +103,16 @@ export function ReferenceSelect({
   description?: string;
 }) {
   const open = useContext(WorkspaceActions);
-  const current = String(value ?? "");
-  const missing = !!current && !names.includes(current);
   return (
-    <Stack gap={4}>
-      <Select
-        label={label}
-        required={required}
-        searchable
-        allowDeselect={!required}
-        data={[...names, ...(missing ? [current] : [])]}
-        value={current || null}
-        onChange={(v) => onChange(v ?? "")}
-        description={description}
-        error={
-          missing
-            ? "This reference is missing or incompatible."
-            : required && !current
-              ? "Choose a configured reference."
-              : undefined
-        }
-      />
-      <Button variant="subtle" size="compact-xs" onClick={() => open(panel)}>
-        Manage {panel}
-      </Button>
-    </Stack>
+    <ReferenceField
+      label={label}
+      value={value}
+      names={names}
+      onChange={onChange}
+      required={required}
+      description={description}
+      onManage={() => open(panel)}
+      manageLabel={`Manage ${panel}`}
+    />
   );
 }

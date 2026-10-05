@@ -2,7 +2,7 @@
 //
 // The sandbox defends against operator accidents (infinite loops, runaway
 // recursion, accidental host I/O), not a hostile tenant. Flow authors are
-// already inside the trust boundary. See docs/security.md "Code node".
+// already inside the trust boundary. See docs/reference/security.md "Code node".
 package codenode
 
 import (

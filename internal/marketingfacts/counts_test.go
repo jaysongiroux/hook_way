@@ -207,8 +207,8 @@ func TestQuotedWebhookRetryDefaultsMatchPublisher(t *testing.T) {
 }
 
 func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
-	const quoted = "55"
-	src := readRepoFile(t, "internal/metrics/metrics.go")
+	const quoted = "63"
+	src := readRepoFile(t, "internal/metrics/metrics.go") + readRepoFile(t, "internal/metrics/protection.go")
 	names := uniqueMatches(t, regexp.MustCompile(`"(hookway_[a-z0-9_]+)"`), src)
 	if strconv.Itoa(len(names)) != quoted {
 		t.Fatalf("internal/metrics/metrics.go declares %d distinct metrics but %s quotes %s",
@@ -218,7 +218,7 @@ func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
 }
 
 func TestQuotedSchemeCountMatchesRegistry(t *testing.T) {
-	const quoted = "13"
+	const quoted = "14"
 	// no_auth is an explicit bypass, not an authentication format.
 	authenticated := 0
 	for _, scheme := range auth.Schemes() {

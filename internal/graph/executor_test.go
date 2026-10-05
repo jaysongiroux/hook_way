@@ -270,7 +270,10 @@ func TestNeedsCompensation(t *testing.T) {
 		{"full success", allOK, nil, false},
 		// The skip_failed partial-failure case: 202 to the sender, but the
 		// failed destinations still need the retry (server.go:344).
-		{"partial delivery failure, no error", failed, nil, true},
+		{"partial delivery failure, no error", failed, nil, false},
+		{"uncertain delivery failure", Terminal{Deliveries: []Delivery{{Err: errors.New("uncertain")}}}, errors.New("failed"), false},
+		{"known no dispatch", Terminal{Deliveries: []Delivery{{NoEffect: true, Err: errors.New("preflight")}}}, errors.New("failed"), true},
+		{"earlier outbound effect", Terminal{SideEffects: true}, errors.New("later failed"), false},
 		// A filter silent drop: no error, no deliveries attempted. The
 		// delivery was consumed, so the reservation is kept (server.go:181).
 		{"filtered, nothing attempted", none, nil, false},

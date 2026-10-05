@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	SchemeHMACSHA256SlackV0      = "hmac_sha256_slack_v0"
 	SchemeHMACSHA256HeadersDot   = "hmac_sha256_headers_dot"
 	SchemeHMACSHA256TSDotMulti   = "hmac_sha256_ts_dot_multi"
 	SchemeECDSAP256SHA256Headers = "ecdsa_p256_sha256_headers"
@@ -58,10 +59,10 @@ func FailureReason(err error) string {
 }
 
 func IsRequestScheme(scheme string) bool {
-	return scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeHMACSHA256TSDotMulti || scheme == SchemeECDSAP256SHA256Headers
+	return scheme == SchemeHMACSHA256SlackV0 || scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeHMACSHA256TSDotMulti || scheme == SchemeECDSAP256SHA256Headers
 }
 func SeparateTimestamp(scheme string) bool {
-	return scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeECDSAP256SHA256Headers
+	return scheme == SchemeHMACSHA256SlackV0 || scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeECDSAP256SHA256Headers
 }
 
 // ValidateSpec checks protocol configuration without accessing key material.
@@ -91,6 +92,9 @@ func ValidateSpec(s Spec) error {
 	}
 	if s.BodyRepresentation == "json_js" && s.Scheme != SchemeHMACSHA256HeadersDot {
 		return errors.New("json_js is supported only by hmac_sha256_headers_dot")
+	}
+	if s.Scheme == SchemeHMACSHA256SlackV0 && s.TimestampUnit != "seconds" {
+		return errors.New("slack timestamps use seconds")
 	}
 	if s.SignatureLabel != "" {
 		if s.Scheme != SchemeHMACSHA256TSDotMulti || len(s.SignatureLabel) > 32 || s.SignatureLabel == "t" {
@@ -141,6 +145,7 @@ func newRequestVerifier(s Spec) (Verifier, error) {
 	return v, nil
 }
 func init() {
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256SlackV0, true, newRequestVerifier)
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256HeadersDot, true, newRequestVerifier)
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256TSDotMulti, true, newRequestVerifier)
 	Register("ecdsa", SchemeECDSAP256SHA256Headers, true, newRequestVerifier)
@@ -160,6 +165,13 @@ func (v requestVerifier) VerifyRequest(ctx context.Context, in Input, now time.T
 	}
 	ts := in.Timestamp
 	candidates := []string{in.Signature}
+	if v.spec.Scheme == SchemeHMACSHA256SlackV0 {
+		signature, ok := strings.CutPrefix(in.Signature, "v0=")
+		if !ok {
+			return fail("malformed_signature")
+		}
+		candidates = []string{signature}
+	}
 	if v.spec.Scheme == SchemeHMACSHA256TSDotMulti {
 		candidates = nil
 		label := v.spec.SignatureLabel
@@ -247,7 +259,11 @@ func (v requestVerifier) VerifyRequest(ctx context.Context, in Input, now time.T
 	if v.key == nil {
 		hash = hmac.New(sha256.New, []byte(v.spec.Secret))
 	}
-	_, _ = hash.Write([]byte(ts + sep))
+	prefix := ts + sep
+	if v.spec.Scheme == SchemeHMACSHA256SlackV0 {
+		prefix = "v0:" + ts + ":"
+	}
+	_, _ = hash.Write([]byte(prefix))
 	_, _ = hash.Write(body)
 	digest := hash.Sum(nil)
 	malformed := true

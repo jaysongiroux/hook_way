@@ -39,6 +39,7 @@ func TestLoadBytesRejectsLegacyTopLevelKeys(t *testing.T) {
 
 func TestLoadBytesValidFlow(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -116,6 +117,7 @@ func TestOnErrorExampleIsValid(t *testing.T) {
 
 func TestLoadBytesRejectsGateAfterReadBody(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -124,7 +126,7 @@ flows:
     nodes:
       - {id: in,   type: http_trigger, path: /w, methods: [POST]}
       - {id: body, type: read_body,    max_bytes: 1024}
-      - {id: rl,   type: rate_limit,   rpm: 60}
+      - {id: rl,   type: rate_limit, store: test,   rpm: 60}
       - {id: auth, type: auth,         scheme: hmac_sha256_hex, secret: s, signature_header: X-S}
       - {id: env,  type: envelope,     body_format: json}
       - {id: out,  type: publish,      destination: primary, target: t}
@@ -142,6 +144,7 @@ flows:
 
 func TestLoadBytesAggregatesAcrossFlows(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -162,6 +165,7 @@ flows:
 
 func TestLoadBytesRejectsUnknownField(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 flows:
   a:
@@ -177,6 +181,7 @@ flows:
 
 func TestLoadBytesRejectsDuplicateTriggerPaths(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}
@@ -259,6 +264,7 @@ func TestReviewServingConfigPreservesDynamicTargetMatcher(t *testing.T) {
 
 func TestObjectPayloadRejectedOnNonObjectDestination(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -285,6 +291,7 @@ flows:
 
 func TestLambdaPublishRejectsCreate(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations:
   workers:
@@ -341,6 +348,7 @@ flows:
 
 func TestLambdaPublishRejectsBadTarget(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations:
   workers:
@@ -364,6 +372,7 @@ flows:
 
 func TestObjectPayloadAllowedOnS3(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -393,6 +402,7 @@ flows:
 
 func TestLoadBytesAcceptsPublishSuccessContinuation(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   a: {type: webhook, webhook: {url: "https://example.test/a"}}
@@ -418,6 +428,7 @@ flows:
 
 func TestLoadBytesRejectsPublishToRespond(t *testing.T) {
 	const src = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}

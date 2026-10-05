@@ -25,6 +25,7 @@ import {
 } from "./nodeSchema";
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
+import { JSONValidationOptions } from "./JSONValidationOptions";
 
 export interface ProcessingOptionsFormProps {
   nodeType: string;
@@ -329,7 +330,7 @@ function TransformForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
         value={value}
         onChange={(next) => onChange(next as Record<string, unknown>)}
         scope={scope}
-        hideFields={known.filter((key) => !active.includes(key))}
+        hideFields={known.filter((key) => !active.includes(key) || (kind === "json_schema" && ["json_schema", "coercions"].includes(key)))}
         order={active}
         fieldHelp={(field) => nodeFieldHelp("transform", field)}
         defaults={
@@ -338,6 +339,9 @@ function TransformForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
             : undefined
         }
       />
+      {kind === "json_schema" && (
+        <JSONValidationOptions value={value} onChange={onChange} scope={scope} schemaField="json_schema" />
+      )}
     </Stack>
   );
 }

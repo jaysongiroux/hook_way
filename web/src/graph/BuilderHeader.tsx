@@ -16,6 +16,8 @@ export function BuilderHeader({
   onConnections,
   onRouting,
   onCredentials,
+  onLookups,
+  onStateStores,
   onEnv,
   onServer,
   onReplay,
@@ -32,6 +34,8 @@ export function BuilderHeader({
   onConnections: () => void;
   onRouting?: () => void;
   onCredentials?: () => void;
+  onLookups?: () => void;
+  onStateStores?: () => void;
   onEnv: () => void;
   onServer: () => void;
   onReplay: () => void;
@@ -101,6 +105,8 @@ export function BuilderHeader({
               <Menu.Item onClick={onDestinations}>Destinations</Menu.Item>
               <Menu.Item onClick={onRouting}>Routing</Menu.Item>
               <Menu.Item onClick={onCredentials}>Credentials</Menu.Item>
+              <Menu.Item onClick={onLookups}>Lookups</Menu.Item>
+              <Menu.Item onClick={onStateStores}>Protection stores</Menu.Item>
               <Menu.Item onClick={onEnv}>Environment</Menu.Item>
               <Menu.Item onClick={onServer}>Core server</Menu.Item>
               <Menu.Item onClick={onReplay}>Replay service</Menu.Item>

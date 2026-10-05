@@ -42,9 +42,14 @@ const (
 	EventRunRequested      = "run_requested"
 	EventPayloadDownloaded = "payload_downloaded"
 	EventDismissed         = "dismissed"
+	EventResolved          = "operator_resolved"
 )
 
 var (
+	ErrNotResolvable               = errors.New("store: only an unknown record without an active retry can be operator resolved")
+	ErrResolutionConflict          = errors.New("store: this record already has a different operator resolution")
+	ErrInvalidResolution           = errors.New("store: invalid resolution evidence or idempotency key")
+	ErrExpired                     = errors.New("store: the record has expired")
 	ErrNotFound                    = errors.New("store: not found")
 	ErrConflict                    = errors.New("store: a record with this id exists with different content")
 	ErrCapacity                    = errors.New("store: record or byte capacity reached")

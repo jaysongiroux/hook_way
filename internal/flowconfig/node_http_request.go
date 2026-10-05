@@ -403,6 +403,7 @@ func (n httpRequestNode) send(ctx context.Context, method, target string, body [
 		}
 		client = &cloned
 	}
+	graph.MarkSideEffect(ctx)
 	resp, err := client.Do(req)
 	if err != nil {
 		status := http.StatusBadGateway
@@ -626,3 +627,5 @@ func isTimeout(ctx context.Context, err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
 }
+
+func (httpRequestNode) TracksSideEffects() {}

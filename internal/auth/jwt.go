@@ -25,12 +25,25 @@ type jwtVerifier struct {
 }
 
 func (v jwtVerifier) Verify(header string, rawBody []byte, now time.Time) error {
+	_, err := v.VerifyIdentity(header, rawBody, now, "")
+	return err
+}
+
+// VerifiedIdentity contains only selected claims from a successfully verified
+// JWT. Quota callers never parse tokens a second time or inspect untrusted claims.
+type VerifiedIdentity struct{ Subject, Tenant, Issuer string }
+type IdentityVerifier interface {
+	VerifyIdentity(string, []byte, time.Time, string) (VerifiedIdentity, error)
+}
+
+func (v jwtVerifier) VerifyIdentity(header string, rawBody []byte, now time.Time, tenantClaim string) (VerifiedIdentity, error) {
+	failed := VerifiedIdentity{}
 	if v.key == nil {
-		return ErrUnauthorized
+		return failed, ErrUnauthorized
 	}
 	tokenStr := stripBearerPrefix(header)
 	if tokenStr == "" {
-		return ErrUnauthorized
+		return failed, ErrUnauthorized
 	}
 
 	opts := []jwt.ParserOption{
@@ -49,7 +62,7 @@ func (v jwtVerifier) Verify(header string, rawBody []byte, now time.Time) error 
 	claims := jwt.MapClaims{}
 	keyFunc := func(*jwt.Token) (any, error) { return v.key, nil }
 	if _, err := jwt.NewParser(opts...).ParseWithClaims(tokenStr, claims, keyFunc); err != nil {
-		return ErrUnauthorized
+		return failed, ErrUnauthorized
 	}
 
 	if v.bodyHashClaim != "" {
@@ -57,10 +70,13 @@ func (v jwtVerifier) Verify(header string, rawBody []byte, now time.Time) error 
 		sum := sha256.Sum256(rawBody)
 		got := hex.EncodeToString(sum[:])
 		if want == "" || subtle.ConstantTimeCompare([]byte(strings.ToLower(want)), []byte(got)) != 1 {
-			return ErrUnauthorized
+			return failed, ErrUnauthorized
 		}
 	}
-	return nil
+	subject, _ := claims["sub"].(string)
+	issuer, _ := claims["iss"].(string)
+	tenant, _ := claims[tenantClaim].(string)
+	return VerifiedIdentity{Subject: subject, Tenant: tenant, Issuer: issuer}, nil
 }
 
 func newJWTHS256Verifier(secret string, leeway time.Duration, iss, aud, bodyHashClaim string) (Verifier, error) {

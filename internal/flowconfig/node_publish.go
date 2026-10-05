@@ -91,13 +91,13 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 	env, ok := in.(graph.Envelope)
 	if !ok {
 		err := fmt.Errorf("publish %q: expected Envelope, got %T", n.id, in)
-		return graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, Err: err}}}, graph.NodeError{
+		return graph.Terminal{Deliveries: []graph.Delivery{{NoEffect: true, NodeID: n.id, Target: n.opts.Target, Err: err}}}, graph.NodeError{
 			NodeID: n.id, Status: http.StatusInternalServerError, Err: err,
 		}
 	}
 	rendered, prepared, err := preparePublish(context.WithValue(ctx, publishingNodeKey{}, n.id), n.opts, n.template, env)
 	if err != nil {
-		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
+		term := graph.Terminal{Deliveries: []graph.Delivery{{NoEffect: true, NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		var nodeErr graph.NodeError
 		if errors.As(err, &nodeErr) {
 			nodeErr.NodeID = n.id
@@ -108,14 +108,15 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 	env = prepared
 	if n.resolver == nil {
 		err := fmt.Errorf("publish %q: no publisher resolver", n.id)
-		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
+		term := graph.Terminal{Deliveries: []graph.Delivery{{NoEffect: true, NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: err}
 	}
 	pub, err := n.resolver.Resolve(n.opts.Destination)
 	if err != nil {
-		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
+		term := graph.Terminal{Deliveries: []graph.Delivery{{NoEffect: true, NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		return term, graph.NodeError{NodeID: n.id, Status: http.StatusServiceUnavailable, Err: err}
 	}
+	graph.MarkSideEffect(ctx)
 	if err := pub.Publish(context.WithValue(ctx, publishingNodeKey{}, n.id), n.opts.Destination, rendered, env); err != nil {
 		term := graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered, Err: err}}}
 		var nodeErr graph.NodeError
@@ -127,3 +128,5 @@ func (n publishNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, 
 	}
 	return graph.Terminal{Deliveries: []graph.Delivery{{NodeID: n.id, Target: n.opts.Target, RenderedTarget: rendered}}}, nil
 }
+
+func (publishNode) TracksSideEffects() {}

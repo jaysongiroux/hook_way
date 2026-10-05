@@ -28,12 +28,13 @@ const (
 // dismiss they remain for audit while HasArtifacts turns false.
 type Failure struct {
 	replaywire.FailureMetadata
-	Status       string
-	ParentID     string
-	RootID       string
-	CapturedAt   time.Time
-	ExpiresAt    time.Time
-	HasArtifacts bool
+	Status           string
+	ParentID         string
+	RootID           string
+	CapturedAt       time.Time
+	ExpiresAt        time.Time
+	HasArtifacts     bool
+	ResolutionSource string
 }
 
 // NewFailure is one validated ingest request. Snapshot and Payload are nil
@@ -81,9 +82,10 @@ type Event struct {
 // and child record ids.
 type Detail struct {
 	Failure
-	Runs     []Run
-	History  []Event
-	Children []string
+	Runs       []Run
+	History    []Event
+	Children   []string
+	Resolution *Resolution
 }
 
 // Filter selects records for List. Since is inclusive and Until exclusive,
@@ -115,12 +117,14 @@ type Payload struct {
 }
 
 // failureColumns is the column list scanFailure reads, in order.
-const failureColumns = `id, kind, status, retryable, not_retryable_reason, flow, node_id, node_type,
+const capturedFailureColumns = `id, kind, status, retryable, not_retryable_reason, flow, node_id, node_type,
 	destination_id, destination_type, target, rendered_target, event_id, request_id, trace_id, idempotency_key,
 	received_at, failed_at, inbound_status, error_class, error_message, attempts, node_config_hash,
 	destination_hash, core_version, core_instance, snapshot_version, snapshot_size, snapshot_sha256,
 	payload_size, payload_sha256, payload_content_type, payload_filename, has_artifacts, parent_id, root_id,
 	captured_at, expires_at`
+
+const failureColumns = capturedFailureColumns + `, resolution_source`
 
 const runColumns = `run_id, failure_id, status, requested_by, idempotency_key, ack_duplicate_risk,
 	created_at, claimed_at, lease_expires_at, worker_id, finished_at, result`
@@ -137,7 +141,7 @@ func scanFailure(row pgx.Row) (Failure, error) {
 		&m.ReceivedAt, &m.FailedAt, &m.InboundStatus, &m.ErrorClass, &m.ErrorMessage, &m.Attempts, &m.NodeConfigHash,
 		&m.DestinationHash, &m.CoreVersion, &m.CoreInstance, &snapVersion, &snapSize, &snapSHA,
 		&paySize, &paySHA, &payType, &payName, &f.HasArtifacts, &parent, &f.RootID,
-		&f.CapturedAt, &f.ExpiresAt)
+		&f.CapturedAt, &f.ExpiresAt, &f.ResolutionSource)
 	if err != nil {
 		return Failure{}, err
 	}
@@ -204,7 +208,7 @@ func placeholders(n int) string {
 	return strings.Join(p, ", ")
 }
 
-var insertFailureSQL = `INSERT INTO failures (` + failureColumns + `, ingest_hash) VALUES (` + placeholders(39) + `)`
+var insertFailureSQL = `INSERT INTO failures (` + capturedFailureColumns + `, ingest_hash) VALUES (` + placeholders(39) + `)`
 
 // lineage places a record in its family: a root is its own root with no
 // parent; a child points at its parent and keeps the root's expiry.
@@ -345,6 +349,13 @@ func (s *Store) Get(ctx context.Context, id string) (Detail, error) {
 			return err
 		}
 		d.Failure = f
+		resolution, err := scanResolution(tx.QueryRow(ctx, `SELECT `+resolutionColumns+` FROM failure_resolutions WHERE failure_id = $1`, id))
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil {
+			d.Resolution = &resolution
+		}
 		rows, err := tx.Query(ctx, `SELECT `+runColumns+` FROM retry_runs WHERE failure_id = $1 ORDER BY created_at DESC, run_id DESC`, id)
 		if err != nil {
 			return err

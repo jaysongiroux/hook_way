@@ -4,7 +4,7 @@
 // Each node declares the payload type it consumes and the one it produces.
 // Edges are type-checked when the config loads, and the type lattice is chosen
 // so that incompatible request phases are compile errors. Presence, filter
-// ordering and executor invariants need additional checks. See docs/invariants.md.
+// ordering and executor invariants need additional checks. See docs/development/invariants.md.
 package graph
 
 import "fmt"

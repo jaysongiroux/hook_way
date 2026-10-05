@@ -35,7 +35,7 @@ func TestValidateRejectsUnknownFieldsAndShortLiteralTokens(t *testing.T) {
 
 	doc = strings.Replace(validReplay, `"${REPLAY_CONTROL_TOKEN}"`, `"short"`, 1)
 	joined = Validate([]byte(doc))
-	if len(joined.Issues) == 0 || !strings.Contains(joined.Issues[0].Message, "at least 32") {
+	if len(joined.Issues) == 0 || !strings.Contains(joined.Issues[0].Message, "between 32 and 256 bytes") {
 		t.Fatalf("expected short-token issue, got %#v", joined.Issues)
 	}
 }

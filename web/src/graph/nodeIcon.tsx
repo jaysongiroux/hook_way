@@ -1,58 +1,11 @@
 import type { IconType } from "react-icons";
-import {
-  TbArrowBackUp,
-  TbStack2,
-  TbArrowsSplit,
-  TbBox,
-  TbCode,
-  TbDatabaseSearch,
-  TbDatabasePlus,
-  TbRoute,
-  TbFileText,
-  TbFilter,
-  TbGauge,
-  TbGitBranch,
-  TbApi,
-  TbHistoryOff,
-  TbListCheck,
-  TbLockOpen,
-  TbPackage,
-  TbRepeatOff,
-  TbSend,
-  TbShieldLock,
-  TbTransform,
-  TbWebhook,
-} from "react-icons/tb";
-import { destinationPresentation } from "../marketing/destinationIdentity";
+import { TbBox } from "react-icons/tb";
+import { nodeDescriptor } from "./nodeDescriptors";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import { DARK } from "../tokens";
 
-/** One shape per catalog type, so a node is recognizable before its label is read. */
-const NODE_TYPE_ICONS: Record<string, IconType> = {
-  auth: TbShieldLock,
-  batch: TbStack2,
-  code: TbCode,
-  envelope: TbPackage,
-  filter: TbFilter,
-  http_request: TbApi,
-  http_trigger: TbWebhook,
-  if_else: TbGitBranch,
-  ip_allowlist: TbListCheck,
-  lookup: TbDatabaseSearch,
-  register_route: TbDatabasePlus,
-  route: TbRoute,
-  loop_guard: TbRepeatOff,
-  no_auth: TbLockOpen,
-  publish: TbSend,
-  rate_limit: TbGauge,
-  read_body: TbFileText,
-  replay_guard: TbHistoryOff,
-  respond: TbArrowBackUp,
-  switch: TbArrowsSplit,
-  transform: TbTransform,
-};
-
 export function nodeTypeIcon(type: string): IconType {
-  return NODE_TYPE_ICONS[type] ?? TbBox;
+  return nodeDescriptor(type)?.icon ?? TbBox;
 }
 
 /** Publish shows the destination it writes to; every other node shows its type. */

@@ -29,6 +29,12 @@
         }
       ],
       "properties": {
+        "credential_id": {
+          "type": "string"
+        },
+        "tenant_claim": {
+          "type": "string"
+        },
         "timestamp_header": {
           "type": "string"
         },
@@ -67,6 +73,7 @@
             "hmac_sha256_base64",
             "hmac_sha256_headers_dot",
             "hmac_sha256_hex",
+            "hmac_sha256_slack_v0",
             "hmac_sha256_ts_colon",
             "hmac_sha256_ts_dot",
             "hmac_sha256_ts_dot_multi",
@@ -206,6 +213,12 @@
         "jwt": false,
         "key_format": "shared_secret"
       },
+      "hmac_sha256_slack_v0": {
+        "request_signature": true,
+        "separate_timestamp": true,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
       "hmac_sha256_ts_colon": {
         "request_signature": false,
         "separate_timestamp": false,
@@ -335,6 +348,7 @@
     }
   },
   "code": {
+    "batch_child_order": 2,
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
@@ -446,6 +460,7 @@
     }
   },
   "filter": {
+    "batch_child_order": 3,
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
@@ -784,6 +799,7 @@
     }
   },
   "if_else": {
+    "batch_child_order": 4,
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
@@ -851,6 +867,51 @@
       "type": "object",
       "required": [
         "cidrs"
+      ]
+    }
+  },
+  "json_validate": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "schema": {
+          "type": "object"
+        },
+        "coercions": {
+          "items": {
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "string",
+                  "number",
+                  "integer",
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "path",
+              "type"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema"
       ]
     }
   },
@@ -933,6 +994,7 @@
     }
   },
   "publish": {
+    "batch_child_order": 6,
     "input": "Envelope",
     "output": "Envelope",
     "detached": true,
@@ -940,6 +1002,68 @@
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "temporal": {
+          "properties": {
+            "workflow_type": {
+              "type": "string"
+            },
+            "input": {
+              "type": "string",
+              "enum": [
+                "envelope",
+                "body"
+              ],
+              "default": "envelope"
+            },
+            "workflow_id": {
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "static",
+                    "endpoint",
+                    "header",
+                    "body"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "prefix": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "id_reuse_policy": {
+              "type": "string",
+              "enum": [
+                "allow_duplicate",
+                "allow_duplicate_failed_only",
+                "reject_duplicate",
+                "terminate_if_running"
+              ]
+            },
+            "execution_timeout": {
+              "type": "string"
+            },
+            "run_timeout": {
+              "type": "string"
+            },
+            "task_timeout": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workflow_type"
+          ]
+        },
         "group_id": {
           "properties": {
             "source": {
@@ -1175,6 +1299,16 @@
     }
   },
   "rate_limit": {
+    "stage_ports": {
+      "request_head": {
+        "input": "RequestHead",
+        "output": "RequestHead"
+      },
+      "verified": {
+        "input": "Verified",
+        "output": "Verified"
+      }
+    },
     "input": "RequestHead",
     "output": "RequestHead",
     "detached": false,
@@ -1182,6 +1316,35 @@
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "store": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "request_head",
+            "verified"
+          ],
+          "default": "request_head"
+        },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "token_bucket",
+            "sliding_window_counter"
+          ],
+          "default": "token_bucket"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "window": {
+          "type": "string"
+        },
         "rpm": {
           "type": "integer",
           "minimum": 1
@@ -1193,12 +1356,17 @@
         "key_by": {
           "type": "string",
           "default": "source_ip"
+        },
+        "max_keys": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "rpm"
+        "store"
       ]
     }
   },
@@ -1305,6 +1473,12 @@
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "store": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "string"
+        },
         "ttl": {
           "type": "string",
           "default": "5m"
@@ -1319,7 +1493,10 @@
         }
       },
       "additionalProperties": false,
-      "type": "object"
+      "type": "object",
+      "required": [
+        "store"
+      ]
     }
   },
   "respond": {
@@ -1465,6 +1642,7 @@
     }
   },
   "switch": {
+    "batch_child_order": 5,
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,
@@ -1575,6 +1753,7 @@
     }
   },
   "transform": {
+    "batch_child_order": 1,
     "input": "Envelope",
     "output": "Envelope",
     "detached": false,

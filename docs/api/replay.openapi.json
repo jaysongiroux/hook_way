@@ -1,0 +1,2720 @@
+{
+  "components": {
+    "schemas": {
+      "ActionEligibility": {
+        "additionalProperties": true,
+        "properties": {
+          "allowed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "requires_duplicate_acknowledgement": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowed",
+          "requires_duplicate_acknowledgement"
+        ],
+        "type": "object"
+      },
+      "ActionIssue": {
+        "additionalProperties": true,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ActionValidationInput": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "failure_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "idempotency_key"
+        ],
+        "type": "object"
+      },
+      "ActionValidationResult": {
+        "additionalProperties": true,
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ActionIssue"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "issues"
+        ],
+        "type": "object"
+      },
+      "ArtifactInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "content_type": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sha256",
+          "size"
+        ],
+        "type": "object"
+      },
+      "ArtifactsView": {
+        "additionalProperties": true,
+        "properties": {
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayloadView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stored": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stored",
+          "snapshot",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "BatchRetryItem": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "failure_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "failure_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "BatchRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledge_duplicate_risk": {
+            "default": false,
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "failure_ids": {
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "failure_ids"
+        ],
+        "type": "object"
+      },
+      "BatchRetryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/BatchRetryItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "type": "object"
+      },
+      "CaptureResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "DeliverResult": {
+        "additionalProperties": true,
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/FailureMetadata"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "core_instance": {
+            "type": "string"
+          },
+          "core_version": {
+            "type": "string"
+          },
+          "destination_hash": {
+            "type": "string"
+          },
+          "node_config_hash": {
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeOutcome"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "nodes",
+          "children"
+        ],
+        "type": "object"
+      },
+      "EventView": {
+        "additionalProperties": true,
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {},
+          "event": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event",
+          "actor",
+          "at",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "FailureActions": {
+        "additionalProperties": true,
+        "properties": {
+          "dismiss": {
+            "$ref": "#/components/schemas/ActionEligibility"
+          },
+          "resolve": {
+            "$ref": "#/components/schemas/ActionEligibility"
+          },
+          "retry": {
+            "$ref": "#/components/schemas/ActionEligibility"
+          }
+        },
+        "required": [
+          "retry",
+          "dismiss",
+          "resolve"
+        ],
+        "type": "object"
+      },
+      "FailureDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/FailureActions"
+          },
+          "artifacts": {
+            "$ref": "#/components/schemas/ArtifactsView"
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "core_instance": {
+            "type": "string"
+          },
+          "core_version": {
+            "type": "string"
+          },
+          "destination_hash": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/EventView"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "inbound_status": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "node_config_hash": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "not_retryable_reason": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution_source": {
+            "enum": [
+              "operator_confirmed",
+              "retry_succeeded"
+            ],
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions",
+          "id",
+          "kind",
+          "status",
+          "flow",
+          "node_id",
+          "node_type",
+          "event_id",
+          "failed_at",
+          "error_class",
+          "retryable",
+          "root_id",
+          "captured_at",
+          "expires_at",
+          "received_at",
+          "inbound_status",
+          "attempts",
+          "artifacts",
+          "runs",
+          "history",
+          "children"
+        ],
+        "type": "object"
+      },
+      "FailureList": {
+        "additionalProperties": true,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FailureSummary"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "FailureMetadata": {
+        "additionalProperties": false,
+        "description": "Strict metadata JSON. Text fields are bounded printable UTF-8 (normally 1024 bytes); error_message permits newlines and is bounded to 4096 bytes. publish_only requires destination_id, destination_type, target and rendered_target. Retryable records require snapshot and payload declarations; non-retryable records carry no artifacts and require too_large or unsupported reason. Snapshot size/version must be positive; payload size may be zero. Artifact size and SHA256 must exactly match the binary parts.",
+        "properties": {
+          "attempts": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "core_instance": {
+            "type": "string"
+          },
+          "core_version": {
+            "type": "string"
+          },
+          "destination_hash": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "failed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "inbound_status": {
+            "maximum": 299,
+            "minimum": 200,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "resume",
+              "publish_only"
+            ],
+            "type": "string"
+          },
+          "node_config_hash": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "not_retryable_reason": {
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "flow",
+          "node_id",
+          "node_type",
+          "event_id",
+          "received_at",
+          "failed_at",
+          "inbound_status",
+          "error_class"
+        ],
+        "type": "object"
+      },
+      "FailureSummary": {
+        "additionalProperties": true,
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/FailureActions"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "not_retryable_reason": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          },
+          "resolution_source": {
+            "enum": [
+              "operator_confirmed",
+              "retry_succeeded"
+            ],
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions",
+          "id",
+          "kind",
+          "status",
+          "flow",
+          "node_id",
+          "node_type",
+          "event_id",
+          "failed_at",
+          "error_class",
+          "retryable",
+          "root_id",
+          "captured_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "Identity": {
+        "additionalProperties": true,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "contract_version": {
+            "type": "integer"
+          },
+          "key_name": {
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "key_name",
+          "scopes",
+          "contract_version",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      "NodeOutcome": {
+        "additionalProperties": true,
+        "properties": {
+          "attempts": {
+            "type": "integer"
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "outcome",
+          "attempts"
+        ],
+        "type": "object"
+      },
+      "PayloadView": {
+        "additionalProperties": true,
+        "properties": {
+          "content_type": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "Problem": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "enum": [
+              "unauthorized",
+              "forbidden",
+              "auth_throttled",
+              "origin_forbidden",
+              "cors_preflight_forbidden",
+              "internal",
+              "not_ready",
+              "invalid_request",
+              "invalid_metadata",
+              "artifact_mismatch",
+              "request_too_large",
+              "record_too_large",
+              "invalid_parameter",
+              "idempotency_key_required",
+              "not_resolvable",
+              "resolution_conflict",
+              "invalid_resolution",
+              "record_expired",
+              "not_found",
+              "conflict",
+              "capacity_exceeded",
+              "invalid_cursor",
+              "payload_not_captured",
+              "payload_gone",
+              "payload_corrupt",
+              "not_dismissable",
+              "run_active",
+              "not_retryable",
+              "duplicate_risk_unacknowledged",
+              "idempotency_key_mismatch"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "type": "object",
+        "x-code-statuses": {
+          "artifact_mismatch": 400,
+          "auth_throttled": 429,
+          "capacity_exceeded": 507,
+          "conflict": 409,
+          "cors_preflight_forbidden": 403,
+          "duplicate_risk_unacknowledged": 422,
+          "forbidden": 403,
+          "idempotency_key_mismatch": 422,
+          "idempotency_key_required": 400,
+          "internal": 500,
+          "invalid_cursor": 400,
+          "invalid_metadata": 400,
+          "invalid_parameter": 400,
+          "invalid_request": 400,
+          "invalid_resolution": 400,
+          "not_dismissable": 422,
+          "not_found": 404,
+          "not_ready": 503,
+          "not_resolvable": 422,
+          "not_retryable": 422,
+          "origin_forbidden": 403,
+          "payload_corrupt": 500,
+          "payload_gone": 410,
+          "payload_not_captured": 404,
+          "record_expired": 410,
+          "record_too_large": 413,
+          "request_too_large": 413,
+          "resolution_conflict": 409,
+          "run_active": 409,
+          "unauthorized": 401
+        }
+      },
+      "Resolution": {
+        "additionalProperties": true,
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "failure_id": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "resolved_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "failure_id",
+          "actor",
+          "idempotency_key",
+          "note",
+          "resolved_at"
+        ],
+        "type": "object"
+      },
+      "ResolutionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "description": "Required nonblank evidence, valid UTF-8, at most 4096 bytes. Line breaks and tabs are allowed; other control characters are rejected. Text is preserved exactly.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-max-utf8-bytes": 4096
+          },
+          "reference": {
+            "description": "Optional printable UTF-8 receipt/reference, at most 1024 bytes. Empty or null means omitted; whitespace-only and controls are rejected. This is opaque text, not a URL Hookway opens.",
+            "maxLength": 1024,
+            "type": [
+              "string",
+              "null"
+            ],
+            "x-max-utf8-bytes": 1024
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "type": "object"
+      },
+      "ResolutionResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution"
+          },
+          "resolution_source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "resolution_source",
+          "resolution"
+        ],
+        "type": "object"
+      },
+      "RetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "acknowledge_duplicate_risk": {
+            "default": false,
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "RetryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "Run": {
+        "additionalProperties": true,
+        "properties": {
+          "acknowledge_duplicate_risk": {
+            "type": "boolean"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failure_id": {
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "lease_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requested_by": {
+            "type": "string"
+          },
+          "result": {
+            "description": "Raw persisted JSON, including null for queued runs. Newly written result objects follow RunResult. Historical unknown keys and JSON are passed through unchanged.",
+            "x-known-schema": {
+              "$ref": "#/components/schemas/RunResult"
+            }
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "blocked",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "failure_id",
+          "status",
+          "requested_by",
+          "idempotency_key",
+          "acknowledge_duplicate_risk",
+          "created_at",
+          "claimed_at",
+          "lease_expires_at",
+          "finished_at",
+          "result"
+        ],
+        "type": "object"
+      },
+      "RunResult": {
+        "additionalProperties": true,
+        "properties": {
+          "deliver": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeliverResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "SnapshotView": {
+        "additionalProperties": true,
+        "properties": {
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size",
+          "sha256",
+          "version"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "description": "Named scoped replay bearer token. Scopes: capture, read, payload, retry, metrics. Required scope is declared on each operation.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Hookway replay API",
+    "version": "1"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "openapi": "3.1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "description": "Unauthenticated liveness.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "ok followed by newline."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "description": "Unauthenticated database reachability and schema readiness.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "ready followed by newline."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable; stable code in problem body."
+          }
+        }
+      }
+    },
+    "/v1/actions/validate": {
+      "post": {
+        "description": "Pure retry/resolution input validation, also provided by WASM. Does not access records or perform an action. HTTP 200 with issues means inputs are invalid; scopes, eligibility and evidence authenticity remain authoritative at action time.",
+        "operationId": "validateAction",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionValidationInput"
+              }
+            }
+          },
+          "description": "",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionValidationResult"
+                }
+              }
+            },
+            "description": "Input issues; empty issues means syntactically valid only."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request; stable code in problem body."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 65536,
+        "x-required-scope": "read"
+      }
+    },
+    "/v1/failures": {
+      "get": {
+        "description": "Cursor pagination, newest failed records first (failed_at then id descending). Unknown or repeated query parameters are rejected. Empty filters are omitted. Text filters accept at most 1024 bytes printable UTF-8.",
+        "operationId": "listFailures",
+        "parameters": [
+          {
+            "description": "Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination.",
+            "in": "query",
+            "name": "flow",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "x-max-bytes": 1024
+            }
+          },
+          {
+            "description": "Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination.",
+            "in": "query",
+            "name": "node_id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "x-max-bytes": 1024
+            }
+          },
+          {
+            "description": "Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination.",
+            "in": "query",
+            "name": "destination_id",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "x-max-bytes": 1024
+            }
+          },
+          {
+            "description": "Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "x-max-bytes": 1024
+            }
+          },
+          {
+            "description": "Failure status.",
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "enum": [
+                "open",
+                "retrying",
+                "resolved",
+                "unknown",
+                "dismissed"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Captured failure kind.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "enum": [
+                "resume",
+                "publish_only"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Literal true or false.",
+            "in": "query",
+            "name": "retryable",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Inclusive failed_at lower bound (RFC 3339).",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exclusive failed_at upper bound (RFC 3339).",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum returned records.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FailureList"
+                }
+              }
+            },
+            "description": "Failure summaries and optional next cursor."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request; stable code in problem body."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read"
+      },
+      "post": {
+        "description": "Captures one failure as multipart/form-data. Metadata is strict JSON, maximum 1 MiB, without duplicate or unknown parts. Snapshot and payload are exact binary bytes, required exactly when metadata declares them (both for retryable records). Each artifact is bounded by configured retention.max_record_bytes; the entire request by twice that plus 1 MiB metadata and 64 KiB framing. Digests and sizes must match. Repeated identical capture returns 200.",
+        "operationId": "captureFailure",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "encoding": {
+                "metadata": {
+                  "contentType": "application/json"
+                },
+                "payload": {
+                  "contentType": "application/octet-stream"
+                },
+                "snapshot": {
+                  "contentType": "application/octet-stream"
+                }
+              },
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "metadata": {
+                    "$ref": "#/components/schemas/FailureMetadata"
+                  },
+                  "payload": {
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "snapshot": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "metadata"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "Exactly one metadata part; artifact parts match declarations. Part order is arbitrary. Unknown metadata fields and trailing JSON are rejected.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureResponse"
+                }
+              }
+            },
+            "description": "Duplicate capture acknowledged."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureResponse"
+                }
+              }
+            },
+            "description": "Created captured record."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request; stable code in problem body."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict; stable code in problem body."
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          },
+          "507": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Insufficient Storage; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "capture"
+      }
+    },
+    "/v1/failures/{id}": {
+      "get": {
+        "description": "Failure metadata, current action eligibility, artifact descriptions, run history and child IDs. Eligibility is independent of scopes and rechecked at action time. Artifact bytes are not included.",
+        "operationId": "getFailure",
+        "parameters": [
+          {
+            "description": "Failure record ID; malformed or absent records return 404.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FailureDetail"
+                }
+              }
+            },
+            "description": "Failure detail."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read"
+      }
+    },
+    "/v1/failures/{id}/dismiss": {
+      "post": {
+        "description": "Dismisses a failure and removes stored artifacts. Running or invalid states reject dismissal. Request body is ignored.",
+        "operationId": "dismissFailure",
+        "parameters": [
+          {
+            "description": "Failure record ID; malformed or absent records return 404.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FailureSummary"
+                }
+              }
+            },
+            "description": "Updated failure summary."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict; stable code in problem body."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "retry"
+      }
+    },
+    "/v1/failures/{id}/payload": {
+      "get": {
+        "description": "Downloads exact captured bytes after integrity verification. Missing capture returns 404; expired or dismissed artifact returns 410.",
+        "operationId": "downloadPayload",
+        "parameters": [
+          {
+            "description": "Failure record ID; malformed or absent records return 404.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Exact payload bytes. Content type is always octet-stream; original content type is in X-Hookway-Payload-Content-Type when available.",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Attachment with sanitized encoded filename.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "schema": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "X-Hookway-Payload-Content-Type": {
+                "description": "Optional originally captured content type.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gone; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "payload"
+      }
+    },
+    "/v1/failures/{id}/resolve": {
+      "post": {
+        "description": "Records independent operator confirmation of an unknown outcome; it sends nothing. Requires an investigation note and no active retry. Preserves original runs, results, artifacts and retention expiry. An identical actor/key/body repeat returns the original resolution; changed body/key conflicts reject. Idempotency keys are scoped separately from retry keys, until record retention deletes the resolution.",
+        "operationId": "resolveFailure",
+        "parameters": [
+          {
+            "description": "Failure record ID; malformed or absent records return 404.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Printable ASCII without spaces. Required even when repeating a previous request.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolutionRequest"
+              }
+            }
+          },
+          "description": "Strict evidence object, at most 64 KiB. Notes are required; reference is an optional opaque receipt or investigation identifier, never fetched or executed.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolutionResponse"
+                }
+              }
+            },
+            "description": "Resolved by operator confirmation; identical repeats return this same receipt."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request; stable code in problem body."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict; stable code in problem body."
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gone; stable code in problem body."
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large; stable code in problem body."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 65536,
+        "x-required-scope": "retry"
+      }
+    },
+    "/v1/failures/{id}/retries": {
+      "post": {
+        "description": "Queues a retry for an unexpired record. Both a newly created run and an idempotent repeated request return 202. Unknown JSON fields or trailing data are rejected; an empty body is allowed. Unknown prior delivery outcomes require duplicate-risk acknowledgement.",
+        "operationId": "retryFailure",
+        "parameters": [
+          {
+            "description": "Failure record ID; malformed or absent records return 404.",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Printable ASCII without spaces. Required even when repeating a previous request.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RetryRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "description": "Optional strict JSON object or null, maximum 64 KiB. Empty body or null uses the default false acknowledgement.",
+          "required": false
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryResponse"
+                }
+              }
+            },
+            "description": "Retry run accepted."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request; stable code in problem body."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict; stable code in problem body."
+          },
+          "410": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Gone; stable code in problem body."
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large; stable code in problem body."
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 65536,
+        "x-required-scope": "retry"
+      }
+    },
+    "/v1/me": {
+      "get": {
+        "description": "Returns the authenticated key name, scopes, contract version and implemented replay API capabilities. Never returns credentials.",
+        "operationId": "whoAmI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Identity"
+                }
+              }
+            },
+            "description": "Authenticated operator capabilities."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read"
+      }
+    },
+    "/v1/retries": {
+      "post": {
+        "description": "Requests one run per unique failure ID, using \u003cIdempotency-Key\u003e:\u003cfailure_id\u003e for each item. HTTP 200 includes per-item 202 successes and classified errors; unexpected failures return 500 and earlier items may already have been accepted.",
+        "operationId": "retryFailures",
+        "parameters": [
+          {
+            "description": "Printable ASCII without spaces. Required even when repeating a previous request.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 255,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchRetryRequest"
+              }
+            }
+          },
+          "description": "Strict JSON, maximum 64 KiB; failure_ids contains 1-100 unique IDs. Missing acknowledgement defaults to false.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchRetryResponse"
+                }
+              }
+            },
+            "description": "Per-item retry outcomes, including mixed successes/errors."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request; stable code in problem body."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large; stable code in problem body."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-batch-size": 100,
+        "x-max-body-bytes": 65536,
+        "x-required-scope": "retry"
+      }
+    },
+    "/v1/retries/{run_id}": {
+      "get": {
+        "description": "Run timestamps are nullable. Queued result is null. Newly written objects use RunResult; historical raw JSON and unknown members are preserved verbatim.",
+        "operationId": "getRetry",
+        "parameters": [
+          {
+            "description": "Retry run ID.",
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            },
+            "description": "Retry run."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal Server Error; stable code in problem body."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read"
+      }
+    }
+  }
+}

@@ -2,9 +2,11 @@
 # directory). Both replay replicas and the one-shot migration use this file.
 # Demonstrates shared failure storage and coordinated retry workers across
 # two replay replicas, with bounded retention and separate capture, operator
-# and metrics keys. Every setting is described in docs/replay-service.md.
+# and metrics keys. Every setting is described in docs/operations/replay-service.md.
 server:
   addr: ":8080"
+  cors:
+    allowed_origins: ["${REPLAY_CONSOLE_ORIGIN}"]
 logging:
   level: info
 metrics:

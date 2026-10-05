@@ -1,5 +1,5 @@
 import type { Connection, Edge } from "@xyflow/react";
-import { labelledPorts, NODE_SCHEMAS, portAccepts } from "./nodeSchema";
+import { labelledPorts, nodeMeta, portAccepts } from "./nodeSchema";
 import type { HookwayNode } from "./model";
 
 export const HANDLE_IN = "in";
@@ -11,8 +11,8 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
   const src = nodes.find((n) => n.id === c.source);
   const tgt = nodes.find((n) => n.id === c.target);
   if (!src || !tgt) return false;
-  const from = NODE_SCHEMAS[src.data.nodeType];
-  const to = NODE_SCHEMAS[tgt.data.nodeType];
+  const from = nodeMeta(src.data.nodeType, src.data.options);
+  const to = nodeMeta(tgt.data.nodeType, tgt.data.options);
   if (!from || !to) return false;
   if (c.targetHandle && c.targetHandle !== HANDLE_IN) return false;
   // The compiler rejects reconvergence, duplicate edges and cycles.

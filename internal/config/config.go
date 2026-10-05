@@ -49,6 +49,11 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
+	// ShutdownDelay withdraws readiness before stopping HTTP admission (default zero).
+	ShutdownDelay time.Duration
+	// ShutdownTotalTimeout bounds withdrawal, request/redrive draining and resource cleanup.
+	// Exceeding it terminates the process with an error; unfinished work may be lost.
+	ShutdownTotalTimeout time.Duration
 	// PublishTimeout bounds how long a webhook request's fan-out publish is
 	// allowed to run once detached from the inbound request context (see
 	// FlowServer publish). Defaults to 10s when omitted,

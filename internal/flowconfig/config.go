@@ -15,14 +15,17 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/protection"
 	"github.com/jaysongiroux/hook_way/internal/routing"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // Config is a Hookway config document: shared process settings plus named flows.
 type Config struct {
+	StateStores  map[string]protection.Config
 	Routing      routing.Config
 	Credentials  map[string]CredentialProfile
+	Lookups      map[string]LookupProviderConfig
 	Server       config.ServerConfig
 	Security     config.SecurityConfig
 	Metrics      config.MetricsConfig
@@ -45,7 +48,7 @@ func Load(path string) (Config, []config.ValidationIssue) {
 // structural problem it can find. Policy lint is a separate pass.
 func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.ValidationIssue) {
 	if expandEnv {
-		expanded, missing := config.ExpandEnvStrict(string(data))
+		expanded, missing := ExpandConfigEnv(string(data), config.ExpandEnvStrict)
 		if len(missing) > 0 {
 			return Config{}, explicitErrorSeverity(config.MissingEnvIssues(missing))
 		}
@@ -56,7 +59,7 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	// `flows` and `routing` are decoded separately below. Every other
 	// non-shared top-level key -- including
 	// `endpoints` -- is reported as unknown by the strict decoder.
-	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials")
+	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores")
 	issues = append(issues, sharedIssues...)
 	issues = append(issues, shared.ValidationIssues()...)
 
@@ -77,6 +80,14 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	// keys inside it. Shared sections and flows have their own strict decoders.
 	var root map[string]yaml.Node
 	if yaml.Unmarshal(data, &root) == nil {
+		if node, ok := root["state_stores"]; ok {
+			block, _ := yaml.Marshal(node)
+			decoder := yaml.NewDecoder(bytes.NewReader(block))
+			decoder.KnownFields(true)
+			if err := decoder.Decode(&cfg.StateStores); err != nil {
+				issues = append(issues, cfgIssue("state_stores", "unknown or invalid state store configuration", "check backend fields and duration values"))
+			}
+		}
 		if node, ok := root["routing"]; ok {
 			block, _ := yaml.Marshal(node)
 			decoder := yaml.NewDecoder(bytes.NewReader(block))
@@ -95,10 +106,20 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 			issues = append(issues, cfgIssue("credentials", err.Error(), ""))
 		}
 	}
+	if node, ok := root["lookups"]; ok {
+		block, _ := yaml.Marshal(node)
+		decoder := yaml.NewDecoder(bytes.NewReader(block))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&cfg.Lookups); err != nil {
+			issues = append(issues, cfgIssue("lookups", err.Error(), ""))
+		}
+	}
+	issues = append(issues, LookupConfigurationIssues(cfg)...)
 	cfg.Credentials = credentials
 	cfg.Routing = routingConfig
 	issues = append(issues, CredentialConfigurationIssues(cfg)...)
 	issues = append(issues, RoutingConfigurationIssues(cfg)...)
+	issues = append(issues, ProtectionConfigurationIssues(cfg)...)
 	issues = append(issues, compileFlows(cfg)...)
 	issues = append(issues, crossFlowIssues(cfg)...)
 	return cfg, issues
@@ -219,7 +240,7 @@ func (c Config) ServingConfig() config.Config {
 						snsOptions.TopicARN = opts.SNS.TopicARN
 					}
 					dests = append(dests, config.EndpointDestinationConfig{
-						Destination: opts.Destination, Target: opts.Target, Create: opts.Create, FIFO: fifo, BrokerAttributes: opts.ResourceAttributes, SQSOptions: sqsOptions, SNSOptions: snsOptions,
+						Destination: opts.Destination, Target: opts.Target, Create: opts.Create, FIFO: fifo, BrokerAttributes: opts.ResourceAttributes, SQSOptions: sqsOptions, SNSOptions: snsOptions, TemporalOptions: temporalEndpointOptions(opts.Temporal),
 					})
 				}
 			}
@@ -337,6 +358,7 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 
 func crossFlowIssues(cfg Config) []config.ValidationIssue {
 	issues := RoutingIssues(cfg)
+	issues = append(issues, temporalPublishIssues(cfg)...)
 	brokerDedup := map[string]bool{}
 	brokerResources := map[string]map[string]string{}
 	brokerBindings := map[string]string{}
@@ -555,9 +577,18 @@ func sortedKeys[V any](m map[string]V) []string {
 func StandaloneIssues(cfg Config) []config.ValidationIssue {
 	var issues []config.ValidationIssue
 	for _, name := range sortedKeys(cfg.Flows) {
-		for _, nc := range cfg.Flows[name].Nodes {
+		for _, nc := range ExpandedNodes(cfg.Flows[name]) {
 			if nc.Type == "lookup" {
-				issues = append(issues, cfgIssue("flows."+name, "lookup requires an injected provider; the standalone server has no lookup provider configuration", "use path variables or transform field_map; standalone lookup binding is not implemented"))
+				o, err := decodeOptions[LookupOptions](nc)
+				if err != nil {
+					continue
+				}
+				if _, ok := cfg.Lookups[o.Provider]; !ok {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID, "lookup requires a configured provider or an injected provider", "add the named provider under top-level lookups"))
+				}
+				if o.Table != "" || o.Cache != nil || o.NegativeTTL != "" {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID, "standalone lookup table and cache options belong to the named provider", "move table into lookups.<provider>.dynamodb and cache settings into lookups.<provider>.cache"))
+				}
 			}
 		}
 	}

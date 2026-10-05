@@ -2,6 +2,7 @@ package flowconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,7 +10,7 @@ import (
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/graph"
-	"github.com/jaysongiroux/hook_way/internal/ratelimit"
+	"github.com/jaysongiroux/hook_way/internal/protection"
 )
 
 type loopGuardNode struct {
@@ -95,45 +96,101 @@ func (n ipAllowlistNode) allowed(sourceIP string) bool {
 }
 
 type rateLimitNode struct {
-	id      string
-	keyBy   string
-	limiter *ratelimit.Limiter
+	id, keyBy, stage string
+	policy           protection.Policy
+	store            protection.Store
+	timeout          time.Duration
 }
 
-func newRateLimit(id string, opts RateLimitOptions) graph.Node {
-	burst := opts.Burst
-	if burst <= 0 {
-		burst = opts.RPM
+func newRateLimit(id string, o RateLimitOptions) graph.Node {
+	key := o.KeyBy
+	if key == "" {
+		key = "source_ip"
 	}
-	keyBy := opts.KeyBy
-	if keyBy == "" {
-		keyBy = "source_ip"
+	stage := o.Stage
+	if stage == "" {
+		stage = "request_head"
 	}
-	return rateLimitNode{
-		id: id, keyBy: keyBy,
-		limiter: ratelimit.New(true, opts.RPM, burst),
-	}
+	return rateLimitNode{id: id, keyBy: key, stage: stage, policy: ratePolicy("", id, o), timeout: 250 * time.Millisecond}
 }
-
-func (n rateLimitNode) Run(_ context.Context, in graph.Payload) (graph.Payload, error) {
-	head, err := requireHead(n.id, "rate_limit", in)
+func bindRateLimit(id string, o RateLimitOptions, opts RegistryOptions) (graph.Node, error) {
+	if opts.ValidateOnly {
+		return newRateLimit(id, o), nil
+	}
+	p, store, err := nodeProtectionPolicy(o.Store, ratePolicy(opts.FlowID, id, o), opts)
 	if err != nil {
 		return nil, err
 	}
-	key := head.SourceIP
-	if n.keyBy != "source_ip" && strings.HasPrefix(n.keyBy, "header.") {
-		key = head.Header.Get(strings.TrimPrefix(n.keyBy, "header."))
+	if o.Stage == "verified" && p.KeyScope == "verified/"+o.KeyBy {
+		return nil, errors.New("verified protection policy requires validated authentication trust binding")
 	}
-	if key == "" {
+	n := newRateLimit(id, o).(rateLimitNode)
+	n.policy, n.store = p, store
+	if cfg, ok := opts.StateStores[o.Store]; ok {
+		n.timeout = cfg.Defaults().Timeout
+	}
+	return n, nil
+}
+func (n rateLimitNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, error) {
+	var key string
+	if n.stage == "verified" {
+		v, ok := in.(graph.Verified)
+		if !ok {
+			return nil, graph.NodeError{NodeID: n.id, Status: 500, Err: errors.New("rate_limit expected Verified")}
+		}
+		switch n.keyBy {
+		case "credential_id":
+			key = v.CredentialID
+		case "jwt_subject":
+			key = v.Subject
+		case "jwt_tenant":
+			key = v.Tenant
+		}
+		if v.CredentialID == "" || v.TrustScope == "" {
+			key = ""
+		}
+		if key != "" {
+			key = v.TrustScope + "/" + key
+		}
+	} else {
+		head, err := requireHead(n.id, "rate_limit", in)
+		if err != nil {
+			return nil, err
+		}
 		key = head.SourceIP
-	}
-	if !n.limiter.Allow(key, time.Now()) {
-		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusTooManyRequests,
-			Err: fmt.Errorf("rate limited"),
+		if strings.HasPrefix(n.keyBy, "header.") {
+			key, _ = protectionHeaderValue(head.Header, strings.TrimPrefix(n.keyBy, "header."))
 		}
 	}
-	return head, nil
+	if key == "" || len(key) > 4096 || strings.ContainsAny(key, "\x00\r\n") {
+		return nil, protectionNodeError(n.id, protection.ErrMissingKey)
+	}
+	if n.store == nil {
+		return nil, protectionNodeError(n.id, protection.ErrUnavailable)
+	}
+	opctx, cancel := context.WithTimeout(ctx, n.timeout)
+	defer cancel()
+	decision, err := n.store.Allow(opctx, n.policy, key)
+	if err != nil {
+		return nil, protectionNodeError(n.id, err)
+	}
+	if !decision.Allowed {
+		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusTooManyRequests, Reason: "rate_limit_exhausted", Err: errors.New("rate quota exhausted")}
+	}
+	return in, nil
+}
+func protectionNodeError(id string, err error) graph.NodeError {
+	status, reason := http.StatusServiceUnavailable, "protection_unavailable"
+	if errors.Is(err, protection.ErrMissingKey) {
+		status, reason = http.StatusBadRequest, "protection_key_missing"
+	}
+	if errors.Is(err, protection.ErrCapacity) {
+		reason = "protection_capacity"
+	}
+	if errors.Is(err, protection.ErrPolicyConflict) {
+		reason = "protection_policy_conflict"
+	}
+	return graph.NodeError{NodeID: id, Status: status, Reason: reason, AbortRecovery: status == 503, Err: errors.New(strings.ReplaceAll(reason, "_", " "))}
 }
 
 func requireHead(id, kind string, in graph.Payload) (graph.RequestHead, error) {
@@ -146,3 +203,5 @@ func requireHead(id, kind string, in graph.Payload) (graph.RequestHead, error) {
 	}
 	return head, nil
 }
+
+func (rateLimitNode) AdmissionGuard() {}

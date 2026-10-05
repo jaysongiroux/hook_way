@@ -67,6 +67,9 @@ type NodeSpec struct {
 	SuccessContinuation bool
 	// New builds a node from its config. Returning an error fails the load.
 	New func(NodeConfig) (Node, error)
+	// ResolvePorts specializes a configured node's phase while preserving a
+	// fixed default signature for catalog consumers.
+	ResolvePorts func(NodeConfig) (PortType, PortType, error)
 }
 
 // Registry maps node type names to their specs.

@@ -2,8 +2,11 @@ package configapi
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 func TestValidate_RejectsLegacyTopLevelKeys(t *testing.T) {
@@ -28,8 +31,8 @@ func TestValidate_RejectsLegacyTopLevelKeys(t *testing.T) {
 	}
 }
 
-func TestValidate_ValidConfigMarshalsEmptyIssuesArray(t *testing.T) {
-	resp := Validate([]byte(`server:
+const validDeliveryConfig = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -37,20 +40,36 @@ destinations:
     type: "webhook"
     webhook:
       url: "https://example.test/hooks"
+      delivery_mode: sync
 flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
       - {id: out, type: publish, destination: billing, target: test-target}
     edges: [in>rl, rl>body, body>auth, auth>env, env>out]
-`))
+`
+
+func TestValidate_ValidConfigMarshalsEmptyIssuesArray(t *testing.T) {
+	resp := Validate([]byte(validDeliveryConfig))
 	out, _ := json.Marshal(resp)
 	if string(out) != `{"issues":[]}` {
 		t.Fatalf("expected empty issues array, got %s", out)
+	}
+}
+
+func TestValidateAsyncDeliveryIsNonBlockingWarning(t *testing.T) {
+	src := strings.ReplaceAll(validDeliveryConfig, "delivery_mode: sync", "delivery_mode: async")
+	resp := Validate([]byte(src))
+	if len(resp.Issues) != 1 {
+		t.Fatalf("issues = %+v", resp.Issues)
+	}
+	issue := resp.Issues[0]
+	if issue.Severity != "warning" || issue.Field != "destinations.billing.webhook.delivery_mode" || !strings.Contains(issue.Message, "in-memory queue") || issue.Suggestion == "" {
+		t.Fatalf("expected actionable delivery warning, got %+v", issue)
 	}
 }
 
@@ -77,7 +96,42 @@ func TestSchema_ReturnsValidJSON(t *testing.T) {
 	}
 }
 
-const configMissingEnvVar = `server:
+func TestStateStoreSchemaRequiresExactlyOneBackend(t *testing.T) {
+	data, err := Schema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	stores := doc["properties"].(map[string]any)["state_stores"]
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("https://hookway.test/state-stores", stores); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile("https://hookway.test/state-stores")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for mask := 0; mask < 8; mask++ {
+		store := map[string]any{"namespace": "test"}
+		count := 0
+		for i, backend := range []string{"memory", "redis", "postgres"} {
+			if mask&(1<<i) != 0 {
+				store[backend] = map[string]any{}
+				count++
+			}
+		}
+		err := schema.Validate(map[string]any{"test": store})
+		if (err == nil) != (count == 1) {
+			t.Errorf("backend mask %d: validation error=%v, want valid=%t", mask, err, count == 1)
+		}
+	}
+}
+
+const configMissingEnvVar = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -92,13 +146,27 @@ flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
       - {id: out, type: publish, destination: billing, target: test-target}
     edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
+
+func TestValidateWithEnvSchemaKeywordsAreLiteral(t *testing.T) {
+	data, err := os.ReadFile("../../examples/json-validation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("schema", "not-a-keyword")
+	t.Setenv("ref", "not-a-keyword")
+	for _, issue := range ValidateWithEnv(data, true).Issues {
+		if issue.Severity == "error" || strings.HasPrefix(issue.Field, "config.env.") {
+			t.Fatalf("valid schema rejected after CLI environment expansion: %+v", issue)
+		}
+	}
+}
 
 func TestValidateWithEnv_MissingVarIsWarningSeverity(t *testing.T) {
 	resp := ValidateWithEnv([]byte(configMissingEnvVar), true)
@@ -133,7 +201,8 @@ func TestValidateWithEnv_ExpandTrueStillReportsStructuralErrors(t *testing.T) {
 	}
 }
 
-const configWebhookURLMissingEnvVar = `server:
+const configWebhookURLMissingEnvVar = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -145,7 +214,7 @@ flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
@@ -189,7 +258,8 @@ func TestValidateWithEnv_MissingWebhookURLDowngradesFormatCheckToWarning(t *test
 	_ = sawURLIssue // downgraded-to-warning or absent are both acceptable per spec
 }
 
-const configWebhookURLGenuinelyInvalid = `server:
+const configWebhookURLGenuinelyInvalid = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -201,7 +271,7 @@ flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
@@ -319,7 +389,8 @@ func TestValidate_ExfilBoundary_SetEnvVarValueNeverLeaks(t *testing.T) {
 // raw value in the issue message — when (and only when) envRef is NOT
 // expanded against the environment.
 func exfilBoundaryConfig(envRef string) string {
-	return `server:
+	return `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -329,7 +400,7 @@ flows:
   test:
     nodes:
       - {id: in, type: http_trigger, path: /test, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
@@ -340,6 +411,7 @@ flows:
 
 func TestValidate_PreservesLintWarningSeverity(t *testing.T) {
 	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test/hooks"}}
@@ -374,7 +446,8 @@ flows:
 	}
 }
 
-const configConnectionModeMissingEnvVar = `server:
+const configConnectionModeMissingEnvVar = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 connections:

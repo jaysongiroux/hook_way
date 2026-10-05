@@ -20,13 +20,14 @@
 # (per-destination, default 1000). When the queue is full, Publish fails and the
 # upstream sender receives a non-2xx response, creating backpressure.
 #
-# On shutdown, hook_way drains the queue within drain_timeout (defaults to
-# server.shutdown_timeout) before exiting, so in-flight deliveries are not lost
-# across graceful restarts / deploys.
+# On shutdown, hook_way attempts to drain the queue within drain_timeout
+# (defaults to server.shutdown_timeout). An expired deadline or forced exit can
+# abandon queued and in-flight deliveries.
 #
-# NON-DURABLE (async): a hard crash (kill -9, OOM, host failure) loses any events
-# that were queued or in-flight but not yet delivered — UNLESS a dead_letter
-# destination is configured, which durably captures terminally-failed deliveries.
+# NON-DURABLE (async): a hard crash (kill -9, OOM, host failure) can lose events
+# already acknowledged to the sender. dead_letter handles observed terminal
+# failures while the process runs; it cannot recover jobs lost with the process.
+# Publish directly to a durable broker when accepted work must survive a crash.
 # hook_way is not a transparent proxy — the downstream response is not returned
 # to the inbound sender in async mode.
 #
@@ -36,7 +37,7 @@
 # LOOP PROTECTION: every outbound delivery is stamped with an X-Hookway-Hops
 # header (incremented per Hookway hop). If this URL points back at a Hookway
 # flow, put a `loop_guard` on that flow — `security.loop_protection` is leftover
-# YAML and is not wired to inbound rejection. See docs/configuration.md.
+# YAML and is not wired to inbound rejection. See docs/reference/configuration.md.
 
 server:
   addr: ":8088"

@@ -78,7 +78,8 @@ func (s *Store) requestRetry(ctx context.Context, req RetryRequest, hash string)
 		}
 		var status string
 		var retryable bool
-		err := tx.QueryRow(ctx, `SELECT status, retryable FROM failures WHERE id = $1 FOR UPDATE`, req.FailureID).Scan(&status, &retryable)
+		var expiresAt time.Time
+		err := tx.QueryRow(ctx, `SELECT status, retryable, expires_at FROM failures WHERE id = $1 FOR UPDATE`, req.FailureID).Scan(&status, &retryable, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -91,6 +92,8 @@ func (s *Store) requestRetry(ctx context.Context, req RetryRequest, hash string)
 			return err
 		}
 		switch {
+		case !expiresAt.After(s.now().UTC()):
+			return ErrExpired
 		case !retryable || status == StatusResolved || status == StatusDismissed:
 			return ErrNotRetryable
 		case status == StatusRetrying:

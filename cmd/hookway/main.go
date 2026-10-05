@@ -65,6 +65,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runSchema(args[1:], stdout, stderr)
 	case "editor":
 		return runEditor(args[1:], stdout, stderr)
+	case "state-store":
+		return runStateStore(args[1:], stdout, stderr)
 	case "version":
 		if code, ok := program.Parse("version", flag.NewFlagSet("version", flag.ContinueOnError), args[1:], stdout, stderr); !ok {
 			return code
@@ -494,11 +496,12 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		servers = append(servers, ctl)
 	}
 	res := servingResources{
-		logger:  logger,
-		signals: signals,
-		servers: servers,
-		after:   []func(){stopProbe},
-		closers: closers,
+		logger:          logger,
+		signals:         signals,
+		servers:         servers,
+		after:           []func(){stopProbe},
+		closers:         closers,
+		listenerTimeout: cfg.Server.ShutdownTimeout,
 	}
 
 	var waitErr error
@@ -508,16 +511,31 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	case waitErr = <-errs:
 		logger.Error("server stopped", "error", waitErr)
 	}
-	timeout := cfg.Server.ShutdownTimeout
+	timeout := cfg.Server.ShutdownTotalTimeout
 	if timeout <= 0 {
-		timeout = 10 * time.Second
+		timeout = 60 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	delay := cfg.Server.ShutdownDelay
+	if waitErr != nil {
+		delay = 0
+	} // a failed listener cannot serve during withdrawal
+	logger.Info("hookway withdrawing", "delay", delay, "shutdown_total_timeout", timeout)
+	if err := withdrawBeforeDrain(ctx, delay, app.Withdraw); err != nil {
+		logger.Error("readiness withdrawal failed", "error", err)
+		return 1
+	}
+	app.BeginDrain()
+	if ctl != nil {
+		ctl.Drain()
+	}
+	logger.Info("hookway draining")
 	if err := errors.Join(waitErr, res.drain(ctx)); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 		return 1
 	}
+	logger.Info("hookway stopped")
 	return 0
 }
 

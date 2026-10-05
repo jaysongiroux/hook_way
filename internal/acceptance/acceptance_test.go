@@ -70,6 +70,15 @@ func binaries(t *testing.T) (core, replay string) {
 	if os.Getenv("HOOKWAY_ACCEPTANCE") != "1" {
 		t.Skip("set HOOKWAY_ACCEPTANCE=1 (make replay-acceptance-test) to run the end-to-end suite")
 	}
+	if supplied := os.Getenv("HOOKWAY_ACCEPTANCE_BIN_DIR"); supplied != "" {
+		for _, name := range []string{"hookway", "hookway-replay"} {
+			info, err := os.Stat(filepath.Join(supplied, name)) // #nosec G703 -- trusted test operator explicitly selects prebuilt binaries; names are fixed, with no request input
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+				t.Fatalf("supplied acceptance binary %s must be an executable regular file: %v", name, err)
+			}
+		}
+		return filepath.Join(supplied, "hookway"), filepath.Join(supplied, "hookway-replay")
+	}
 	root := repoRoot(t)
 	buildOnce.Do(func() {
 		binDir, buildErr = os.MkdirTemp("", "hookway-acceptance-")
@@ -305,7 +314,7 @@ type system struct {
 
 func writeConfig(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { // #nosec G703 -- callers provide test-owned temporary config paths, never request input
 		t.Fatal(err)
 	}
 }
@@ -313,12 +322,19 @@ func writeConfig(t *testing.T, path, content string) {
 // startSystem runs two replay replicas (after one migration) and two core
 // replicas, wired to each other through round-robin proxies.
 func startSystem(t *testing.T) *system {
+	return startSystemWithProtection(t, "", "")
+}
+
+func startSystemWithProtection(t *testing.T, backend, redisURL string) *system {
 	t.Helper()
 	coreBin, replayBin := binaries(t)
 	env := []string{
 		"REPLAY_CAPTURE_TOKEN=" + captureToken, "REPLAY_CONTROL_TOKEN=" + controlToken,
 		"REPLAY_OPERATOR_TOKEN=" + operatorToken, "ORDERS_WEBHOOK_SECRET=" + webhookSecret,
 		"REPLAY_DATABASE_URL=" + replaytest.Database(t),
+	}
+	if backend == "redis" {
+		env = append(env, "PROTECTION_REDIS_URL="+redisURL)
 	}
 	dir := t.TempDir()
 	s := &system{orders: newSink(t), audit: newSink(t)}
@@ -332,7 +348,8 @@ func startSystem(t *testing.T) *system {
 
 	for i, ra := range replays {
 		path := filepath.Join(dir, fmt.Sprintf("replay-%d.yaml", i))
-		writeConfig(t, path, fmt.Sprintf(replayYAML, ra.api, ra.metrics, controlURL))
+		replaySource := fmt.Sprintf(replayYAML, ra.api, ra.metrics, controlURL)
+		writeConfig(t, path, replaySource)
 		if i == 0 {
 			cmd := exec.CommandContext(context.Background(), replayBin, "migrate", "--config", path) // #nosec G204 -- this repository's binary
 			cmd.Env = append(os.Environ(), env...)
@@ -344,7 +361,18 @@ func startSystem(t *testing.T) *system {
 	}
 	for i, ca := range cores {
 		path := filepath.Join(dir, fmt.Sprintf("core-%d.yaml", i))
-		writeConfig(t, path, fmt.Sprintf(coreYAML, ca.http, ca.metrics, s.replayURL, ca.control, s.orders.srv.URL, s.audit.srv.URL))
+		coreSource := fmt.Sprintf(coreYAML, ca.http, ca.metrics, s.replayURL, ca.control, s.orders.srv.URL, s.audit.srv.URL)
+		if backend != "" {
+			coreSource = protectionConfig(coreSource, backend)
+		}
+		writeConfig(t, path, coreSource)
+		if backend == "postgres" && i == 0 {
+			cmd := exec.CommandContext(t.Context(), coreBin, "state-store", "migrate", "--config", path, "--store", "cluster") // #nosec G204 -- repository-built binary and test-owned config
+			cmd.Env = append(os.Environ(), env...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("protection migrate: %v\n%s", err, out)
+			}
+		}
 		s.cores = append(s.cores, startProcess(t, fmt.Sprintf("core-%d", i), coreBin, env, "--config", path))
 		s.coreReady = append(s.coreReady, "http://"+ca.http+"/readyz")
 		s.coreMetrics = append(s.coreMetrics, "http://"+ca.metrics+"/metrics")
@@ -355,27 +383,40 @@ func startSystem(t *testing.T) *system {
 	for _, u := range s.coreReady {
 		waitReady(t, "core", u)
 	}
+	if backend == "" {
+		if code, _, err := get(s.replayURL + "/console/"); err != nil || code != http.StatusNotFound {
+			t.Fatalf("disabled console route: %d %v", code, err)
+		}
+	}
 	return s
 }
 
 // post sends one signed webhook through the core proxy and returns its status.
 func (s *system) post(t *testing.T, body []byte) int {
 	t.Helper()
+	status, err := s.postResult(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return status
+}
+
+func (s *system) postResult(body []byte) (int, error) {
 	mac := hmac.New(sha256.New, []byte(webhookSecret))
 	mac.Write(body)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, s.coreURL+"/webhooks/orders", bytes.NewReader(body))
 	if err != nil {
-		t.Fatal(err)
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	resp, err := client.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		return 0, err
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, readErr := io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	return resp.StatusCode
+	return resp.StatusCode, readErr
 }
 
 // api calls the replay API as the operator.

@@ -1,0 +1,954 @@
+import React from "react";
+import { Link, useLocation } from "react-router-dom";
+import { DARK } from "../shared/ui/tokens";
+import {
+  Alert,
+  Box,
+  Button,
+  Checkbox,
+  Group,
+  PasswordInput,
+  Select,
+  Menu,
+  Skeleton,
+  Tabs,
+  SimpleGrid,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import {
+  FiChevronDown,
+  FiChevronLeft,
+  FiFilter,
+  FiInbox,
+  FiRefreshCw,
+} from "react-icons/fi";
+import { FailureState } from "./FailureState";
+import { Logo } from "../shared/ui/Logo";
+import { HEADER_STYLE } from "../shared/ui/chrome";
+import { EmptyState, ErrorState, LoadingState } from "../shared/ui/States";
+import { loadWasm, retryWasm } from "../shared/wasm/loader";
+import type { paths } from "../shared/contracts/generated/replay";
+import {
+  createSession,
+  APIError,
+  requestError,
+  result,
+  timestamp,
+  type Detail,
+  type Failure,
+  type Identity,
+  type Session,
+} from "./session";
+import { ActionDialog, type Intent } from "./ActionDialog";
+import { FailureDetail } from "./FailureDetail";
+import "./console.css";
+
+const Builder = React.lazy(() => import("../App"));
+
+type Filters = {
+  status: string;
+  flow: string;
+  node_id: string;
+  destination_id: string;
+  retryable: string;
+  since: string;
+  until: string;
+};
+const initialFilters: Filters = {
+  status: "open",
+  flow: "",
+  node_id: "",
+  destination_id: "",
+  retryable: "",
+  since: "",
+  until: "",
+};
+type Query = NonNullable<paths["/v1/failures"]["get"]["parameters"]["query"]>;
+function queryOf(filters: Filters, cursor: string): Query {
+  const query: Query = { limit: 50 };
+  if (cursor) query.cursor = cursor;
+  if (filters.status) query.status = filters.status as Query["status"];
+  for (const key of ["flow", "node_id", "destination_id"] as const)
+    if (filters[key]) query[key] = filters[key];
+  if (filters.retryable) query.retryable = filters.retryable === "true";
+  for (const key of ["since", "until"] as const)
+    if (filters[key]) query[key] = new Date(filters[key]).toISOString();
+  return query;
+}
+
+export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
+  const builder = useLocation().pathname === "/builder";
+  React.useEffect(() => { document.title = builder ? "Hookway builder" : "Hookway replay console"; }, [builder]);
+  const [wasm, setWasm] = React.useState<"loading" | "ready" | "error">(
+    "loading",
+  );
+  const [credential, setCredential] = React.useState("");
+  const [identity, setIdentity] = React.useState<Identity>();
+  const [session, setSession] = React.useState<Session>();
+  const activeSession = React.useRef<Session>();
+  const [loginBusy, setLoginBusy] = React.useState(false);
+  const [loginError, setLoginError] = React.useState("");
+  const logout = React.useCallback(() => {
+    activeSession.current?.dispose();
+    activeSession.current = undefined;
+    setSession(undefined);
+    setIdentity(undefined);
+    setCredential("");
+    setLoginError("");
+  }, []);
+  React.useEffect(() => {
+    window.addEventListener("pagehide", logout);
+    return () => {
+      window.removeEventListener("pagehide", logout);
+      activeSession.current?.dispose();
+    };
+  }, [logout]);
+  const initialize = React.useCallback(async (retry = false) => {
+    setWasm("loading");
+    try {
+      const options = { assetBase: import.meta.env.BASE_URL };
+      await (retry ? retryWasm(options) : loadWasm(options));
+      setWasm("ready");
+    } catch {
+      setWasm("error");
+    }
+  }, []);
+  React.useEffect(() => {
+    void initialize();
+  }, [initialize]);
+  async function login(e: React.FormEvent) {
+    e.preventDefault();
+    if (loginBusy) return;
+    setLoginBusy(true);
+    setLoginError("");
+    const candidate = createSession(credential.trim(), () => {
+      logout();
+      setLoginError(
+        "Your API key was rejected. Sign in again with a valid operator key.",
+      );
+    }, apiUrl);
+    setCredential("");
+    activeSession.current = candidate;
+    try {
+      const me = result(
+        await candidate.client.GET("/v1/me", { signal: candidate.signal }),
+      );
+      if (
+        me.contract_version !== 1 ||
+        ![
+          "failure_inspection",
+          "destination_retry",
+          "batch_retry",
+          "unknown_resolution",
+          "action_input_validation",
+          "action_eligibility",
+        ].every((capability) => me.capabilities.includes(capability)) ||
+        !me.scopes.includes("read")
+      )
+        throw new Error(
+          "The replay API contract is incompatible or this key has no read scope. Update matching console/API assets and use an operator key.",
+        );
+      if (!candidate.signal.aborted) {
+        setIdentity(me);
+        setSession(candidate);
+      }
+    } catch (caught) {
+      const cancelled =
+        candidate.signal.aborted && !(caught instanceof APIError);
+      candidate.dispose();
+      if (activeSession.current === candidate)
+        activeSession.current = undefined;
+      if (!cancelled) setLoginError(requestError(caught, "Sign-in failed."));
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+  return (
+    <Box
+      className={`replay-app ${session || builder ? "is-authenticated" : ""}`}
+      style={
+        {
+          "--console-bg": DARK.bg,
+          "--console-surface": DARK.surface,
+          "--console-text": DARK.text,
+          "--console-border": DARK.border,
+          "--console-muted": DARK.muted,
+          "--console-accent": DARK.accent,
+        } as React.CSSProperties
+      }
+    >
+      <header className="console-header" style={HEADER_STYLE}>
+        <Group gap="md" wrap="nowrap">
+          <Logo to="/" assetBase={import.meta.env.BASE_URL} />
+          <span className="header-separator" aria-hidden="true" />
+          <Title order={1} size="h4">
+            {builder ? "Configuration builder" : "Replay console"}
+          </Title>
+        </Group>
+        <Group gap="xs" wrap="nowrap">
+          <Button component={Link} to={builder ? "/" : "/builder"} variant="default" size="xs">
+            {builder ? "Replay console" : "Builder"}
+          </Button>
+        {identity && (
+          <Menu position="bottom-end" width={270}>
+            <Menu.Target>
+              <Button
+                variant="subtle"
+                size="sm"
+                title={identity.key_name}
+                rightSection={<FiChevronDown aria-hidden="true" />}
+              >
+                <Text
+                  component="span"
+                  size="sm"
+                  className="operator-name"
+                  truncate
+                >
+                  {identity.key_name}
+                </Text>
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>Current API key</Menu.Label>
+              <Box px="sm" pb="sm">
+                <Text size="sm" fw={600}>
+                  {identity.key_name}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Scopes: {identity.scopes.join(", ")}
+                </Text>
+                <Text size="xs" c="dimmed" mt={6}>
+                  Session kept in memory. Reloading requires sign-in.
+                </Text>
+              </Box>
+              <Menu.Divider />
+              <Menu.Item onClick={logout}>Sign out</Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        )}
+        </Group>
+      </header>
+      <main className="console-main">
+        {!builder && wasm === "loading" && (
+          <div className="validation-notice">
+            <LoadingState>Loading local validation…</LoadingState>
+          </div>
+        )}
+        {!builder && wasm === "error" && (
+          <div className="validation-notice">
+            <ErrorState
+              title="Local validation is unavailable"
+              onRetry={() => void initialize(true)}
+            >
+              Operations remain available through the API input validation path.
+              Restore matching WASM assets to validate locally.
+            </ErrorState>
+          </div>
+        )}
+        {session && identity ? (
+          <Inbox
+            key={identity.key_name}
+            session={session}
+            identity={identity}
+            active={!builder}
+          />
+        ) : !builder ? (
+          <div className="console-signin">
+            <section
+              className="signin-context"
+              aria-label="About the replay console"
+            >
+              <Title order={2}>
+                Investigate a delivery.
+                <br />
+                Choose the next step.
+              </Title>
+              <Text c="dimmed">
+                Inspect what failed, check the delivery evidence, and recover
+                the captured destination with a deliberate retry.
+              </Text>
+              <ol className="signin-workflow">
+                <li>
+                  <strong>Find the failure</strong>
+                  <span>Narrow the inbox by state, flow or destination.</span>
+                </li>
+                <li>
+                  <strong>Check the evidence</strong>
+                  <span>Read errors, retry history and captured payloads.</span>
+                </li>
+                <li>
+                  <strong>Recover deliberately</strong>
+                  <span>
+                    Retry, confirm an uncertain outcome or stop recovery.
+                  </span>
+                </li>
+              </ol>
+            </section>
+            <Box
+              component="form"
+              className="signin-form"
+              onSubmit={(e) => void login(e)}
+            >
+              <Stack gap="md">
+                <div>
+                  <Title order={2} size="h3">
+                    Sign in to inspect deliveries
+                  </Title>
+                  <Text size="sm" c="dimmed" mt={6}>
+                    Use a named token from your replay service.
+                  </Text>
+                </div>
+                <PasswordInput
+                  label="Replay API token"
+                  description="Read scope is required. Retry and payload scopes enable additional actions."
+                  autoComplete="off"
+                  value={credential}
+                  onChange={(e) => setCredential(e.currentTarget.value)}
+                  required
+                  disabled={loginBusy}
+                />
+                {loginError && (
+                  <Alert color="red" title="Sign-in failed">
+                    {loginError}
+                  </Alert>
+                )}
+                <Button
+                  type="submit"
+                  loading={loginBusy}
+                  disabled={!credential.trim()}
+                >
+                  Sign in
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Your token stays in browser memory. Signing out or reloading
+                  clears this session.
+                </Text>
+              </Stack>
+            </Box>
+          </div>
+        ) : null}
+        {builder && <React.Suspense fallback={<LoadingState>Loading builder…</LoadingState>}><Builder product /></React.Suspense>}
+      </main>
+    </Box>
+  );
+}
+
+function Inbox({
+  session,
+  identity,
+  active,
+}: {
+  session: Session;
+  identity: Identity;
+  active: boolean;
+}) {
+  const [draft, setDraft] = React.useState(initialFilters);
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
+  const inboxRef = React.useRef<HTMLElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const inboxPosition = React.useRef(0);
+  const inspectRef = React.useRef<HTMLButtonElement>(null);
+  const [filters, setFilters] = React.useState(initialFilters);
+  const [cursors, setCursors] = React.useState<string[]>([""]);
+  const cursor = cursors[cursors.length - 1];
+  React.useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [filters, cursor]);
+  const [next, setNext] = React.useState("");
+  const [items, setItems] = React.useState<Failure[]>([]);
+  const [selected, setSelected] = React.useState("");
+  const [detail, setDetail] = React.useState<Detail>();
+  const [checked, setChecked] = React.useState<string[]>([]);
+  const [error, setError] = React.useState("");
+  const [detailError, setDetailError] = React.useState("");
+  const [filterError, setFilterError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [updated, setUpdated] = React.useState("");
+  const [refresh, setRefresh] = React.useState(0);
+  const [intent, setIntent] = React.useState<Intent>();
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const panelRef = React.useRef<HTMLElement>(null);
+  const focusPending = React.useRef("");
+  React.useEffect(() => {
+    if (detail?.id && detail.id === focusPending.current) {
+      focusPending.current = "";
+      if (window.matchMedia("(max-width: 1000px)").matches) {
+        panelRef.current?.scrollIntoView({ block: "start" });
+        panelRef.current?.focus({ preventScroll: true });
+      }
+    }
+  }, [detail?.id]);
+  const select = (id: string) => {
+    if (!selected || !window.matchMedia("(max-width: 1000px)").matches)
+      inboxPosition.current = listRef.current?.scrollTop || 0;
+    focusPending.current = id;
+    setSelected(id);
+    setDetail(undefined);
+    setDetailError("");
+  };
+  const refreshNow = () => setRefresh((value) => value + 1);
+  const action = (value: Intent) => {
+    if (intent) return;
+    setIntent(value);
+    setDialogOpen(true);
+  };
+  React.useEffect(() => {
+    if (!active) return;
+    let live = true;
+    let running = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let controller: AbortController | undefined;
+    const abort = () => controller?.abort();
+    session.signal.addEventListener("abort", abort);
+    async function poll() {
+      if (
+        !live ||
+        document.visibilityState !== "visible" ||
+        session.signal.aborted ||
+        running
+      )
+        return;
+      running = true;
+      controller = new AbortController();
+      setBusy(true);
+      try {
+        const page = result(
+          await session.client.GET("/v1/failures", {
+            params: { query: queryOf(filters, cursor) },
+            signal: controller.signal,
+          }),
+        );
+        if (live && !controller.signal.aborted) {
+          setItems(page.items);
+          setNext(page.next_cursor || "");
+          setError("");
+          setUpdated(new Date().toLocaleTimeString());
+        }
+        if (selected) {
+          try {
+            const record = result(
+              await session.client.GET("/v1/failures/{id}", {
+                params: { path: { id: selected } },
+                signal: controller.signal,
+              }),
+            );
+            if (live && !controller.signal.aborted) {
+              setDetail(record);
+              setDetailError("");
+            }
+          } catch (caught) {
+            if (live && !controller.signal.aborted) {
+              setDetail(undefined);
+              setDetailError(
+                requestError(caught, "Could not load this record."),
+              );
+            }
+          }
+        }
+      } catch (caught) {
+        if (live && !controller.signal.aborted)
+          setError(requestError(caught, "Could not load failures."));
+      } finally {
+        running = false;
+        if (live) {
+          setBusy(false);
+          if (document.visibilityState === "visible")
+            timer = setTimeout(() => void poll(), 3000);
+        }
+      }
+    }
+    function visibility() {
+      if (timer) clearTimeout(timer);
+      if (document.visibilityState === "visible") void poll();
+      else abort();
+    }
+    document.addEventListener("visibilitychange", visibility);
+    void poll();
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+      abort();
+      session.signal.removeEventListener("abort", abort);
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [session, filters, cursor, selected, refresh, active]);
+  const apply = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFilterError("");
+    if (
+      draft.since &&
+      draft.until &&
+      new Date(draft.since) >= new Date(draft.until)
+    ) {
+      setFilterError("The lower time bound must precede the upper bound.");
+      return;
+    }
+    setFilters({ ...draft });
+    setCursors([""]);
+    setChecked([]);
+    setItems([]);
+    setNext("");
+  };
+  function move(cursors: string[]) {
+    setCursors(cursors);
+    setItems([]);
+    setChecked([]);
+    setNext("");
+  }
+  function closeDetail() {
+    const trigger = inspectRef.current;
+    setSelected("");
+    setDetail(undefined);
+    requestAnimationFrame(() => {
+      if (listRef.current) listRef.current.scrollTop = inboxPosition.current;
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      else inboxRef.current?.focus({ preventScroll: true });
+    });
+  }
+  function changeStatus(value: string | null) {
+    const status = value === "all" ? "" : value || "";
+    setDraft((current) => ({ ...current, status }));
+    setFilters((current) => ({ ...current, status }));
+    move([""]);
+  }
+  const unapplied = JSON.stringify(draft) !== JSON.stringify(filters);
+  const advancedCount = [
+    filters.node_id,
+    filters.destination_id,
+    filters.retryable,
+    filters.since,
+    filters.until,
+  ].filter(Boolean).length;
+  const selectedRecords = items.filter((item) => checked.includes(item.id));
+  return (
+    <>
+    {active && <div className={`console-investigation ${selected ? "has-detail" : ""}`}>
+      <div
+        className="console-workspace"
+        id="delivery-state-results"
+        role="tabpanel"
+        aria-labelledby={`delivery-state-${filters.status || "all"}`}
+      >
+        <section
+          aria-label="Failure inbox"
+          className="failure-inbox"
+          tabIndex={-1}
+          ref={inboxRef}
+        >
+      <div className="inbox-chrome">
+        <div className="console-page-heading">
+          <div>
+            <Title order={2} size="h3">
+              Delivery failures
+            </Title>
+            <Text size="sm" c="dimmed">
+              Investigate captured deliveries and recover the destination.
+            </Text>
+          </div>
+          <Button
+            variant="default"
+            size="xs"
+            leftSection={<FiRefreshCw aria-hidden="true" />}
+            onClick={refreshNow}
+            disabled={busy}
+          >
+            Refresh
+          </Button>
+        </div>
+        <Tabs
+          value={filters.status || "all"}
+          onChange={changeStatus}
+          className="state-navigation"
+        >
+          <Tabs.List aria-label="Delivery state">
+            {[
+              { value: "open", label: "Open failures" },
+              { value: "unknown", label: "Unknown outcome" },
+              { value: "retrying", label: "Retry in progress" },
+              { value: "resolved", label: "Resolved" },
+              { value: "dismissed", label: "Dismissed" },
+              { value: "all", label: "All states" },
+            ].map((state) => (
+              <Tabs.Tab
+                key={state.value}
+                value={state.value}
+                id={`delivery-state-${state.value}`}
+                aria-controls="delivery-state-results"
+              >
+                {state.label}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+        </Tabs>
+        {filterError && (
+          <Alert color="red" title="Check your filters" mb="sm">
+            {filterError}
+          </Alert>
+        )}
+        <Box component="form" onSubmit={apply} className="console-filters">
+          <div className="filter-toolbar">
+            <TextInput
+              label="Flow"
+              placeholder="All flows"
+              value={draft.flow}
+              onChange={(e) =>
+                setDraft({ ...draft, flow: e.currentTarget.value })
+              }
+              size="xs"
+            />
+            <Button type="submit" size="xs" variant="default">
+              Apply filters
+            </Button>
+            <Button
+              size="xs"
+              variant={filtersOpen || advancedCount ? "light" : "subtle"}
+              leftSection={<FiFilter aria-hidden="true" />}
+              onClick={() => setFiltersOpen((open) => !open)}
+              aria-expanded={filtersOpen}
+              aria-controls="advanced-filters"
+            >
+              Filters{advancedCount ? ` (${advancedCount})` : ""}
+            </Button>
+            {unapplied && (
+              <Text size="xs" c="dimmed" className="filter-change-note">
+                Unapplied changes
+              </Text>
+            )}
+            {(filters.flow || advancedCount > 0) && (
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => {
+                  const cleared = { ...initialFilters, status: filters.status };
+                  setFilterError("");
+                  setDraft(cleared);
+                  setFilters(cleared);
+                  move([""]);
+                }}
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+          <div
+            id="advanced-filters"
+            className="advanced-filters"
+            hidden={!filtersOpen}
+          >
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm">
+              {(["node_id", "destination_id"] as const).map((key) => (
+                <TextInput
+                  key={key}
+                  label={key === "node_id" ? "Node ID" : "Destination ID"}
+                  size="xs"
+                  value={draft[key]}
+                  onChange={(e) =>
+                    setDraft({ ...draft, [key]: e.currentTarget.value })
+                  }
+                />
+              ))}
+              <Select
+                label="Captured retry capability"
+                description="State and retention also determine availability."
+                size="xs"
+                value={draft.retryable}
+                data={[
+                  { value: "", label: "All records" },
+                  { value: "true", label: "Retry artifacts captured" },
+                  { value: "false", label: "Metadata only" },
+                ]}
+                onChange={(value) =>
+                  setDraft({ ...draft, retryable: value || "" })
+                }
+                allowDeselect={false}
+              />
+              <TextInput
+                type="datetime-local"
+                label="Failed since (inclusive)"
+                description="Your local time zone."
+                size="xs"
+                value={draft.since}
+                onChange={(e) =>
+                  setDraft({ ...draft, since: e.currentTarget.value })
+                }
+              />
+              <TextInput
+                type="datetime-local"
+                label="Failed before (exclusive)"
+                description="Your local time zone."
+                size="xs"
+                value={draft.until}
+                onChange={(e) =>
+                  setDraft({ ...draft, until: e.currentTarget.value })
+                }
+              />
+            </SimpleGrid>
+          </div>
+        </Box>
+      </div>
+      {error && (
+        <ErrorState title="Inbox refresh failed" onRetry={refreshNow}>
+          {error}{" "}
+          {updated &&
+            "Previously loaded data may be stale. Actions are checked again by the API."}
+        </ErrorState>
+      )}
+      {intent && !dialogOpen && (
+        <Alert
+          color="yellow"
+          title="A submission needs confirmation"
+          className="pending-action"
+        >
+          <Group justify="space-between">
+            <Text size="sm">
+              Inspect the history before deciding what to do next.
+            </Text>
+            <Button
+              size="xs"
+              color="yellow"
+              onClick={() => setDialogOpen(true)}
+            >
+              Continue uncertain request
+            </Button>
+          </Group>
+        </Alert>
+      )}
+          <div className="inbox-panel-heading">
+            <Title order={3} size="h5">
+              Failure inbox
+            </Title>
+            <Text size="xs" c="dimmed">
+              {items.length} on this page
+            </Text>
+          </div>
+          {identity.scopes.includes("retry") && checked.length > 0 && (
+            <div className="batch-toolbar">
+              <Text size="sm">{selectedRecords.length} selected</Text>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => setChecked([])}
+                >
+                  Clear selection
+                </Button>
+                <Button
+                  size="xs"
+                  disabled={!selectedRecords.length || !!intent}
+                  onClick={() =>
+                    action({ action: "retry", records: selectedRecords })
+                  }
+                >
+                  Retry selected ({selectedRecords.length})
+                </Button>
+              </Group>
+            </div>
+          )}
+          <div className="inbox-scroll" ref={listRef}>
+            {!items.length ? (
+              busy ? (
+                <Stack p="md" aria-label="Loading failure inbox">
+                  {[1, 2, 3, 4].map((i) => (
+                    <Skeleton key={i} height={74} radius="sm" />
+                  ))}
+                </Stack>
+              ) : (
+                <EmptyState>
+                  {error
+                    ? "The inbox could not be loaded."
+                    : "No failures match these filters. Try another state or clear your filters."}
+                </EmptyState>
+              )
+            ) : (
+              <Table highlightOnHover className="failure-table">
+                <Table.Thead>
+                  <Table.Tr>
+                    {identity.scopes.includes("retry") && (
+                      <Table.Th className="selection-heading">
+                        <span className="visually-hidden">Select</span>
+                      </Table.Th>
+                    )}
+                    <Table.Th>Delivery</Table.Th>
+                    <Table.Th>Outcome</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {items.map((item) => (
+                    <Table.Tr
+                      key={item.id}
+                      data-selected={item.id === selected || undefined}
+                    >
+                      {identity.scopes.includes("retry") && (
+                        <Table.Td className="failure-selection">
+                          <Checkbox
+                            size="xs"
+                            aria-label={`Select ${item.id}`}
+                            checked={checked.includes(item.id)}
+                            disabled={!item.actions.retry.allowed || !!intent}
+                            onChange={(e) =>
+                              setChecked(
+                                e.currentTarget.checked
+                                  ? [...checked, item.id]
+                                  : checked.filter((id) => id !== item.id),
+                              )
+                            }
+                          />
+                        </Table.Td>
+                      )}
+                      <Table.Td className="failure-identity">
+                        <Button
+                          ref={item.id === selected ? inspectRef : undefined}
+                          variant="subtle"
+                          className="failure-link"
+                          onClick={() => select(item.id)}
+                          aria-label={`Inspect ${item.id}`}
+                        >
+                          <span className="failure-row-title">
+                            {item.flow} <span className="row-slash">/</span>{" "}
+                            {item.node_id}
+                          </span>
+                          <span className="failure-row-destination">
+                            {item.destination_id || item.node_type}
+                          </span>
+                          <span className="identifier row-id">{item.id}</span>
+                        </Button>
+                        {!item.actions.retry.allowed && (
+                          <Text size="xs" c="dimmed" className="row-reason">
+                            {item.actions.retry.reason}
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td className="failure-state">
+                        <FailureState record={item} />
+                        <time
+                          dateTime={item.failed_at}
+                          title={timestamp(item.failed_at)}
+                        >
+                          {new Date(item.failed_at).toLocaleString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </time>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            )}
+          </div>
+          <div className="inbox-footer">
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="default"
+                disabled={cursors.length === 1 || busy}
+                onClick={() => move(cursors.slice(0, -1))}
+              >
+                Previous page
+              </Button>
+              <Text size="xs">Page {cursors.length}</Text>
+              <Button
+                size="xs"
+                variant="default"
+                disabled={!next || busy}
+                onClick={() => move([...cursors, next])}
+              >
+                Next page
+              </Button>
+            </Group>
+            <Text size="xs" c="dimmed" className="refresh-note">
+              {updated
+                ? `Last refreshed ${updated}. Updates every 3 seconds while this page is visible.`
+                : "Loading failure inbox…"}
+            </Text>
+          </div>
+        </section>
+        <section
+          aria-label={selected ? "Selected failure" : "Investigation panel"}
+          ref={panelRef}
+          tabIndex={-1}
+          className="detail-panel"
+        >
+          {selected ? (
+            <>
+              <div className="detail-navigation">
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  leftSection={<FiChevronLeft aria-hidden="true" />}
+                  onClick={closeDetail}
+                >
+                  <span className="desktop-close-label">Close details</span>
+                  <span className="mobile-close-label">Back to inbox</span>
+                </Button>
+                <Text size="xs" c="dimmed">
+                  Delivery investigation
+                </Text>
+              </div>
+              {detailError ? (
+                <ErrorState title="Record unavailable" onRetry={refreshNow}>
+                  {detailError}
+                </ErrorState>
+              ) : detail ? (
+                <FailureDetail
+                  key={detail.id}
+                  record={detail}
+                  session={session}
+                  scopes={identity.scopes}
+                  onSelect={select}
+                  onAction={action}
+                  actionPending={!!intent}
+                />
+              ) : (
+                <Stack p="lg" aria-label="Loading failure details">
+                  <Skeleton height={28} width="65%" />
+                  <Skeleton height={70} />
+                  <Skeleton height={140} />
+                </Stack>
+              )}
+            </>
+          ) : (
+            <div className="investigation-empty">
+              <FiInbox size={32} aria-hidden="true" />
+              <Title order={3} size="h3">
+                Select a delivery to investigate
+              </Title>
+              <Text size="sm" c="dimmed">
+                Check its error and delivery history, then choose the next safe
+                action. Selecting a row leaves your inbox and filters in place.
+              </Text>
+              <div className="investigation-guide">
+                <Text size="sm" fw={600}>
+                  An unknown outcome needs evidence
+                </Text>
+                <Text size="sm" c="dimmed">
+                  A lost response does not prove delivery failed. Check the
+                  destination before retrying.
+                </Text>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>}
+      {intent && (
+        <ActionDialog
+          intent={intent}
+          session={session}
+          opened={active && dialogOpen}
+          onRefresh={refreshNow}
+          onClose={(retain) => {
+            setDialogOpen(false);
+            if (!retain) setIntent(undefined);
+          }}
+        />
+      )}
+    </>
+  );
+}

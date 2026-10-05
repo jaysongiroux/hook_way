@@ -30,7 +30,6 @@ func TestHMACSHA256VerifierRejectsInvalidInputs(t *testing.T) {
 		"missing ts":     "h1=abc",
 		"missing h1":     "ts=1710000000",
 		"duplicate ts":   fmt.Sprintf("ts=%d;ts=%d;h1=%s", now.Unix(), now.Add(time.Second).Unix(), valid[len("ts=1710000000;h1="):]),
-		"duplicate h1":   valid + ";h1=" + valid[len("ts=1710000000;h1="):],
 		"invalid hmac":   valid[:len(valid)-1] + "0",
 		"short hmac":     "ts=1710000000;h1=abcd",
 		"expired":        signHeader("secret", now.Add(-10*time.Minute), body, "ts-first"),

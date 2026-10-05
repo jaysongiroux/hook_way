@@ -6,22 +6,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/jaysongiroux/hook_way/internal/replay/problem"
+	"github.com/jaysongiroux/hook_way/internal/problem"
 )
 
 // Scope is one permission a key can hold.
 type Scope string
 
 const (
-	ScopeCapture Scope = "capture"
-	ScopeRead    Scope = "read"
-	ScopePayload Scope = "payload"
-	ScopeRetry   Scope = "retry"
-	ScopeMetrics Scope = "metrics"
+	// MaxTokenBytes bounds credentials in configuration and incoming requests.
+	MaxTokenBytes       = 256
+	ScopeCapture  Scope = "capture"
+	ScopeRead     Scope = "read"
+	ScopePayload  Scope = "payload"
+	ScopeRetry    Scope = "retry"
+	ScopeMetrics  Scope = "metrics"
 )
 
 // Scopes lists every scope in documentation order.
@@ -39,9 +40,10 @@ type Key struct {
 // Failure reasons passed to the onFailure callback (the auth_failures_total
 // reason label).
 const (
-	ReasonMissing = "missing"
-	ReasonInvalid = "invalid"
-	ReasonScope   = "scope"
+	ReasonMissing   = "missing"
+	ReasonInvalid   = "invalid"
+	ReasonScope     = "scope"
+	ReasonThrottled = "throttled"
 )
 
 type credential struct {
@@ -54,13 +56,17 @@ type credential struct {
 type Authenticator struct {
 	keys      []credential
 	onFailure func(reason string)
+	failures  *failureLimiter
 }
 
 // New builds an Authenticator. onFailure, when non-nil, is called with a
 // Reason* constant for every rejected request.
 func New(keys []Key, onFailure func(reason string)) *Authenticator {
-	a := &Authenticator{onFailure: onFailure}
+	a := &Authenticator{onFailure: onFailure, failures: newFailureLimiter()}
 	for _, k := range keys {
+		if len(k.Token) == 0 || len(k.Token) > MaxTokenBytes {
+			continue
+		}
 		c := credential{name: k.Name, digest: sha256.Sum256([]byte(k.Token)), scopes: map[Scope]bool{}}
 		for _, s := range k.Scopes {
 			c.scopes[s] = true
@@ -72,43 +78,65 @@ func New(keys []Key, onFailure func(reason string)) *Authenticator {
 
 type actorKey struct{}
 
+// Identity is the authenticated key identity, never the bearer credential.
+type Identity struct {
+	Name   string
+	Scopes []Scope
+}
+
+// Principal returns a copy so handlers cannot mutate authenticated scopes.
+func Principal(ctx context.Context) Identity {
+	identity, _ := ctx.Value(actorKey{}).(Identity)
+	identity.Scopes = append([]Scope{}, identity.Scopes...)
+	return identity
+}
+
 // Actor returns the name of the key that authenticated the request, or ""
 // outside Require.
 func Actor(ctx context.Context) string {
-	name, _ := ctx.Value(actorKey{}).(string)
-	return name
-}
-
-// AnyKeyHas reports whether at least one key holds scope.
-func (a *Authenticator) AnyKeyHas(scope Scope) bool {
-	for _, k := range a.keys {
-		if k.scopes[scope] {
-			return true
-		}
-	}
-	return false
+	return Principal(ctx).Name
 }
 
 // Require admits a request whose bearer token belongs to a key holding scope.
 // Tokens are compared as SHA-256 digests in constant time against every key,
-// so neither the match position nor the token length leaks through timing.
+// so comparisons do not leak stored secret contents, lengths or match position.
+// Parsing and hashing the bounded submitted token can depend on its length.
 func (a *Authenticator) Require(scope Scope, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r.Header.Get("Authorization"))
-		if !ok {
-			a.deny(w, ReasonMissing, http.StatusUnauthorized, "unauthorized", "a bearer token is required")
-			return
+		if len(r.Header.Values("Authorization")) != 1 {
+			ok = false
 		}
+		// Always scan all configured digests before consulting failure limits.
 		key := a.match(token)
-		if key == nil {
-			a.deny(w, ReasonInvalid, http.StatusUnauthorized, "unauthorized", "the bearer token is not recognized")
+		if !ok || key == nil {
+			reason := ReasonInvalid
+			if !ok {
+				reason = ReasonMissing
+			}
+			if wait := a.failures.reject(r.RemoteAddr); wait > 0 {
+				w.Header().Set("Retry-After", retryAfter(wait))
+				a.deny(w, ReasonThrottled, http.StatusTooManyRequests, "auth_throttled", "too many failed authentication attempts")
+				return
+			}
+			if a.onFailure != nil {
+				a.onFailure(reason)
+			}
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			problem.Write(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 			return
 		}
 		if !key.scopes[scope] {
-			a.deny(w, ReasonScope, http.StatusForbidden, "forbidden", fmt.Sprintf("key %q lacks the %s scope", key.name, scope))
+			a.deny(w, ReasonScope, http.StatusForbidden, "forbidden", "insufficient permission")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, key.name)))
+		identity := Identity{Name: key.name, Scopes: []Scope{}}
+		for _, s := range Scopes() {
+			if key.scopes[s] {
+				identity.Scopes = append(identity.Scopes, s)
+			}
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorKey{}, identity)))
 	})
 }
 
@@ -127,9 +155,10 @@ func (a *Authenticator) deny(w http.ResponseWriter, reason string, status int, c
 	if a.onFailure != nil {
 		a.onFailure(reason)
 	}
-	if status == http.StatusUnauthorized {
+	switch status {
+	case http.StatusUnauthorized:
 		w.Header().Set("WWW-Authenticate", "Bearer")
-	} else {
+	case http.StatusForbidden:
 		w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope"`)
 	}
 	problem.Write(w, status, code, detail)
@@ -143,5 +172,8 @@ func bearerToken(header string) (string, bool) {
 		return "", false
 	}
 	token := strings.TrimSpace(header[len(prefix):])
-	return token, token != ""
+	if token == "" || len(token) > MaxTokenBytes || strings.ContainsAny(token, " \t\r\n") {
+		return "", false
+	}
+	return token, true
 }

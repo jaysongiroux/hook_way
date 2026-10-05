@@ -25,3 +25,9 @@ test("rejects a non-mapping replay document", () => {
   expect(() => fromReplayYaml("# comments only\n")).toThrow(/must be a YAML mapping/);
   expect(() => fromReplayYaml("null\n")).toThrow(/must be a YAML mapping/);
 });
+
+
+test("export removes the retired console serving setting and preserves API configuration", () => {
+  const imported = fromReplayYaml("console:\n  enabled: true\nserver:\n  addr: :8080\n  allowed_origins:\n    - https://console.example\n");
+  expect(parse(toReplayYaml(imported))).toEqual({ server: { addr: ":8080", allowed_origins: ["https://console.example"] } });
+});

@@ -4,7 +4,7 @@ import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { theme } from "../theme";
 import { Marketing } from "./Marketing";
-import { DOC_LINKS, GITHUB_REPO } from "./links";
+import { DOC_LINKS, GITHUB_REPO, repoBlob } from "./links";
 import { destinationPresentation } from "./destinationIdentity";
 
 function wrap() {
@@ -46,7 +46,10 @@ test("the hero states what Hookway does and offers both calls to action", () => 
 test("features lead with publish and verify, then bodies, branch, and transform", () => {
   wrap();
   const section = screen
-    .getByRole("heading", { level: 2, name: "From incoming webhook to delivered event" })
+    .getByRole("heading", {
+      level: 2,
+      name: "From incoming webhook to delivered event",
+    })
     .closest("section");
   expect(section).not.toBeNull();
   const text = section!.textContent ?? "";
@@ -71,17 +74,17 @@ test("features lead with publish and verify, then bodies, branch, and transform"
   expect(text).toMatch(/exact tokens/);
   expect(text).toMatch(/named connections/i);
   expect(text).toMatch(/DynamoDB/);
-  expect(text).toMatch(/JSON schemas/);
+  expect(text).toMatch(/required JSON fields, value types and formats/);
   expect(text).toMatch(/ordered XML/);
   expect(text).toMatch(/batch size, concurrency/);
   expect(text).toMatch(/managed credential profiles/);
   expect(text).not.toMatch(/HMAC, static header, or JWT/);
 });
 
-test("the destination marquee states the Temporal YAML limitation", () => {
+test("the destination marquee explains Temporal workflow delivery", () => {
   wrap();
   expect(screen.getByRole("main")).toHaveTextContent(
-    /Temporal workflow settings are not yet exposed in standalone YAML/,
+    /Start Temporal workflows; your workers process the events/,
   );
 });
 
@@ -125,14 +128,18 @@ test("the overview uses concrete product language instead of generic hype", () =
 test("performance measurements include hardware and synthetic workload limits", () => {
   wrap();
   const section = screen
-    .getByRole("heading", { level: 2, name: "Control load, monitor delivery, and recover failures" })
+    .getByRole("heading", {
+      level: 2,
+      name: "Control load, monitor delivery, and recover failures",
+    })
     .closest("section");
   expect(section).toHaveTextContent(/measured: 5,000 requests\/s/i);
   expect(section).toHaveTextContent(/three 20-second bursts on two replicas/i);
   expect(section).toHaveTextContent(/2 vCPU and 4 GiB/i);
   expect(section).toHaveTextContent(/synthetic destination/i);
-  expect(screen.getByRole("link", { name: "Results and methodology" }))
-    .toHaveAttribute("href", `${GITHUB_REPO}/blob/main/docs/performance.md`);
+  expect(
+    screen.getByRole("link", { name: "Results and methodology" }),
+  ).toHaveAttribute("href", repoBlob("docs/evidence/performance.md"));
 });
 
 test("a real config sample is shown rather than described", () => {
@@ -142,6 +149,26 @@ test("a real config sample is shown rather than described", () => {
   expect(sample.textContent).toContain("flows:");
   expect(sample.textContent).toContain("hmac_sha256");
   expect(sample.textContent).toContain("destinations:");
+});
+
+test("replay operations explain recovery, scoped access and the public builder", () => {
+  wrap();
+  const section = screen
+    .getByRole("heading", {
+      level: 2,
+      name: "Recover missed deliveries with the replay console",
+    })
+    .closest("section");
+  expect(section).toHaveTextContent(/sender got a success response/i);
+  expect(section).toHaveTextContent(/without rerunning the whole flow/i);
+  expect(section).toHaveTextContent(/scoped API key/i);
+  expect(section).toHaveTextContent(/without signing in/i);
+  expect(
+    screen.getByRole("link", { name: "Deploy the replay console" }),
+  ).toHaveAttribute("href", repoBlob("docs/operations/replay-console.md"));
+  expect(
+    screen.getByRole("img", { name: /replay console showing/i }),
+  ).toHaveAttribute("loading", "lazy");
 });
 
 test("every destination type the builder supports is listed", () => {
@@ -176,10 +203,11 @@ test("the page does not restate the documentation it links to", () => {
   // Measured on the content region, since Mantine injects a stylesheet into
   // the render container.
   const copy = screen.getByRole("main").textContent!;
-  // It exists to keep the page a signpost: docs/configuration.md alone is
+  // It exists to keep the page a signpost: docs/reference/configuration.md alone is
   // ~95KB, and the site must not duplicate it.
   //
   // Include the ingress-adapter guide and its native capabilities, while
-  // retaining a compact overview rather than duplicating the reference.
-  expect(copy.length).toBeLessThan(8000);
+  // retaining a compact overview, including the replay investigation walkthrough,
+  // rather than duplicating the reference.
+  expect(copy.length).toBeLessThan(10000);
 });

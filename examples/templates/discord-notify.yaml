@@ -1,3 +1,8 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # TEMPLATE: post an event summary to a Discord webhook.
 #
 # This file has two jobs. It is a complete, runnable config so that
@@ -49,7 +54,7 @@ flows:
     nodes:
       - {id: in, type: http_trigger, description: "Where the source system delivers its webhook.", path: /webhooks/discord-notify, methods: [POST]}
       - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
-      - {id: rl, type: rate_limit, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
       - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
       - id: auth
         type: auth
@@ -57,7 +62,7 @@ flows:
         scheme: hmac_sha256_hex
         secret_ref: {provider: env, name: DISCORD_SOURCE_SECRET, refresh: 15m, overlap: 5m}
         signature_header: X-Hub-Signature-256
-      - {id: replay, type: replay_guard, description: "Drops a body already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
+      - {id: replay, type: replay_guard, store: local, description: "Drops a body already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
       - {id: env, type: envelope, description: "Decodes the JSON event.", body_format: json}
       - id: fmt
         type: code

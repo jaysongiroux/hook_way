@@ -16,6 +16,7 @@ func Lint(cfg Config) []config.ValidationIssue {
 	for _, name := range sortedKeys(cfg.Flows) {
 		issues = append(issues, lintFlow(name, cfg)...)
 	}
+	issues = append(issues, deliveryGuaranteeIssues(cfg)...)
 	if cfg.Replay.Configured && cfg.Replay.TLS.InsecureSkipVerify {
 		issues = append(issues, cfgWarning("replay.tls.insecure_skip_verify",
 			"certificate verification is disabled for uploads to the replay service",
@@ -55,8 +56,8 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			if err == nil && strings.TrimSpace(opts.Timeout) == "" {
 				issues = append(issues, cfgWarning(
 					fmt.Sprintf("%s.nodes[%d].timeout", prefix, i),
-					"code node has no explicit timeout; the 1s default applies and goja has no memory cap (docs/security.md#code-node)",
-					"set timeout explicitly; see docs/security.md#code-node",
+					"code node has no explicit timeout; the 1s default applies and goja has no memory cap (docs/reference/security.md#code-node)",
+					"set timeout explicitly; see docs/reference/security.md#code-node",
 				))
 			}
 		case "read_body":
@@ -278,30 +279,14 @@ func bodyFormatIssues(prefix string, fc graph.FlowConfig) []config.ValidationIss
 			continue
 		}
 		format := cur.format
-		switch node.typ {
-		case "envelope":
-			format = "json" // the node's own default when body_format is unset
-			if opts, err := decodeOptions[EnvelopeOptions](node.cfg); err == nil && opts.BodyFormat != "" {
-				format = opts.BodyFormat
-			}
-		case "filter", "switch", "if_else":
-			if !reported[cur.id] {
-				if issue, bad := conditionBodyFormatIssue(prefix, node.index, cur.id, node.typ, format, node.cfg); bad {
-					reported[cur.id] = true
-					issues = append(issues, issue)
-				}
-			}
-		case "batch":
-			if format != "json" && !reported[cur.id] {
+		def := validationCatalog[node.typ]
+		if def.bodyFormat != nil {
+			format = def.bodyFormat(node.cfg)
+		}
+		if !reported[cur.id] && def.checkBodyFormat != nil {
+			if issue, bad := def.checkBodyFormat(prefix, node.index, cur.id, format, node.cfg); bad {
 				reported[cur.id] = true
-				issues = append(issues, cfgIssue(prefix+".nodes."+cur.id, "batch requires a JSON envelope", "set body_format: json"))
-			}
-		case "transform":
-			if !reported[cur.id] {
-				if issue, bad := transformBodyFormatIssue(prefix, node.index, cur.id, format, node.cfg); bad {
-					reported[cur.id] = true
-					issues = append(issues, issue)
-				}
+				issues = append(issues, issue)
 			}
 		}
 		for _, next := range out[cur.id] {
@@ -311,13 +296,30 @@ func bodyFormatIssues(prefix string, fc graph.FlowConfig) []config.ValidationIss
 	return issues
 }
 
+type bodyFormatCheck func(prefix string, index int, id, format string, nc graph.NodeConfig) (config.ValidationIssue, bool)
+
+func envelopeBodyFormat(nc graph.NodeConfig) string {
+	if opts, err := decodeOptions[EnvelopeOptions](nc); err == nil && opts.BodyFormat != "" {
+		return opts.BodyFormat
+	}
+	return "json"
+}
+
+func jsonBodyFormatIssue(prefix string, _ int, id, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
+	if format == "json" {
+		return config.ValidationIssue{}, false
+	}
+	return cfgIssue(prefix+".nodes."+id, nc.Type+" requires a JSON envelope", "set body_format: json"), true
+}
+
 // conditionBodyFormatIssue rejects a body condition that can never resolve.
 // Only body_format: raw is unreadable now — json walks dotted keys and xml
 // walks dotted element names. It covers every node type that routes on a
 // condition, because the failure is the same one each time: the body is empty,
 // so the condition is uniformly false and the node always takes its
 // no-match path.
-func conditionBodyFormatIssue(prefix string, index int, id, typ, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
+func conditionBodyFormatIssue(prefix string, index int, id, format string, nc graph.NodeConfig) (config.ValidationIssue, bool) {
+	typ := nc.Type
 	if format != "raw" {
 		return config.ValidationIssue{}, false
 	}

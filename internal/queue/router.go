@@ -85,6 +85,11 @@ func (r *RoutingPublisher) Close() error {
 			errs = append(errs, fmt.Errorf("%s: %w", id, err))
 		}
 	}
+	if err := errors.Join(errs...); errors.Is(err, ErrWebhookDrainTimeout) {
+		// Undrained engines can still dead-letter into these publishers. The
+		// process shutdown must fail without closing their dependencies.
+		return err
+	}
 	for _, id := range otherIDs {
 		if err := r.publishers[id].Close(); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", id, err))

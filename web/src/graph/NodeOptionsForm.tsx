@@ -10,8 +10,11 @@ import {
   type OptionsProps,
 } from "./FormPresentation";
 import { useContext } from "react";
-import { SimpleOptionsForm, SIMPLE_NODE_TYPES } from "./SimpleOptionsForm";
+import { SimpleOptionsForm } from "./SimpleOptionsForm";
+import { nodeDescriptor } from "./nodeDescriptors";
 import { NODE_SCHEMAS, schemaProperties } from "./nodeSchema";
+import { JSONValidationOptions } from "./JSONValidationOptions";
+import { ProtectionOptionsForm } from "./ProtectionOptionsForm";
 
 export function NodeOptionsForm(props: OptionsProps) {
   const known = Object.keys(
@@ -50,12 +53,12 @@ export function NodeOptionsForm(props: OptionsProps) {
 function NodeOptionsFields(props: OptionsProps) {
   const open = useContext(WorkspaceActions);
   const { nodeType } = props;
-  if (nodeType === "auth") return <AuthOptionsForm {...props} />;
-  if (
-    ["transform", "envelope", "batch", "filter", "if_else", "switch"].includes(
-      nodeType,
-    )
-  )
+  const editor = nodeDescriptor(nodeType)?.editor ?? "schema";
+  if (editor === "auth") return <AuthOptionsForm {...props} />;
+  if (editor === "protection") return <ProtectionOptionsForm {...props} />;
+  if (editor === "json-validation")
+    return <JSONValidationOptions {...props} schemaField="schema" />;
+  if (editor === "processing")
     return (
       <ProcessingOptionsForm
         {...props}
@@ -71,27 +74,19 @@ function NodeOptionsFields(props: OptionsProps) {
         )}
       />
     );
-  if (nodeType === "publish") return <PublishOptionsForm {...props} />;
-  if (nodeType === "respond") return <RespondOptionsForm {...props} />;
-  if (nodeType === "http_request") return <HTTPOptionsForm {...props} />;
-  if (nodeType === "route" || nodeType === "register_route")
-    return <RoutingOptionsForm {...props} />;
-  if (nodeType === "no_auth")
+  if (editor === "publish") return <PublishOptionsForm {...props} />;
+  if (editor === "respond") return <RespondOptionsForm {...props} />;
+  if (editor === "http") return <HTTPOptionsForm {...props} />;
+  if (editor === "routing") return <RoutingOptionsForm {...props} />;
+  if (editor === "public")
     return (
       <Alert color="yellow" title="Public access">
         No options required. Connect Read request body before this node. Requests continue without checking the sender’s identity.
       </Alert>
     );
-  if (SIMPLE_NODE_TYPES.includes(nodeType))
-    return <SimpleOptionsForm {...props} />;
+  if (editor === "simple") return <SimpleOptionsForm {...props} />;
   return (
     <Stack gap="sm">
-      {nodeType === "lookup" && (
-        <Alert color="yellow" title="Provider configuration">
-          Provider names depend on the runtime's registered lookup providers.
-          Choose a provider your deployment supports.
-        </Alert>
-      )}
       <Fields
         {...props}
         fields={Object.keys(schemaProperties(NODE_SCHEMAS[nodeType]?.schema))}

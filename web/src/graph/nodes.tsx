@@ -1,9 +1,10 @@
+import { nodeSummary } from "./nodeDescriptors";
 import { Handle, Position, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { Group, Paper, Stack, Text } from "@mantine/core";
 import { destinationTypeOf, NodeGlyph } from "./nodeIcon";
 import type { CSSProperties } from "react";
 import type { HookwayNode } from "./model";
-import { labelledPorts, NODE_SCHEMAS, nodeHasOnError, nodeLabel } from "./nodeSchema";
+import { labelledPorts, nodeMeta, nodeHasOnError, nodeLabel } from "./nodeSchema";
 import { HANDLE_IN, HANDLE_ON_ERROR, HANDLE_OUT } from "./connection";
 import { useGraphStore } from "./store";
 import { DARK, NODE, NODE_SIZE, PORT } from "../tokens";
@@ -69,7 +70,7 @@ const DESCRIPTION: CSSProperties = {
 };
 
 export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
-  const meta = NODE_SCHEMAS[data.nodeType];
+  const meta = nodeMeta(data.nodeType, data.options);
   const input = meta?.input ?? "Envelope";
   const output = meta?.output ?? "Envelope";
   const color = PORT[output] ?? NODE.border.endpoint;
@@ -158,20 +159,6 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
       )}
     </Paper>
   );
-}
-
-function nodeSummary(type: string, options: Record<string, unknown>): string {
-  if (type === "http_trigger") return String(options.path ?? "");
-  if (type === "publish") return [options.destination, options.target].filter(Boolean).map(String).join(" → ");
-  if (type === "auth") return String(options.scheme ?? "");
-  if (type === "filter") {
-    const conditions = Array.isArray(options.conditions) ? options.conditions : [];
-    const first = conditions[0] as { path?: string; operator?: string } | undefined;
-    return first?.path ? `${first.path} ${first.operator ?? ""}`.trim() : "";
-  }
-  if (type === "http_request") return String(options.url ?? "");
-  if (type === "respond") return options.passthrough ? "passthrough" : String(options.status ?? "");
-  return "";
 }
 
 export const nodeTypes: NodeTypes = { flow: FlowNode };

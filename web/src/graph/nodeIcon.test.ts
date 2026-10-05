@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { destinationPresentation } from "../marketing/destinationIdentity";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import { NODE_TYPES } from "./nodeSchema";
 import { destinationTypeOf, nodeGlyph, nodeTypeIcon } from "./nodeIcon";
 

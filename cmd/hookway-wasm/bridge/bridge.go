@@ -10,6 +10,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/configapi"
 	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
+	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 // Validate validates raw YAML config and returns the JSON encoding of
@@ -67,4 +68,32 @@ func ReplaySchema() (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// ContractInfo identifies the exact browser bridge contract and implemented
+// capabilities. Keep this sourced from uicontract, also used by editor HTTP.
+func ContractInfo() (string, error) {
+	b, err := json.Marshal(uicontract.Info())
+	return string(b), err
+}
+
+// ReplayActionValidate checks retry and resolution inputs without consulting secrets,
+// authentication, or replay store state. The API is still the final authority.
+func ReplayActionValidate(raw string) (string, error) {
+	var input uicontract.ReplayActionInput
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(uicontract.ValidateReplayAction(input))
+	return string(b), err
+}
+
+// JSONSampleValidate runs the same pure validation contract as the editor API.
+func JSONSampleValidate(raw string) (string, error) {
+	input, err := uicontract.DecodeJSONSampleInput([]byte(raw))
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(uicontract.ValidateJSONSample(input))
+	return string(b), err
 }

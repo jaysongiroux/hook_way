@@ -42,10 +42,12 @@ func clonePayload(p Payload) (out Payload, err error) {
 		return cloneRaw(v), nil
 	case Verified:
 		v.Raw = cloneRaw(v.Raw)
+		v.Reservations = maps.Clone(v.Reservations)
 		return v, nil
 	case Envelope:
 		v.Publish = deliverymeta.Clone(v.Publish)
 		v.V.Raw = cloneRaw(v.V.Raw)
+		v.V.Reservations = maps.Clone(v.V.Reservations)
 		v.Vars = maps.Clone(v.Vars)
 		v.MessageAttributes = maps.Clone(v.MessageAttributes)
 		b, err := cloneBody(v.Body, 0)

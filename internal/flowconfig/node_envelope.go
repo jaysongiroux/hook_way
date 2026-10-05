@@ -1,6 +1,7 @@
 package flowconfig
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,7 +29,9 @@ func (c CapturedEvent) CloneBody() (any, error) {
 		return nil, err
 	}
 	var event webhook.Envelope
-	if err := json.Unmarshal(b, &event); err != nil {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	if err := d.Decode(&event); err != nil {
 		return nil, err
 	}
 	event.RawBody = slices.Clone(c.Event.RawBody)

@@ -11,67 +11,76 @@ import (
 )
 
 type Metrics struct {
-	admissionWaiting         prometheus.Gauge
-	admissionWaits           *prometheus.CounterVec
-	admissionWaitDuration    *prometheus.HistogramVec
-	batch                    *prometheus.CounterVec
-	credentials              *prometheus.CounterVec
-	routing                  *prometheus.CounterVec
-	registry                 *prometheus.Registry
-	httpRequests             *prometheus.CounterVec
-	authFailures             *prometheus.CounterVec
-	rateLimited              *prometheus.CounterVec
-	saturated                *prometheus.CounterVec
-	forbidden                *prometheus.CounterVec
-	duplicateRejected        *prometheus.CounterVec
-	filtered                 *prometheus.CounterVec
-	variableUnresolved       *prometheus.CounterVec
-	variableLookup           *prometheus.CounterVec
-	variableLookupDuration   *prometheus.HistogramVec
-	loopRejected             *prometheus.CounterVec
-	publishTotal             *prometheus.CounterVec
-	publishDuration          *prometheus.HistogramVec
-	messagesPublished        *prometheus.CounterVec
-	requestDuration          *prometheus.HistogramVec
-	bodyBytes                *prometheus.HistogramVec
-	endpointInfo             *prometheus.GaugeVec
-	destinationInfo          *prometheus.GaugeVec
-	inflight                 prometheus.Gauge
-	admitted                 *prometheus.GaugeVec
-	admissionCapacity        prometheus.Gauge
-	admissionServers         *prometheus.GaugeVec
-	configLoadFailures       *prometheus.CounterVec
-	rabbitMQReconnects       prometheus.Counter
-	rabbitMQConfirms         prometheus.Counter
-	rabbitMQRetries          prometheus.Counter
-	rabbitMQDLQPublishes     prometheus.Counter
-	rabbitMQUnroutable       *prometheus.CounterVec
-	redisPubSubNoSubscribers *prometheus.CounterVec
-	webhookDelivery          *prometheus.CounterVec
-	webhookRetries           *prometheus.CounterVec
-	webhookDropped           *prometheus.CounterVec
-	webhookDeadLetter        *prometheus.CounterVec
-	webhookDeadLetterFailure *prometheus.CounterVec
-	webhookQueueDepth        *prometheus.GaugeVec
-	webhookQueueCapacity     *prometheus.GaugeVec
-	destinationReady         *prometheus.GaugeVec
-	panics                   *prometheus.CounterVec
-	buildInfo                *prometheus.GaugeVec
-	compensationFailed       *prometheus.CounterVec
-	flowOutcomes             *prometheus.CounterVec
-	nodeTotal                *prometheus.CounterVec
-	nodeDuration             *prometheus.HistogramVec
-	secretRefreshFailures    *prometheus.CounterVec
-	captureTotal             *prometheus.CounterVec
-	captureDropped           *prometheus.CounterVec
-	captureBufferBytes       prometheus.Gauge
-	controlRuns              *prometheus.CounterVec
-	controlInflight          prometheus.Gauge
-	runtimeRegistered        bool
+	protectionOperations      *prometheus.CounterVec
+	protectionDuration        *prometheus.HistogramVec
+	protectionPool            *prometheus.GaugeVec
+	protectionPoolWait        *prometheus.CounterVec
+	protectionReady           *prometheus.GaugeVec
+	protectionCleanup         *prometheus.CounterVec
+	protectionDeleted         *prometheus.CounterVec
+	protectionCleanupDuration *prometheus.HistogramVec
+	admissionWaiting          prometheus.Gauge
+	admissionWaits            *prometheus.CounterVec
+	admissionWaitDuration     *prometheus.HistogramVec
+	batch                     *prometheus.CounterVec
+	credentials               *prometheus.CounterVec
+	routing                   *prometheus.CounterVec
+	registry                  *prometheus.Registry
+	httpRequests              *prometheus.CounterVec
+	authFailures              *prometheus.CounterVec
+	rateLimited               *prometheus.CounterVec
+	saturated                 *prometheus.CounterVec
+	forbidden                 *prometheus.CounterVec
+	duplicateRejected         *prometheus.CounterVec
+	filtered                  *prometheus.CounterVec
+	variableUnresolved        *prometheus.CounterVec
+	variableLookup            *prometheus.CounterVec
+	variableLookupDuration    *prometheus.HistogramVec
+	loopRejected              *prometheus.CounterVec
+	publishTotal              *prometheus.CounterVec
+	publishDuration           *prometheus.HistogramVec
+	messagesPublished         *prometheus.CounterVec
+	requestDuration           *prometheus.HistogramVec
+	bodyBytes                 *prometheus.HistogramVec
+	endpointInfo              *prometheus.GaugeVec
+	destinationInfo           *prometheus.GaugeVec
+	inflight                  prometheus.Gauge
+	admitted                  *prometheus.GaugeVec
+	admissionCapacity         prometheus.Gauge
+	admissionServers          *prometheus.GaugeVec
+	configLoadFailures        *prometheus.CounterVec
+	rabbitMQReconnects        prometheus.Counter
+	rabbitMQConfirms          prometheus.Counter
+	rabbitMQRetries           prometheus.Counter
+	rabbitMQDLQPublishes      prometheus.Counter
+	rabbitMQUnroutable        *prometheus.CounterVec
+	redisPubSubNoSubscribers  *prometheus.CounterVec
+	webhookDelivery           *prometheus.CounterVec
+	webhookRetries            *prometheus.CounterVec
+	webhookDropped            *prometheus.CounterVec
+	webhookDeadLetter         *prometheus.CounterVec
+	webhookDeadLetterFailure  *prometheus.CounterVec
+	webhookQueueDepth         *prometheus.GaugeVec
+	webhookQueueCapacity      *prometheus.GaugeVec
+	destinationReady          *prometheus.GaugeVec
+	panics                    *prometheus.CounterVec
+	buildInfo                 *prometheus.GaugeVec
+	compensationFailed        *prometheus.CounterVec
+	flowOutcomes              *prometheus.CounterVec
+	nodeTotal                 *prometheus.CounterVec
+	nodeDuration              *prometheus.HistogramVec
+	secretRefreshFailures     *prometheus.CounterVec
+	captureTotal              *prometheus.CounterVec
+	captureDropped            *prometheus.CounterVec
+	captureBufferBytes        prometheus.Gauge
+	controlRuns               *prometheus.CounterVec
+	controlInflight           prometheus.Gauge
+	runtimeRegistered         bool
 }
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.initProtection()
 	m.admissionWaiting = prometheus.NewGauge(prometheus.GaugeOpts{Name: "hookway_admission_waiting_requests", Help: "HTTP handlers waiting for an execution slot; bodies have not been parsed."})
 	m.admissionWaits = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_admission_wait_total", Help: "Contended admission outcomes for configured bounded waiting queues."}, []string{"flow", "result"})
 	m.admissionWaitDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "hookway_admission_wait_duration_seconds", Help: "Time spent waiting for execution admission.", Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5}}, []string{"flow", "result"})
@@ -275,8 +284,8 @@ func New() *Metrics {
 		Help: "Redrives the control listener is running now.",
 	})
 	m.registry.MustRegister(
-		m.admissionWaiting, m.admissionWaits, m.admissionWaitDuration,
 		m.httpRequests, m.authFailures, m.rateLimited, m.saturated, m.forbidden, m.duplicateRejected, m.filtered, m.variableUnresolved, m.variableLookup, m.variableLookupDuration, m.loopRejected, m.routing, m.credentials, m.batch,
+		m.admissionWaiting, m.admissionWaits, m.admissionWaitDuration,
 		m.publishTotal, m.publishDuration, m.messagesPublished, m.requestDuration, m.bodyBytes,
 		m.endpointInfo, m.destinationInfo, m.inflight, m.admitted, m.admissionCapacity, m.admissionServers, m.configLoadFailures, m.rabbitMQReconnects,
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,

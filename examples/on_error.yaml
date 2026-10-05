@@ -1,9 +1,19 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # examples/on_error.yaml
 #
 # on_error is a reserved output port on nodes that can fail with a recoverable
 # input. If the node returns an error and an on_error edge exists, the flow
 # continues with that node's *input* (not its output) and the request succeeds
 # unless the error path itself fails.
+# Protection store failures/capacity/policy conflicts always fail closed with
+# 503. Quota/duplicate/missing-key recovery may render local responses, but may
+# never dispatch publish, HTTP, registration or child work. A replay guard is
+# retained after any earlier successful or uncertain outbound effect, including
+# an HTTP attempt followed by DLQ recovery.
 #
 # Type rule: the error-path target must consume the failing node's input port.
 # http_trigger, read_body, and no_auth cannot declare on_error. A node still
@@ -13,7 +23,7 @@
 # (401, 413, 429, 502, …) or 500. Filter on_no_match: drop is a successful
 # stop, not an error, so it does not take this port.
 #
-# See docs/configuration.md § Flows.
+# See docs/reference/configuration.md § Flows.
 
 server:
   addr: ":8080"
@@ -36,7 +46,7 @@ flows:
   github_ack_or_dlq:
     nodes:
       - {id: in, type: http_trigger, description: "GitHub posts webhook deliveries here.", path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, description: "Caps inbound traffic before any body is read.", rpm: 60}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound traffic before any body is read.", rpm: 60}
       - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
       - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
@@ -50,7 +60,7 @@ flows:
   proxy_or_502:
     nodes:
       - {id: in, type: http_trigger, description: "Accepts any method under the proxy prefix.", path: "/proxy/{rest...}", methods: [ANY]}
-      - {id: rl, type: rate_limit, description: "Caps proxy traffic before any body is read.", rpm: 60}
+      - {id: rl, type: rate_limit, store: local, description: "Caps proxy traffic before any body is read.", rpm: 60}
       - {id: body, type: read_body, description: "Buffers the body so it can be forwarded upstream.", max_bytes: 10485760, allow_empty: true}
       - {id: auth, type: auth, description: "Compares the inbound X-Auth header to the shared token.", scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
       - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
@@ -64,7 +74,7 @@ flows:
   rate_or_429:
     nodes:
       - {id: in, type: http_trigger, description: "Endpoint with a deliberately tight rate limit.", path: /webhooks/limited, methods: [POST]}
-      - {id: rl, type: rate_limit, description: "One request per burst; the rest take the error port.", rpm: 60, burst: 1, key_by: source_ip}
+      - {id: rl, type: rate_limit, store: local, description: "One request per burst; the rest take the error port.", rpm: 60, burst: 1, key_by: source_ip}
       - {id: body, type: read_body, description: "Normal path: read the accepted request body.", max_bytes: 1048576}
       - {id: auth, type: no_auth, description: "No signature to check on this endpoint."}
       - {id: env, type: envelope, description: "Builds the JSON envelope for the accepted request.", body_format: json}

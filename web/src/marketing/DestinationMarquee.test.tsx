@@ -4,7 +4,10 @@ import { MantineProvider } from "@mantine/core";
 import { DEST_TYPES } from "../graph/nodeSchema";
 import { theme } from "../theme";
 import { DestinationMarquee } from "./DestinationMarquee";
-import { DESTINATION_PRESENTATIONS, destinationPresentation } from "./destinationIdentity";
+import {
+  DESTINATION_PRESENTATIONS,
+  destinationPresentation,
+} from "./destinationIdentity";
 
 function wrap() {
   return render(
@@ -16,11 +19,15 @@ function wrap() {
 
 test("the marquee is driven by the complete destination registry", () => {
   wrap();
-  const region = screen.getByRole("region", { name: `Declare once in YAML. Publish to ${DEST_TYPES.length} destination types.` });
+  const region = screen.getByRole("region", {
+    name: `Send events to ${DEST_TYPES.length} destination types.`,
+  });
   const list = within(region).getByRole("list");
   expect(within(list).getAllByRole("listitem")).toHaveLength(DEST_TYPES.length);
   for (const type of DEST_TYPES) {
-    expect(within(list).getByText(destinationPresentation(type).label)).toBeInTheDocument();
+    expect(
+      within(list).getByText(destinationPresentation(type).label),
+    ).toBeInTheDocument();
   }
 });
 
@@ -38,17 +45,21 @@ test("each AWS destination is told apart by its icon, not just its label", () =>
   expect(icons.size, "AWS destinations share a generic mark").toBe(aws.length);
 });
 
-test("the marquee states that Temporal workflow settings are not in standalone YAML", () => {
+test("the marquee explains the Temporal worker boundary", () => {
   wrap();
   const region = screen.getByRole("region", {
-    name: `Declare once in YAML. Publish to ${DEST_TYPES.length} destination types.`,
+    name: `Send events to ${DEST_TYPES.length} destination types.`,
   });
-  expect(region).toHaveTextContent(/Temporal workflow settings are not yet exposed in standalone YAML/);
+  expect(region).toHaveTextContent(
+    /Start Temporal workflows; your workers process the events/,
+  );
 });
 
 test("the repeated track is hidden from assistive technology", () => {
   const { container } = wrap();
-  const duplicate = container.querySelector('[aria-hidden="true"].hookway-marquee-group');
+  const duplicate = container.querySelector(
+    '[aria-hidden="true"].hookway-marquee-group',
+  );
   expect(duplicate).toBeInTheDocument();
   expect(container.querySelectorAll("svg")).toHaveLength(DEST_TYPES.length * 2);
 });

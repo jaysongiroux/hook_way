@@ -8,7 +8,7 @@ func TestReviewRuntimeRejectsSchemaInvalidOptions(t *testing.T) {
 		body string
 	}{
 		{"loop_guard", "max_hops: -1\n"},
-		{"rate_limit", "rpm: 60\nburst: -1\n"},
+		{"rate_limit", "store: test\nrpm: 60\nburst: -1\n"},
 		{"replay_guard", "max_entries: -1\n"},
 		{"lookup", "provider: dynamodb\nkey: id\ncache: {max_entries: -1}\n"},
 		{"code", "script: return input.body\nmax_input_bytes: -1\nmax_output_bytes: -1\nmax_call_stack: -1\n"},
@@ -17,7 +17,7 @@ func TestReviewRuntimeRejectsSchemaInvalidOptions(t *testing.T) {
 		{"auth", "scheme: header_exact\nsecret: value\nsource: {kind: header, key: ''}\n"},
 	}
 
-	r, err := NewRegistryWithOptions(RegistryOptions{})
+	r, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))
 	if err != nil {
 		t.Fatal(err)
 	}

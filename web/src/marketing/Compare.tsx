@@ -3,6 +3,7 @@ import { useDocumentTitle } from "@mantine/hooks";
 import { Link } from "react-router-dom";
 import {
   COMPARE_DIFFERS,
+  COMPARE_CHECKED_ON,
   COMPARE_INTRO,
   COMPARE_OUTPOST_NOTE,
   COMPARE_ROWS,
@@ -117,7 +118,7 @@ export function Compare() {
 
       <Section
         title="Feature and integration matrix"
-        lead="Cells summarise public documentation. Re-check the linked sources before relying on a cell in a purchase decision."
+        lead={`Checked ${COMPARE_CHECKED_ON}. Each cell links to its supporting documentation. Different delivery and storage boundaries are explained where they matter.`}
         background={DARK.recessed}
       >
         <Box component="aside" className="hookway-compare-differs" aria-labelledby="where-hookway-differs">
@@ -138,7 +139,7 @@ export function Compare() {
           </Box>
         </Box>
         <Text size="xs" c={DARK.muted} mb={8}>
-          Scroll sideways to compare. The capability column stays in view.
+          Scroll sideways to read each product's column.
         </Text>
         <Box
           className={COMPARE_TABLE_CLASS}
@@ -203,11 +204,20 @@ export function Compare() {
                           fw={650}
                           size="xs"
                         >
-                          {levelLabel(cell.level)}
+                          {cell.count !== undefined ? `${cell.count} ${cell.count === 1 ? "type" : "types"}` : levelLabel(cell.level)}
                         </Text>
                         <Text size="sm" mt={6} style={{ lineHeight: 1.45 }}>
                           {cell.detail}
                         </Text>
+                        <Anchor
+                          href={row.sources[c.id]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="xs"
+                          aria-label={`${c.name}: ${row.capability} documentation`}
+                        >
+                          Documentation
+                        </Anchor>
                       </Table.Td>
                     );
                   })}

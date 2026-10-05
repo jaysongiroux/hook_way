@@ -22,6 +22,7 @@ import (
 )
 
 const testFlowYAML = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -34,7 +35,7 @@ flows:
   github:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 60}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
       - {id: env, type: envelope, body_format: json}
@@ -179,6 +180,7 @@ func TestPanickingNodeReturns500(t *testing.T) {
 }
 
 const replayFlowYAML = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -191,16 +193,17 @@ flows:
   github:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: rl, type: rate_limit, store: test, rpm: 6000, burst: 6000}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
-      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: replay, type: replay_guard, store: test, ttl: 5m, max_entries: 100}
       - {id: env, type: envelope, body_format: json}
       - {id: out, type: publish, destination: primary, target: github-webhooks}
     edges: [in>rl, rl>body, body>auth, auth>replay, replay>env, env>out]
 `
 
 const filterDropReplayYAML = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -213,10 +216,10 @@ flows:
   github:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: rl, type: rate_limit, store: test, rpm: 6000, burst: 6000}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
-      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: replay, type: replay_guard, store: test, ttl: 5m, max_entries: 100}
       - {id: env, type: envelope, body_format: json}
       - {id: filt, type: filter, conditions: [{source: body, path: action, operator: eq, value: never}], on_no_match: drop}
       - {id: out, type: publish, destination: primary, target: github-webhooks}
@@ -232,7 +235,7 @@ func postSignedFlow(srv *FlowServer, body []byte) *httptest.ResponseRecorder {
 	return rec
 }
 
-func TestPublishFailureReleasesReservation(t *testing.T) {
+func TestUncertainPublishFailureRetainsReservation(t *testing.T) {
 	pub := &fakePublisher{err: errors.New("broker down")}
 	srv, err := NewFlowServer(loadFlowCfg(t, replayFlowYAML), pub, slog.Default(), nil)
 	if err != nil {
@@ -247,12 +250,8 @@ func TestPublishFailureReleasesReservation(t *testing.T) {
 	pub.err = nil
 	pub.mu.Unlock()
 	rec := postSignedFlow(srv, body)
-	if rec.Code == http.StatusConflict {
-		t.Fatal("retry after a publish failure was rejected 409: the reservation was not " +
-			"released, so the only recovery path for a failed publish is closed (I17)")
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("retry = %d, want 202", rec.Code)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("retry after uncertain publish = %d, want retained guard 409", rec.Code)
 	}
 }
 
@@ -299,6 +298,7 @@ func TestFilterSilentDropKeepsReservation(t *testing.T) {
 }
 
 const skipFailedFlowYAML = `
+state_stores: {test: {namespace: tests, memory: {}}}
 server:
   addr: ":8080"
   max_body_bytes: 1048576
@@ -316,10 +316,10 @@ flows:
     delivery_failure_policy: skip_failed
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 6000, burst: 6000}
+      - {id: rl, type: rate_limit, store: test, rpm: 6000, burst: 6000}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: testsecret, signature_header: X-Hub-Signature-256}
-      - {id: replay, type: replay_guard, ttl: 5m, max_entries: 100}
+      - {id: replay, type: replay_guard, store: test, ttl: 5m, max_entries: 100}
       - {id: env, type: envelope, body_format: json}
       - {id: out_a, type: publish, destination: primary, target: github-a}
       - {id: out_b, type: publish, destination: secondary, target: github-b}
@@ -372,7 +372,7 @@ func TestSkipFailedAllFailuresReturn503(t *testing.T) {
 	}
 }
 
-func TestSkipFailedPartialSuccessReleasesReservation(t *testing.T) {
+func TestSkipFailedPartialSuccessRetainsReservation(t *testing.T) {
 	pub := &fakePublisher{err: errors.New("secondary down"), errDestination: "secondary"}
 	srv, err := NewFlowServer(loadFlowCfg(t, skipFailedFlowYAML), pub, slog.Default(), nil)
 	if err != nil {
@@ -384,11 +384,8 @@ func TestSkipFailedPartialSuccessReleasesReservation(t *testing.T) {
 		t.Fatalf("first = %d %s", rec.Code, rec.Body.String())
 	}
 	rec := postSignedFlow(srv, body)
-	if rec.Code == http.StatusConflict {
-		t.Fatal("retry after skip_failed partial success was 409: the reservation was not released (I17)")
-	}
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("retry = %d, want 202", rec.Code)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("retry after accepted or uncertain destinations = %d, want retained guard 409", rec.Code)
 	}
 }
 
@@ -433,6 +430,7 @@ func TestPublishMessageAttributesReachQueueMessage(t *testing.T) {
 
 func TestBrokenFlowRegistersPathWith500Not404(t *testing.T) {
 	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1024}
 destinations:
   primary: {type: webhook, webhook: {url: "https://example.test"}}

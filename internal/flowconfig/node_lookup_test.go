@@ -3,6 +3,7 @@ package flowconfig
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -98,5 +99,27 @@ func TestLookupCacheBehaviourViaCountingProvider(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("provider calls = %d, want 1 (cache in resolver)", calls.Load())
+	}
+}
+
+func TestLookupBackendFailureIsRetryableAndSanitized(t *testing.T) {
+	node, err := newLookupNode("find", LookupOptions{Key: "constant", Fallback: "unsafe-default"}, func(context.Context, string) (string, bool, error) {
+		return "", false, errors.New("password=sensitive database diagnostic")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = node.Run(t.Context(), graph.Envelope{})
+	var ne graph.NodeError
+	if !errors.As(err, &ne) || ne.Status != 503 {
+		t.Fatalf("backend failure = %v, want 503", err)
+	}
+	if strings.Contains(err.Error(), "sensitive") {
+		t.Fatal("provider diagnostic leaked")
+	}
+	missing, _ := newLookupNode("find", LookupOptions{Key: "constant"}, func(context.Context, string) (string, bool, error) { return "", false, nil })
+	_, err = missing.Run(t.Context(), graph.Envelope{})
+	if !errors.As(err, &ne) || ne.Status != 400 {
+		t.Fatalf("missing key = %v, want 400", err)
 	}
 }

@@ -161,3 +161,23 @@ func TestEnvelopeCarriesRawBodyAndOrigHeadersInMemoryOnly(t *testing.T) {
 		t.Fatalf("json:\"-\" not honored: %s", j)
 	}
 }
+
+func TestEnvelopeJSONNumbersRemainExact(t *testing.T) {
+	raw := []byte(`{"id":9007199254740993,"fraction":0.123456789012345678901}`)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/exact", bytes.NewReader(raw))
+	env, err := BuildEnvelopeWithOptions(req, EnvelopeOptions{RawBody: raw, ReceivedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := env.Body.(map[string]any)
+	if body["id"] != json.Number("9007199254740993") || body["fraction"] != json.Number("0.123456789012345678901") {
+		t.Fatalf("numbers rounded: %#v", body)
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil || !bytes.Equal(encoded, []byte(`{"fraction":0.123456789012345678901,"id":9007199254740993}`)) {
+		t.Fatalf("numbers reencoded incorrectly: %s %v", encoded, err)
+	}
+	if !bytes.Equal(env.RawBody, raw) {
+		t.Fatal("raw input changed")
+	}
+}

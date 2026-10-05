@@ -34,7 +34,7 @@ export function Production() {
       </Bento>
       <Text size="sm" c={DARK.muted} mt="xl">
         {PERFORMANCE_SUMMARY}{" "}
-        <Anchor href={repoBlob("docs/performance.md")} target="_blank" rel="noopener noreferrer">
+        <Anchor href={repoBlob("docs/evidence/performance.md")} target="_blank" rel="noopener noreferrer">
           Results and methodology
         </Anchor>
         .

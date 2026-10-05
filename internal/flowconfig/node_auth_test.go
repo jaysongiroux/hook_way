@@ -251,7 +251,7 @@ func TestAuthRotationDoesNotRepeatUnavailableRepresentationWork(t *testing.T) {
 		var calls atomic.Int32
 		v := unavailableAuthVerifier{calls: &calls, err: tc.err}
 		n := &authNode{secrets: func(context.Context) ([][]byte, error) { return [][]byte{[]byte("first"), []byte("second")}, nil }, cached: map[string]auth.Verifier{"first": v, "second": v}}
-		if err := n.verify(context.Background(), auth.Input{}); !errors.Is(err, tc.err) || calls.Load() != tc.wantCalls {
+		if _, err := n.verifyIdentity(context.Background(), auth.Input{}); !errors.Is(err, tc.err) || calls.Load() != tc.wantCalls {
 			t.Fatalf("rotation result = %v, attempts = %d", err, calls.Load())
 		}
 	}

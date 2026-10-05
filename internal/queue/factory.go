@@ -528,12 +528,8 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 // destination of some endpoint-used webhook destination. The dead-letter level
 // is one deep only — DLQ targets are never webhook destinations.
 func destinationUsed(cfg config.Config, destinationID string) bool {
-	for _, endpoint := range cfg.Endpoints {
-		for _, route := range endpoint.DestinationRoutes() {
-			if endpoint.Enabled && route.Destination == destinationID {
-				return true
-			}
-		}
+	if endpointRoutesToDestination(cfg, destinationID) {
+		return true
 	}
 	for id, dest := range cfg.Destinations {
 		if dest.Type != "webhook" || dest.Webhook.DeadLetter.Destination != destinationID {
@@ -668,9 +664,15 @@ func collectQueues(cfg config.Config, destinationID string) []string {
 	return queues
 }
 
-func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
+// collectTargets shares route filtering, first-route deduplication and sorted
+// output. A nil deadLetter mapper excludes DLQs (Temporal and webhook); other
+// backends keep direct-route settings when a DLQ shares the same target name.
+func collectTargets[T any](cfg config.Config, destinationID string,
+	fromRoute func(config.EndpointConfig, config.ExpandedRoute) T, deadLetter func(string) T,
+	name func(T) string,
+) []T {
 	seen := map[string]struct{}{}
-	var targets []SQSTarget
+	var targets []T
 	for _, endpoint := range cfg.Endpoints {
 		if !endpoint.Enabled {
 			continue
@@ -679,225 +681,100 @@ func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
 			if route.Destination != destinationID {
 				continue
 			}
-			if _, ok := seen[route.Target]; ok {
-				continue
+			if _, exists := seen[route.Target]; !exists {
+				seen[route.Target] = struct{}{}
+				targets = append(targets, fromRoute(endpoint, route))
 			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, SQSTarget{
-				Attributes:          maps.Clone(route.BrokerAttributes),
-				QueueOwnerAccountID: route.SQSOptions.QueueOwnerAccountID,
-				Template:            routeMatcher(endpoint, route),
-				Name:                route.Target,
-				Create:              route.Create,
-				VisibilityTimeout:   route.SQSOptions.VisibilityTimeout,
-				MessageRetention:    route.SQSOptions.MessageRetention,
-				FIFO:                mapFIFO(route.FIFO),
-			})
 		}
 	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, SQSTarget{Name: t})
+	if deadLetter != nil {
+		for _, target := range deadLetterTargets(cfg, destinationID) {
+			if _, exists := seen[target]; !exists {
+				seen[target] = struct{}{}
+				targets = append(targets, deadLetter(target))
+			}
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	sort.Slice(targets, func(i, j int) bool { return name(targets[i]) < name(targets[j]) })
 	return targets
+}
+
+func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) SQSTarget {
+		return SQSTarget{
+			Attributes:          maps.Clone(route.BrokerAttributes),
+			QueueOwnerAccountID: route.SQSOptions.QueueOwnerAccountID,
+			Template:            routeMatcher(endpoint, route),
+			Name:                route.Target,
+			Create:              route.Create,
+			VisibilityTimeout:   route.SQSOptions.VisibilityTimeout,
+			MessageRetention:    route.SQSOptions.MessageRetention,
+			FIFO:                mapFIFO(route.FIFO),
+		}
+	}, func(name string) SQSTarget { return SQSTarget{Name: name} }, func(target SQSTarget) string { return target.Name })
 }
 
 func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
-	seen := map[string]struct{}{}
-	var targets []SNSTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) SNSTarget {
+		return SNSTarget{
+			ARN:        route.SNSOptions.TopicARN,
+			Attributes: maps.Clone(route.BrokerAttributes),
+			Template:   routeMatcher(endpoint, route),
+			Name:       route.Target,
+			Create:     route.Create,
+			Subject:    route.SNSOptions.Subject,
+			FIFO:       mapFIFO(route.FIFO),
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, SNSTarget{
-				ARN:        route.SNSOptions.TopicARN,
-				Attributes: maps.Clone(route.BrokerAttributes),
-				Template:   routeMatcher(endpoint, route),
-				Name:       route.Target,
-				Create:     route.Create,
-				Subject:    route.SNSOptions.Subject,
-				FIFO:       mapFIFO(route.FIFO),
-			})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, SNSTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	}, func(name string) SNSTarget { return SNSTarget{Name: name} }, func(target SNSTarget) string { return target.Name })
 }
 
 func collectLambdaTargets(cfg config.Config, destinationID string) []LambdaTarget {
-	seen := map[string]struct{}{}
-	var targets []LambdaTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) LambdaTarget {
+		return LambdaTarget{
+			Template: routeMatcher(endpoint, route),
+			Name:     route.Target,
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, LambdaTarget{
-				Template: routeMatcher(endpoint, route),
-				Name:     route.Target,
-			})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, LambdaTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	}, func(name string) LambdaTarget { return LambdaTarget{Name: name} }, func(target LambdaTarget) string { return target.Name })
 }
 
 func collectS3Targets(cfg config.Config, destinationID string) []S3Target {
-	seen := map[string]struct{}{}
-	var targets []S3Target
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, S3Target{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, S3Target{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) S3Target {
+		return S3Target{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, func(name string) S3Target { return S3Target{Name: name} }, func(target S3Target) string { return target.Name })
 }
 
 func collectPostgresTargets(cfg config.Config, destinationID string) []PostgresTarget {
-	seen := map[string]struct{}{}
-	var targets []PostgresTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, PostgresTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, PostgresTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) PostgresTarget {
+		return PostgresTarget{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, func(name string) PostgresTarget { return PostgresTarget{Name: name} }, func(target PostgresTarget) string { return target.Name })
 }
 
 func collectMongoTargets(cfg config.Config, destinationID string) []MongoTarget {
-	seen := map[string]struct{}{}
-	var targets []MongoTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, MongoTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, MongoTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) MongoTarget {
+		return MongoTarget{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, func(name string) MongoTarget { return MongoTarget{Name: name} }, func(target MongoTarget) string { return target.Name })
 }
 
 func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget {
-	seen := map[string]struct{}{}
-	var targets []KafkaTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) KafkaTarget {
+		var partitionKey *FIFOSettings
+		if pk := route.KafkaOptions.PartitionKey; pk.Source != "" {
+			partitionKey = &FIFOSettings{
+				GroupIDSource:   pk.Source,
+				GroupIDValue:    pk.Value,
+				GroupIDPath:     pk.Path,
+				GroupIDFallback: pk.Fallback,
 			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			var partitionKey *FIFOSettings
-			if pk := route.KafkaOptions.PartitionKey; pk.Source != "" {
-				partitionKey = &FIFOSettings{
-					GroupIDSource:   pk.Source,
-					GroupIDValue:    pk.Value,
-					GroupIDPath:     pk.Path,
-					GroupIDFallback: pk.Fallback,
-				}
-			}
-			targets = append(targets, KafkaTarget{
-				Template:          routeMatcher(endpoint, route),
-				Topic:             route.Target,
-				Create:            route.Create,
-				PartitionKey:      partitionKey,
-				Partitions:        route.KafkaOptions.Partitions,
-				ReplicationFactor: route.KafkaOptions.ReplicationFactor,
-			})
 		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, KafkaTarget{Topic: t})
+		return KafkaTarget{
+			Template:          routeMatcher(endpoint, route),
+			Topic:             route.Target,
+			Create:            route.Create,
+			PartitionKey:      partitionKey,
+			Partitions:        route.KafkaOptions.Partitions,
+			ReplicationFactor: route.KafkaOptions.ReplicationFactor,
 		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Topic < targets[j].Topic })
-	return targets
+	}, func(name string) KafkaTarget { return KafkaTarget{Topic: name} }, func(target KafkaTarget) string { return target.Topic })
 }
 
 // collectTemporalTargets builds one TemporalTarget per unique task queue routed
@@ -906,77 +783,39 @@ func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget 
 // not merged: validation forbids a temporal destination as a webhook DLQ
 // because a dead-letter route has no workflow_type.
 func collectTemporalTargets(cfg config.Config, destinationID string) []TemporalTarget {
-	seen := map[string]struct{}{}
-	var targets []TemporalTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) TemporalTarget {
+		opts := route.TemporalOptions
+		return TemporalTarget{
+			Template:     routeMatcher(endpoint, route),
+			TaskQueue:    route.Target,
+			WorkflowType: opts.WorkflowType,
+			Input:        opts.Input,
+			WorkflowID: WorkflowIDSettings{
+				Source: opts.WorkflowID.Source,
+				Value:  opts.WorkflowID.Value,
+				Path:   opts.WorkflowID.Path,
+				Prefix: opts.WorkflowID.Prefix,
+			},
+			IDReusePolicy:    opts.IDReusePolicy,
+			ExecutionTimeout: opts.ExecutionTimeout,
+			RunTimeout:       opts.RunTimeout,
+			TaskTimeout:      opts.TaskTimeout,
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			opts := route.TemporalOptions
-			targets = append(targets, TemporalTarget{
-				Template:     routeMatcher(endpoint, route),
-				TaskQueue:    route.Target,
-				WorkflowType: opts.WorkflowType,
-				Input:        opts.Input,
-				WorkflowID: WorkflowIDSettings{
-					Source: opts.WorkflowID.Source,
-					Value:  opts.WorkflowID.Value,
-					Path:   opts.WorkflowID.Path,
-					Prefix: opts.WorkflowID.Prefix,
-				},
-				IDReusePolicy:    opts.IDReusePolicy,
-				ExecutionTimeout: opts.ExecutionTimeout,
-				RunTimeout:       opts.RunTimeout,
-				TaskTimeout:      opts.TaskTimeout,
-			})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].TaskQueue < targets[j].TaskQueue })
-	return targets
+	}, nil, func(target TemporalTarget) string { return target.TaskQueue })
 }
 
 func collectRedisTargets(cfg config.Config, destinationID string) []RedisTarget {
-	seen := map[string]struct{}{}
-	var targets []RedisTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) RedisTarget {
+		return RedisTarget{
+			Template:      routeMatcher(endpoint, route),
+			Name:          route.Target,
+			MaxLen:        route.RedisOptions.MaxLen,
+			ConsumerGroup: route.RedisOptions.ConsumerGroup,
+			TTL:           route.RedisOptions.TTL,
+			KeyTemplate:   route.RedisOptions.KeyTemplate,
+			Create:        route.Create,
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, RedisTarget{
-				Template:      routeMatcher(endpoint, route),
-				Name:          route.Target,
-				MaxLen:        route.RedisOptions.MaxLen,
-				ConsumerGroup: route.RedisOptions.ConsumerGroup,
-				TTL:           route.RedisOptions.TTL,
-				KeyTemplate:   route.RedisOptions.KeyTemplate,
-				Create:        route.Create,
-			})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, RedisTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	}, func(name string) RedisTarget { return RedisTarget{Name: name} }, func(target RedisTarget) string { return target.Name })
 }
 
 func mapFIFO(c *config.FIFOConfig) *FIFOSettings {
@@ -994,25 +833,9 @@ func mapFIFO(c *config.FIFOConfig) *FIFOSettings {
 }
 
 func collectWebhookTargets(cfg config.Config, destinationID string) []WebhookTarget {
-	seen := map[string]struct{}{}
-	var targets []WebhookTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, WebhookTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) WebhookTarget {
+		return WebhookTarget{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, nil, func(target WebhookTarget) string { return target.Name })
 }
 
 func mergeQueueOptions(defaults, override config.RabbitMQQueueOptions) QueueOptions {

@@ -9,9 +9,9 @@
 # line, the newest of which (GO-2026-6088 through -6218, in encoding/xml,
 # crypto/tls, net/http, html/template and net/url) are fixed in 1.26.6.
 # Bump this pin, and the `go` directive, as newer patches ship.
-FROM golang:1.26.8-alpine AS source
+FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS source
 WORKDIR /src
-RUN apk add --no-cache ca-certificates
+# The pinned official Go image already includes the CA trust store.
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
@@ -24,14 +24,16 @@ COPY . .
 FROM source AS build-core
 ARG VERSION=dev
 ARG COMMIT=none
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hookway ./cmd/hookway
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hookway ./cmd/hookway
 
 FROM source AS build-replay
 ARG VERSION=dev
 ARG COMMIT=none
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hookway-replay ./cmd/hookway-replay
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH go build -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hookway-replay ./cmd/hookway-replay
 
-# The optional replay service (docs/replay-service.md): the failed-delivery
+# The optional replay service (docs/operations/replay-service.md): the failed-delivery
 # store, its API, and the redrive workers. Build with --target replay.
 FROM scratch AS replay
 USER 65532:65532

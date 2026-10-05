@@ -52,6 +52,16 @@ func (e ErrUnbound) Error() string { return fmt.Sprintf("variable %q is unbound"
 // Parse splits s into literal and placeholder parts. Braces must be balanced,
 // non-nested, and every placeholder must be a valid name.
 func Parse(s string) (Template, error) {
+	return ParseWithNames(s, ValidName)
+}
+
+// ParseWithNames keeps the standard brace and environment syntax while allowing
+// a caller to authorize a narrow, domain-specific placeholder vocabulary.
+// A nil validator retains the standard variable-name rules.
+func ParseWithNames(s string, validName func(string) bool) (Template, error) {
+	if validName == nil {
+		validName = ValidName
+	}
 	var t Template
 	var lit strings.Builder
 	for i := 0; i < len(s); {
@@ -81,7 +91,7 @@ func Parse(s string) (Template, error) {
 			if strings.ContainsRune(name, '{') {
 				return Template{}, fmt.Errorf("nested '{' in placeholder at offset %d", i)
 			}
-			if !ValidName(name) {
+			if !validName(name) {
 				return Template{}, fmt.Errorf("invalid placeholder name %q (use letters, digits, underscore; must not start with a digit)", name)
 			}
 			if lit.Len() > 0 {

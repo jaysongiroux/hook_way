@@ -3,13 +3,11 @@ package queue
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 	"sync"
 	"time"
 
@@ -367,38 +365,11 @@ func (p *RabbitMQPublisher) dialBroker() (*amqp.Connection, error) {
 // nil when no TLS customisation is requested (amqp.Dial then uses system roots
 // for amqps://). Unreadable or invalid CA/cert material is a hard error.
 func buildTLSConfig(c RabbitMQTLSConfig) (*tls.Config, error) {
-	if c.CACert == "" && c.ClientCert == "" && c.ClientKey == "" && c.ServerName == "" && !c.InsecureSkipVerify {
+	m := tlsMaterial{CACert: c.CACert, ClientCert: c.ClientCert, ClientKey: c.ClientKey, ServerName: c.ServerName, InsecureSkipVerify: c.InsecureSkipVerify}
+	if !m.Configured() {
 		return nil, nil
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.ServerName != "" {
-		cfg.ServerName = c.ServerName
-	}
-	if c.InsecureSkipVerify {
-		cfg.InsecureSkipVerify = true
-	}
-	if c.CACert != "" {
-		pem, err := os.ReadFile(c.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("read rabbitmq tls ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("rabbitmq tls ca_cert %q contained no valid certificates", c.CACert)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.ClientCert != "" || c.ClientKey != "" {
-		if c.ClientCert == "" || c.ClientKey == "" {
-			return nil, errors.New("rabbitmq tls client_cert and client_key must both be set for mutual TLS")
-		}
-		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load rabbitmq tls client cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	return cfg, nil
+	return newTLSConfig("rabbitmq", m)
 }
 
 // watchClose proactively re-establishes the connection when the broker drops it,

@@ -164,11 +164,21 @@ func serve(s *Server, r *http.Request) *httptest.ResponseRecorder {
 
 func problemCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
+	for header, want := range map[string]string{
+		"Content-Type": "application/problem+json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
 	var p struct {
 		Code string `json:"code"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
 		t.Fatalf("not a problem body: %q", rec.Body.String())
+	}
+	if p.Code == replaywire.NotStartedCode && rec.Header().Get("Retry-After") != "1" {
+		t.Errorf("not_started Retry-After = %q, want 1", rec.Header().Get("Retry-After"))
 	}
 	return p.Code
 }

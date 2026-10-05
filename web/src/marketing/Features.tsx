@@ -16,7 +16,12 @@ const FEATURES: { span: 2 | 3 | 4 | 6; title: string; body: string }[] = [
     body: `Choose from ${Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length} authentication formats: HMAC or ECDSA signatures, HTTP Basic, exact tokens, and JWT. Invalid credentials and unknown schemes are rejected; accepting unauthenticated traffic is an explicit choice.`,
   },
   {
-    span: 2,
+    span: 3,
+    title: "Keep traffic protection consistent as you scale",
+    body: "Share rate limits and duplicate checks across servers with Redis or PostgreSQL, or use memory for one server. Control bursts or rolling quotas by caller or verified tenant. If protection becomes unavailable, affected requests are rejected until it recovers.",
+  },
+  {
+    span: 3,
     title: "Handle events and file uploads",
     body: "Read JSON, XML, multipart form data, or raw bodies. Use fields to route events, store decoded file bytes in S3 or Redis key/value storage, or forward the original request to an API.",
   },
@@ -28,12 +33,12 @@ const FEATURES: { span: 2 | 3 | 4 | 6; title: string; body: string }[] = [
   {
     span: 2,
     title: "Prepare data for the next service",
-    body: "Map or remove fields, compare JSON changes, validate JSON schemas, or clean up ordered XML. Use sandboxed JavaScript when the receiving service needs a custom payload.",
+    body: "Check required JSON fields, value types and formats before delivery. Map or remove fields, compare JSON changes, or clean up ordered XML. Use sandboxed JavaScript when the receiving service needs a custom payload.",
   },
   {
     span: 2,
     title: "Route to the right environment",
-    body: "Choose only environments allowed by your routing rules. Look up saved routes in DynamoDB, or save a new route after an API creates a resource so later events reach the same backend.",
+    body: "Choose only environments allowed by your routing rules. Use HTTP, PostgreSQL or DynamoDB lookups to resolve routing values. Save a new route after an API creates a resource so later events reach the same backend.",
   },
   {
     span: 2,
@@ -44,6 +49,11 @@ const FEATURES: { span: 2 | 3 | 4 | 6; title: string; body: string }[] = [
     span: 2,
     title: "Process batches with limits",
     body: "Split a JSON batch into individual events, check each event’s environment, and deliver each through its own flow. Set batch size, concurrency, and time limits to bound the work.",
+  },
+  {
+    span: 2,
+    title: "Investigate uncertain deliveries",
+    body: "Retry only a failed destination through the optional replay console or API. Investigate uncertain delivery before repeating it, or record independent confirmation with a note, preserving the evidence.",
   },
 ];
 

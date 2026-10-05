@@ -210,7 +210,7 @@ func TestBatchCompilerRejectsUnsafeChildrenAndCapture(t *testing.T) {
 			t.Fatal("bad shape/count accepted")
 		}
 	}
-	nc := nodeConfigFromYAML(t, "batch", validNodeYAML["batch"])
+	nc := nodeConfigFromYAML(t, "batch", nodeFixtures["batch"].yaml)
 	fc := graph.FlowConfig{Nodes: []graph.NodeConfig{nc}}
 	cfg := Config{Routing: routeTestConfig(), Flows: map[string]graph.FlowConfig{"sample": fc}}
 	cfg.Replay.Configured = true

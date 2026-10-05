@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 type orderCloser struct {
@@ -117,4 +119,77 @@ func waitAccepting(t *testing.T, addr string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("server at %s never accepted connections", addr)
+}
+
+type blockedShutdown struct{ release <-chan struct{} }
+
+func (s blockedShutdown) Shutdown(context.Context) error { <-s.release; return nil }
+
+type blockedClose struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (c blockedClose) Close() error { close(c.started); <-c.release; return nil }
+
+func TestTotalBudgetDoesNotCloseResourcesUnderActiveListener(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	var order []string
+	res := servingResources{servers: []shutdowner{blockedShutdown{release}}, closers: []io.Closer{orderCloser{name: "publisher", order: &order}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := res.drain(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("drain = %v", err)
+	}
+	if len(order) != 0 {
+		t.Fatal("closed publisher while listener was active")
+	}
+}
+
+func TestTotalBudgetStopsSequentialCleanupAtStalledCloser(t *testing.T) {
+	release, started := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	var order []string
+	res := servingResources{closers: []io.Closer{blockedClose{started, release}, orderCloser{name: "capture", order: &order}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := res.drain(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("drain = %v", err)
+	}
+	<-started
+	if len(order) != 0 {
+		t.Fatal("closed capture while publisher was still draining")
+	}
+}
+
+func TestWithdrawalHappensBeforeDelayAndCanBeCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	withdrawn := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- withdrawBeforeDrain(ctx, time.Hour, func() { close(withdrawn) }) }()
+	<-withdrawn
+	select {
+	case <-done:
+		t.Fatal("did not wait for withdrawal")
+	default:
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("withdraw = %v", err)
+	}
+}
+
+func TestUndrainedPublisherLeavesCaptureOpen(t *testing.T) {
+	var order []string
+	res := servingResources{closers: []io.Closer{
+		orderCloser{name: "publisher", order: &order, err: queue.ErrWebhookDrainTimeout},
+		orderCloser{name: "capture", order: &order},
+	}}
+	if err := res.drain(context.Background()); !errors.Is(err, queue.ErrWebhookDrainTimeout) {
+		t.Fatalf("drain = %v", err)
+	}
+	if len(order) != 1 || order[0] != "publisher" {
+		t.Fatalf("closed dependencies: %v", order)
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -98,8 +99,8 @@ func buildImage(t *testing.T, root, dir, arch, pkg, binary, target, tag string) 
 func override(images map[string]string) string {
 	var b strings.Builder
 	b.WriteString("services:\n")
-	ports := map[string]string{"rabbitmq": "15672", "hookway": "8080", "replay": "8080", "notify-sink": "8080"}
-	for _, svc := range []string{"rabbitmq", "hookway", "notify-sink", "postgres", "migrate", "replay"} {
+	ports := map[string]string{"rabbitmq": "15672", "hookway": "8080", "replay": "8080", "notify-sink": "8080", "console": "8080"}
+	for _, svc := range []string{"rabbitmq", "hookway", "notify-sink", "postgres", "migrate", "replay", "console"} {
 		image, port := images[svc], ports[svc]
 		if image == "" && port == "" {
 			continue
@@ -166,6 +167,8 @@ func up(t *testing.T) *stack {
 	images := map[string]string{"notify-sink": "hookway-e2e-sink:" + id}
 	buildImage(t, root, dir, arch, "./internal/composee2e/testdata/sink", "sink", "sink", images["notify-sink"])
 	if mode == "binaries" {
+		images["console"] = "hookway-e2e-console:" + id
+		mustRun(t, root, nil, "docker", "build", "--file", "web/Dockerfile", "--tag", images["console"], ".")
 		images["hookway"] = "hookway-e2e-core:" + id
 		images["replay"] = "hookway-e2e-replay:" + id
 		images["migrate"] = images["replay"]
@@ -203,7 +206,7 @@ func up(t *testing.T) *stack {
 		if out, err := s.run(down...); err != nil {
 			t.Errorf("docker compose down: %v\n%s", err, out)
 		}
-		for _, image := range []string{images["notify-sink"], images["hookway"], images["replay"]} {
+		for _, image := range []string{images["notify-sink"], images["hookway"], images["replay"], images["console"]} {
 			if image != "" {
 				_, _ = command(root, nil, "docker", "image", "rm", "--force", image)
 			}
@@ -214,7 +217,7 @@ func up(t *testing.T) *stack {
 	}
 	s.compose(t, "up", "--detach", "--no-build")
 	for _, probe := range []struct{ service, path string }{
-		{"hookway", "/readyz"}, {"replay", "/readyz"}, {"notify-sink", "/received"},
+		{"console", "/healthz"}, {"hookway", "/readyz"}, {"replay", "/readyz"}, {"notify-sink", "/received"},
 	} {
 		waitFor(t, probe.service+" to answer "+probe.path, 3*time.Minute, func() bool {
 			code, _, err := do(http.MethodGet, s.url(t, probe.service, 8080)+probe.path, nil)
@@ -361,6 +364,7 @@ type failure struct {
 // destination that already had the event.
 func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 	s := up(t)
+	s.checkConsole(t)
 
 	// Both destinations are up: the event reaches RabbitMQ and the sink.
 	if code := s.postGitHub(t, `{"action":"opened","issue":{"number":1}}`); code != http.StatusAccepted {
@@ -455,6 +459,54 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("RabbitMQ has events %v, want %v once each", got, want)
+	}
+}
+
+// Check the deployed bundle, rather than just source configuration: the console
+// and its Go validator must survive image packaging and share the live API.
+func (s *stack) checkConsole(t *testing.T) {
+	t.Helper()
+	base := s.url(t, "console", 8080)
+	code, html, err := do(http.MethodGet, base+"/", nil)
+	if err != nil || code != http.StatusOK || !bytes.Contains(html, []byte(`id="root"`)) {
+		t.Fatalf("deployed console: status=%d error=%v body=%s", code, err, html)
+	}
+	assets := regexp.MustCompile(`(?:src|href)="(/assets/[^" ]+)"`).FindAllSubmatch(html, -1)
+	if len(assets) < 2 {
+		t.Fatalf("console HTML is missing its bundled script/styles: %s", html)
+	}
+	for _, asset := range assets {
+		if code, body, err := do(http.MethodGet, base+string(asset[1]), nil); err != nil || code != http.StatusOK || len(body) == 0 {
+			t.Fatalf("console asset %s: status=%d error=%v", asset[1], code, err)
+		}
+	}
+	code, wasm, err := do(http.MethodGet, base+"/hookway.wasm", nil)
+	if err != nil || code != http.StatusOK || !bytes.HasPrefix(wasm, []byte{0, 'a', 's', 'm', 1, 0, 0, 0}) {
+		t.Fatalf("deployed Go WASM: status=%d error=%v", code, err)
+	}
+	// Compare the served validator with the independent frontend container's
+	// packaged file; host and image Go toolchain versions may legitimately differ.
+	container := strings.TrimSpace(s.compose(t, "ps", "--quiet", "console"))
+	packaged := filepath.Join(t.TempDir(), "hookway.wasm")
+	mustRun(t, s.root, nil, "docker", "cp", container+":/usr/share/nginx/html/hookway.wasm", packaged)
+	wantWASM, err := os.ReadFile(packaged) // #nosec G304 -- fixed filename in a test-owned temporary directory
+	if err != nil || sha256.Sum256(wasm) != sha256.Sum256(wantWASM) {
+		t.Fatalf("served frontend WASM differs from the independent image: %v", err)
+	}
+	for _, path := range []string{"/builder", "/build-info.json", "/wasm_exec.js"} {
+		if code, body, err := do(http.MethodGet, base+path, nil); err != nil || code != http.StatusOK || len(body) == 0 {
+			t.Fatalf("standalone frontend %s: status=%d error=%v", path, code, err)
+		}
+	}
+	if code, _, err := do(http.MethodGet, s.url(t, "replay", 8080)+"/v1/me", nil); err != nil || code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated identity: status=%d error=%v", code, err)
+	}
+	var identity struct {
+		KeyName string   `json:"key_name"`
+		Scopes  []string `json:"scopes"`
+	}
+	if code, raw := s.api(t, http.MethodGet, "/v1/me", nil, &identity); code != http.StatusOK || identity.KeyName != "operator" || !slices.Equal(identity.Scopes, []string{"read", "payload", "retry"}) {
+		t.Fatalf("deployed operator identity: status=%d body=%s", code, raw)
 	}
 }
 

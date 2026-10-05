@@ -56,7 +56,15 @@ type Config struct {
 	Keys      []KeyConfig
 }
 
-type ServerConfig struct{ Addr string }
+type ServerConfig struct {
+	Addr string
+	CORS CORSConfig
+}
+
+// CORSConfig lists exact browser origins permitted to use operator routes.
+type CORSConfig struct {
+	AllowedOrigins []string `yaml:"allowed_origins"`
+}
 
 type LoggingConfig struct{ Level string }
 
@@ -130,7 +138,8 @@ type rawTLS struct {
 // default) from an explicit zero (validate it).
 type rawConfig struct {
 	Server struct {
-		Addr string `yaml:"addr"`
+		Addr string     `yaml:"addr"`
+		CORS CORSConfig `yaml:"cors"`
 	} `yaml:"server"`
 	Logging struct {
 		Level string `yaml:"level"`
@@ -238,7 +247,7 @@ func SchemaJSON() ([]byte, error) {
 
 func (raw rawConfig) resolve(is *issues) Config {
 	cfg := Config{
-		Server:   ServerConfig{Addr: raw.Server.Addr},
+		Server:   ServerConfig{Addr: raw.Server.Addr, CORS: raw.Server.CORS},
 		Logging:  LoggingConfig{Level: raw.Logging.Level},
 		Metrics:  raw.Metrics,
 		Database: DatabaseConfig{URL: raw.Database.URL, MaxConns: defaultMaxConns, TLS: TLSConfig(raw.Database.TLS)},
@@ -300,6 +309,16 @@ func reservedPath(path string) bool {
 }
 
 func (c Config) validate(is *issues, allowSecretRefs bool) {
+	seenOrigins := map[string]bool{}
+	for i, origin := range c.Server.CORS.AllowedOrigins {
+		field := fmt.Sprintf("server.cors.allowed_origins[%d]", i)
+		if (!allowSecretRefs || !exactEnvReference.MatchString(origin)) && !ValidOrigin(origin) {
+			is.errorf(field, "must be an exact serialized http or https origin without credentials, path, query, or fragment")
+		} else if seenOrigins[origin] {
+			is.errorf(field, "origin is listed twice")
+		}
+		seenOrigins[origin] = true
+	}
 	switch c.Logging.Level {
 	case "", "debug", "info", "warn", "error":
 	default:
@@ -316,7 +335,7 @@ func (c Config) validate(is *issues, allowSecretRefs bool) {
 			is.errorf("metrics.addr", "must differ from server.addr (leave it empty to serve metrics on server.addr)")
 		}
 		if !c.anyKeyHas(auth.ScopeMetrics) {
-			is.warnf("metrics", "no key has the metrics scope, so the metrics endpoint is unauthenticated")
+			is.errorf("metrics", "an enabled metrics endpoint requires a key with the metrics scope")
 		}
 	}
 	if strings.TrimSpace(c.Database.URL) == "" {
@@ -328,8 +347,8 @@ func (c Config) validate(is *issues, allowSecretRefs bool) {
 	if u, err := url.Parse(c.Core.ControlURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		is.errorf("core.control_url", "must be an absolute http or https URL")
 	}
-	if len(c.Core.ControlToken) < minTokenLen && (!allowSecretRefs || !exactEnvReference.MatchString(c.Core.ControlToken)) {
-		is.errorf("core.control_token", "is required and must be at least %d characters", minTokenLen)
+	if (!allowSecretRefs || !exactEnvReference.MatchString(c.Core.ControlToken)) && (len(c.Core.ControlToken) < minTokenLen || len(c.Core.ControlToken) > auth.MaxTokenBytes) {
+		is.errorf("core.control_token", "is required and must be between %d and %d bytes", minTokenLen, auth.MaxTokenBytes)
 	}
 	r := c.Retention
 	if r.TTL <= 0 {
@@ -392,8 +411,8 @@ func (c Config) validateKeys(is *issues, allowSecretRefs bool) {
 			names[k.Name] = i
 		}
 		switch j, dup := tokens[k.Token]; {
-		case len(k.Token) < minTokenLen && (!allowSecretRefs || !exactEnvReference.MatchString(k.Token)):
-			is.errorf(prefix+".token", "must be at least %d characters", minTokenLen)
+		case (!allowSecretRefs || !exactEnvReference.MatchString(k.Token)) && (len(k.Token) < minTokenLen || len(k.Token) > auth.MaxTokenBytes):
+			is.errorf(prefix+".token", "must be between %d and %d bytes", minTokenLen, auth.MaxTokenBytes)
 		case dup:
 			is.errorf(prefix+".token", "is the same token as keys[%d].token", j)
 		case k.Token == c.Core.ControlToken:

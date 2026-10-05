@@ -18,7 +18,7 @@ const REQUEST_FIELDS = [
   "body_representation",
   "signature_label",
 ];
-const JWT_FIELDS = ["expected_issuer", "expected_audience", "body_hash_claim"];
+const JWT_FIELDS = ["expected_issuer", "expected_audience", "body_hash_claim", "tenant_claim"];
 const LABELS: Record<string, string> = {
   hmac_sha1_hex: "HMAC SHA-1 · hexadecimal",
   hmac_sha256_ts_colon: "Timestamp + HMAC SHA-256 · labeled header",
@@ -33,6 +33,7 @@ const LABELS: Record<string, string> = {
   jwt_es256: "JWT · ES256",
   hmac_sha256_ts_dot: "Timestamp + HMAC SHA-256",
   hmac_sha256_ts_dot_multi: "Timestamp + multiple signatures",
+  hmac_sha256_slack_v0: "Slack · timestamp + HMAC SHA-256",
   hmac_sha256_headers_dot: "Separate timestamp + HMAC SHA-256",
   ecdsa_p256_sha256_headers: "Separate timestamp + ECDSA P-256",
 };
@@ -157,16 +158,19 @@ export function AuthOptionsForm(props: OptionsProps) {
             "expected_issuer",
             "expected_audience",
             "timestamp_tolerance",
+            "tenant_claim",
           ]}
           order={[
             "body_hash_claim",
             "expected_issuer",
             "expected_audience",
             "timestamp_tolerance",
+            "tenant_claim",
           ]}
           required={["body_hash_claim"]}
           labels={{
             body_hash_claim: "Raw body SHA-256 claim",
+            tenant_claim: "JWT tenant claim",
             timestamp_tolerance: "JWT clock tolerance",
           }}
           fieldHelp={(path) =>
@@ -176,6 +180,9 @@ export function AuthOptionsForm(props: OptionsProps) {
           }
         />
       )}
+      <Fields {...props} fields={["credential_id"]}
+        labels={{ credential_id: "Stable credential ID" }}
+        fieldHelp={() => "Optional label for this authenticated credential, such as partner-acme. Required by verified identity quotas. Keep it stable during secret rotation; never enter the secret itself."} />
       <InactiveSettings
         value={value}
         fields={inactive}

@@ -22,14 +22,14 @@ import (
 // this test so error coverage cannot drift.
 func TestCatalogNodeRuntimeErrors(t *testing.T) {
 	cases := catalogRuntimeErrors(t)
-	for name := range wantedCatalog {
+	for name := range nodeFixtures {
 		if _, ok := cases[name]; !ok {
 			t.Errorf("no runtime error case for %s", name)
 		}
 	}
 	for name, fn := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, ok := wantedCatalog[name]; !ok {
+			if _, ok := nodeFixtures[name]; !ok {
 				t.Fatalf("%s is not in the catalog", name)
 			}
 			err := fn(t)
@@ -51,7 +51,7 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 	t.Helper()
 	return map[string]func(*testing.T) error{
 		"batch": func(t *testing.T) error {
-			n := mustCatalogNode(t, "batch", validNodeYAML["batch"], RegistryOptions{ValidateOnly: true})
+			n := mustCatalogNode(t, "batch", nodeFixtures["batch"].yaml, RegistryOptions{ValidateOnly: true})
 			_, err := n.Run(context.Background(), graph.RequestHead{})
 			return err
 		},
@@ -66,7 +66,7 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 			return err
 		},
 		"http_trigger": func(t *testing.T) error {
-			_, err := mustCatalogNode(t, "http_trigger", validNodeYAML["http_trigger"], RegistryOptions{}).
+			_, err := mustCatalogNode(t, "http_trigger", nodeFixtures["http_trigger"].yaml, RegistryOptions{}).
 				Run(context.Background(), graph.Envelope{})
 			return err
 		},
@@ -81,7 +81,7 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 			return err
 		},
 		"rate_limit": func(t *testing.T) error {
-			node := mustCatalogNode(t, "rate_limit", "rpm: 60\nburst: 1\nkey_by: source_ip\n", RegistryOptions{})
+			node := mustCatalogNode(t, "rate_limit", "store: test\nrpm: 60\nburst: 1\nkey_by: source_ip\n", RegistryOptions{})
 			head := graph.RequestHead{SourceIP: "1.1.1.1"}
 			if _, err := node.Run(context.Background(), head); err != nil {
 				t.Fatalf("first request: %v", err)
@@ -109,7 +109,7 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 			return err
 		},
 		"replay_guard": func(t *testing.T) error {
-			node := mustCatalogNode(t, "replay_guard", "ttl: 1m\nmax_entries: 100\n", RegistryOptions{})
+			node := mustCatalogNode(t, "replay_guard", "store: test\nttl: 1m\nmax_entries: 100\n", RegistryOptions{})
 			in := graph.Verified{Raw: graph.RawRequest{Body: []byte(`{"id":1}`)}}
 			if _, err := node.Run(context.Background(), in); err != nil {
 				t.Fatalf("first accept: %v", err)
@@ -134,6 +134,10 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 			_, err := mustCatalogNode(t, "lookup", "provider: dynamodb\nkey: '{id}'\nname: route\n", RegistryOptions{
 				Lookups: func(LookupOptions) LookupFunc { return resolve },
 			}).Run(context.Background(), graph.Envelope{Vars: map[string]string{"id": "missing"}})
+			return err
+		},
+		"json_validate": func(t *testing.T) error {
+			_, err := mustCatalogNode(t, "json_validate", "schema: {type: object, required: [id]}\n", RegistryOptions{}).Run(context.Background(), graph.Envelope{Body: map[string]any{}})
 			return err
 		},
 		"transform": func(t *testing.T) error {
@@ -187,7 +191,7 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 
 func mustCatalogNode(t *testing.T, typ, body string, opts RegistryOptions) graph.Node {
 	t.Helper()
-	reg, err := NewRegistryWithOptions(opts)
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, opts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +209,7 @@ func mustCatalogNode(t *testing.T, typ, body string, opts RegistryOptions) graph
 func TestOnErrorRecoversEveryFailingNode(t *testing.T) {
 	schemas := NodeSchemas()
 	cases := onErrorRecoveryCases(t)
-	for name := range wantedCatalog {
+	for name := range nodeFixtures {
 		if !schemas[name].OnError {
 			continue
 		}
@@ -272,7 +276,7 @@ destinations:
 			assertRecovered(t, flow, []byte(`{}`), "10.0.0.1", "")
 		},
 		"rate_limit": func(t *testing.T) {
-			flow := mustCompileDemo(t, requestHeadFailYAML(`{id: fail, type: rate_limit, rpm: 60, burst: 1, key_by: source_ip}`), RegistryOptions{})
+			flow := mustCompileDemo(t, requestHeadFailYAML(`{id: fail, type: rate_limit, store: test, rpm: 60, burst: 1, key_by: source_ip}`), RegistryOptions{})
 			term, err := runDemo(t, flow, []byte(`{}`), "10.0.0.1", "")
 			if err != nil {
 				t.Fatalf("first request should pass: %v", err)
@@ -284,6 +288,7 @@ destinations:
 		},
 		"auth": func(t *testing.T) {
 			src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -303,6 +308,7 @@ flows:
 		},
 		"replay_guard": func(t *testing.T) {
 			src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -311,7 +317,7 @@ flows:
       - {id: in, type: http_trigger, path: /w, methods: [POST]}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: no_auth}
-      - {id: fail, type: replay_guard, ttl: 1m, max_entries: 100}
+      - {id: fail, type: replay_guard, store: test, ttl: 1m, max_entries: 100}
       - {id: env, type: envelope, body_format: json}
       - {id: ok, type: respond, status: 200, body: ok}
       - {id: env2, type: envelope, body_format: json}
@@ -330,6 +336,7 @@ flows:
 		},
 		"envelope": func(t *testing.T) {
 			src := `
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -362,6 +369,10 @@ flows:
 				respondOKNode,
 				"env>fail, fail>ok, fail:on_error>fb",
 			), opts), []byte(`{"id":"missing"}`), "10.0.0.1", "")
+		},
+		"json_validate": func(t *testing.T) {
+			src := envelopeFailYAML(`{id: fail, type: json_validate, schema: {type: object, required: [id]}}`, respondOKNode, "env>fail, fail>ok, fail:on_error>fb")
+			assertRecovered(t, mustCompileDemo(t, src, RegistryOptions{}), []byte(`{}`), "10.0.0.1", "")
 		},
 		"transform": func(t *testing.T) {
 			assertRecovered(t, mustCompileDemo(t, envelopeFailYAML(
@@ -415,6 +426,7 @@ flows:
 
 func requestHeadFailYAML(failNode string) string {
 	return fmt.Sprintf(`
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -441,6 +453,7 @@ func envelopeFailYAML(failNode, extraNodes, edges string) string {
 		extraNodes = extraNodes + "\n"
 	}
 	return fmt.Sprintf(`
+state_stores: {test: {namespace: tests, memory: {}}}
 server: {addr: ":8080", max_body_bytes: 1048576}
 destinations: {primary: {type: webhook, webhook: {url: "https://example.test"}}}
 flows:
@@ -468,7 +481,7 @@ func mustCompileDemo(t *testing.T, src string, opts RegistryOptions) *graph.Flow
 	if !ok {
 		t.Fatal("missing demo flow")
 	}
-	reg, err := NewRegistryWithOptions(opts)
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, opts))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,6 +29,23 @@ beforeEach(() => {
   useGraphStore.getState().clear();
 });
 
+test("HTTP delivery guidance follows the selected async or sync mode", () => {
+  setDestinations({
+    sink: { type: "webhook", webhook: { url: "https://example.test" } },
+  });
+  wrap();
+  expect(screen.getByText("Queued in memory")).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("delivery mode"));
+  fireEvent.click(screen.getByRole("option", { name: "sync" }));
+  expect(screen.queryByText("Queued in memory")).not.toBeInTheDocument();
+  expect(
+    screen.getByText(/Publication waits for the HTTP destination response/),
+  ).toBeInTheDocument();
+  expect(useGraphStore.getState().destinations.sink).toMatchObject({
+    webhook: { delivery_mode: "sync" },
+  });
+});
+
 test("lists every destination in the rail and edits the first one", () => {
   setDestinations({
     orders: { type: "sqs", sqs: { region: "us-east-1" } },
@@ -36,19 +53,32 @@ test("lists every destination in the rail and edits the first one", () => {
   });
   wrap();
 
-  expect(within(rail()).getByRole("button", { name: "Select orders" })).toBeInTheDocument();
-  expect(within(rail()).getByRole("button", { name: "Select archive" })).toBeInTheDocument();
-  expect(within(editor("orders")).getByLabelText("region")).toHaveValue("us-east-1");
+  expect(
+    within(rail()).getByRole("button", { name: "Select orders" }),
+  ).toBeInTheDocument();
+  expect(
+    within(rail()).getByRole("button", { name: "Select archive" }),
+  ).toBeInTheDocument();
+  expect(within(editor("orders")).getByLabelText("region")).toHaveValue(
+    "us-east-1",
+  );
   expect(screen.queryByTestId("destination-archive")).not.toBeInTheDocument();
 });
 
 test("picking a rail row swaps which destination the editor holds", () => {
-  setDestinations({ orders: { type: "sqs", sqs: {} }, archive: { type: "s3", s3: { bucket: "cold" } } });
+  setDestinations({
+    orders: { type: "sqs", sqs: {} },
+    archive: { type: "s3", s3: { bucket: "cold" } },
+  });
   wrap();
 
-  fireEvent.click(within(rail()).getByRole("button", { name: "Select archive" }));
+  fireEvent.click(
+    within(rail()).getByRole("button", { name: "Select archive" }),
+  );
 
-  expect(within(editor("archive")).getByLabelText("bucket")).toHaveValue("cold");
+  expect(within(editor("archive")).getByLabelText("bucket")).toHaveValue(
+    "cold",
+  );
 });
 
 test("an empty config opens on the type grid instead of a blank pane", () => {
@@ -77,7 +107,10 @@ test("a second destination of the same type gets a suffixed name", () => {
   fireEvent.click(screen.getByRole("button", { name: "Add destination" }));
   fireEvent.click(screen.getByRole("button", { name: "Webhook" }));
 
-  expect(Object.keys(useGraphStore.getState().destinations)).toEqual(["webhook", "webhook_2"]);
+  expect(Object.keys(useGraphStore.getState().destinations)).toEqual([
+    "webhook",
+    "webhook_2",
+  ]);
 });
 
 test("renaming commits on blur and leaves the destination in place", () => {
@@ -91,13 +124,26 @@ test("renaming commits on blur and leaves the destination in place", () => {
 
   const name = within(editor("b")).getByLabelText("Name");
   fireEvent.change(name, { target: { value: "archive" } });
-  expect(Object.keys(useGraphStore.getState().destinations)).toEqual(["a", "b", "c"]);
+  expect(Object.keys(useGraphStore.getState().destinations)).toEqual([
+    "a",
+    "b",
+    "c",
+  ]);
 
   fireEvent.blur(name);
 
-  expect(Object.keys(useGraphStore.getState().destinations)).toEqual(["a", "archive", "c"]);
-  expect(useGraphStore.getState().destinations.archive).toEqual({ type: "s3", s3: { bucket: "cold" } });
-  expect(within(editor("archive")).getByLabelText("Name")).toHaveValue("archive");
+  expect(Object.keys(useGraphStore.getState().destinations)).toEqual([
+    "a",
+    "archive",
+    "c",
+  ]);
+  expect(useGraphStore.getState().destinations.archive).toEqual({
+    type: "s3",
+    s3: { bucket: "cold" },
+  });
+  expect(within(editor("archive")).getByLabelText("Name")).toHaveValue(
+    "archive",
+  );
 });
 
 test("renaming onto a name already in use is refused", () => {
@@ -108,8 +154,13 @@ test("renaming onto a name already in use is refused", () => {
   fireEvent.change(name, { target: { value: "b" } });
   fireEvent.blur(name);
 
-  expect(screen.getByText("That destination already exists.")).toBeInTheDocument();
-  expect(Object.keys(useGraphStore.getState().destinations)).toEqual(["a", "b"]);
+  expect(
+    screen.getByText("That destination already exists."),
+  ).toBeInTheDocument();
+  expect(Object.keys(useGraphStore.getState().destinations)).toEqual([
+    "a",
+    "b",
+  ]);
 });
 
 test("removing the edited destination falls back to the one beside it", () => {
@@ -119,17 +170,26 @@ test("removing the edited destination falls back to the one beside it", () => {
 
   fireEvent.click(within(editor("b")).getByRole("button", { name: "Remove" }));
 
-  expect(useGraphStore.getState().destinations).toEqual({ a: { type: "sqs", sqs: {} } });
+  expect(useGraphStore.getState().destinations).toEqual({
+    a: { type: "sqs", sqs: {} },
+  });
   expect(editor("a")).toBeInTheDocument();
 });
 
 test("nested blocks stay folded so the fields that matter read first", () => {
-  setDestinations({ hook: { type: "webhook", webhook: { url: "https://x", retry: { max_attempts: 3 } } } });
+  setDestinations({
+    hook: {
+      type: "webhook",
+      webhook: { url: "https://x", retry: { max_attempts: 3 } },
+    },
+  });
   wrap();
 
   expect(within(editor("hook")).getByLabelText("url")).toHaveValue("https://x");
   expect(screen.queryByLabelText("max attempts")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /^retry/i })).toHaveTextContent("1 set");
+  expect(screen.getByRole("button", { name: /^retry/i })).toHaveTextContent(
+    "1 set",
+  );
 });
 
 function chooseType(within_: ReturnType<typeof within>, option: string) {
@@ -138,16 +198,26 @@ function chooseType(within_: ReturnType<typeof within>, option: string) {
 }
 
 test("switching to an unrelated backend starts its block empty", () => {
-  setDestinations({ hook: { type: "webhook", webhook: { url: "https://x", timeout: "5s" } } });
+  setDestinations({
+    hook: { type: "webhook", webhook: { url: "https://x", timeout: "5s" } },
+  });
   wrap();
 
   chooseType(within(editor("hook")), "s3");
 
-  expect(useGraphStore.getState().destinations.hook).toEqual({ type: "s3", s3: {} });
+  expect(useGraphStore.getState().destinations.hook).toEqual({
+    type: "s3",
+    s3: {},
+  });
 });
 
 test("switching between redis variants keeps the connection they share", () => {
-  setDestinations({ cache: { type: "redis_kv", redis: { url: "redis://localhost:6379", db: 2 } } });
+  setDestinations({
+    cache: {
+      type: "redis_kv",
+      redis: { url: "redis://localhost:6379", db: 2 },
+    },
+  });
   wrap();
 
   chooseType(within(editor("cache")), "redis_list");
@@ -173,12 +243,18 @@ test("a destination offers only connections whose type can serve its backend", (
   expect(screen.getByRole("option", { name: "aws_prod" })).toBeInTheDocument();
   // A postgres credential cannot fill an s3 destination; internal/config
   // rejects it, so the form must not offer it.
-  expect(screen.queryByRole("option", { name: "pg_main" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("option", { name: "pg_main" }),
+  ).not.toBeInTheDocument();
 });
 
 test("choosing a connection hides the fields it supplies and keeps the sink fields", () => {
-  useGraphStore.setState({ connections: { aws_prod: { type: "aws", region: "us-east-1" } } });
-  setDestinations({ archive: { type: "s3", s3: { bucket: "cold", region: "eu-west-2" } } });
+  useGraphStore.setState({
+    connections: { aws_prod: { type: "aws", region: "us-east-1" } },
+  });
+  setDestinations({
+    archive: { type: "s3", s3: { bucket: "cold", region: "eu-west-2" } },
+  });
   wrap();
 
   fireEvent.click(within(editor("archive")).getByLabelText("Connection"));
@@ -189,51 +265,87 @@ test("choosing a connection hides the fields it supplies and keeps the sink fiel
   expect(useGraphStore.getState().destinations).toEqual({
     archive: { type: "s3", connection: "aws_prod", s3: { bucket: "cold" } },
   });
-  expect(within(editor("archive")).queryByLabelText("region")).not.toBeInTheDocument();
-  expect(within(editor("archive")).getByLabelText("bucket")).toHaveValue("cold");
+  expect(
+    within(editor("archive")).queryByLabelText("region"),
+  ).not.toBeInTheDocument();
+  expect(within(editor("archive")).getByLabelText("bucket")).toHaveValue(
+    "cold",
+  );
 });
 
 test("switching back to inline drops the connection reference", () => {
   useGraphStore.setState({ connections: { aws_prod: { type: "aws" } } });
-  setDestinations({ archive: { type: "s3", connection: "aws_prod", s3: { bucket: "cold" } } });
+  setDestinations({
+    archive: { type: "s3", connection: "aws_prod", s3: { bucket: "cold" } },
+  });
   wrap();
 
   fireEvent.click(within(editor("archive")).getByLabelText("Connection"));
   fireEvent.click(screen.getByRole("option", { name: "Configure inline" }));
 
-  expect(useGraphStore.getState().destinations).toEqual({ archive: { type: "s3", s3: { bucket: "cold" } } });
-  expect(within(editor("archive")).getByLabelText("region")).toBeInTheDocument();
+  expect(useGraphStore.getState().destinations).toEqual({
+    archive: { type: "s3", s3: { bucket: "cold" } },
+  });
+  expect(
+    within(editor("archive")).getByLabelText("region"),
+  ).toBeInTheDocument();
 });
 
 test("a webhook destination has no connection select", () => {
   // A webhook credential carries no host, so it is an auth profile rather than
   // a connection and has no connection type to reference.
-  setDestinations({ forward: { type: "webhook", webhook: { url: "https://x" } } });
+  setDestinations({
+    forward: { type: "webhook", webhook: { url: "https://x" } },
+  });
   wrap();
 
-  expect(within(editor("forward")).queryByLabelText("Connection")).not.toBeInTheDocument();
+  expect(
+    within(editor("forward")).queryByLabelText("Connection"),
+  ).not.toBeInTheDocument();
 });
 
 test("switching between redis variants keeps the connection reference", () => {
-  useGraphStore.setState({ connections: { r: { type: "redis", mode: "single" } } });
-  setDestinations({ events: { type: "redis_stream", connection: "r", redis: { key_prefix: "evt:" } } });
+  useGraphStore.setState({
+    connections: { r: { type: "redis", mode: "single" } },
+  });
+  setDestinations({
+    events: {
+      type: "redis_stream",
+      connection: "r",
+      redis: { key_prefix: "evt:" },
+    },
+  });
   wrap();
 
-  fireEvent.change(within(editor("events")).getByLabelText("Type"), { target: { value: "redis_list" } });
+  fireEvent.change(within(editor("events")).getByLabelText("Type"), {
+    target: { value: "redis_list" },
+  });
   fireEvent.click(screen.getByRole("option", { name: "redis_list" }));
 
   expect(useGraphStore.getState().destinations).toEqual({
-    events: { type: "redis_list", connection: "r", redis: { key_prefix: "evt:" } },
+    events: {
+      type: "redis_list",
+      connection: "r",
+      redis: { key_prefix: "evt:" },
+    },
   });
 });
 
 test("switching to an unrelated backend drops the connection reference", () => {
-  useGraphStore.setState({ connections: { r: { type: "redis", mode: "single" } } });
-  setDestinations({ events: { type: "redis_stream", connection: "r", redis: {} } });
+  useGraphStore.setState({
+    connections: { r: { type: "redis", mode: "single" } },
+  });
+  setDestinations({
+    events: { type: "redis_stream", connection: "r", redis: {} },
+  });
   wrap();
 
-  fireEvent.change(within(editor("events")).getByLabelText("Type"), { target: { value: "kafka" } });
+  fireEvent.change(within(editor("events")).getByLabelText("Type"), {
+    target: { value: "kafka" },
+  });
   fireEvent.click(screen.getByRole("option", { name: "kafka" }));
 
-  expect(useGraphStore.getState().destinations).toEqual({ events: { type: "kafka", kafka: {} } });
+  expect(useGraphStore.getState().destinations).toEqual({
+    events: { type: "kafka", kafka: {} },
+  });
 });

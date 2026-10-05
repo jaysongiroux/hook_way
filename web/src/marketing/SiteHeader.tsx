@@ -10,7 +10,7 @@ import {
 } from "./marketingStyles";
 import { DARK } from "../tokens";
 
-const CONFIG_DOC = DOC_LINKS.find((d) => d.path === "docs/configuration.md")!;
+const CONFIG_DOC = DOC_LINKS.find((d) => d.path === "docs/reference/configuration.md")!;
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }) => ({
   color: isActive ? DARK.accent : DARK.muted,

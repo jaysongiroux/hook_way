@@ -1,22 +1,27 @@
-import { Box, Group, Text } from "@mantine/core";
+import { Box, Button, Group, Text } from "@mantine/core";
+import { useState } from "react";
 import { LogoMark } from "../brand/Logo";
 import { FlowGraphSvg } from "./FlowDiagram";
 import { LAYOUT, flowDescription } from "./flowGraph";
 import { DARK } from "../tokens";
+import { useVisibleMotion } from "./useVisibleMotion";
 
 // BuilderFrame shows the config builder inside browser chrome. It is rendered
-// live from the same flowGraph data the diagram section uses, rather than a
-// screenshot, so it stays crisp at any size and cannot go stale against the
-// real UI.
+// from the same flowGraph data the diagram section uses, so the illustrative
+// example stays consistent across the page.
 export function BuilderFrame() {
+  const { viewportRef, running } = useVisibleMotion();
+  const [paused, setPaused] = useState(false);
   return (
     <Box
+      ref={viewportRef}
+      className="hookway-hero-diagram"
+      data-running={running && !paused ? "true" : "false"}
       style={{
         border: `1px solid ${DARK.border}`,
         borderRadius: 4,
         overflow: "hidden",
         background: DARK.surface,
-        boxShadow: "0 8px 24px rgba(20, 24, 31, 0.08)",
       }}
     >
       <Group
@@ -25,9 +30,6 @@ export function BuilderFrame() {
         py={8}
         style={{ borderBottom: `1px solid ${DARK.border}`, background: DARK.recessed }}
       >
-        {[0, 1, 2].map((i) => (
-          <Box key={i} style={{ width: 8, height: 8, borderRadius: 1, background: DARK.border }} />
-        ))}
         <LogoMark size={14} />
         <Text
           size="xs"
@@ -37,8 +39,23 @@ export function BuilderFrame() {
         >
           Hookway Builder
         </Text>
+        <Button
+          className="hookway-flow-motion-control"
+          variant="subtle"
+          size="compact-xs"
+          ml="auto"
+          aria-pressed={paused}
+          onClick={() => setPaused((value) => !value)}
+        >
+          {paused ? "Resume diagram motion" : "Pause diagram motion"}
+        </Button>
       </Group>
-      <CanvasMock />
+      <Box className="hookway-hero-canvas" tabIndex={0} role="region" aria-label="Example flow diagram">
+        <CanvasMock />
+      </Box>
+      <Text className="hookway-flow-scroll-hint" size="xs" c={DARK.muted} px="sm" py={8}>
+        Scroll to see the destinations.
+      </Text>
     </Box>
   );
 }
@@ -62,7 +79,7 @@ function CanvasMock() {
         </pattern>
       </defs>
       <rect x={0} y={0} width={inspectorX - 20} height={LAYOUT.height} fill="url(#hookway-dots)" />
-      <FlowGraphSvg selectedId="ep" markerId="hookway-hero-edge" />
+      <FlowGraphSvg selectedId="ep" markerId="hookway-hero-edge" animate />
       <Inspector x={inspectorX} />
     </svg>
   );

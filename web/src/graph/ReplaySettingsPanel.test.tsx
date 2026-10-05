@@ -17,11 +17,13 @@ beforeEach(() => {
   useGraphStore.setState({ ...emptyDocument(), selectedId: null, selectedEdgeId: null });
   window.hookwayValidate = () => JSON.stringify({ issues: [] });
   window.hookwayReplaySchema = () => JSON.stringify(replaySchema);
+  window.hookwayContractInfo = () => JSON.stringify({ contract_version: 1, capabilities: ["core_yaml_validate", "replay_schema"] });
 });
 
 afterEach(() => {
   delete window.hookwayValidate;
   delete window.hookwayReplaySchema;
+  delete window.hookwayContractInfo;
 });
 
 test("adds coordinated defaults and masks core tokens", async () => {

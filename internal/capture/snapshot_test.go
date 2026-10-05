@@ -106,6 +106,25 @@ func TestSnapshotDropsRequestLocalRepresentation(t *testing.T) {
 	}
 }
 
+func TestSnapshotDropsRequestLocalQuotaIdentityAndGuardOwnership(t *testing.T) {
+	env := richEnvelope()
+	env.V.CredentialID = "credential"
+	env.V.Subject = "subject"
+	env.V.Tenant = "tenant"
+	env.V.Issuer = "issuer"
+	env.V.TrustScope = "trust"
+	env.V.Reservations = map[string]graph.GuardReservation{"guard": {Key: "private-key", Owner: "private-owner"}}
+	got := roundTripEnvelope(t, env)
+	if got.V.CredentialID != "" || got.V.Subject != "" || got.V.Tenant != "" || got.V.Issuer != "" || got.V.TrustScope != "" || got.V.Reservations != nil {
+		t.Fatal("request-local admission identity/ownership escaped into redrive")
+	}
+	env.V.CredentialID, env.V.Subject, env.V.Tenant, env.V.Issuer, env.V.TrustScope = "", "", "", "", ""
+	env.V.Reservations = nil
+	if !reflect.DeepEqual(got, env) {
+		t.Fatal("dropping admission metadata changed persisted delivery contract")
+	}
+}
+
 func TestZeroEnvelopeRoundTripsToZero(t *testing.T) {
 	if got := roundTripEnvelope(t, graph.Envelope{}); !reflect.DeepEqual(got, graph.Envelope{}) {
 		t.Fatalf("round trip = %#v, want the zero Envelope", got)

@@ -52,10 +52,11 @@ type FlowServer struct {
 	flows          map[string]mountedFlow
 	mux            *http.ServeMux
 	readiness      *readinessProber
-	// closers holds resources with background goroutines -- currently
-	// secret_ref resolvers, each of which runs a refresh ticker. Close()
-	// stops them; without this they outlive the server they belong to.
+	protection     *protectionRuntime
+	// closers holds provider pools, lookup transports, and secret resolvers.
+	// Close stops their background work after the server has drained.
 	closers   []io.Closer
+	lifecycle atomic.Uint32 // 0 running, 1 withdrawing, 2 draining, 3 stopped
 	closeOnce sync.Once
 	closeErr  error
 	// capture, when set, records acknowledged failures for the replay service.
@@ -176,6 +177,40 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		extra.Credentials[name] = provider
 		closers = append(closers, provider)
 	}
+	if issues := flowconfig.LookupConfigurationIssues(cfg); len(issues) > 0 {
+		closeAll()
+		return nil, fmt.Errorf("invalid lookup configuration: %s", issues[0].Message)
+	}
+	if extra.Lookups == nil {
+		bind, resources, err := bindLookups(cfg.Lookups, logger, m)
+		closers = append(closers, resources...)
+		if err != nil {
+			closeAll()
+			return nil, err
+		}
+		extra.Lookups = bind
+	}
+	var protectionState *protectionRuntime
+	if extra.Protection == nil {
+		var resources []io.Closer
+		var err error
+		protectionState, resources, err = bindProtection(cfg, m)
+		closers = append(closers, resources...)
+		if err != nil {
+			closeAll()
+			return nil, err
+		}
+		extra.Protection = protectionState.resolve
+		// Stop background probes/cleanup before their stores close.
+		closers = append([]io.Closer{protectionState}, closers...)
+	}
+	extra.StateStores = cfg.StateStores
+	var protectionErr error
+	extra.ProtectionPolicies, protectionErr = flowconfig.ProtectionPolicies(cfg)
+	if protectionErr != nil {
+		closeAll()
+		return nil, protectionErr
+	}
 	if extra.RoutingRegistry == nil {
 		extra.RoutingRegistry, _ = routing.NewRegistry(cfg.Routing)
 	}
@@ -214,11 +249,6 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			return fn, nil
 		}
 	}
-	reg, err := flowconfig.NewRegistryWithOptions(extra)
-	if err != nil {
-		closeAll()
-		return nil, err
-	}
 	s := &FlowServer{
 		cfg:          cfg,
 		process:      processCfg,
@@ -228,6 +258,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		literalPaths: map[string]string{},
 		flows:        map[string]mountedFlow{},
 		mux:          http.NewServeMux(),
+		protection:   protectionState,
 	}
 	names := make([]string, 0, len(cfg.Flows))
 	for name := range cfg.Flows {
@@ -241,10 +272,17 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			closeAll()
 			return nil, fmt.Errorf("flow %q: %w", name, err)
 		}
+		flowOptions := extra
+		flowOptions.FlowID = name
+		reg, err := flowconfig.NewRegistryWithOptions(flowOptions)
+		if err != nil {
+			closeAll()
+			return nil, err
+		}
 		closerStart := len(closers)
 		compiled, compileErr := graph.Compile(name, fc, reg)
 		if compileErr != nil {
-			if errors.Is(compileErr, flowconfig.ErrAuthConfiguration) || errors.Is(compileErr, flowconfig.ErrRoutingConfiguration) || errors.Is(compileErr, flowconfig.ErrCredentialConfiguration) {
+			if errors.Is(compileErr, flowconfig.ErrAuthConfiguration) || errors.Is(compileErr, flowconfig.ErrRoutingConfiguration) || errors.Is(compileErr, flowconfig.ErrCredentialConfiguration) || errors.Is(compileErr, flowconfig.ErrProtectionConfiguration) || errors.Is(compileErr, graph.ErrAdmissionRecovery) {
 				closeAll()
 				return nil, fmt.Errorf("flow %q: %w", name, compileErr)
 			}
@@ -390,7 +428,7 @@ func (s *FlowServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *FlowServer) HTTPServer() *http.Server {
-	return &http.Server{
+	srv := &http.Server{
 		Addr:              s.cfg.Server.Addr,
 		Handler:           s,
 		ReadHeaderTimeout: readHeaderTimeout,
@@ -398,6 +436,8 @@ func (s *FlowServer) HTTPServer() *http.Server {
 		WriteTimeout:      s.cfg.Server.WriteTimeout,
 		IdleTimeout:       s.cfg.Server.IdleTimeout,
 	}
+	srv.RegisterOnShutdown(s.BeginDrain)
+	return srv
 }
 
 func (s *FlowServer) MetricsServer() *http.Server {
@@ -405,14 +445,33 @@ func (s *FlowServer) MetricsServer() *http.Server {
 }
 
 func (s *FlowServer) StartReadinessProbe(ctx context.Context) <-chan struct{} {
-	return s.readiness.run(ctx)
+	destDone := s.readiness.run(ctx)
+	if s.protection == nil {
+		return destDone
+	}
+	storeDone := s.protection.run(ctx, s.cfg.Server.ReadinessInterval)
+	done := make(chan struct{})
+	go func() { <-destDone; <-storeDone; close(done) }()
+	return done
+}
+
+// Withdraw marks readiness unavailable while allowing load balancers time to
+// remove this instance. Liveness and existing/new flow requests remain available.
+func (s *FlowServer) Withdraw() { s.lifecycle.CompareAndSwap(0, 1) }
+
+// BeginDrain rejects new and queued flow requests without interrupting admitted work.
+func (s *FlowServer) BeginDrain() {
+	s.Withdraw()
+	s.lifecycle.CompareAndSwap(1, 2)
+	s.gate.close()
 }
 
 // Close releases resources holding background goroutines. Safe to call more
 // than once, including concurrent calls.
 func (s *FlowServer) Close() error {
 	s.closeOnce.Do(func() {
-		s.gate.close()
+		s.BeginDrain()
+		s.lifecycle.Store(3)
 		s.admission.Close()
 		var errs []error
 		for _, c := range s.closers {
@@ -782,6 +841,23 @@ type flowReadyState struct {
 }
 
 func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
+	if state := s.lifecycle.Load(); state != 0 {
+		status := "withdrawing"
+		if state >= 2 {
+			status = "draining"
+		}
+		if state == 3 {
+			status = "stopped"
+		}
+		s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{"error": "not ready", "status": status})
+		return
+	}
+	if s.protection != nil {
+		if stores := s.protection.unready(time.Now(), s.cfg.Server.ReadinessInterval); len(stores) > 0 {
+			s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{"error": "protection unavailable", "status": "not_ready", "state_stores": stores})
+			return
+		}
+	}
 	dest, fresh, _ := s.readiness.destinationSnapshot(time.Now())
 	if !fresh {
 		s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{

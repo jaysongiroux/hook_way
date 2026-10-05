@@ -252,3 +252,11 @@ func TestCredentialFlowsNeverPersistCallerCredentialsOrRepeatCreate(t *testing.T
 		})
 	}
 }
+
+func TestLookupFailureDoesNotReplayAgainstChangedProvider(t *testing.T) {
+	b := testBuilder(t, 1<<20)
+	rec, ok := b.FromFailure("orders", testHead, 202, graph.FailureEvent{NodeID: "find", NodeType: "lookup", Input: testEnvelope(), Err: errors.New("lookup unavailable")})
+	if !ok || rec.Metadata.Retryable || rec.Metadata.NotRetryableReason != replaywire.NotRetryableUnsupported || rec.Snapshot != nil || rec.Payload != nil {
+		t.Fatalf("failed lookup replay must be metadata only: %+v", rec)
+	}
+}

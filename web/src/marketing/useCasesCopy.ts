@@ -78,9 +78,9 @@ export const USE_CASES: UseCase[] = [
     id: "redis-stream",
     title: "Hand verified events to Redis Streams",
     summary:
-      "Append each envelope to a durable Redis or Valkey stream for workers to consume with XREADGROUP.",
+      "Append each envelope to a Redis or Valkey stream for workers to consume with XREADGROUP.",
     detail:
-      "Hookway writes with XADD; your consumers own group creation and retention. Choose a list for a simpler work queue or Pub/Sub only when occasional loss is acceptable.",
+      "Hookway writes with XADD; configure Redis persistence and replication for durability. Your consumers own group creation and retention. Choose a list for a simpler work queue or Pub/Sub only when occasional loss is acceptable.",
     examplePath: "examples/destinations/redis_stream.yaml",
     exampleHref: repoBlob("examples/destinations/redis_stream.yaml"),
     exampleLabel: "redis_stream.yaml",

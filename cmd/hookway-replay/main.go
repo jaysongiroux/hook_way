@@ -51,6 +51,7 @@ const (
 	readTimeout       = 2 * time.Minute
 	writeTimeout      = 2 * time.Minute
 	idleTimeout       = 2 * time.Minute
+	maxHeaderBytes    = 16 << 10
 )
 
 func main() {
@@ -338,17 +339,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 	authn := auth.New(cfg.AuthKeys(), m.AuthFailure)
 	metricsHandler := promhttp.HandlerFor(m.Registry(), promhttp.HandlerOpts{})
-	if authn.AnyKeyHas(auth.ScopeMetrics) {
-		metricsHandler = authn.Require(auth.ScopeMetrics, metricsHandler)
-	}
-	opts := api.Options{Store: st, Auth: authn, Metrics: m, Logger: logger, MaxRecordBytes: cfg.Retention.MaxRecordBytes}
+	opts := api.Options{Store: st, Auth: authn, Metrics: m, Logger: logger, MaxRecordBytes: cfg.Retention.MaxRecordBytes, AllowedOrigins: cfg.Server.CORS.AllowedOrigins}
 	if cfg.Metrics.Enabled && cfg.Metrics.Addr == "" {
 		opts.MetricsPath, opts.MetricsHandler = cfg.Metrics.Path, metricsHandler
 	}
 	servers := []*http.Server{newServer(cfg.Server.Addr, api.New(opts))}
 	if cfg.Metrics.Enabled && cfg.Metrics.Addr != "" {
 		mux := http.NewServeMux()
-		mux.Handle(cfg.Metrics.Path, metricsHandler)
+		mux.Handle(cfg.Metrics.Path, authn.Require(auth.ScopeMetrics, metricsHandler))
 		servers = append(servers, newServer(cfg.Metrics.Addr, mux))
 	}
 	return serve(ctx, logger, servers, func(ctx context.Context) {
@@ -370,7 +368,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 func newServer(addr string, h http.Handler) *http.Server {
 	return &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: readHeaderTimeout,
-		ReadTimeout: readTimeout, WriteTimeout: writeTimeout, IdleTimeout: idleTimeout}
+		ReadTimeout: readTimeout, WriteTimeout: writeTimeout, IdleTimeout: idleTimeout, MaxHeaderBytes: maxHeaderBytes}
 }
 
 // serve runs the servers and a background loop until ctx ends or a server
@@ -399,6 +397,9 @@ func serve(ctx context.Context, logger *slog.Logger, servers []*http.Server, bac
 		logger.Error("server stopped", "error", err)
 		code = 1
 	}
+	// Stop claiming immediately, including when a listener fails while ctx is
+	// still live. Already claimed runs keep their own lease-bounded contexts.
+	stopBackground()
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 	defer cancel()
 	for _, srv := range servers {

@@ -5,12 +5,12 @@
 #   notify-sink  a second destination: `docker compose stop notify-sink` to
 #                make its delivery fail while RabbitMQ still succeeds
 #   replay       keeps the deliveries that failed after the sender got its 202;
-#                API on http://localhost:8081
+#                API on http://localhost:8081; frontend on http://localhost:8082
 #   postgres     the replay service's store (not published to the host)
 #   migrate      applies the replay schema once, then exits
 #
 # Core's config is dev/core.yaml; the replay service's is dev/replay.yaml.
-# docs/local-development.md walks through capturing and retrying a failure.
+# docs/development/local-development.md walks through capturing and retrying a failure.
 #
 # Every variable below falls back to a working dev default. Export your own
 # before `make dev-up` to override one. The RabbitMQ host must stay
@@ -21,6 +21,7 @@ x-replay-env: &replay-env
   REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:-dev-control-token-0123456789abcdef}
   REPLAY_OPERATOR_TOKEN: ${REPLAY_OPERATOR_TOKEN:-dev-operator-token-0123456789abcde}
   REPLAY_METRICS_TOKEN: ${REPLAY_METRICS_TOKEN:-dev-metrics-token-0123456789abcdefg}
+  REPLAY_CONSOLE_ORIGIN: ${REPLAY_CONSOLE_ORIGIN:-http://localhost:8082}
   REPLAY_DATABASE_URL: postgres://replay:replay@postgres:5432/replay?sslmode=disable
 
 services:
@@ -33,7 +34,9 @@ services:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # Diagnostics may create the cookie before the server does. Use the
+      # server's user so a slow startup never leaves a root-owned cookie.
+      test: ["CMD", "gosu", "rabbitmq", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
       timeout: 10s
       retries: 30
@@ -43,9 +46,9 @@ services:
       context: ..
       dockerfile: Dockerfile
       target: core
-    # Longer than the replay service's execution_timeout plus core's
-    # shutdown_timeout, so `docker compose stop` lets in-flight retries finish.
-    stop_grace_period: 60s
+    # Exceed core server.shutdown_total_timeout (60s), including publisher
+    # and capture cleanup. Raise this when increasing that total budget.
+    stop_grace_period: 70s
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -99,7 +102,7 @@ services:
       target: replay
     command: ["serve", "--config", "/etc/hookway-replay/replay.yaml"]
     # Longer than workers.execution_timeout, so in-flight runs finalize.
-    stop_grace_period: 45s
+    stop_grace_period: 70s
     environment: *replay-env
     volumes:
       - ./dev/replay.yaml:/etc/hookway-replay/replay.yaml:ro
@@ -109,3 +112,13 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  console:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+    environment:
+      # Browser-reachable URL, never Docker service DNS. No API keys here.
+      REPLAY_API_URL: ${REPLAY_API_URL:-http://localhost:8081}
+    ports:
+      - "8082:8080"

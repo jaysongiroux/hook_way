@@ -27,6 +27,30 @@ test("flow guidance explains double-click editing", () => {
   expect(screen.getByLabelText("Flow name")).toBeInTheDocument();
 });
 
+test("partial delivery guidance follows the policy without changing imported recovery settings", () => {
+  useGraphStore.setState({
+    deliveryFailurePolicy: "skip_failed",
+    flowExtra: { capture_failures: false },
+  });
+  wrap();
+  expect(
+    screen.getByText("Partial delivery can return success"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Replay capture is disabled for this flow/),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Delivery failure policy"));
+  fireEvent.click(
+    screen.getByRole("option", { name: "Stop on first failure" }),
+  );
+  expect(
+    screen.queryByText("Partial delivery can return success"),
+  ).not.toBeInTheDocument();
+  expect(useGraphStore.getState().flowExtra).toEqual({
+    capture_failures: false,
+  });
+});
+
 test("lists nodes in the flow so they can be opened from the inspector", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: null });

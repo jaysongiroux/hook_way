@@ -13,6 +13,7 @@ import { yamlIdOf } from "./model";
 import { useGraphStore } from "./store";
 import { toConfig } from "./toConfig";
 import { toYaml } from "./toYaml";
+import { VALIDATOR_RETRY_EVENT } from "../shared/wasm/validationMode";
 import { validateYaml, type ValidationIssue } from "./validate";
 
 export type BuilderValidationStatus =
@@ -48,6 +49,12 @@ export function BuilderValidationProvider({
 }: {
   children: ReactNode;
 }) {
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const retry = () => setRevision((value) => value + 1);
+    window.addEventListener(VALIDATOR_RETRY_EVENT, retry);
+    return () => window.removeEventListener(VALIDATOR_RETRY_EVENT, retry);
+  }, []);
   const formDrafts = useGraphStore((state) => state.formDrafts);
   const documentParts = useGraphStore(
     useShallow((state) => ({
@@ -134,7 +141,7 @@ export function BuilderValidationProvider({
       window.clearTimeout(timer);
       generation.current += 1;
     };
-  }, [exportResult]);
+  }, [exportResult, revision]);
 
   const draftIssues = useMemo(
     () =>

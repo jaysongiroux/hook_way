@@ -7,6 +7,7 @@ import { useGraphStore } from "./store";
 import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 beforeEach(() => {
+  window.hookwayContractInfo = () => JSON.stringify({ contract_version: 1, capabilities: ["core_yaml_validate"] });
   resetIdCounters();
   const trigger = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({
@@ -19,6 +20,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete window.hookwayValidate;
+  delete window.hookwayContractInfo;
   vi.unstubAllGlobals();
 });
 

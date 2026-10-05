@@ -10,6 +10,7 @@ import {
 } from "@mantine/core";
 import { asRecord, useRowKeys } from "./ConditionEditor";
 import {
+  BATCH_CHILD_TYPES,
   defaultNodeOptions,
   labelledPorts,
   NODE_SCHEMAS,
@@ -19,20 +20,11 @@ import {
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
 
-const CHILD_TYPES = [
-  "transform",
-  "code",
-  "filter",
-  "if_else",
-  "switch",
-  "publish",
-];
 const validID = (value: string) =>
   value.length > 0 &&
   new TextEncoder().encode(value).length <= 1024 &&
   !/[\s:>\p{Cc}]/u.test(value);
-const permitted = (type: string) =>
-  CHILD_TYPES.includes(type) && !!NODE_SCHEMAS[type];
+const permitted = (type: string) => BATCH_CHILD_TYPES.includes(type);
 
 interface ChildEdge {
   from: string;
@@ -387,9 +379,10 @@ export function BatchChildEditor({
               required
               value={type}
               data={withImportedChoice(
-                CHILD_TYPES.filter((item) => NODE_SCHEMAS[item]).map(
-                  (item) => ({ value: item, label: nodeLabel(item) }),
-                ),
+                BATCH_CHILD_TYPES.map((item) => ({
+                  value: item,
+                  label: nodeLabel(item),
+                })),
                 type,
               )}
               description="Changing the node type replaces its options with that type's starting values. ID and description are kept."
@@ -467,7 +460,7 @@ export function BatchChildEditor({
         label="New child node type"
         aria-label="New child node type"
         value={newType}
-        data={CHILD_TYPES.filter((type) => NODE_SCHEMAS[type]).map((type) => ({
+        data={BATCH_CHILD_TYPES.map((type) => ({
           value: type,
           label: nodeLabel(type),
         }))}

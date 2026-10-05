@@ -126,8 +126,8 @@ func TestControlServerDrainsFirst(t *testing.T) {
 	status := startRedrive(t, addr)
 	<-r.entered
 	pub := &flagCloser{}
-	res := servingResources{logger: slog.New(slog.DiscardHandler), servers: []shutdowner{ctl}, closers: []io.Closer{pub}}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond) // shorter than the redrive
+	res := servingResources{logger: slog.New(slog.DiscardHandler), servers: []shutdowner{ctl}, closers: []io.Closer{pub}, listenerTimeout: 100 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second) // total budget includes detached redrives
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- res.drain(ctx) }()

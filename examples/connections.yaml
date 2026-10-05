@@ -1,3 +1,8 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
 # examples/connections.yaml
 #
 # Named connections: one credential, many destinations.
@@ -87,7 +92,7 @@ flows:
   order_events:
     nodes:
       - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
-      - {id: rl, type: rate_limit, rpm: 600}
+      - {id: rl, type: rate_limit, store: local, rpm: 600}
       - {id: body, type: read_body, max_bytes: 1048576}
       - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Signature}
       - {id: env, type: envelope, body_format: json}
