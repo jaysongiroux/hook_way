@@ -54,7 +54,7 @@ test("loads a nested asset base once and waits for the Go readiness callback", a
 });
 
 test("a contract mismatch is explicit and a later retry can recover", async () => {
-  let version = 2;
+  let version = 0;
   window.Go = class {
     importObject = {};
     run() {
@@ -103,7 +103,7 @@ test("an advertised JSON sample capability without implementation is a mismatch"
   expect(getWasmState().status).toBe("mismatch");
 });
 
-test("an older version 1 bridge never reports a missing JSON sample capability as success", async () => {
+test("a current bridge never reports a missing JSON sample capability as success", async () => {
   window.hookwayValidate = () => "{}";
   window.hookwayContractInfo = () => JSON.stringify({ contract_version: 1, capabilities: ["core_yaml_validate"] });
   const { loadWasm, hasWasmCapability } = await import("./loader");

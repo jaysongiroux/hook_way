@@ -792,3 +792,29 @@
   .advanced-filters .mantine-SimpleGrid-root { grid-template-columns: 1fr; }
   .inbox-chrome { padding-inline: 10px; }
 }
+
+.record-navigation {
+  flex-shrink: 0;
+  padding: 8px 24px 0;
+}
+.record-navigation .mantine-Tabs-tab {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 16px;
+}
+.record-navigation + .console-investigation {
+  padding-top: 10px;
+}
+.inspection-context { margin: 0; font-size: 13px; }
+.inspection-context > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--console-border);
+}
+.inspection-context dt,
+.inspection-context dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inspection-context dt { color: var(--console-muted); }
+@media (max-width: 1000px) { .record-navigation { padding-inline: 16px; } }
+@media (max-width: 600px) { .inspection-context > div { grid-template-columns: 1fr; gap: 4px; } }

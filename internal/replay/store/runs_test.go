@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"github.com/jaysongiroux/hook_way/internal/replaywire"
 	"sync"
 	"testing"
 	"time"
@@ -10,15 +11,24 @@ import (
 	"github.com/google/uuid"
 )
 
+// Test setup accepts dismissal as a separate operation, never a delivery state.
+const StatusDismissed = "dismissed"
+
 func setStatus(t *testing.T, s *Store, id, status string) {
 	t.Helper()
-	if _, err := s.pool.Exec(context.Background(), `UPDATE failures SET status = $2 WHERE id = $1`, id, status); err != nil {
+	if status == StatusDismissed {
+		if _, err := s.Dismiss(t.Context(), id, "test"); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if _, err := s.pool.Exec(context.Background(), `UPDATE records SET delivery_status = $2, resolution_source = CASE WHEN $2 = 'resolved' THEN 'retry_succeeded' ELSE NULL END WHERE id = $1`, id, status); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func retry(s *Store, id, key string, ack bool) (RetryResult, error) {
-	return s.RequestRetry(context.Background(), RetryRequest{FailureID: id, Actor: "ops", IdempotencyKey: key, AcknowledgeDuplicateRisk: ack})
+	return s.RequestRetry(context.Background(), RetryRequest{RecordID: id, Actor: "ops", IdempotencyKey: key, AcknowledgeDuplicateRisk: ack})
 }
 
 func TestRequestRetryQueuesARun(t *testing.T) {
@@ -31,14 +41,14 @@ func TestRequestRetryQueuesARun(t *testing.T) {
 		t.Fatalf("RequestRetry = %+v, %v", res, err)
 	}
 	d, _ := s.Get(ctx, f.Metadata.ID)
-	if d.Status != StatusRetrying || len(d.Runs) != 1 || d.Runs[0].Status != RunQueued || d.Runs[0].RequestedBy != "ops" {
-		t.Fatalf("detail = status %q runs %+v", d.Status, d.Runs)
+	if d.DeliveryStatus != StatusRetrying || len(d.Runs) != 1 || d.Runs[0].Status != RunQueued || d.Runs[0].RequestedBy != "ops" {
+		t.Fatalf("detail = status %q runs %+v", d.DeliveryStatus, d.Runs)
 	}
 	if last := d.History[len(d.History)-1]; last.Event != EventRunRequested || last.Actor != "ops" {
 		t.Fatalf("history = %+v", d.History)
 	}
 	run, err := s.GetRun(ctx, res.RunID)
-	if err != nil || run.FailureID != f.Metadata.ID || run.IdempotencyKey != "key-1" || !run.CreatedAt.Equal(testNow) || run.Result != nil {
+	if err != nil || run.RecordID != f.Metadata.ID || run.IdempotencyKey != "key-1" || !run.CreatedAt.Equal(testNow) || run.Result != nil {
 		t.Fatalf("GetRun = %+v, %v", run, err)
 	}
 }
@@ -90,7 +100,7 @@ func TestRequestRetryStateRules(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			s := newTestStore(t, defaultLimits())
-			var f NewFailure
+			var f NewRecord
 			if name == "metadata only" {
 				f = testFailure(t, metadataOnly)
 			} else {
@@ -192,7 +202,7 @@ func TestDismissFreesCapacity(t *testing.T) {
 	}
 	_, bytesBefore := usage(t, s)
 	f, err := s.Dismiss(ctx, a.Metadata.ID, "ops")
-	if err != nil || f.Status != StatusDismissed || f.HasArtifacts {
+	if err != nil || f.DismissedAt == nil || f.DeliveryStatus != StatusOpen || f.HasArtifacts {
 		t.Fatalf("Dismiss = %+v, %v", f, err)
 	}
 	if r, bytes := usage(t, s); r != 1 || bytes != bytesBefore-int64(len(a.Snapshot)+len(a.Payload)) {
@@ -245,7 +255,7 @@ func TestStatsCountsStatusesAndUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.RecordsByStatus[StatusOpen] != 1 || st.RecordsByStatus[StatusRetrying] != 1 || st.UsageRecords != 2 ||
+	if st.RecordsByState[replaywire.RecordState{Kind: replaywire.KindFailure, DeliveryStatus: StatusOpen}] != 1 || st.RecordsByState[replaywire.RecordState{Kind: replaywire.KindFailure, DeliveryStatus: StatusRetrying}] != 1 || st.UsageRecords != 2 ||
 		st.UsageBytes != int64(len(a.Snapshot)+len(a.Payload)+len(b.Snapshot)+len(b.Payload)) || st.SchemaVersion != LatestSchemaVersion() {
 		t.Fatalf("stats = %+v", st)
 	}

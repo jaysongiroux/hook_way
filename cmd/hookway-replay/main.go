@@ -429,7 +429,7 @@ func runSampler(ctx context.Context, st *store.Store, m *metrics.Metrics, logger
 			return
 		}
 		m.SetDBUp(true)
-		m.SetState(metrics.State{RecordsByStatus: stats.RecordsByStatus, UsageRecords: stats.UsageRecords,
+		m.SetState(metrics.State{RecordsByState: stats.RecordsByState, UsageRecords: stats.UsageRecords,
 			UsageBytes: stats.UsageBytes, SchemaVersion: stats.SchemaVersion})
 		m.SetRunState(metrics.RunState{Queued: stats.RunsByStatus[store.RunQueued], Running: stats.RunsByStatus[store.RunRunning],
 			OldestQueued: stats.OldestQueuedAge})

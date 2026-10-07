@@ -26,7 +26,7 @@ func testAuth(t *testing.T) (*Authenticator, *[]string) {
 func call(t *testing.T, h http.Handler, header string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var actor string
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/failures", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/records", nil)
 	if header != "" {
 		req.Header.Set("Authorization", header)
 	}

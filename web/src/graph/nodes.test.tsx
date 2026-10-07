@@ -92,6 +92,17 @@ test("labelled ports are named on the card, not just on hover", () => {
   expect(screen.getByText("default")).toBeInTheDocument();
 });
 
+test("sample starts at keep-all and has no on-error handle", () => {
+  resetIdCounters();
+  const n = createNode("sample", { x: 0, y: 0 });
+  expect(n.data.options).toEqual({ rate: 1 });
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  expect(screen.getByText("Sample requests")).toBeInTheDocument();
+  expect(screen.getByText("100% kept")).toBeInTheDocument();
+  expect(container.querySelector('[data-handleid="out"]')).not.toBeNull();
+  expect(container.querySelector('[data-handleid="on_error"]')).toBeNull();
+});
+
 test("if_else renders true and false ports and no on-error handle", () => {
   resetIdCounters();
   const n = createNode("if_else", { x: 0, y: 0 });

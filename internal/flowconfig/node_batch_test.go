@@ -180,6 +180,51 @@ func TestBatchDedicatedBoundsCancellationAndAttemptAll(t *testing.T) {
 		t.Fatal("leaked execution capacity")
 	}
 }
+
+func TestBatchSampleSkipsSuccessfully(t *testing.T) {
+	for _, mode := range []string{"shared", "dedicated"} {
+		for _, rate := range []float64{0, 1} {
+			t.Run(fmt.Sprintf("%s/rate=%g", mode, rate), func(t *testing.T) {
+				o := batchTestOptions(mode)
+				o.Child.Entry = "batch.sample"
+				o.Child.Nodes = append(o.Child.Nodes, map[string]any{"id": "batch.sample", "type": "sample", "rate": rate})
+				o.Child.Edges = []string{"batch.sample>batch.send"}
+				var sends atomic.Int32
+				n := batchTestNode(t, o, batchPublisherFunc(func(context.Context, string, string, graph.Envelope) error {
+					sends.Add(1)
+					return nil
+				}))
+				children := []any{
+					map[string]any{"environment": "preview", "event_id": "one"},
+					map[string]any{"environment": "preview", "event_id": "two"},
+				}
+				out, err := n.Run(t.Context(), graph.Envelope{Body: children})
+				if err != nil {
+					t.Fatal(err)
+				}
+				term := out.(graph.Terminal)
+				wantSends := int(2 * rate)
+				if term.Response.Status != 200 || len(term.Deliveries) != wantSends || int(sends.Load()) != wantSends {
+					t.Fatalf("sends=%d terminal=%+v", sends.Load(), term)
+				}
+				var body map[string]any
+				if err := json.Unmarshal(term.Response.Body, &body); err != nil {
+					t.Fatal(err)
+				}
+				if body["primary"] != float64(wantSends) {
+					t.Fatal(body)
+				}
+				if mode == "dedicated" {
+					if body["skipped"] != float64(2-wantSends) || body["dropped"] != float64(0) || body["unattempted"] != float64(0) {
+						t.Fatal(body)
+					}
+				} else if body["dropped"] != float64(2-wantSends) {
+					t.Fatal(body)
+				}
+			})
+		}
+	}
+}
 func TestBatchCompilerRejectsUnsafeChildrenAndCapture(t *testing.T) {
 	o := batchTestOptions("shared")
 	for _, typ := range []string{"batch", "auth", "http_trigger", "respond", "http_request", "register_route"} {

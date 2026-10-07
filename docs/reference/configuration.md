@@ -249,8 +249,8 @@ into whatever global provider happens to be installed.
 ## Replay
 
 The optional `replay:` block connects core to the replay service
-(`hookway-replay`), which stores failed deliveries for inspection and
-operator-initiated retry. Without the block, failure capture and the control
+(`hookway-replay`), which stores failed deliveries for operator-initiated retry
+and view-only webhook inspections. Without the block, failure capture and the control
 listener are off. The service itself is documented in
 [replay-service.md](../operations/replay-service.md).
 
@@ -275,7 +275,7 @@ or whose dead-letter dispatch failed. An async
 failure waits for its request's final status before it is kept. A flow opts
 out with `capture_failures: false`.
 
-Each record carries metadata (flow, node, destination, sanitized error,
+Each failure record carries metadata (flow, node, destination, sanitized error,
 attempts, config hashes), a snapshot of the failed node's input, and the
 payload the node was sending. A snapshot or payload over `max_record_bytes`,
 or one that cannot be reproduced exactly, makes the record metadata-only and
@@ -316,7 +316,9 @@ allowance longer than the total budget; see [Upgrades and rollback](../operation
 |--------|--------|-------------|
 | `hookway_capture_total` | `flow`, `outcome` | Captured failures by outcome: `uploaded` or `dropped`. |
 | `hookway_capture_dropped_total` | `reason` | Records that never reached replay: `buffer_full`, `upload_failed` (three attempts or five seconds spent), `capacity` (replay answered 507), `rejected` (replay refused the record, or core could not build it), `shutdown`. |
-| `hookway_capture_buffer_bytes` | — | Bytes waiting for upload, including in-flight uploads (gauge). |
+| `hookway_inspection_total` | `flow`, `outcome` | View-only inspections by upload outcome: `uploaded` or `dropped`. |
+| `hookway_inspection_dropped_total` | `reason` | Inspection uploads dropped by the same bounded-uploader reasons as failure capture. Captured content is never logged. |
+| `hookway_capture_buffer_bytes` | — | Shared failure/inspection bytes reserved during requests or waiting for upload, including in-flight uploads (gauge). |
 | `hookway_control_runs_total` | `flow`, `outcome` | Deliver requests answered: `succeeded`, `failed` (the resumed node failed), `blocked` (422), `not_started` (503), `rejected` (401/4xx), `error` (500). `flow` is a configured flow or `unknown`. |
 | `hookway_control_inflight` | — | Redrives running now (gauge). |
 
@@ -1121,7 +1123,7 @@ flows:
     edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 ```
 
-Nodes are wired by `edges` (`from>to`, or `from:port>to` for a labelled port). Illegal port wiring fails `hookway validate`. Typical order: `http_trigger` → pre-body gates (`loop_guard`, `ip_allowlist`, `rate_limit`) → `read_body` → `auth` or `no_auth` → `envelope` → `filter` / `transform` / `lookup` / `code` / `http_request` → `publish` and/or `respond`.
+Nodes are wired by `edges` (`from>to`, or `from:port>to` for a labelled port). Illegal port wiring fails `hookway validate`. Typical order: `http_trigger` → pre-body gates (`loop_guard`, `ip_allowlist`, `rate_limit`) → `read_body` → `auth` or `no_auth` → `envelope` → `filter` / `sample` / `transform` / `lookup` / `code` / `http_request` → `publish` and/or `respond`.
 
 `on_error` is a reserved output port on nodes that can fail with a recoverable input. It is not available on `http_trigger` (no input), `read_body` (the body reader is consumed by a failed read), or `no_auth` (no semantic failure). If the node returns an error and an `on_error` edge exists, the flow continues with that node's **input** (not its output) and the request succeeds unless the error path itself fails. The error-path target must consume the failing node's input port — `rate_limit:on_error` carries `RequestHead` by default or `Verified` for the verified stage, `auth:on_error` still carries `RawRequest`, `envelope:on_error` still carries `Verified`, `http_request:on_error` still carries `Envelope`. Protection infrastructure errors (503) never enter `on_error`. Quota and duplicate denial recovery paths may return a custom response, but cannot execute outbound effects or child flows. A node that has only `on_error` successors is rejected; it still needs a success path. Without `on_error`, the failure becomes the HTTP status from the node (`401`, `413`, `429`, `502`, …) or `500`. Filter `on_no_match: drop` is a successful stop, not an error, so it does not take `on_error`.
 
@@ -1291,7 +1293,7 @@ Node fields (every type):
 
 Flow fields:
 
-- `capture_failures`: optional, default `true`. Set `false` to never capture this flow's failures for the replay service (see [Replay](#replay)). It has no effect without the `replay:` block.
+- `capture_failures`: optional, default `true`. Set `false` to never capture this flow's failures for the replay service (see [Replay](#replay)). It has no effect without the `replay:` block. Inspect collection is independent of this flag.
 - `delivery_failure_policy`: optional. Defaults to `stop_on_failure`. Fan-out is the set of `publish` successors of a node. A `filter` that drops a branch is not a delivery failure. Partial or uncertain delivery retains the `replay_guard` reservation. Recover missed destinations through replay when a retained record exists; consumers must still deduplicate using a stable sender event ID.
 - `nodes` / `edges`: required.
 
@@ -1407,6 +1409,87 @@ Header values are strings, so numeric/bool operators parse them (`"42"` matches 
 Config files pass through `os.ExpandEnv` before parsing, so `$name` inside a `regex` value is expanded. Escape or avoid literal `$`-prefixed tokens.
 
 See `examples/filters.yaml`.
+
+### Sampling
+
+Place a `sample` node after `envelope` to keep a random fraction of events:
+
+```yaml
+- id: sample_events
+  type: sample
+  rate: 0.2
+```
+
+`rate` is required and must be a finite number from 0 to 1 inclusive. It is the
+fraction **kept**: `0` drops all events, `1` keeps all, and `0.2` keeps roughly
+20%. Smaller fractions work too: `0.001` keeps roughly 0.1% and `0.00001` keeps
+roughly 0.001%. Each node execution makes an independent random decision, including retries
+and replays; this is an approximate proportion, not an exact quota or a stable
+selection by event ID. The builder starts new sample nodes at `rate: 1`; YAML
+without a rate is invalid.
+
+Selected events continue unchanged. Sampled-out events stop that branch
+successfully, receive the default HTTP 202 acknowledgment (or the flow's
+`responses.dropped` policy), produce no failure capture, and retain any preceding
+`replay_guard` reservation. Other fan-out branches continue normally. Existing
+deliveries and responses follow the usual flow response rules.
+
+Sampling supports every envelope body format. Before a `batch`, it selects whole
+requests; inside a batch child flow, it selects individual items. Sampled-out
+children use the existing successful filtered-child skip counts, so they do not
+cause a dedicated batch to return 502. Node metrics use `outcome="dropped"`, and
+`hookway_filtered_total` records `level="sampled_out"`.
+
+See [the runnable sampling configuration](../../examples/sample.yaml). Release
+the matching core backend, builder, and WASM validator together before using this
+node; older versions do not recognize `type: sample`.
+
+### Inspecting webhooks
+
+An `inspect` node captures the **current** rendered body and request context for
+viewing in the replay console's **Inspections** tab. It takes no options and
+requires the global [`replay:` connection](#replay), even with
+`capture_failures: false`. Connect it inline (`env>inspect>publish`) to observe
+every event that reaches it, or leave it as a successful observation leaf.
+It passes its input onward unchanged; downstream changes cannot alter a capture.
+
+For spot-checking without reducing delivery traffic, put Sample and Inspect on
+an independent branch **before** the Publish edge:
+
+```yaml
+nodes:
+  # ... http_trigger → read_body → auth → envelope (id: env)
+  - {id: spot_check, type: sample, rate: 0.05}
+  - {id: inspect_sample, type: inspect}
+  - {id: send_all, type: publish, destination: primary, target: events}
+edges: [env>spot_check, spot_check>inspect_sample, env>send_all]
+```
+
+The executor visits the observation branch first in edge order. Approximately
+5% of requests are inspected while Publish receives every request. Putting
+Sample inline before Publish instead would reduce deliveries. An inspection-only
+flow uses the `inspected` response outcome (default 202); publication, explicit
+responses and processing errors retain their normal precedence. A later failure
+or non-2xx sender response does not discard an earlier inspection.
+
+View-only records contain inspection time, flow/node and correlation identifiers,
+and the final inbound HTTP status. The versioned JSON payload contains the
+rendered body (UTF-8, or base64 for binary), content type, filtered/redacted
+headers, variables, method and path. JSON number precision is preserved. Headers
+use existing logging policies and authentication credential redactions. Body and
+variable contents are operator-authored data; there is no field-level redaction.
+
+Uploads are best effort, reuse the bounded replay uploader, and never fail the
+webhook request. Inspections and failures share retention, record-size limits,
+upload-buffer memory and storage caps. Oversized/unsupported captures retain
+metadata with an unavailable-payload reason. View-only records have no executable
+snapshot, retry, or delivery-resolution action; dismissal deletes their payload.
+V1 supports inbound flows, excludes batch-child placement, and collects no new
+inspections during replay redrives. Deploy the replay migration/API first, then
+matching console/builder/WASM assets, before core configs using Inspect.
+
+See [the runnable spot-check example](../../examples/inspect.yaml) and
+[console inspection controls](../operations/replay-console.md#view-only-inspections).
 
 ### XML bodies
 

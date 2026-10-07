@@ -30,23 +30,23 @@ const (
 // panic recovery turns into a 500 the test will see.
 type fakeStore struct {
 	resolve      func(store.ResolveRequest) (store.ResolveResult, error)
-	ingest       func(store.NewFailure) (store.IngestResult, error)
+	ingest       func(store.NewRecord) (store.IngestResult, error)
 	list         func(store.Filter) (store.Page, error)
-	get          func(string) (store.Detail, error)
+	get          func(string) (store.RecordDetail, error)
 	payload      func(id, actor string) (store.Payload, error)
 	requestRetry func(store.RetryRequest) (store.RetryResult, error)
 	getRun       func(string) (store.Run, error)
-	dismiss      func(id, actor string) (store.Failure, error)
+	dismiss      func(id, actor string) (store.Record, error)
 	ready        func() error
 }
 
-func (f *fakeStore) Ingest(_ context.Context, nf store.NewFailure) (store.IngestResult, error) {
+func (f *fakeStore) Ingest(_ context.Context, nf store.NewRecord) (store.IngestResult, error) {
 	return f.ingest(nf)
 }
 func (f *fakeStore) List(_ context.Context, filter store.Filter) (store.Page, error) {
 	return f.list(filter)
 }
-func (f *fakeStore) Get(_ context.Context, id string) (store.Detail, error) { return f.get(id) }
+func (f *fakeStore) Get(_ context.Context, id string) (store.RecordDetail, error) { return f.get(id) }
 func (f *fakeStore) Payload(_ context.Context, id, actor string) (store.Payload, error) {
 	return f.payload(id, actor)
 }
@@ -54,7 +54,7 @@ func (f *fakeStore) RequestRetry(_ context.Context, r store.RetryRequest) (store
 	return f.requestRetry(r)
 }
 func (f *fakeStore) GetRun(_ context.Context, id string) (store.Run, error) { return f.getRun(id) }
-func (f *fakeStore) Dismiss(_ context.Context, id, actor string) (store.Failure, error) {
+func (f *fakeStore) Dismiss(_ context.Context, id, actor string) (store.Record, error) {
 	return f.dismiss(id, actor)
 }
 func (f *fakeStore) ResolveUnknown(_ context.Context, r store.ResolveRequest) (store.ResolveResult, error) {
@@ -122,13 +122,13 @@ func notFoundStore() *fakeStore {
 		resolve: func(store.ResolveRequest) (store.ResolveResult, error) {
 			return store.ResolveResult{}, store.ErrNotFound
 		},
-		ingest:       func(store.NewFailure) (store.IngestResult, error) { return 0, store.ErrNotFound },
+		ingest:       func(store.NewRecord) (store.IngestResult, error) { return 0, store.ErrNotFound },
 		list:         func(store.Filter) (store.Page, error) { return store.Page{}, nil },
-		get:          func(string) (store.Detail, error) { return store.Detail{}, store.ErrNotFound },
+		get:          func(string) (store.RecordDetail, error) { return store.RecordDetail{}, store.ErrNotFound },
 		payload:      func(string, string) (store.Payload, error) { return store.Payload{}, store.ErrNotFound },
 		requestRetry: func(store.RetryRequest) (store.RetryResult, error) { return store.RetryResult{}, store.ErrNotFound },
 		getRun:       func(string) (store.Run, error) { return store.Run{}, store.ErrNotFound },
-		dismiss:      func(string, string) (store.Failure, error) { return store.Failure{}, store.ErrNotFound },
+		dismiss:      func(string, string) (store.Record, error) { return store.Record{}, store.ErrNotFound },
 		ready:        func() error { return nil },
 	}
 }
@@ -140,13 +140,13 @@ func TestRoutesRequireTheirScope(t *testing.T) {
 	}{
 		{"GET", "/v1/me", auth.ScopeRead},
 		{"POST", "/v1/actions/validate", auth.ScopeRead},
-		{"POST", "/v1/failures/" + testID + "/resolve", auth.ScopeRetry},
-		{"POST", "/v1/failures", auth.ScopeCapture},
-		{"GET", "/v1/failures", auth.ScopeRead},
-		{"GET", "/v1/failures/" + testID, auth.ScopeRead},
-		{"GET", "/v1/failures/" + testID + "/payload", auth.ScopePayload},
-		{"POST", "/v1/failures/" + testID + "/retries", auth.ScopeRetry},
-		{"POST", "/v1/failures/" + testID + "/dismiss", auth.ScopeRetry},
+		{"POST", "/v1/records/" + testID + "/resolve", auth.ScopeRetry},
+		{"POST", "/v1/records", auth.ScopeCapture},
+		{"GET", "/v1/records", auth.ScopeRead},
+		{"GET", "/v1/records/" + testID, auth.ScopeRead},
+		{"GET", "/v1/records/" + testID + "/payload", auth.ScopePayload},
+		{"POST", "/v1/records/" + testID + "/retries", auth.ScopeRetry},
+		{"POST", "/v1/records/" + testID + "/dismiss", auth.ScopeRetry},
 		{"POST", "/v1/retries", auth.ScopeRetry},
 		{"GET", "/v1/retries/" + testRunID, auth.ScopeRead},
 	}
@@ -191,13 +191,13 @@ func TestHealthzAndReadyz(t *testing.T) {
 
 func TestInstrumentBoundsRouteAndMethodLabels(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	h.do(t, "GET", "/v1/failures/"+testID, readToken, nil, nil)
+	h.do(t, "GET", "/v1/records/"+testID, readToken, nil, nil)
 	h.do(t, "GET", "/no/such/path/"+testID, "", nil, nil)
-	h.do(t, "BREW", "/v1/failures", readToken, nil, nil)
+	h.do(t, "BREW", "/v1/records", readToken, nil, nil)
 	const want = `
 # HELP hookway_replay_http_requests_total HTTP requests served, by route pattern, method, and status.
 # TYPE hookway_replay_http_requests_total counter
-hookway_replay_http_requests_total{method="GET",route="/v1/failures/{id}",status="404"} 1
+hookway_replay_http_requests_total{method="GET",route="/v1/records/{id}",status="404"} 1
 hookway_replay_http_requests_total{method="GET",route="unmatched",status="404"} 1
 hookway_replay_http_requests_total{method="other",route="unmatched",status="405"} 1
 `
@@ -208,9 +208,9 @@ hookway_replay_http_requests_total{method="other",route="unmatched",status="405"
 
 func TestPanicsBecomeAProblem500(t *testing.T) {
 	fs := notFoundStore()
-	fs.get = func(string) (store.Detail, error) { panic("boom") }
+	fs.get = func(string) (store.RecordDetail, error) { panic("boom") }
 	h := newHarness(t, fs)
-	rec := h.do(t, "GET", "/v1/failures/"+testID, readToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records/"+testID, readToken, nil, nil)
 	if rec.Code != 500 || problemCode(t, rec) != "internal" {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
@@ -226,11 +226,11 @@ hookway_replay_panics_total{location="handler"} 1
 
 func TestUnexpectedStoreErrorsWithholdDetail(t *testing.T) {
 	fs := notFoundStore()
-	fs.get = func(string) (store.Detail, error) {
-		return store.Detail{}, errors.New("dial tcp 10.0.0.5:5432: connection refused")
+	fs.get = func(string) (store.RecordDetail, error) {
+		return store.RecordDetail{}, errors.New("dial tcp 10.0.0.5:5432: connection refused")
 	}
 	h := newHarness(t, fs)
-	rec := h.do(t, "GET", "/v1/failures/"+testID, readToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records/"+testID, readToken, nil, nil)
 	if rec.Code != 500 || problemCode(t, rec) != "internal" || strings.Contains(rec.Body.String(), "10.0.0.5") {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}

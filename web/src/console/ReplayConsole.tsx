@@ -26,7 +26,7 @@ import {
   FiInbox,
   FiRefreshCw,
 } from "react-icons/fi";
-import { FailureState } from "./FailureState";
+import { RecordState } from "./RecordState";
 import { Logo } from "../shared/ui/Logo";
 import { HEADER_STYLE } from "../shared/ui/chrome";
 import { EmptyState, ErrorState, LoadingState } from "../shared/ui/States";
@@ -38,19 +38,19 @@ import {
   requestError,
   result,
   timestamp,
-  type Detail,
-  type Failure,
+  type RecordDetailData,
+  type ReplayRecord,
   type Identity,
   type Session,
 } from "./session";
 import { ActionDialog, type Intent } from "./ActionDialog";
-import { FailureDetail } from "./FailureDetail";
+import { RecordDetail } from "./RecordDetail";
 import "./console.css";
 
 const Builder = React.lazy(() => import("../App"));
 
 type Filters = {
-  status: string;
+  state: string;
   flow: string;
   node_id: string;
   destination_id: string;
@@ -59,7 +59,7 @@ type Filters = {
   until: string;
 };
 const initialFilters: Filters = {
-  status: "open",
+  state: "open",
   flow: "",
   node_id: "",
   destination_id: "",
@@ -67,11 +67,16 @@ const initialFilters: Filters = {
   since: "",
   until: "",
 };
-type Query = NonNullable<paths["/v1/failures"]["get"]["parameters"]["query"]>;
-function queryOf(filters: Filters, cursor: string): Query {
+type Query = NonNullable<paths["/v1/records"]["get"]["parameters"]["query"]>;
+function queryOf(filters: Filters, cursor: string, inspection: boolean): Query {
   const query: Query = { limit: 50 };
+  query.kind = inspection ? "inspection" : "failure";
   if (cursor) query.cursor = cursor;
-  if (filters.status) query.status = filters.status as Query["status"];
+  if (filters.state === "dismissed") query.dismissed = true;
+  else if (filters.state) {
+    query.dismissed = false;
+    if (!inspection) query.delivery_status = filters.state as Query["delivery_status"];
+  }
   for (const key of ["flow", "node_id", "destination_id"] as const)
     if (filters[key]) query[key] = filters[key];
   if (filters.retryable) query.retryable = filters.retryable === "true";
@@ -137,9 +142,11 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
       const me = result(
         await candidate.client.GET("/v1/me", { signal: candidate.signal }),
       );
+      if (me.contract_version !== 1)
+        throw new Error("This console requires replay API contract version 1. Update the replay service and console together.");
       if (
-        me.contract_version !== 1 ||
         ![
+          "record_api",
           "failure_inspection",
           "destination_retry",
           "batch_retry",
@@ -250,7 +257,7 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
           </div>
         )}
         {session && identity ? (
-          <Inbox
+          <Records
             key={identity.key_name}
             session={session}
             identity={identity}
@@ -337,31 +344,52 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
   );
 }
 
+function Records({ session, identity, active }: { session: Session; identity: Identity; active: boolean }) {
+  const [kind, setKind] = React.useState("failures");
+  const hasInspections = identity.capabilities.includes("inspection_records");
+  return (
+    <>
+      {active && hasInspections && (
+        <Tabs id="record-kind" value={kind} onChange={(value) => setKind(value || "failures")} className="record-navigation">
+          <Tabs.List aria-label="Record kind">
+            <Tabs.Tab value="failures">Failures</Tabs.Tab>
+            <Tabs.Tab value="inspections">Inspections</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
+      )}
+      <Inbox session={session} identity={identity} active={active && kind === "failures"} inspection={false} />
+      {hasInspections && <Inbox session={session} identity={identity} active={active && kind === "inspections"} inspection />}
+    </>
+  );
+}
+
 function Inbox({
   session,
   identity,
   active,
+  inspection,
 }: {
   session: Session;
   identity: Identity;
   active: boolean;
+  inspection: boolean;
 }) {
-  const [draft, setDraft] = React.useState(initialFilters);
+  const [draft, setDraft] = React.useState(() => ({ ...initialFilters, state: inspection ? "available" : "open" }));
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const inboxRef = React.useRef<HTMLElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const inboxPosition = React.useRef(0);
   const inspectRef = React.useRef<HTMLButtonElement>(null);
-  const [filters, setFilters] = React.useState(initialFilters);
+  const [filters, setFilters] = React.useState(() => ({ ...initialFilters, state: inspection ? "available" : "open" }));
   const [cursors, setCursors] = React.useState<string[]>([""]);
   const cursor = cursors[cursors.length - 1];
   React.useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0;
   }, [filters, cursor]);
   const [next, setNext] = React.useState("");
-  const [items, setItems] = React.useState<Failure[]>([]);
+  const [items, setItems] = React.useState<ReplayRecord[]>([]);
   const [selected, setSelected] = React.useState("");
-  const [detail, setDetail] = React.useState<Detail>();
+  const [detail, setDetail] = React.useState<RecordDetailData>();
   const [checked, setChecked] = React.useState<string[]>([]);
   const [error, setError] = React.useState("");
   const [detailError, setDetailError] = React.useState("");
@@ -417,8 +445,8 @@ function Inbox({
       setBusy(true);
       try {
         const page = result(
-          await session.client.GET("/v1/failures", {
-            params: { query: queryOf(filters, cursor) },
+          await session.client.GET("/v1/records", {
+            params: { query: queryOf(filters, cursor, inspection) },
             signal: controller.signal,
           }),
         );
@@ -431,7 +459,7 @@ function Inbox({
         if (selected) {
           try {
             const record = result(
-              await session.client.GET("/v1/failures/{id}", {
+              await session.client.GET("/v1/records/{id}", {
                 params: { path: { id: selected } },
                 signal: controller.signal,
               }),
@@ -451,7 +479,7 @@ function Inbox({
         }
       } catch (caught) {
         if (live && !controller.signal.aborted)
-          setError(requestError(caught, "Could not load failures."));
+          setError(requestError(caught, inspection ? "Could not load inspections." : "Could not load failures."));
       } finally {
         running = false;
         if (live) {
@@ -475,7 +503,7 @@ function Inbox({
       session.signal.removeEventListener("abort", abort);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [session, filters, cursor, selected, refresh, active]);
+  }, [session, filters, cursor, selected, refresh, active, inspection]);
   const apply = (e: React.FormEvent) => {
     e.preventDefault();
     setFilterError("");
@@ -509,10 +537,10 @@ function Inbox({
       else inboxRef.current?.focus({ preventScroll: true });
     });
   }
-  function changeStatus(value: string | null) {
-    const status = value === "all" ? "" : value || "";
-    setDraft((current) => ({ ...current, status }));
-    setFilters((current) => ({ ...current, status }));
+  function changeState(value: string | null) {
+    const state = value === "all" ? "" : value || "";
+    setDraft((current) => ({ ...current, state }));
+    setFilters((current) => ({ ...current, state }));
     move([""]);
   }
   const unapplied = JSON.stringify(draft) !== JSON.stringify(filters);
@@ -526,15 +554,15 @@ function Inbox({
   const selectedRecords = items.filter((item) => checked.includes(item.id));
   return (
     <>
-    {active && <div className={`console-investigation ${selected ? "has-detail" : ""}`}>
+    {active && <div className={`console-investigation ${selected ? "has-detail" : ""}`} id={`record-kind-panel-${inspection ? "inspections" : "failures"}`} role={identity.capabilities.includes("inspection_records") ? "tabpanel" : undefined} aria-labelledby={identity.capabilities.includes("inspection_records") ? `record-kind-tab-${inspection ? "inspections" : "failures"}` : undefined}>
       <div
         className="console-workspace"
         id="delivery-state-results"
         role="tabpanel"
-        aria-labelledby={`delivery-state-${filters.status || "all"}`}
+        aria-labelledby={`delivery-state-${filters.state || "all"}`}
       >
         <section
-          aria-label="Failure inbox"
+          aria-label={inspection ? "Inspection inbox" : "Failure inbox"}
           className="failure-inbox"
           tabIndex={-1}
           ref={inboxRef}
@@ -543,10 +571,10 @@ function Inbox({
         <div className="console-page-heading">
           <div>
             <Title order={2} size="h3">
-              Delivery failures
+              {inspection ? "Webhook inspections" : "Delivery failures"}
             </Title>
             <Text size="sm" c="dimmed">
-              Investigate captured deliveries and recover the destination.
+              {inspection ? "Spot-check captured webhooks. These records are view only." : "Investigate captured deliveries and recover the destination."}
             </Text>
           </div>
           <Button
@@ -560,19 +588,23 @@ function Inbox({
           </Button>
         </div>
         <Tabs
-          value={filters.status || "all"}
-          onChange={changeStatus}
+          value={filters.state || "all"}
+          onChange={changeState}
           className="state-navigation"
         >
-          <Tabs.List aria-label="Delivery state">
-            {[
+          <Tabs.List aria-label={inspection ? "Inspection state" : "Delivery state"}>
+            {(inspection ? [
+              { value: "available", label: "Available" },
+              { value: "dismissed", label: "Dismissed" },
+              { value: "all", label: "All inspections" },
+            ] : [
               { value: "open", label: "Open failures" },
               { value: "unknown", label: "Unknown outcome" },
               { value: "retrying", label: "Retry in progress" },
               { value: "resolved", label: "Resolved" },
               { value: "dismissed", label: "Dismissed" },
               { value: "all", label: "All states" },
-            ].map((state) => (
+            ]).map((state) => (
               <Tabs.Tab
                 key={state.value}
                 value={state.value}
@@ -623,7 +655,7 @@ function Inbox({
                 size="xs"
                 variant="subtle"
                 onClick={() => {
-                  const cleared = { ...initialFilters, status: filters.status };
+                  const cleared = { ...initialFilters, state: filters.state };
                   setFilterError("");
                   setDraft(cleared);
                   setFilters(cleared);
@@ -640,7 +672,7 @@ function Inbox({
             hidden={!filtersOpen}
           >
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm">
-              {(["node_id", "destination_id"] as const).map((key) => (
+              {(inspection ? ["node_id"] as const : ["node_id", "destination_id"] as const).map((key) => (
                 <TextInput
                   key={key}
                   label={key === "node_id" ? "Node ID" : "Destination ID"}
@@ -651,7 +683,7 @@ function Inbox({
                   }
                 />
               ))}
-              <Select
+              {!inspection && <Select
                 label="Captured retry capability"
                 description="State and retention also determine availability."
                 size="xs"
@@ -665,10 +697,10 @@ function Inbox({
                   setDraft({ ...draft, retryable: value || "" })
                 }
                 allowDeselect={false}
-              />
+              />}
               <TextInput
                 type="datetime-local"
-                label="Failed since (inclusive)"
+                label={inspection ? "Observed since (inclusive)" : "Failed since (inclusive)"}
                 description="Your local time zone."
                 size="xs"
                 value={draft.since}
@@ -678,7 +710,7 @@ function Inbox({
               />
               <TextInput
                 type="datetime-local"
-                label="Failed before (exclusive)"
+                label={inspection ? "Observed before (exclusive)" : "Failed before (exclusive)"}
                 description="Your local time zone."
                 size="xs"
                 value={draft.until}
@@ -719,13 +751,13 @@ function Inbox({
       )}
           <div className="inbox-panel-heading">
             <Title order={3} size="h5">
-              Failure inbox
+              {inspection ? "Inspection inbox" : "Failure inbox"}
             </Title>
             <Text size="xs" c="dimmed">
               {items.length} on this page
             </Text>
           </div>
-          {identity.scopes.includes("retry") && checked.length > 0 && (
+          {!inspection && identity.scopes.includes("retry") && checked.length > 0 && (
             <div className="batch-toolbar">
               <Text size="sm">{selectedRecords.length} selected</Text>
               <Group gap="xs">
@@ -751,7 +783,7 @@ function Inbox({
           <div className="inbox-scroll" ref={listRef}>
             {!items.length ? (
               busy ? (
-                <Stack p="md" aria-label="Loading failure inbox">
+                <Stack p="md" aria-label={inspection ? "Loading inspection inbox" : "Loading failure inbox"}>
                   {[1, 2, 3, 4].map((i) => (
                     <Skeleton key={i} height={74} radius="sm" />
                   ))}
@@ -760,20 +792,20 @@ function Inbox({
                 <EmptyState>
                   {error
                     ? "The inbox could not be loaded."
-                    : "No failures match these filters. Try another state or clear your filters."}
+                    : inspection ? "No inspections match these filters. Connect an Inspect node after Envelope, or after Sample on an observation branch." : "No failures match these filters. Try another state or clear your filters."}
                 </EmptyState>
               )
             ) : (
               <Table highlightOnHover className="failure-table">
                 <Table.Thead>
                   <Table.Tr>
-                    {identity.scopes.includes("retry") && (
+                    {!inspection && identity.scopes.includes("retry") && (
                       <Table.Th className="selection-heading">
                         <span className="visually-hidden">Select</span>
                       </Table.Th>
                     )}
-                    <Table.Th>Delivery</Table.Th>
-                    <Table.Th>Outcome</Table.Th>
+                    <Table.Th>{inspection ? "Webhook" : "Delivery"}</Table.Th>
+                    <Table.Th>{inspection ? "Observation" : "Outcome"}</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -782,7 +814,7 @@ function Inbox({
                       key={item.id}
                       data-selected={item.id === selected || undefined}
                     >
-                      {identity.scopes.includes("retry") && (
+                      {!inspection && identity.scopes.includes("retry") && (
                         <Table.Td className="failure-selection">
                           <Checkbox
                             size="xs"
@@ -816,19 +848,19 @@ function Inbox({
                           </span>
                           <span className="identifier row-id">{item.id}</span>
                         </Button>
-                        {!item.actions.retry.allowed && (
+                        {!inspection && !item.actions.retry.allowed && (
                           <Text size="xs" c="dimmed" className="row-reason">
                             {item.actions.retry.reason}
                           </Text>
                         )}
                       </Table.Td>
                       <Table.Td className="failure-state">
-                        <FailureState record={item} />
+                        <RecordState record={item} />
                         <time
-                          dateTime={item.failed_at}
-                          title={timestamp(item.failed_at)}
+                          dateTime={item.occurred_at}
+                          title={timestamp(item.occurred_at)}
                         >
-                          {new Date(item.failed_at).toLocaleString(undefined, {
+                          {new Date(item.occurred_at).toLocaleString(undefined, {
                             month: "short",
                             day: "numeric",
                             hour: "numeric",
@@ -865,12 +897,12 @@ function Inbox({
             <Text size="xs" c="dimmed" className="refresh-note">
               {updated
                 ? `Last refreshed ${updated}. Updates every 3 seconds while this page is visible.`
-                : "Loading failure inbox…"}
+                : inspection ? "Loading inspection inbox…" : "Loading failure inbox…"}
             </Text>
           </div>
         </section>
         <section
-          aria-label={selected ? "Selected failure" : "Investigation panel"}
+          aria-label={selected ? (inspection ? "Selected inspection" : "Selected failure") : "Investigation panel"}
           ref={panelRef}
           tabIndex={-1}
           className="detail-panel"
@@ -888,7 +920,7 @@ function Inbox({
                   <span className="mobile-close-label">Back to inbox</span>
                 </Button>
                 <Text size="xs" c="dimmed">
-                  Delivery investigation
+                  {inspection ? "Webhook observation" : "Delivery investigation"}
                 </Text>
               </div>
               {detailError ? (
@@ -896,7 +928,7 @@ function Inbox({
                   {detailError}
                 </ErrorState>
               ) : detail ? (
-                <FailureDetail
+                <RecordDetail
                   key={detail.id}
                   record={detail}
                   session={session}
@@ -906,7 +938,7 @@ function Inbox({
                   actionPending={!!intent}
                 />
               ) : (
-                <Stack p="lg" aria-label="Loading failure details">
+                <Stack p="lg" aria-label={inspection ? "Loading inspection details" : "Loading failure details"}>
                   <Skeleton height={28} width="65%" />
                   <Skeleton height={70} />
                   <Skeleton height={140} />
@@ -917,19 +949,17 @@ function Inbox({
             <div className="investigation-empty">
               <FiInbox size={32} aria-hidden="true" />
               <Title order={3} size="h3">
-                Select a delivery to investigate
+                {inspection ? "Select a webhook to inspect" : "Select a delivery to investigate"}
               </Title>
               <Text size="sm" c="dimmed">
-                Check its error and delivery history, then choose the next safe
-                action. Selecting a row leaves your inbox and filters in place.
+                {inspection ? "See the body and context captured at the Inspect node, alongside the final response sent to the webhook sender." : "Check its error and delivery history, then choose the next safe action. Selecting a row leaves your inbox and filters in place."}
               </Text>
               <div className="investigation-guide">
                 <Text size="sm" fw={600}>
-                  An unknown outcome needs evidence
+                  {inspection ? "A snapshot of one moment" : "An unknown outcome needs evidence"}
                 </Text>
                 <Text size="sm" c="dimmed">
-                  A lost response does not prove delivery failed. Check the
-                  destination before retrying.
+                  {inspection ? "Inspections share replay retention and storage limits. They cannot be retried or confirmed as delivery outcomes." : "A lost response does not prove delivery failed. Check the destination before retrying."}
                 </Text>
               </div>
             </div>

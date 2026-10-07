@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"github.com/jaysongiroux/hook_way/internal/replaywire"
 	"sort"
 	"strings"
 	"testing"
@@ -27,9 +28,9 @@ func TestNewDeclaresEveryMetric(t *testing.T) {
 	m := New()
 	m.SetBuildInfo("v1.0.0", "abc123")
 	m.Panic("handler")
-	m.HTTPRequest("/v1/failures", "GET", 200, time.Millisecond)
-	m.CaptureArtifactBytes("snapshot", 10)
-	m.Dismissal()
+	m.HTTPRequest("/v1/records", "GET", 200, time.Millisecond)
+	m.CaptureArtifactBytes("failure", "snapshot", 10)
+	m.Dismissal("failure")
 	m.RegisterPool(func() PoolStats { return PoolStats{} })
 	m.RunFinished("succeeded", time.Second)
 	want := []string{
@@ -60,12 +61,12 @@ func TestNewDeclaresEveryMetric(t *testing.T) {
 func TestBoundedLabelsStartAtZero(t *testing.T) {
 	m := New()
 	for _, outcome := range []string{CaptureCreated, CaptureDuplicate, CaptureConflict, CaptureCapacity, CaptureTooLarge, CaptureInvalid} {
-		if got := testutil.ToFloat64(m.captures.WithLabelValues(outcome)); got != 0 {
+		if got := testutil.ToFloat64(m.captures.WithLabelValues("failure", outcome)); got != 0 {
 			t.Errorf("captures{%s} = %v", outcome, got)
 		}
 	}
-	if got := testutil.CollectAndCount(m.records); got != 5 {
-		t.Fatalf("records series = %d, want one per status (5)", got)
+	if got := testutil.CollectAndCount(m.records); got != 8 {
+		t.Fatalf("records series = %d, want eight valid lifecycle combinations", got)
 	}
 	if got := testutil.CollectAndCount(m.payloadDownloads); got != 4 {
 		t.Fatalf("payload_downloads series = %d, want 4", got)
@@ -75,21 +76,21 @@ func TestBoundedLabelsStartAtZero(t *testing.T) {
 func TestRecordersCount(t *testing.T) {
 	m := New()
 	m.AuthFailure("scope")
-	m.Capture(CaptureCreated)
-	m.Capture(CaptureCreated)
+	m.Capture("failure", CaptureCreated)
+	m.Capture("failure", CaptureCreated)
 	m.PayloadDownload(DownloadCorrupt)
 	m.RunsCreated(ModeBatch, 3)
-	m.Dismissal()
+	m.Dismissal("failure")
 	m.Panic("handler")
-	m.HTTPRequest("/v1/failures/{id}", "GET", 404, time.Millisecond)
+	m.HTTPRequest("/v1/records/{id}", "GET", 404, time.Millisecond)
 	checks := map[string]float64{
 		"auth":      testutil.ToFloat64(m.authFailures.WithLabelValues("scope")),
-		"captures":  testutil.ToFloat64(m.captures.WithLabelValues(CaptureCreated)),
+		"captures":  testutil.ToFloat64(m.captures.WithLabelValues("failure", CaptureCreated)),
 		"downloads": testutil.ToFloat64(m.payloadDownloads.WithLabelValues(DownloadCorrupt)),
 		"runs":      testutil.ToFloat64(m.runsCreated.WithLabelValues(ModeBatch)),
-		"dismiss":   testutil.ToFloat64(m.dismissals),
+		"dismiss":   testutil.ToFloat64(m.dismissals.WithLabelValues("failure")),
 		"panics":    testutil.ToFloat64(m.panics.WithLabelValues("handler")),
-		"http":      testutil.ToFloat64(m.httpRequests.WithLabelValues("/v1/failures/{id}", "GET", "404")),
+		"http":      testutil.ToFloat64(m.httpRequests.WithLabelValues("/v1/records/{id}", "GET", "404")),
 	}
 	want := map[string]float64{"auth": 1, "captures": 2, "downloads": 1, "runs": 3, "dismiss": 1, "panics": 1, "http": 1}
 	for name, got := range checks {
@@ -101,13 +102,18 @@ func TestRecordersCount(t *testing.T) {
 
 func TestSetStateZeroesStatusesMissingFromTheSample(t *testing.T) {
 	m := New()
-	m.SetState(State{RecordsByStatus: map[string]int64{"open": 3, "unknown": 1}, UsageRecords: 4, UsageBytes: 100, SchemaVersion: 1})
-	m.SetState(State{RecordsByStatus: map[string]int64{"open": 2}, UsageRecords: 2, UsageBytes: 50, SchemaVersion: 1})
-	if got := testutil.ToFloat64(m.records.WithLabelValues("unknown")); got != 0 {
+	m.SetState(State{RecordsByState: map[replaywire.RecordState]int64{{Kind: "failure", DeliveryStatus: "open"}: 3, {Kind: "failure", DeliveryStatus: "unknown"}: 1, {Kind: "inspection"}: 2, {Kind: "failure", DeliveryStatus: "unknown", Dismissed: true}: 1}, UsageRecords: 4, UsageBytes: 100, SchemaVersion: 1})
+	m.SetState(State{RecordsByState: map[replaywire.RecordState]int64{{Kind: "failure", DeliveryStatus: "open"}: 2}, UsageRecords: 2, UsageBytes: 50, SchemaVersion: 1})
+	if got := testutil.ToFloat64(m.records.WithLabelValues("failure", "unknown", "false")); got != 0 {
 		t.Fatalf("records{unknown} = %v after it left the sample, want 0", got)
 	}
-	if got := testutil.ToFloat64(m.records.WithLabelValues("open")); got != 2 {
+	if got := testutil.ToFloat64(m.records.WithLabelValues("failure", "open", "false")); got != 2 {
 		t.Fatalf("records{open} = %v", got)
+	}
+	for _, labels := range [][]string{{"inspection", "", "false"}, {"failure", "unknown", "true"}} {
+		if got := testutil.ToFloat64(m.records.WithLabelValues(labels...)); got != 0 {
+			t.Fatalf("stale record counts for %v = %v", labels, got)
+		}
 	}
 	if testutil.ToFloat64(m.usageRecords) != 2 || testutil.ToFloat64(m.usageBytes) != 50 || testutil.ToFloat64(m.schemaVersion) != 1 {
 		t.Fatal("usage or schema gauges not set")
@@ -216,5 +222,25 @@ func TestGCLastSuccessStartsAtProcessStart(t *testing.T) {
 	m := New()
 	if got := testutil.ToFloat64(m.gcLastSuccess); got < before || got > float64(time.Now().Unix())+1 {
 		t.Fatalf("gc_last_success_timestamp_seconds = %v at start, want about %v", got, before)
+	}
+}
+
+func TestCaptureKindsRemainBoundedAndArtifactsAreSeparate(t *testing.T) {
+	m := New()
+	m.Capture("untrusted-kind", CaptureInvalid)
+	m.Capture("inspection", CaptureCreated)
+	m.Dismissal("inspection")
+	m.CaptureArtifactBytes("inspection", "payload", 0)
+	if got := testutil.ToFloat64(m.captures.WithLabelValues("unknown", CaptureInvalid)); got != 1 {
+		t.Fatal(got)
+	}
+	if got := testutil.ToFloat64(m.captures.WithLabelValues("inspection", CaptureCreated)); got != 1 {
+		t.Fatal(got)
+	}
+	if got := testutil.ToFloat64(m.dismissals.WithLabelValues("inspection")); got != 1 {
+		t.Fatal(got)
+	}
+	if got := testutil.CollectAndCount(m.artifactBytes); got != 1 {
+		t.Fatalf("zero-byte payload should create one histogram, got %d", got)
 	}
 }

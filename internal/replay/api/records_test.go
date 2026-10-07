@@ -10,9 +10,9 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
 )
 
-func testRecord() store.Failure {
+func testRecord() store.Record {
 	at := time.Date(2026, 9, 23, 13, 0, 0, 0, time.UTC)
-	return store.Failure{FailureMetadata: testMetadata(), Status: store.StatusOpen, RootID: testID,
+	return store.Record{RecordMetadata: testMetadata(), DeliveryStatus: store.StatusOpen, RootID: testID,
 		CapturedAt: at, ExpiresAt: at.Add(168 * time.Hour), HasArtifacts: true}
 }
 
@@ -21,17 +21,17 @@ func TestListPassesTheFilter(t *testing.T) {
 	fs := notFoundStore()
 	fs.list = func(f store.Filter) (store.Page, error) {
 		got = f
-		return store.Page{Items: []store.Failure{testRecord()}, NextCursor: "next"}, nil
+		return store.Page{Items: []store.Record{testRecord()}, NextCursor: "next"}, nil
 	}
 	h := newHarness(t, fs)
-	q := "flow=orders&node_id=out&destination_id=archive&status=open&kind=resume&retryable=true" +
+	q := "flow=orders&node_id=out&destination_id=archive&delivery_status=open&kind=failure&replay_mode=resume&retryable=true" +
 		"&since=2026-09-23T00:00:00Z&until=2026-09-24T00:00:00Z&limit=20&cursor=abc"
-	rec := h.do(t, "GET", "/v1/failures?"+q, readToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records?"+q, readToken, nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
 	yes := true
-	want := store.Filter{Flow: "orders", NodeID: "out", DestinationID: "archive", Status: "open", Kind: "resume", Retryable: &yes,
+	want := store.Filter{Flow: "orders", NodeID: "out", DestinationID: "archive", DeliveryStatus: "open", Kind: "failure", ReplayMode: "resume", Retryable: &yes,
 		Since: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC), Until: time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC), Limit: 20, Cursor: "abc"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("filter = %+v\nwant     %+v", got, want)
@@ -41,7 +41,7 @@ func TestListPassesTheFilter(t *testing.T) {
 		NextCursor string           `json:"next_cursor"`
 	}
 	decode(t, rec, &resp)
-	if len(resp.Items) != 1 || resp.Items[0]["id"] != testID || resp.Items[0]["status"] != "open" || resp.NextCursor != "next" {
+	if len(resp.Items) != 1 || resp.Items[0]["id"] != testID || resp.Items[0]["delivery_status"] != "open" || resp.NextCursor != "next" {
 		t.Fatalf("response = %+v", resp)
 	}
 	if _, leaks := resp.Items[0]["error_message"]; leaks {
@@ -51,7 +51,7 @@ func TestListPassesTheFilter(t *testing.T) {
 
 func TestListEmptyPageIsAnArray(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	rec := h.do(t, "GET", "/v1/failures", readToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records", readToken, nil, nil)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"items":[]`) {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
@@ -68,14 +68,14 @@ func TestListRejectsBadParameters(t *testing.T) {
 	}
 	h := newHarness(t, fs)
 	for query, code := range map[string]string{
-		"bogus=1": "invalid_parameter", "flow=a&flow=b": "invalid_parameter", "status=weird": "invalid_parameter",
+		"bogus=1": "invalid_parameter", "flow=a&flow=b": "invalid_parameter", "delivery_status=weird": "invalid_parameter", "status=open": "invalid_parameter", "kind=inspect": "invalid_parameter", "kind=resume": "invalid_parameter", "replay_mode=weird": "invalid_parameter", "dismissed=1": "invalid_parameter", "dismissed=true&dismissed=false": "invalid_parameter",
 		"kind=weird": "invalid_parameter", "retryable=yes": "invalid_parameter", "since=yesterday": "invalid_parameter",
 		"limit=0": "invalid_parameter", "limit=501": "invalid_parameter", "limit=ten": "invalid_parameter",
 		"cursor=bad": "invalid_cursor",
 		"flow=%00":   "invalid_parameter", "node_id=caf%E9": "invalid_parameter",
 		"destination_id=" + strings.Repeat("d", 1025): "invalid_parameter",
 	} {
-		rec := h.do(t, "GET", "/v1/failures?"+query, readToken, nil, nil)
+		rec := h.do(t, "GET", "/v1/records?"+query, readToken, nil, nil)
 		if rec.Code != 400 || problemCode(t, rec) != code {
 			t.Errorf("%s: status %d code %q, want 400 %s", query, rec.Code, problemCode(t, rec), code)
 		}
@@ -84,19 +84,19 @@ func TestListRejectsBadParameters(t *testing.T) {
 
 func TestGetReturnsTheDetail(t *testing.T) {
 	fs := notFoundStore()
-	fs.get = func(id string) (store.Detail, error) {
+	fs.get = func(id string) (store.RecordDetail, error) {
 		if id != testID {
 			t.Fatalf("id = %q", id)
 		}
-		return store.Detail{
-			Failure:  testRecord(),
-			Runs:     []store.Run{{RunID: testRunID, FailureID: testID, Status: store.RunQueued, RequestedBy: "ops", IdempotencyKey: "k", CreatedAt: time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)}},
+		return store.RecordDetail{
+			Record:   testRecord(),
+			Runs:     []store.Run{{RunID: testRunID, RecordID: testID, Status: store.RunQueued, RequestedBy: "ops", IdempotencyKey: "k", CreatedAt: time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)}},
 			History:  []store.Event{{Event: store.EventCaptured, Actor: "core-capture", At: time.Date(2026, 9, 23, 13, 0, 0, 0, time.UTC), Detail: json.RawMessage(`{}`)}},
 			Children: []string{},
 		}, nil
 	}
 	h := newHarness(t, fs)
-	rec := h.do(t, "GET", "/v1/failures/"+testID, readToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records/"+testID, readToken, nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
@@ -115,7 +115,7 @@ func TestGetReturnsTheDetail(t *testing.T) {
 
 func TestGetNotFound(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	if rec := h.do(t, "GET", "/v1/failures/"+testID, readToken, nil, nil); rec.Code != 404 || problemCode(t, rec) != "not_found" {
+	if rec := h.do(t, "GET", "/v1/records/"+testID, readToken, nil, nil); rec.Code != 404 || problemCode(t, rec) != "not_found" {
 		t.Fatalf("status %d", rec.Code)
 	}
 }
@@ -128,7 +128,7 @@ func TestPayloadDownload(t *testing.T) {
 		return store.Payload{Bytes: testPayload, ContentType: "application/json", Filename: "café.json"}, nil
 	}
 	h := newHarness(t, fs)
-	rec := h.do(t, "GET", "/v1/failures/"+testID+"/payload", opsToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records/"+testID+"/payload", opsToken, nil, nil)
 	if rec.Code != 200 || rec.Body.String() != string(testPayload) || actor != "ops" {
 		t.Fatalf("status %d body %q actor %q", rec.Code, rec.Body.String(), actor)
 	}
@@ -159,7 +159,7 @@ func TestPayloadErrors(t *testing.T) {
 		fs := notFoundStore()
 		fs.payload = func(string, string) (store.Payload, error) { return store.Payload{}, c.err }
 		h := newHarness(t, fs)
-		rec := h.do(t, "GET", "/v1/failures/"+testID+"/payload", opsToken, nil, nil)
+		rec := h.do(t, "GET", "/v1/records/"+testID+"/payload", opsToken, nil, nil)
 		if rec.Code != c.status || problemCode(t, rec) != c.code {
 			t.Errorf("%v: status %d code %q", c.err, rec.Code, problemCode(t, rec))
 		}
@@ -170,7 +170,7 @@ func TestPayloadCorruptIsA500(t *testing.T) {
 	fs := notFoundStore()
 	fs.payload = func(string, string) (store.Payload, error) { return store.Payload{}, store.ErrCorrupt }
 	h := newHarness(t, fs)
-	rec := h.do(t, "GET", "/v1/failures/"+testID+"/payload", opsToken, nil, nil)
+	rec := h.do(t, "GET", "/v1/records/"+testID+"/payload", opsToken, nil, nil)
 	if rec.Code != 500 || problemCode(t, rec) != "payload_corrupt" {
 		t.Fatalf("status %d code %q", rec.Code, problemCode(t, rec))
 	}
@@ -202,20 +202,21 @@ func TestContentDisposition(t *testing.T) {
 
 func TestDismiss(t *testing.T) {
 	fs := notFoundStore()
-	fs.dismiss = func(id, actor string) (store.Failure, error) {
+	fs.dismiss = func(id, actor string) (store.Record, error) {
 		f := testRecord()
-		f.Status, f.HasArtifacts = store.StatusDismissed, false
+		at := time.Now().UTC()
+		f.DismissedAt, f.HasArtifacts = &at, false
 		return f, nil
 	}
 	h := newHarness(t, fs)
-	rec := h.do(t, "POST", "/v1/failures/"+testID+"/dismiss", opsToken, nil, nil)
+	rec := h.do(t, "POST", "/v1/records/"+testID+"/dismiss", opsToken, nil, nil)
 	var resp map[string]any
 	decode(t, rec, &resp)
-	if rec.Code != 200 || resp["status"] != "dismissed" {
+	if rec.Code != 200 || resp["dismissed_at"] == nil || resp["delivery_status"] != "open" {
 		t.Fatalf("status %d body %v", rec.Code, resp)
 	}
-	fs.dismiss = func(string, string) (store.Failure, error) { return store.Failure{}, store.ErrInvalidState }
-	if rec := h.do(t, "POST", "/v1/failures/"+testID+"/dismiss", opsToken, nil, nil); rec.Code != 422 || problemCode(t, rec) != "not_dismissable" {
+	fs.dismiss = func(string, string) (store.Record, error) { return store.Record{}, store.ErrInvalidState }
+	if rec := h.do(t, "POST", "/v1/records/"+testID+"/dismiss", opsToken, nil, nil); rec.Code != 422 || problemCode(t, rec) != "not_dismissable" {
 		t.Fatalf("status %d", rec.Code)
 	}
 }

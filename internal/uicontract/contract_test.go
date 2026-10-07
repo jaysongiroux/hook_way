@@ -33,14 +33,14 @@ func TestValidateReplayAction(t *testing.T) {
 		issues int
 	}{
 		{"single key", ReplayActionInput{IdempotencyKey: "k"}, 0},
-		{"batch unknown id accepted", ReplayActionInput{IdempotencyKey: "k", FailureIDs: []string{"any-string"}}, 0},
+		{"batch unknown id accepted", ReplayActionInput{IdempotencyKey: "k", RecordIDs: []string{"any-string"}}, 0},
 		{"missing key", ReplayActionInput{}, 1},
 		{"space", ReplayActionInput{IdempotencyKey: "bad key"}, 1},
 		{"non ascii", ReplayActionInput{IdempotencyKey: "é"}, 1},
 		{"too long", ReplayActionInput{IdempotencyKey: strings.Repeat("a", 256)}, 1},
-		{"empty batch", ReplayActionInput{IdempotencyKey: "k", FailureIDs: []string{}}, 1},
-		{"duplicate", ReplayActionInput{IdempotencyKey: "k", FailureIDs: []string{"x", "x"}}, 1},
-		{"too many", ReplayActionInput{IdempotencyKey: "k", FailureIDs: make([]string, 101)}, 2},
+		{"empty batch", ReplayActionInput{IdempotencyKey: "k", RecordIDs: []string{}}, 1},
+		{"duplicate", ReplayActionInput{IdempotencyKey: "k", RecordIDs: []string{"x", "x"}}, 1},
+		{"too many", ReplayActionInput{IdempotencyKey: "k", RecordIDs: make([]string, 101)}, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -89,10 +89,10 @@ func TestServeRefusesAnUnmigratedDatabase(t *testing.T) {
 func TestServeEndToEnd(t *testing.T) {
 	addr := freeAddr(t)
 	path := writeConfig(t, testConfig(replaytest.Database(t), addr, "metrics: {enabled: true, path: /metrics}\n"))
-	if code, stdout, stderr := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is at version 2") {
+	if code, stdout, stderr := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is at version 1") {
 		t.Fatalf("migrate = %d %q %q", code, stdout, stderr)
 	}
-	if code, stdout, _ := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is current at version 2") {
+	if code, stdout, _ := runCmd("migrate", "--config", path); code != 0 || !strings.Contains(stdout, "schema is current at version 1") {
 		t.Fatalf("second migrate = %d %q", code, stdout)
 	}
 
@@ -120,9 +120,9 @@ func TestServeEndToEnd(t *testing.T) {
 	snapshot, payload := []byte("snapshot-bytes"), []byte(`{"event":"created"}`)
 	sum := func(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	meta, _ := json.Marshal(replaywire.FailureMetadata{
-		ID: id, Kind: replaywire.KindResume, Flow: "orders", NodeID: "out", NodeType: "publish", EventID: "evt-1",
-		ReceivedAt: at, FailedAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Retryable: true,
+	meta, _ := json.Marshal(replaywire.RecordMetadata{
+		ID: id, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out", NodeType: "publish", EventID: "evt-1",
+		ReceivedAt: at, OccurredAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Retryable: true,
 		Snapshot: &replaywire.ArtifactInfo{Size: int64(len(snapshot)), SHA256: sum(snapshot), Version: 1},
 		Payload:  &replaywire.ArtifactInfo{Size: int64(len(payload)), SHA256: sum(payload), ContentType: "application/json"},
 	})
@@ -136,16 +136,16 @@ func TestServeEndToEnd(t *testing.T) {
 		_, _ = fw.Write(p.data)
 	}
 	_ = mw.Close()
-	if status, data := call(t, "POST", base+"/v1/failures", captureToken, &body, http.Header{"Content-Type": {mw.FormDataContentType()}}); status != 201 {
+	if status, data := call(t, "POST", base+"/v1/records", captureToken, &body, http.Header{"Content-Type": {mw.FormDataContentType()}}); status != 201 {
 		t.Fatalf("ingest = %d %s", status, data)
 	}
-	if status, data := call(t, "GET", base+"/v1/failures?flow=orders", opsToken, nil, nil); status != 200 || !strings.Contains(string(data), id) {
+	if status, data := call(t, "GET", base+"/v1/records?flow=orders", opsToken, nil, nil); status != 200 || !strings.Contains(string(data), id) {
 		t.Fatalf("list = %d %s", status, data)
 	}
-	if status, data := call(t, "GET", base+"/v1/failures/"+id+"/payload", opsToken, nil, nil); status != 200 || !bytes.Equal(data, payload) {
+	if status, data := call(t, "GET", base+"/v1/records/"+id+"/payload", opsToken, nil, nil); status != 200 || !bytes.Equal(data, payload) {
 		t.Fatalf("payload = %d %q", status, data)
 	}
-	status, data := call(t, "POST", base+"/v1/failures/"+id+"/retries", opsToken, nil, http.Header{"Idempotency-Key": {"e2e-1"}})
+	status, data := call(t, "POST", base+"/v1/records/"+id+"/retries", opsToken, nil, http.Header{"Idempotency-Key": {"e2e-1"}})
 	var queued struct {
 		RunID string `json:"run_id"`
 	}
@@ -164,7 +164,7 @@ func TestServeEndToEnd(t *testing.T) {
 		t.Fatalf("metrics without a token = %d, want 401 (a key has the metrics scope)", status)
 	}
 	if status, data := call(t, "GET", base+"/metrics", opsToken, nil, nil); status != 200 ||
-		!strings.Contains(string(data), `hookway_replay_captures_total{outcome="created"} 1`) ||
+		!strings.Contains(string(data), `hookway_replay_captures_total{kind="failure",outcome="created"} 1`) ||
 		!strings.Contains(string(data), `hookway_replay_db_pool_max_connections`) {
 		t.Fatalf("metrics = %d\n%s", status, data)
 	}
@@ -189,9 +189,9 @@ func postFailure(t *testing.T, base, id string) {
 	snapshot, payload := []byte("snapshot-"+id), []byte(`{"event":"created"}`)
 	sum := func(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	meta, _ := json.Marshal(replaywire.FailureMetadata{
-		ID: id, Kind: replaywire.KindResume, Flow: "orders", NodeID: "out_s3", NodeType: "publish", EventID: "evt-1",
-		ReceivedAt: at, FailedAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Retryable: true,
+	meta, _ := json.Marshal(replaywire.RecordMetadata{
+		ID: id, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out_s3", NodeType: "publish", EventID: "evt-1",
+		ReceivedAt: at, OccurredAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Retryable: true,
 		Snapshot: &replaywire.ArtifactInfo{Size: int64(len(snapshot)), SHA256: sum(snapshot), Version: 1},
 		Payload:  &replaywire.ArtifactInfo{Size: int64(len(payload)), SHA256: sum(payload), ContentType: "application/json"},
 	})
@@ -205,7 +205,7 @@ func postFailure(t *testing.T, base, id string) {
 		_, _ = fw.Write(p.data)
 	}
 	_ = mw.Close()
-	if status, data := call(t, "POST", base+"/v1/failures", captureToken, &body, http.Header{"Content-Type": {mw.FormDataContentType()}}); status != 201 {
+	if status, data := call(t, "POST", base+"/v1/records", captureToken, &body, http.Header{"Content-Type": {mw.FormDataContentType()}}); status != 201 {
 		t.Fatalf("ingest %s = %d %s", id, status, data)
 	}
 }
@@ -237,7 +237,7 @@ func fakeCoreControl(t *testing.T, blockedID, childID string) string {
 				_ = json.Unmarshal(data, &req)
 			}
 		}
-		if req.FailureID == blockedID {
+		if req.RecordID == blockedID {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_, _ = w.Write([]byte(`{"code":"flow_missing"}`))
@@ -247,9 +247,9 @@ func fakeCoreControl(t *testing.T, blockedID, childID string) string {
 		result := replaywire.DeliverResult{
 			Nodes: []replaywire.NodeOutcome{{NodeID: req.NodeID, Outcome: replaywire.NodeDelivered, Attempts: 1},
 				{NodeID: "out_lambda", Outcome: replaywire.NodeFailed, ErrorClass: replaywire.ErrorClass5xx}},
-			Children: []replaywire.FailureMetadata{{
-				ID: childID, Kind: replaywire.KindResume, Flow: req.Flow, NodeID: "out_lambda", NodeType: "publish", EventID: "evt-1",
-				ReceivedAt: at, FailedAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Retryable: true,
+			Children: []replaywire.RecordMetadata{{
+				ID: childID, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: req.Flow, NodeID: "out_lambda", NodeType: "publish", EventID: "evt-1",
+				ReceivedAt: at, OccurredAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Retryable: true,
 				Snapshot: &replaywire.ArtifactInfo{Size: int64(len(childSnap)), SHA256: sum(childSnap), Version: 1},
 				Payload:  &replaywire.ArtifactInfo{Size: int64(len(childPay)), SHA256: sum(childPay), ContentType: "application/json"},
 			}},
@@ -328,21 +328,21 @@ func TestServeRedrivesThroughCore(t *testing.T) {
 	postFailure(t, base, okID)
 	postFailure(t, base, blockedID)
 	for _, id := range []string{okID, blockedID} {
-		if status, data := call(t, "POST", base+"/v1/failures/"+id+"/retries", opsToken, nil, http.Header{"Idempotency-Key": {"k-" + id}}); status != 202 {
+		if status, data := call(t, "POST", base+"/v1/records/"+id+"/retries", opsToken, nil, http.Header{"Idempotency-Key": {"k-" + id}}); status != 202 {
 			t.Fatalf("retry %s = %d %s", id, status, data)
 		}
 	}
-	waitForJSON(t, base+"/v1/failures/"+okID, opsToken, `"status":"resolved"`)
-	detail := waitForJSON(t, base+"/v1/failures/"+okID, opsToken, childID)
+	waitForJSON(t, base+"/v1/records/"+okID, opsToken, `"delivery_status":"resolved"`)
+	detail := waitForJSON(t, base+"/v1/records/"+okID, opsToken, childID)
 	if !strings.Contains(detail, `"status":"succeeded"`) {
 		t.Fatalf("resolved record's run did not succeed: %s", detail)
 	}
-	child := waitForJSON(t, base+"/v1/failures/"+childID, opsToken, `"parent_id":"`+okID+`"`)
-	if !strings.Contains(child, `"status":"open"`) || !strings.Contains(child, `"root_id":"`+okID+`"`) {
+	child := waitForJSON(t, base+"/v1/records/"+childID, opsToken, `"parent_id":"`+okID+`"`)
+	if !strings.Contains(child, `"delivery_status":"open"`) || !strings.Contains(child, `"root_id":"`+okID+`"`) {
 		t.Fatalf("child = %s", child)
 	}
-	blocked := waitForJSON(t, base+"/v1/failures/"+blockedID, opsToken, `"status":"blocked"`)
-	if !strings.Contains(blocked, `"status":"open"`) || !strings.Contains(blocked, "flow_missing") {
+	blocked := waitForJSON(t, base+"/v1/records/"+blockedID, opsToken, `"status":"blocked"`)
+	if !strings.Contains(blocked, `"delivery_status":"open"`) || !strings.Contains(blocked, "flow_missing") {
 		t.Fatalf("blocked record = %s", blocked)
 	}
 	metricsBody := waitForJSON(t, base+"/metrics", opsToken, `hookway_replay_children_created_total 1`)
@@ -371,10 +371,10 @@ func TestGCCommandDeletesExpiredRecords(t *testing.T) {
 	}
 	defer st.Close()
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	if _, err := st.Ingest(ctx, store.NewFailure{Metadata: replaywire.FailureMetadata{
-		ID: "01926d3c-0004-7b3a-9c1e-2f4a5b6c7d8e", Kind: replaywire.KindResume, Flow: "orders", NodeID: "out", NodeType: "publish",
-		EventID: "evt-1", ReceivedAt: at, FailedAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx,
-		NotRetryableReason: replaywire.NotRetryableTooLarge,
+	if _, err := st.Ingest(ctx, store.NewRecord{Metadata: replaywire.RecordMetadata{
+		ID: "01926d3c-0004-7b3a-9c1e-2f4a5b6c7d8e", Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out", NodeType: "publish",
+		EventID: "evt-1", ReceivedAt: at, OccurredAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx,
+		NotRetryableReason: replaywire.NotRetryableTooLarge, PayloadUnavailableReason: replaywire.NotRetryableTooLarge,
 	}, Actor: "test"}); err != nil {
 		t.Fatal(err)
 	}

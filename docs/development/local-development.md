@@ -86,7 +86,7 @@ Expect `202 Accepted`. In RabbitMQ's management UI, find the
    ```sh
    REPLAY_OPERATOR_TOKEN=${REPLAY_OPERATOR_TOKEN:-dev-operator-token-0123456789abcde}
    auth="Authorization: Bearer $REPLAY_OPERATOR_TOKEN"
-   curl -sS -H "$auth" 'http://localhost:8081/v1/failures?status=open'
+   curl -sS -H "$auth" 'http://localhost:8081/v1/records?kind=failure&delivery_status=open&dismissed=false'
    ```
 
 4. Copy the returned failure ID into `FAILURE_ID` and inspect it. The missed
@@ -94,8 +94,8 @@ Expect `202 Accepted`. In RabbitMQ's management UI, find the
 
    ```sh
    FAILURE_ID='paste-the-failure-id-here'
-   curl -sS -H "$auth" "http://localhost:8081/v1/failures/$FAILURE_ID"
-   curl -sS -H "$auth" "http://localhost:8081/v1/failures/$FAILURE_ID/payload"
+   curl -sS -H "$auth" "http://localhost:8081/v1/records/$FAILURE_ID"
+   curl -sS -H "$auth" "http://localhost:8081/v1/records/$FAILURE_ID/payload"
    ```
 
 5. Restore the destination and request a retry:
@@ -103,7 +103,7 @@ Expect `202 Accepted`. In RabbitMQ's management UI, find the
    ```sh
    docker compose -f examples/docker-compose.yaml start notify-sink
    curl -sS -X POST -H "$auth" -H 'Idempotency-Key: my-first-retry' \
-     "http://localhost:8081/v1/failures/$FAILURE_ID/retries"
+     "http://localhost:8081/v1/records/$FAILURE_ID/retries"
    ```
 
 6. Copy the returned run ID into `RUN_ID` and poll its result:

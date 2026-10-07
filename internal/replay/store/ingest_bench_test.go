@@ -56,12 +56,12 @@ func benchIngest(b *testing.B, s *Store, size int, parallel bool) {
 		ingest := func() {
 			i := seq.Add(1)
 			at := time.Now().UTC()
-			m := replaywire.FailureMetadata{ID: uuid.Must(uuid.NewV7()).String(), Kind: replaywire.KindResume,
+			m := replaywire.RecordMetadata{ID: uuid.Must(uuid.NewV7()).String(), Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume,
 				Flow: "orders", NodeID: "out", NodeType: "publish", EventID: fmt.Sprintf("evt-%d", i),
-				ReceivedAt: at, FailedAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Attempts: 1,
+				ReceivedAt: at, OccurredAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Attempts: 1,
 				Retryable: true, Snapshot: &replaywire.ArtifactInfo{Size: int64(size), SHA256: digest, Version: 1},
 				Payload: &replaywire.ArtifactInfo{Size: int64(size), SHA256: digest}}
-			if _, err := s.Ingest(ctx, NewFailure{Metadata: m, Snapshot: art, Payload: art, Actor: "bench"}); err != nil {
+			if _, err := s.Ingest(ctx, NewRecord{Metadata: m, Snapshot: art, Payload: art, Actor: "bench"}); err != nil {
 				b.Error(err)
 			}
 		}

@@ -72,7 +72,7 @@ export const DOC_LINKS: DocLink[] = [
   doc(
     "docs/operations/replay-service.md",
     "Replay operations",
-    "Capture, inspect, and retry failed deliveries with the optional replay service.",
+    "Recover failed deliveries and view captured webhooks with the optional replay service.",
   ),
   doc(
     "docs/guides/protection-stores.md",

@@ -42,7 +42,13 @@
           "action": {
             "type": "string"
           },
-          "failure_ids": {
+          "idempotency_key": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "record_ids": {
             "items": {
               "type": "string"
             },
@@ -50,12 +56,6 @@
               "array",
               "null"
             ]
-          },
-          "idempotency_key": {
-            "type": "string"
-          },
-          "note": {
-            "type": "string"
           },
           "reference": {
             "type": "string"
@@ -149,7 +149,7 @@
           "detail": {
             "type": "string"
           },
-          "failure_id": {
+          "record_id": {
             "type": "string"
           },
           "run_id": {
@@ -160,7 +160,7 @@
           }
         },
         "required": [
-          "failure_id",
+          "record_id",
           "status"
         ],
         "type": "object"
@@ -175,7 +175,7 @@
               "null"
             ]
           },
-          "failure_ids": {
+          "record_ids": {
             "items": {
               "type": [
                 "string",
@@ -189,7 +189,7 @@
           }
         },
         "required": [
-          "failure_ids"
+          "record_ids"
         ],
         "type": "object"
       },
@@ -225,7 +225,7 @@
         "properties": {
           "children": {
             "items": {
-              "$ref": "#/components/schemas/FailureMetadata"
+              "$ref": "#/components/schemas/RecordMetadata"
             },
             "type": [
               "array",
@@ -283,425 +283,6 @@
         ],
         "type": "object"
       },
-      "FailureActions": {
-        "additionalProperties": true,
-        "properties": {
-          "dismiss": {
-            "$ref": "#/components/schemas/ActionEligibility"
-          },
-          "resolve": {
-            "$ref": "#/components/schemas/ActionEligibility"
-          },
-          "retry": {
-            "$ref": "#/components/schemas/ActionEligibility"
-          }
-        },
-        "required": [
-          "retry",
-          "dismiss",
-          "resolve"
-        ],
-        "type": "object"
-      },
-      "FailureDetail": {
-        "additionalProperties": true,
-        "properties": {
-          "actions": {
-            "$ref": "#/components/schemas/FailureActions"
-          },
-          "artifacts": {
-            "$ref": "#/components/schemas/ArtifactsView"
-          },
-          "attempts": {
-            "type": "integer"
-          },
-          "captured_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "children": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "core_instance": {
-            "type": "string"
-          },
-          "core_version": {
-            "type": "string"
-          },
-          "destination_hash": {
-            "type": "string"
-          },
-          "destination_id": {
-            "type": "string"
-          },
-          "destination_type": {
-            "type": "string"
-          },
-          "error_class": {
-            "type": "string"
-          },
-          "error_message": {
-            "type": "string"
-          },
-          "event_id": {
-            "type": "string"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "failed_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "flow": {
-            "type": "string"
-          },
-          "history": {
-            "items": {
-              "$ref": "#/components/schemas/EventView"
-            },
-            "type": "array"
-          },
-          "id": {
-            "type": "string"
-          },
-          "idempotency_key": {
-            "type": "string"
-          },
-          "inbound_status": {
-            "type": "integer"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "node_config_hash": {
-            "type": "string"
-          },
-          "node_id": {
-            "type": "string"
-          },
-          "node_type": {
-            "type": "string"
-          },
-          "not_retryable_reason": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "received_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "rendered_target": {
-            "type": "string"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "resolution": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Resolution"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "resolution_source": {
-            "enum": [
-              "operator_confirmed",
-              "retry_succeeded"
-            ],
-            "type": "string"
-          },
-          "retryable": {
-            "type": "boolean"
-          },
-          "root_id": {
-            "type": "string"
-          },
-          "runs": {
-            "items": {
-              "$ref": "#/components/schemas/Run"
-            },
-            "type": "array"
-          },
-          "status": {
-            "type": "string"
-          },
-          "target": {
-            "type": "string"
-          },
-          "trace_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "actions",
-          "id",
-          "kind",
-          "status",
-          "flow",
-          "node_id",
-          "node_type",
-          "event_id",
-          "failed_at",
-          "error_class",
-          "retryable",
-          "root_id",
-          "captured_at",
-          "expires_at",
-          "received_at",
-          "inbound_status",
-          "attempts",
-          "artifacts",
-          "runs",
-          "history",
-          "children"
-        ],
-        "type": "object"
-      },
-      "FailureList": {
-        "additionalProperties": true,
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/FailureSummary"
-            },
-            "type": "array"
-          },
-          "next_cursor": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "items"
-        ],
-        "type": "object"
-      },
-      "FailureMetadata": {
-        "additionalProperties": false,
-        "description": "Strict metadata JSON. Text fields are bounded printable UTF-8 (normally 1024 bytes); error_message permits newlines and is bounded to 4096 bytes. publish_only requires destination_id, destination_type, target and rendered_target. Retryable records require snapshot and payload declarations; non-retryable records carry no artifacts and require too_large or unsupported reason. Snapshot size/version must be positive; payload size may be zero. Artifact size and SHA256 must exactly match the binary parts.",
-        "properties": {
-          "attempts": {
-            "maximum": 2147483647,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "core_instance": {
-            "type": "string"
-          },
-          "core_version": {
-            "type": "string"
-          },
-          "destination_hash": {
-            "type": "string"
-          },
-          "destination_id": {
-            "type": "string"
-          },
-          "destination_type": {
-            "type": "string"
-          },
-          "error_class": {
-            "type": "string"
-          },
-          "error_message": {
-            "type": "string"
-          },
-          "event_id": {
-            "type": "string"
-          },
-          "failed_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "flow": {
-            "type": "string"
-          },
-          "id": {
-            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-            "type": "string"
-          },
-          "idempotency_key": {
-            "type": "string"
-          },
-          "inbound_status": {
-            "maximum": 299,
-            "minimum": 200,
-            "type": "integer"
-          },
-          "kind": {
-            "enum": [
-              "resume",
-              "publish_only"
-            ],
-            "type": "string"
-          },
-          "node_config_hash": {
-            "type": "string"
-          },
-          "node_id": {
-            "type": "string"
-          },
-          "node_type": {
-            "type": "string"
-          },
-          "not_retryable_reason": {
-            "type": "string"
-          },
-          "payload": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ArtifactInfo"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "received_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "rendered_target": {
-            "type": "string"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "retryable": {
-            "type": "boolean"
-          },
-          "snapshot": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ArtifactInfo"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "target": {
-            "type": "string"
-          },
-          "trace_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "flow",
-          "node_id",
-          "node_type",
-          "event_id",
-          "received_at",
-          "failed_at",
-          "inbound_status",
-          "error_class"
-        ],
-        "type": "object"
-      },
-      "FailureSummary": {
-        "additionalProperties": true,
-        "properties": {
-          "actions": {
-            "$ref": "#/components/schemas/FailureActions"
-          },
-          "captured_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "destination_id": {
-            "type": "string"
-          },
-          "destination_type": {
-            "type": "string"
-          },
-          "error_class": {
-            "type": "string"
-          },
-          "event_id": {
-            "type": "string"
-          },
-          "expires_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "failed_at": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "flow": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "node_id": {
-            "type": "string"
-          },
-          "node_type": {
-            "type": "string"
-          },
-          "not_retryable_reason": {
-            "type": "string"
-          },
-          "parent_id": {
-            "type": "string"
-          },
-          "rendered_target": {
-            "type": "string"
-          },
-          "resolution_source": {
-            "enum": [
-              "operator_confirmed",
-              "retry_succeeded"
-            ],
-            "type": "string"
-          },
-          "retryable": {
-            "type": "boolean"
-          },
-          "root_id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "target": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "actions",
-          "id",
-          "kind",
-          "status",
-          "flow",
-          "node_id",
-          "node_type",
-          "event_id",
-          "failed_at",
-          "error_class",
-          "retryable",
-          "root_id",
-          "captured_at",
-          "expires_at"
-        ],
-        "type": "object"
-      },
       "Identity": {
         "additionalProperties": true,
         "properties": {
@@ -729,6 +310,76 @@
           "scopes",
           "contract_version",
           "capabilities"
+        ],
+        "type": "object"
+      },
+      "InspectionBody": {
+        "additionalProperties": true,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "encoding": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_type",
+          "encoding",
+          "content"
+        ],
+        "type": "object"
+      },
+      "InspectionPayload": {
+        "additionalProperties": true,
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/InspectionBody"
+          },
+          "headers": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "body",
+          "headers",
+          "variables",
+          "method",
+          "path"
         ],
         "type": "object"
       },
@@ -874,19 +525,620 @@
           "unauthorized": 401
         }
       },
+      "RecordActions": {
+        "additionalProperties": true,
+        "properties": {
+          "dismiss": {
+            "$ref": "#/components/schemas/ActionEligibility"
+          },
+          "resolve": {
+            "$ref": "#/components/schemas/ActionEligibility"
+          },
+          "retry": {
+            "$ref": "#/components/schemas/ActionEligibility"
+          }
+        },
+        "required": [
+          "retry",
+          "dismiss",
+          "resolve"
+        ],
+        "type": "object"
+      },
+      "RecordDetail": {
+        "additionalProperties": true,
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/RecordActions"
+          },
+          "artifacts": {
+            "$ref": "#/components/schemas/ArtifactsView"
+          },
+          "attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "captured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "core_instance": {
+            "type": "string"
+          },
+          "core_version": {
+            "type": "string"
+          },
+          "delivery_status": {
+            "enum": [
+              "open",
+              "retrying",
+              "resolved",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "destination_hash": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/EventView"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "inbound_status": {
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "failure",
+              "inspection"
+            ],
+            "type": "string"
+          },
+          "node_config_hash": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "not_retryable_reason": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "payload_unavailable_reason": {
+            "enum": [
+              "too_large",
+              "unsupported"
+            ],
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          },
+          "replay_mode": {
+            "enum": [
+              "resume",
+              "publish_only"
+            ],
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Resolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution_source": {
+            "enum": [
+              "operator_confirmed",
+              "retry_succeeded"
+            ],
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "type": "array"
+          },
+          "target": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions",
+          "id",
+          "kind",
+          "flow",
+          "node_id",
+          "node_type",
+          "event_id",
+          "occurred_at",
+          "retryable",
+          "root_id",
+          "captured_at",
+          "expires_at",
+          "received_at",
+          "inbound_status",
+          "artifacts",
+          "runs",
+          "history",
+          "children"
+        ],
+        "type": "object"
+      },
+      "RecordList": {
+        "additionalProperties": true,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecordSummary"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "RecordMetadata": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "else": {
+              "properties": {
+                "inbound_status": {
+                  "maximum": 299,
+                  "minimum": 200
+                }
+              },
+              "required": [
+                "replay_mode",
+                "error_class"
+              ]
+            },
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "inspection"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "snapshot"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "replay_mode"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_class"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "error_message"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "attempts"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "destination_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "destination_type"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "target"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rendered_target"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "destination_hash"
+                    ]
+                  }
+                ]
+              },
+              "properties": {
+                "node_type": {
+                  "const": "inspect"
+                },
+                "not_retryable_reason": {
+                  "const": "inspection_only"
+                },
+                "retryable": {
+                  "const": false
+                }
+              },
+              "required": [
+                "not_retryable_reason"
+              ]
+            }
+          }
+        ],
+        "description": "Strict capture metadata. kind is failure or inspection; replay_mode is required only for failures. occurred_at is the capture occurrence time. Retryable failures require snapshot and payload; non-retryable failures retain metadata only and use too_large or unsupported. Inspections are view-only, have no failure/destination fields or snapshot, and always use inspection_only as their retry prohibition. Missing payloads require payload_unavailable_reason too_large or unsupported independently of retry policy. Inspection payload format remains version 1. Text bounds, SHA256 validation, and exact artifact sizes are enforced at ingest.",
+        "properties": {
+          "attempts": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "core_instance": {
+            "type": "string"
+          },
+          "core_version": {
+            "type": "string"
+          },
+          "destination_hash": {
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "inbound_status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "failure",
+              "inspection"
+            ],
+            "type": "string"
+          },
+          "node_config_hash": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "not_retryable_reason": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload_unavailable_reason": {
+            "enum": [
+              "too_large",
+              "unsupported"
+            ],
+            "type": "string"
+          },
+          "received_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          },
+          "replay_mode": {
+            "enum": [
+              "resume",
+              "publish_only"
+            ],
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArtifactInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "trace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "flow",
+          "node_id",
+          "node_type",
+          "event_id",
+          "received_at",
+          "occurred_at",
+          "inbound_status",
+          "retryable"
+        ],
+        "type": "object"
+      },
+      "RecordSummary": {
+        "additionalProperties": true,
+        "properties": {
+          "actions": {
+            "$ref": "#/components/schemas/RecordActions"
+          },
+          "captured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "delivery_status": {
+            "enum": [
+              "open",
+              "retrying",
+              "resolved",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "destination_id": {
+            "type": "string"
+          },
+          "destination_type": {
+            "type": "string"
+          },
+          "dismissed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_class": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "failure",
+              "inspection"
+            ],
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "node_type": {
+            "type": "string"
+          },
+          "not_retryable_reason": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "string"
+          },
+          "payload_unavailable_reason": {
+            "enum": [
+              "too_large",
+              "unsupported"
+            ],
+            "type": "string"
+          },
+          "rendered_target": {
+            "type": "string"
+          },
+          "replay_mode": {
+            "enum": [
+              "resume",
+              "publish_only"
+            ],
+            "type": "string"
+          },
+          "resolution_source": {
+            "enum": [
+              "operator_confirmed",
+              "retry_succeeded"
+            ],
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actions",
+          "id",
+          "kind",
+          "flow",
+          "node_id",
+          "node_type",
+          "event_id",
+          "occurred_at",
+          "retryable",
+          "root_id",
+          "captured_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
       "Resolution": {
         "additionalProperties": true,
         "properties": {
           "actor": {
             "type": "string"
           },
-          "failure_id": {
-            "type": "string"
-          },
           "idempotency_key": {
             "type": "string"
           },
           "note": {
+            "type": "string"
+          },
+          "record_id": {
             "type": "string"
           },
           "reference": {
@@ -898,7 +1150,7 @@
           }
         },
         "required": [
-          "failure_id",
+          "record_id",
           "actor",
           "idempotency_key",
           "note",
@@ -934,18 +1186,18 @@
       "ResolutionResponse": {
         "additionalProperties": true,
         "properties": {
+          "delivery_status": {
+            "type": "string"
+          },
           "resolution": {
             "$ref": "#/components/schemas/Resolution"
           },
           "resolution_source": {
             "type": "string"
-          },
-          "status": {
-            "type": "string"
           }
         },
         "required": [
-          "status",
+          "delivery_status",
           "resolution_source",
           "resolution"
         ],
@@ -998,9 +1250,6 @@
             "format": "date-time",
             "type": "string"
           },
-          "failure_id": {
-            "type": "string"
-          },
           "finished_at": {
             "anyOf": [
               {
@@ -1025,6 +1274,9 @@
                 "type": "null"
               }
             ]
+          },
+          "record_id": {
+            "type": "string"
           },
           "requested_by": {
             "type": "string"
@@ -1055,7 +1307,7 @@
         },
         "required": [
           "run_id",
-          "failure_id",
+          "record_id",
           "status",
           "requested_by",
           "idempotency_key",
@@ -1308,10 +1560,83 @@
         "x-required-scope": "read"
       }
     },
-    "/v1/failures": {
+    "/v1/me": {
       "get": {
-        "description": "Cursor pagination, newest failed records first (failed_at then id descending). Unknown or repeated query parameters are rejected. Empty filters are omitted. Text filters accept at most 1024 bytes printable UTF-8.",
-        "operationId": "listFailures",
+        "description": "Returns the authenticated key name, scopes, contract version and implemented replay API capabilities. Never returns credentials.",
+        "operationId": "whoAmI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Identity"
+                }
+              }
+            },
+            "description": "Authenticated operator capabilities."
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized; stable code in problem body."
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden; stable code in problem body."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the next failed-attempt allowance is available.",
+                "schema": {
+                  "pattern": "^[0-9]+$",
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-required-scope": "read"
+      }
+    },
+    "/v1/records": {
+      "get": {
+        "description": "Cursor pagination, newest records first by failure or inspection time then id. Omitted kind lists both failures and inspections; filter kind to select one. Unknown or repeated query parameters are rejected. Empty filters are omitted. Text filters accept at most 1024 bytes printable UTF-8.",
+        "operationId": "listRecords",
         "parameters": [
           {
             "description": "Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination.",
@@ -1354,30 +1679,51 @@
             }
           },
           {
-            "description": "Failure status.",
+            "description": "Failure delivery state; absent for inspections.",
             "in": "query",
-            "name": "status",
+            "name": "delivery_status",
             "required": false,
             "schema": {
               "enum": [
                 "open",
                 "retrying",
                 "resolved",
-                "unknown",
-                "dismissed"
+                "unknown"
               ],
               "type": "string"
             }
           },
           {
-            "description": "Captured failure kind.",
+            "description": "Failure replay execution mode.",
             "in": "query",
-            "name": "kind",
+            "name": "replay_mode",
             "required": false,
             "schema": {
               "enum": [
                 "resume",
                 "publish_only"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Filter by dismissal; omitted includes both states.",
+            "in": "query",
+            "name": "dismissed",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Record purpose. Omitted kind includes both purposes.",
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "enum": [
+                "failure",
+                "inspection"
               ],
               "type": "string"
             }
@@ -1392,7 +1738,7 @@
             }
           },
           {
-            "description": "Inclusive failed_at lower bound (RFC 3339).",
+            "description": "Inclusive failure or inspection time lower bound (RFC 3339).",
             "in": "query",
             "name": "since",
             "required": false,
@@ -1402,7 +1748,7 @@
             }
           },
           {
-            "description": "Exclusive failed_at upper bound (RFC 3339).",
+            "description": "Exclusive failure or inspection time upper bound (RFC 3339).",
             "in": "query",
             "name": "until",
             "required": false,
@@ -1429,11 +1775,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FailureList"
+                  "$ref": "#/components/schemas/RecordList"
                 }
               }
             },
-            "description": "Failure summaries and optional next cursor."
+            "description": "Record summaries and optional next cursor."
           },
           "400": {
             "content": {
@@ -1513,8 +1859,8 @@
         "x-required-scope": "read"
       },
       "post": {
-        "description": "Captures one failure as multipart/form-data. Metadata is strict JSON, maximum 1 MiB, without duplicate or unknown parts. Snapshot and payload are exact binary bytes, required exactly when metadata declares them (both for retryable records). Each artifact is bounded by configured retention.max_record_bytes; the entire request by twice that plus 1 MiB metadata and 64 KiB framing. Digests and sizes must match. Repeated identical capture returns 200.",
-        "operationId": "captureFailure",
+        "description": "Captures one failure or inspection as multipart/form-data. Metadata is strict JSON, maximum 1 MiB, without duplicate or unknown parts. Snapshot and payload are exact binary bytes, required exactly when metadata declares them (both for retryable records). Each artifact is bounded by configured retention.max_record_bytes; the entire request by twice that plus 1 MiB metadata and 64 KiB framing. Digests and sizes must match. Repeated identical capture returns 200.",
+        "operationId": "captureRecord",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -1533,7 +1879,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "metadata": {
-                    "$ref": "#/components/schemas/FailureMetadata"
+                    "$ref": "#/components/schemas/RecordMetadata"
                   },
                   "payload": {
                     "format": "binary",
@@ -1683,13 +2029,13 @@
         "x-required-scope": "capture"
       }
     },
-    "/v1/failures/{id}": {
+    "/v1/records/{id}": {
       "get": {
-        "description": "Failure metadata, current action eligibility, artifact descriptions, run history and child IDs. Eligibility is independent of scopes and rechecked at action time. Artifact bytes are not included.",
-        "operationId": "getFailure",
+        "description": "Record metadata, current action eligibility, artifact descriptions, run history and child IDs. Eligibility is independent of scopes and rechecked at action time. Artifact bytes are not included.",
+        "operationId": "getRecord",
         "parameters": [
           {
-            "description": "Failure record ID; malformed or absent records return 404.",
+            "description": "Captured record ID; malformed or absent records return 404.",
             "in": "path",
             "name": "id",
             "required": true,
@@ -1703,11 +2049,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FailureDetail"
+                  "$ref": "#/components/schemas/RecordDetail"
                 }
               }
             },
-            "description": "Failure detail."
+            "description": "Record detail."
           },
           "401": {
             "content": {
@@ -1787,13 +2133,13 @@
         "x-required-scope": "read"
       }
     },
-    "/v1/failures/{id}/dismiss": {
+    "/v1/records/{id}/dismiss": {
       "post": {
-        "description": "Dismisses a failure and removes stored artifacts. Running or invalid states reject dismissal. Request body is ignored.",
-        "operationId": "dismissFailure",
+        "description": "Dismisses an eligible record and removes stored artifacts. Running or invalid states reject dismissal. Request body is ignored.",
+        "operationId": "dismissRecord",
         "parameters": [
           {
-            "description": "Failure record ID; malformed or absent records return 404.",
+            "description": "Captured record ID; malformed or absent records return 404.",
             "in": "path",
             "name": "id",
             "required": true,
@@ -1807,11 +2153,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FailureSummary"
+                  "$ref": "#/components/schemas/RecordSummary"
                 }
               }
             },
-            "description": "Updated failure summary."
+            "description": "Updated record summary."
           },
           "401": {
             "content": {
@@ -1911,13 +2257,13 @@
         "x-required-scope": "retry"
       }
     },
-    "/v1/failures/{id}/payload": {
+    "/v1/records/{id}/payload": {
       "get": {
         "description": "Downloads exact captured bytes after integrity verification. Missing capture returns 404; expired or dismissed artifact returns 410.",
         "operationId": "downloadPayload",
         "parameters": [
           {
-            "description": "Failure record ID; malformed or absent records return 404.",
+            "description": "Captured record ID; malformed or absent records return 404.",
             "in": "path",
             "name": "id",
             "required": true,
@@ -2046,13 +2392,13 @@
         "x-required-scope": "payload"
       }
     },
-    "/v1/failures/{id}/resolve": {
+    "/v1/records/{id}/resolve": {
       "post": {
         "description": "Records independent operator confirmation of an unknown outcome; it sends nothing. Requires an investigation note and no active retry. Preserves original runs, results, artifacts and retention expiry. An identical actor/key/body repeat returns the original resolution; changed body/key conflicts reject. Idempotency keys are scoped separately from retry keys, until record retention deletes the resolution.",
-        "operationId": "resolveFailure",
+        "operationId": "resolveRecord",
         "parameters": [
           {
-            "description": "Failure record ID; malformed or absent records return 404.",
+            "description": "Captured record ID; malformed or absent records return 404.",
             "in": "path",
             "name": "id",
             "required": true,
@@ -2224,13 +2570,13 @@
         "x-required-scope": "retry"
       }
     },
-    "/v1/failures/{id}/retries": {
+    "/v1/records/{id}/retries": {
       "post": {
         "description": "Queues a retry for an unexpired record. Both a newly created run and an idempotent repeated request return 202. Unknown JSON fields or trailing data are rejected; an empty body is allowed. Unknown prior delivery outcomes require duplicate-risk acknowledgement.",
-        "operationId": "retryFailure",
+        "operationId": "retryRecord",
         "parameters": [
           {
-            "description": "Failure record ID; malformed or absent records return 404.",
+            "description": "Captured record ID; malformed or absent records return 404.",
             "in": "path",
             "name": "id",
             "required": true,
@@ -2409,83 +2755,10 @@
         "x-required-scope": "retry"
       }
     },
-    "/v1/me": {
-      "get": {
-        "description": "Returns the authenticated key name, scopes, contract version and implemented replay API capabilities. Never returns credentials.",
-        "operationId": "whoAmI",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Identity"
-                }
-              }
-            },
-            "description": "Authenticated operator capabilities."
-          },
-          "401": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Unauthorized; stable code in problem body."
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Forbidden; stable code in problem body."
-          },
-          "405": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Unsupported method (ServeMux plain text response; includes Allow header)."
-          },
-          "429": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            },
-            "description": "Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable.",
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds until the next failed-attempt allowance is available.",
-                "schema": {
-                  "pattern": "^[0-9]+$",
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "x-required-scope": "read"
-      }
-    },
     "/v1/retries": {
       "post": {
-        "description": "Requests one run per unique failure ID, using \u003cIdempotency-Key\u003e:\u003cfailure_id\u003e for each item. HTTP 200 includes per-item 202 successes and classified errors; unexpected failures return 500 and earlier items may already have been accepted.",
-        "operationId": "retryFailures",
+        "description": "Requests one run per unique failure ID, using \u003cIdempotency-Key\u003e:\u003crecord_id\u003e for each item. HTTP 200 includes per-item 202 successes and classified errors; unexpected failures return 500 and earlier items may already have been accepted.",
+        "operationId": "retryRecords",
         "parameters": [
           {
             "description": "Printable ASCII without spaces. Required even when repeating a previous request.",
@@ -2508,7 +2781,7 @@
               }
             }
           },
-          "description": "Strict JSON, maximum 64 KiB; failure_ids contains 1-100 unique IDs. Missing acknowledgement defaults to false.",
+          "description": "Strict JSON, maximum 64 KiB; record_ids contains 1-100 unique IDs. Missing acknowledgement defaults to false.",
           "required": true
         },
         "responses": {

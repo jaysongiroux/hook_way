@@ -31,11 +31,11 @@ func TestResolutionHTTPAgainstSharedPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := open()
-	f := store.NewFailure{Metadata: testMetadata(), Snapshot: testSnapshot, Payload: testPayload, Actor: "core-capture"}
+	f := store.NewRecord{Metadata: testMetadata(), Snapshot: testSnapshot, Payload: testPayload, Actor: "core-capture"}
 	if _, err := first.Ingest(ctx, f); err != nil {
 		t.Fatal(err)
 	}
-	requested, err := first.RequestRetry(ctx, store.RetryRequest{FailureID: testID, Actor: "ops", IdempotencyKey: "unknown-run"})
+	requested, err := first.RequestRetry(ctx, store.RetryRequest{RecordID: testID, Actor: "ops", IdempotencyKey: "unknown-run"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestResolutionHTTPAgainstSharedPostgres(t *testing.T) {
 	}
 	a := newHarness(t, notFoundStore(), func(opts *Options) { opts.Store = first })
 	b := newHarness(t, notFoundStore(), func(opts *Options) { opts.Store = second })
-	path := "/v1/failures/" + testID + "/resolve"
+	path := "/v1/records/" + testID + "/resolve"
 	key := http.Header{"Idempotency-Key": []string{"investigation-42"}}
 	body := `{"note":"Destination audit confirms event receipt","reference":"INC-42"}`
 	denied := a.do(t, "POST", path, readToken, strings.NewReader(body), key)
@@ -61,17 +61,17 @@ func TestResolutionHTTPAgainstSharedPostgres(t *testing.T) {
 		t.Fatalf("%d %s / %d %s", accepted.Code, accepted.Body.String(), repeated.Code, repeated.Body.String())
 	}
 	assertContractBody(t, contractDocument(t), "ResolutionResponse", accepted.Body.Bytes())
-	detail := b.do(t, "GET", "/v1/failures/"+testID, readToken, nil, nil)
+	detail := b.do(t, "GET", "/v1/records/"+testID, readToken, nil, nil)
 	if detail.Code != 200 {
 		t.Fatal(detail.Code, detail.Body.String())
 	}
-	assertContractBody(t, contractDocument(t), "FailureDetail", detail.Body.Bytes())
-	var d failureDetail
+	assertContractBody(t, contractDocument(t), "RecordDetail", detail.Body.Bytes())
+	var d RecordDetail
 	decode(t, detail, &d)
 	if d.ResolutionSource != store.ResolutionOperator || d.Resolution == nil || d.Resolution.Actor != "ops" || len(d.Runs) != 1 || d.Runs[0].Status != store.RunUnknown || !d.Artifacts.Stored {
 		t.Fatalf("%+v", d)
 	}
-	payload := b.do(t, "GET", "/v1/failures/"+testID+"/payload", opsToken, nil, nil)
+	payload := b.do(t, "GET", "/v1/records/"+testID+"/payload", opsToken, nil, nil)
 	if payload.Code != 200 || payload.Body.String() != string(testPayload) {
 		t.Fatalf("%d %q", payload.Code, payload.Body.String())
 	}
@@ -79,7 +79,7 @@ func TestResolutionHTTPAgainstSharedPostgres(t *testing.T) {
 	if changed.Code != 422 || problemCode(t, changed) != "idempotency_key_mismatch" {
 		t.Fatal(changed.Code, changed.Body.String())
 	}
-	retry := b.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, strings.NewReader(`{"acknowledge_duplicate_risk":true}`), http.Header{"Idempotency-Key": []string{"new-run"}})
+	retry := b.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, strings.NewReader(`{"acknowledge_duplicate_risk":true}`), http.Header{"Idempotency-Key": []string{"new-run"}})
 	if retry.Code != 422 || problemCode(t, retry) != "not_retryable" {
 		t.Fatal(retry.Code, retry.Body.String())
 	}

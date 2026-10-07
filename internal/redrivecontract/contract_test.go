@@ -81,7 +81,7 @@ func (p *switchPublisher) set(fail ...string) {
 }
 
 type record struct {
-	meta     replaywire.FailureMetadata
+	meta     replaywire.RecordMetadata
 	snapshot []byte
 }
 
@@ -196,8 +196,8 @@ func buildCore(t *testing.T, src string, pub queue.Publisher) coreParts {
 func (e env) run() store.ClaimedRun {
 	m := e.record.meta
 	return store.ClaimedRun{
-		Run:     store.Run{RunID: "01926d3c-9999-7b3a-9c1e-2f4a5b6c7d8e", FailureID: m.ID, Status: store.RunRunning},
-		Failure: store.Failure{FailureMetadata: m, Status: store.StatusRetrying, RootID: m.ID},
+		Run:    store.Run{RunID: "01926d3c-9999-7b3a-9c1e-2f4a5b6c7d8e", RecordID: m.ID, Status: store.RunRunning},
+		Record: store.Record{RecordMetadata: m, DeliveryStatus: store.StatusRetrying, RootID: m.ID},
 	}
 }
 

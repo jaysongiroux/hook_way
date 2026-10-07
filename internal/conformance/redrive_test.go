@@ -26,7 +26,7 @@ import (
 const testControlToken = "control-token-0123456789abcdefghij"
 
 type sinkRecord struct {
-	meta     replaywire.FailureMetadata
+	meta     replaywire.RecordMetadata
 	snapshot []byte
 }
 
@@ -197,7 +197,7 @@ func (c core) post(t *testing.T) {
 
 func deliverFor(r sinkRecord) replaywire.DeliverRequest {
 	m := r.meta
-	return replaywire.DeliverRequest{RunID: "run-1", FailureID: m.ID, Kind: m.Kind, Flow: m.Flow, NodeID: m.NodeID,
+	return replaywire.DeliverRequest{RunID: "run-1", RecordID: m.ID, Kind: m.Kind, ReplayMode: m.ReplayMode, Flow: m.Flow, NodeID: m.NodeID,
 		NodeType: m.NodeType, DestinationID: m.DestinationID, DestinationType: m.DestinationType,
 		RenderedTarget: m.RenderedTarget, NodeConfigHash: m.NodeConfigHash, DestinationHash: m.DestinationHash,
 		SnapshotSHA256: m.Snapshot.SHA256, SnapshotVersion: m.Snapshot.Version, DeadlineMS: 5000,
@@ -247,7 +247,7 @@ func TestI21_RedriveNeverCapturesOrDeadLetters(t *testing.T) {
 			first := startCore(t, redriveYAML(replay.URL, okSrv.URL, failing.URL, mode, false))
 			first.post(t)
 			rec := sink.wait(t, 1)[0]
-			if rec.meta.Kind != name || rec.meta.NodeID != "out" {
+			if rec.meta.Kind != replaywire.KindFailure || rec.meta.ReplayMode != name || rec.meta.NodeID != "out" {
 				t.Fatalf("captured %+v", rec.meta)
 			}
 			// Redrive against a configuration that would dead-letter an async

@@ -1,5 +1,5 @@
 import React from "react";
-import { FailureState } from "./FailureState";
+import { RecordState } from "./RecordState";
 import { FiCopy, FiCheck } from "react-icons/fi";
 import {
   Alert,
@@ -15,14 +15,18 @@ import {
 import {
   result,
   requestError,
-  timestamp,
-  type Detail,
+  timestamp, deliveryStatusLabel,
+  type RecordDetailData,
   type Session,
 } from "./session";
+import { decodeInspection, InspectionPreview, type Inspection } from "./InspectionPreview";
+import { PayloadFiles } from "./PayloadFiles";
+import { downloadFile } from "./filePayload";
 import type { Intent } from "./ActionDialog";
 
 const PREVIEW_BYTES = 64 * 1024;
-export function FailureDetail({
+const INSPECTION_PREVIEW_BYTES = 1024 * 1024;
+export function RecordDetail({
   record,
   session,
   scopes,
@@ -30,13 +34,15 @@ export function FailureDetail({
   onAction,
   actionPending,
 }: {
-  record: Detail;
+  record: RecordDetailData;
   session: Session;
   scopes: string[];
   onSelect: (id: string) => void;
   onAction: (intent: Intent) => void;
   actionPending: boolean;
 }) {
+  const inspection = record.kind === "inspection";
+  const [capturedInspection, setCapturedInspection] = React.useState<Inspection>();
   const [tab, setTab] = React.useState<string | null>("overview");
   const [copyState, setCopyState] = React.useState("");
   const [preview, setPreview] = React.useState<string>();
@@ -56,12 +62,15 @@ export function FailureDetail({
     record.artifacts.stored &&
     !!payload &&
     new Date(record.expires_at).getTime() > Date.now();
+  React.useEffect(() => {
+    if (!canPayload) setCapturedInspection(undefined);
+  }, [canPayload]);
   const canOperate = scopes.includes("retry");
   async function readPayload(download: boolean) {
     setBusy(true);
     setPayloadError("");
     try {
-      const response = await session.client.GET("/v1/failures/{id}/payload", {
+      const response = await session.client.GET("/v1/records/{id}/payload", {
         params: { path: { id: record.id } },
         parseAs: "stream",
         signal: session.signal,
@@ -71,32 +80,22 @@ export function FailureDetail({
       if (download) {
         const blob = await new Response(stream).blob();
         if (!mounted.current || session.signal.aborted) return;
-        const url = URL.createObjectURL(
-          new Blob([blob], { type: "application/octet-stream" }),
-        );
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download =
-          (payload?.filename || `${record.id}.bin`)
-            .split(/[\\/]/)
-            .pop()!
-            .replace(/[\x00-\x1f\x7f]/g, "_") || "payload.bin";
-        anchor.click();
-        URL.revokeObjectURL(url);
+        downloadFile(blob, payload?.filename || `${record.id}.bin`);
       } else {
+        const previewLimit = inspection ? INSPECTION_PREVIEW_BYTES : PREVIEW_BYTES;
         const reader = stream.getReader();
         const bytes: Uint8Array[] = [];
         let size = 0;
         let clipped = false;
         try {
-          while (size < PREVIEW_BYTES) {
+          while (size < previewLimit) {
             const next = await reader.read();
             if (next.done) break;
-            const part = next.value.subarray(0, PREVIEW_BYTES - size);
+            const part = next.value.subarray(0, previewLimit - size);
             bytes.push(part);
             size += part.length;
-            if (size === PREVIEW_BYTES) {
-              clipped = (payload?.size ?? 0) > PREVIEW_BYTES;
+            if (size === previewLimit) {
+              clipped = (payload?.size ?? 0) > previewLimit;
               break;
             }
           }
@@ -124,8 +123,13 @@ export function FailureDetail({
           );
         }
         if (!mounted.current || session.signal.aborted) return;
-        setPreview(text);
-        setTruncated(clipped);
+        if (inspection) {
+          if (clipped) throw new Error("This inspection is too large for the 1 MiB preview limit. Download the inspection JSON to view the body and context.");
+          setCapturedInspection(decodeInspection(text));
+        } else {
+          setPreview(text);
+          setTruncated(clipped);
+        }
       }
     } catch (caught) {
       if (mounted.current && !session.signal.aborted)
@@ -136,16 +140,16 @@ export function FailureDetail({
   }
   const latest = record.runs[0];
   const explanation =
-    record.status === "unknown"
+    record.dismissed_at
+      ? "Recovery was stopped and stored artifacts were deleted. The previous delivery state remains recorded. Metadata remains until retention expires."
+      : record.delivery_status === "unknown"
       ? "Delivery may have happened, but Hookway cannot confirm it. Check the destination's receipt or audit trail before retrying or confirming the outcome."
       : latest?.status === "blocked"
         ? "The retry was blocked before delivery. Inspect the run result and restore the missing configuration, credentials or control access before trying again."
-        : record.status === "open"
+        : record.delivery_status === "open"
           ? "The delivery failed. Inspect the error and current destination before requesting another attempt."
-          : record.status === "retrying"
+          : record.delivery_status === "retrying"
             ? "A retry is queued or running. Wait for its outcome; acceptance alone does not confirm delivery."
-            : record.status === "dismissed"
-              ? "Recovery was stopped and stored artifacts were deleted. Metadata remains until retention expires."
               : record.resolution_source === "operator_confirmed"
                 ? "An operator confirmed delivery using external evidence. The original unknown run remains unchanged."
                 : "A retry succeeded. Inspect any child failures for downstream work that still needs attention.";
@@ -153,7 +157,7 @@ export function FailureDetail({
     <section className="payload-section" aria-label="Captured payload">
       <Group justify="space-between" mb="xs">
         <Title order={3} size="h5">
-          Payload
+          {inspection ? "Captured body and context" : "Payload"}
         </Title>
         <Text size="xs" c="dimmed">
           {payload ? `${payload.size.toLocaleString()} bytes` : "Not captured"}
@@ -164,6 +168,7 @@ export function FailureDetail({
           ? payload.content_type || "Content type not recorded"
           : "No payload was captured."}
       </Text>
+      {payload?.filename && <Text size="sm" mb="sm">Filename: {payload.filename}</Text>}
       {canPayload ? (
         <Group gap="xs">
           <Button
@@ -172,7 +177,7 @@ export function FailureDetail({
             loading={busy}
             onClick={() => void readPayload(false)}
           >
-            Preview payload
+            {inspection ? "Load body and context" : "Preview payload"}
           </Button>
           <Button
             size="xs"
@@ -180,16 +185,22 @@ export function FailureDetail({
             disabled={busy}
             onClick={() => void readPayload(true)}
           >
-            Download original bytes
+            {inspection ? "Download inspection JSON" : "Download original bytes"}
           </Button>
         </Group>
       ) : (
         <Text size="sm" c="dimmed">
           {!scopes.includes("payload")
             ? "A key with payload scope is required to view captured bytes."
-            : "Captured bytes are unavailable or retention has expired."}
+            : inspection && record.payload_unavailable_reason === "too_large"
+              ? "The inspection exceeded the record-size limit. Only metadata was retained."
+              : inspection && record.payload_unavailable_reason === "unsupported"
+                ? "The body or context could not be encoded. Only metadata was retained."
+                : "Captured bytes are unavailable or retention has expired."}
         </Text>
       )}
+      {capturedInspection && canPayload && <InspectionPreview value={capturedInspection} onClose={() => setCapturedInspection(undefined)} />}
+      {canPayload && <PayloadFiles record={record} session={session} />}
       {payloadError && (
         <Alert mt="sm" color="red" title="Payload unavailable">
           {payloadError}
@@ -209,23 +220,23 @@ export function FailureDetail({
               {record.flow} / {record.node_id}
             </Text>
           </div>
-          <FailureState record={record} />
+          <RecordState record={record} />
         </Group>
-        <details className="outcome-guidance">
+        {inspection ? <Text size="sm" c="dimmed" mt="xs" mb="sm">Final inbound response: HTTP {record.inbound_status}. Observed {timestamp(record.occurred_at)}.</Text> : <details className="outcome-guidance">
           <summary>Delivery guidance</summary>
           <Text size="sm">{explanation}</Text>
-        </details>
+        </details>}
         {canOperate ? (
           <>
             <Group gap="xs" className="recovery-actions">
-              <Button
+              {!inspection && <Button
                 size="sm"
                 disabled={!record.actions.retry.allowed || actionPending}
                 onClick={() => onAction({ action: "retry", records: [record] })}
               >
                 Retry delivery
-              </Button>
-              {record.actions.resolve.allowed && (
+              </Button>}
+              {!inspection && record.actions.resolve.allowed && (
                 <Button
                   size="sm"
                   variant="default"
@@ -247,10 +258,10 @@ export function FailureDetail({
                   onAction({ action: "dismiss", records: [record] })
                 }
               >
-                Dismiss failure
+                {inspection ? "Dismiss inspection" : "Dismiss failure"}
               </Button>
             </Group>
-            {!record.actions.retry.allowed && (
+            {!inspection && !record.actions.retry.allowed && (
               <Text size="xs" c="dimmed" mt="xs">
                 Retry unavailable: {record.actions.retry.reason}
               </Text>
@@ -258,8 +269,7 @@ export function FailureDetail({
           </>
         ) : (
           <Text size="xs" c="dimmed">
-            Read-only access. A key with retry scope is required for recovery
-            actions.
+            {inspection ? "A key with retry scope is required to dismiss this inspection." : "Read-only access. A key with retry scope is required for recovery actions."}
           </Text>
         )}
       </div>
@@ -269,21 +279,21 @@ export function FailureDetail({
         className="evidence-tabs"
         keepMounted={false}
       >
-        <Tabs.List aria-label="Delivery evidence">
+        <Tabs.List aria-label={inspection ? "Inspection evidence" : "Delivery evidence"}>
           <Tabs.Tab value="overview">Overview</Tabs.Tab>
-          <Tabs.Tab value="activity">Activity</Tabs.Tab>
-          <Tabs.Tab value="related">
+          <Tabs.Tab value="activity">{inspection ? "Audit history" : "Activity"}</Tabs.Tab>
+          {!inspection && <Tabs.Tab value="related">
             Related
             {record.children.length ? ` (${record.children.length})` : ""}
-          </Tabs.Tab>
+          </Tabs.Tab>}
         </Tabs.List>
         <div className="evidence-scroll">
           <Tabs.Panel value="overview">
             <Stack gap="lg" className="evidence-content">
-              <Alert
-                color={record.status === "unknown" ? "yellow" : "gray"}
+              {!inspection && <Alert
+                color={record.delivery_status === "unknown" ? "yellow" : "gray"}
                 title={
-                  record.status === "unknown"
+                  record.delivery_status === "unknown"
                     ? "Delivery is not confirmed"
                     : `Captured error · ${record.error_class}`
                 }
@@ -292,8 +302,8 @@ export function FailureDetail({
                   {record.error_message ||
                     "No additional error message was captured."}
                 </Text>
-              </Alert>
-              {record.resolution && (
+              </Alert>}
+              {!inspection && record.resolution && (
                 <Alert title="Resolved — operator confirmed" color="green">
                   <Text size="sm">
                     {record.resolution.actor} ·{" "}
@@ -309,7 +319,7 @@ export function FailureDetail({
                   )}
                 </Alert>
               )}
-              {latest && (
+              {!inspection && latest && (
                 <section className="latest-run">
                   <Title order={3} size="h5" mb="xs">
                     Latest retry
@@ -336,11 +346,13 @@ export function FailureDetail({
                   )}
                 </section>
               )}
-              <section aria-label="Delivery information">
+              {inspection && payloadControls}
+              <section aria-label={inspection ? "Observation information" : "Delivery information"}>
                 <Title order={3} size="h5" mb="sm">
-                  Delivery information
+                  {inspection ? "Observation information" : "Delivery information"}
                 </Title>
                 <dl className="delivery-metadata">
+                  {!inspection && <>
                   <div className="metadata-wide">
                     <dt>Target</dt>
                     <dd className="identifier">
@@ -350,18 +362,20 @@ export function FailureDetail({
                   <div>
                     <dt>Retry scope</dt>
                     <dd>
-                      {record.kind === "publish_only"
+                      {record.replay_mode === "publish_only"
                         ? "Retry scope: captured destination only"
                         : "Retry scope: resume at the captured node"}
                     </dd>
                   </div>
+                  {record.dismissed_at && <div><dt>Last delivery state</dt><dd>{deliveryStatusLabel(record)}</dd></div>}
                   <div>
                     <dt>Attempts</dt>
                     <dd>{record.attempts}</dd>
                   </div>
+                  </>}
                   <div>
-                    <dt>Failed at</dt>
-                    <dd>{timestamp(record.failed_at)}</dd>
+                    <dt>{inspection ? "Observed at" : "Failed at"}</dt>
+                    <dd>{timestamp(record.occurred_at)}</dd>
                   </div>
                   <div>
                     <dt>Retention expires</dt>
@@ -374,17 +388,23 @@ export function FailureDetail({
                     </dd>
                   </div>
                   <div>
-                    <dt>Destination type</dt>
-                    <dd>{record.destination_type || record.node_type}</dd>
+                    <dt>{inspection ? "Final inbound response" : "Destination type"}</dt>
+                    <dd>{inspection ? `HTTP ${record.inbound_status}` : record.destination_type || record.node_type}</dd>
                   </div>
+                  {inspection && <>
+                    <div><dt>Request ID</dt><dd className="identifier">{record.request_id || "Not recorded"}</dd></div>
+                    <div><dt>Trace ID</dt><dd className="identifier">{record.trace_id || "Not recorded"}</dd></div>
+                    <div><dt>Received at</dt><dd>{timestamp(record.received_at)}</dd></div>
+                    <div><dt>Stored at</dt><dd>{timestamp(record.captured_at)}</dd></div>
+                  </>}
                   <div className="metadata-wide">
-                    <dt>Failure ID</dt>
+                    <dt>{inspection ? "Inspection ID" : "Failure ID"}</dt>
                     <dd className="failure-id-line">
                       <span className="identifier">{record.id}</span>
                       <Button
                         size="compact-xs"
                         variant="subtle"
-                        aria-label="Copy failure ID"
+                        aria-label={inspection ? "Copy inspection ID" : "Copy failure ID"}
                         leftSection={
                           copyState === "Copied" ? (
                             <FiCheck aria-hidden="true" />
@@ -413,12 +433,12 @@ export function FailureDetail({
                   </Text>
                 )}
               </section>
-              {payloadControls}
+              {!inspection && payloadControls}
             </Stack>
           </Tabs.Panel>
           <Tabs.Panel value="activity">
             <Stack gap="lg" className="evidence-content">
-              <section>
+              {!inspection && <section>
                 <Title order={3} size="h5" mb="sm">
                   Retry history
                 </Title>
@@ -458,7 +478,7 @@ export function FailureDetail({
                     </li>
                   ))}
                 </ol>
-              </section>
+              </section>}
               <section>
                 <Title order={3} size="h5" mb="sm">
                   Audit history

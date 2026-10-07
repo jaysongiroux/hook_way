@@ -29,9 +29,11 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 	fc := cfg.Flows[name]
 	prefix := "flows." + name
 	var issues []config.ValidationIssue
-	var hasRateLimit, hasNoAuth, hasPublish, hasRespond bool
+	var hasRateLimit, hasNoAuth, hasPublish, hasRespond, hasInspect bool
 	for i, nc := range fc.Nodes {
 		switch nc.Type {
+		case "inspect":
+			hasInspect = true
 		case "rate_limit":
 			hasRateLimit = true
 		case "no_auth":
@@ -90,7 +92,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			fmt.Sprintf("flow %q has a no_auth node; every request is accepted unverified", name),
 			"replace no_auth with an auth node unless this is intentional"))
 	}
-	if !hasPublish && !hasRespond {
+	if !hasPublish && !hasRespond && !hasInspect {
 		issues = append(issues, cfgIssue(prefix,
 			fmt.Sprintf("flow %q has no publish and no respond node; it can never deliver or reply", name),
 			"add a publish or respond node"))

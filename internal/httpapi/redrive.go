@@ -32,7 +32,7 @@ func (s *FlowServer) Redrive(ctx context.Context, req replaywire.DeliverRequest,
 		res.DestinationHash = capture.DestinationHash(s.cfg.Destinations[req.DestinationID])
 	}
 	ctx = queue.WithInlineDelivery(ctx)
-	if req.Kind == replaywire.KindPublishOnly {
+	if req.ReplayMode == replaywire.ReplayPublishOnly {
 		return s.redrivePublish(ctx, req, snap, res)
 	}
 	return s.redriveResume(ctx, req, fc, snap, res)
@@ -55,7 +55,7 @@ func (s *FlowServer) checkRedrive(req replaywire.DeliverRequest) (graph.FlowConf
 	if nc.Type != req.NodeType {
 		return fc, nc, control.Blockf(replaywire.BlockNodeTypeChanged, "node %q is now a %s, not a %s", req.NodeID, nc.Type, req.NodeType)
 	}
-	if req.DestinationID == "" && req.Kind != replaywire.KindPublishOnly {
+	if req.DestinationID == "" && req.ReplayMode != replaywire.ReplayPublishOnly {
 		return fc, nc, nil
 	}
 	opts, err := flowconfig.PublishNodeOptions(nc)

@@ -7,6 +7,8 @@ import {
   TbCode,
   TbDatabaseSearch,
   TbDatabasePlus,
+  TbDice,
+  TbEye,
   TbRoute,
   TbFileText,
   TbFilter,
@@ -203,6 +205,27 @@ export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> 
       "max_total_bytes": "Maximum combined size of decoded multipart parts, in bytes. The original request and each part have separate limits.",
       "body_format": "Choose how to decode the body: JSON, XML, multipart form data, or raw bytes (raw leaves the body empty).",
       "multipart": "Limits for body_format: multipart. Bounds how much of an upload is held in memory.",
+    },
+  },
+  inspect: {
+    label: "Inspect",
+    icon: TbEye,
+    help: "View the current webhook in the replay console. Requires Replay configuration. Use after Sample on a separate observation branch; uploads are best effort.",
+    editor: "schema",
+    initialOptions: () => ({}),
+  },
+  sample: {
+    label: "Sample requests",
+    icon: TbDice,
+    help: "Randomly keep a fraction of events after envelope creation. Before a batch, sample the whole request; inside a batch child flow, sample each item independently.",
+    editor: "schema",
+    initialOptions: () => ({ rate: 1 }),
+    summary: (options) => typeof options.rate === "number" && Number.isFinite(options.rate)
+      ? `${Number((options.rate * 100).toPrecision(12))}% kept`
+      : "",
+    fieldLabels: { rate: "Sampling rate" },
+    fieldHelp: {
+      rate: "Required fraction kept, from 0 to 1 inclusive. 0 drops all; 1 keeps all; 0.2 keeps roughly 20%; 0.001 keeps roughly 0.1%. Smaller positive fractions are supported. Each execution, including retries and replays, makes an independent random decision. Sampled-out events stop this branch successfully and receive the default HTTP 202 acknowledgment.",
     },
   },
   filter: {

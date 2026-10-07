@@ -42,6 +42,8 @@ test("simple forms cover precisely the remaining runtime catalog types", () => {
     "json_validate",
     "envelope",
     "filter",
+    "sample",
+    "inspect",
     "if_else",
     "switch",
     "publish",

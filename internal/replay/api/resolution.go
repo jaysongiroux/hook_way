@@ -16,11 +16,11 @@ type meResponse struct {
 
 func (a *api) me(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Principal(r.Context())
-	writeJSON(w, http.StatusOK, meResponse{KeyName: identity.Name, Scopes: identity.Scopes, ContractVersion: uicontract.ContractVersion, Capabilities: []string{"failure_inspection", "payload_download", "destination_retry", "batch_retry", "unknown_resolution", "action_input_validation", "action_eligibility"}})
+	writeJSON(w, http.StatusOK, meResponse{KeyName: identity.Name, Scopes: identity.Scopes, ContractVersion: uicontract.ContractVersion, Capabilities: []string{"record_api", "inspection_records", "failure_inspection", "payload_download", "destination_retry", "batch_retry", "unknown_resolution", "action_input_validation", "action_eligibility"}})
 }
 
 type resolveResponse struct {
-	Status           string           `json:"status"`
+	DeliveryStatus   string           `json:"delivery_status"`
 	ResolutionSource string           `json:"resolution_source"`
 	Resolution       store.Resolution `json:"resolution"`
 }
@@ -40,12 +40,12 @@ func (a *api) resolve(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, newError(http.StatusBadRequest, "invalid_resolution", "%s", issues[0].Message))
 		return
 	}
-	result, err := a.store.ResolveUnknown(r.Context(), store.ResolveRequest{FailureID: r.PathValue("id"), Actor: auth.Actor(r.Context()), IdempotencyKey: key, ResolutionInput: body})
+	result, err := a.store.ResolveUnknown(r.Context(), store.ResolveRequest{RecordID: r.PathValue("id"), Actor: auth.Actor(r.Context()), IdempotencyKey: key, ResolutionInput: body})
 	if err != nil {
 		a.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, resolveResponse{Status: store.StatusResolved, ResolutionSource: store.ResolutionOperator, Resolution: result.Resolution})
+	writeJSON(w, http.StatusOK, resolveResponse{DeliveryStatus: store.StatusResolved, ResolutionSource: store.ResolutionOperator, Resolution: result.Resolution})
 }
 
 // validateAction is a read-scoped, pure validation fallback when WASM cannot

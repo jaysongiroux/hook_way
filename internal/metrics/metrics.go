@@ -72,6 +72,8 @@ type Metrics struct {
 	secretRefreshFailures     *prometheus.CounterVec
 	captureTotal              *prometheus.CounterVec
 	captureDropped            *prometheus.CounterVec
+	inspectionTotal           *prometheus.CounterVec
+	inspectionDropped         *prometheus.CounterVec
 	captureBufferBytes        prometheus.Gauge
 	controlRuns               *prometheus.CounterVec
 	controlInflight           prometheus.Gauge
@@ -110,7 +112,7 @@ func New() *Metrics {
 	}, []string{"endpoint", "destination_queue_id", "queue"})
 	m.filtered = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_filtered_total",
-		Help: "Webhook deliveries dropped by endpoint or route filters.",
+		Help: "Webhook deliveries intentionally dropped by filters or sampling.",
 	}, []string{"endpoint", "destination_queue_id", "queue", "level"})
 	m.variableUnresolved = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_variable_unresolved_total",
@@ -260,6 +262,11 @@ func New() *Metrics {
 		Name: "hookway_secret_refresh_failures_total",
 		Help: "Background secret_ref refresh failures. The last known-good secret continues to be served.",
 	}, []string{"provider", "name"})
+	m.inspectionTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_inspection_total", Help: "View-only inspections by flow and upload outcome."}, []string{"flow", "outcome"})
+	m.inspectionDropped = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_inspection_dropped_total", Help: "View-only inspections dropped by bounded reason."}, []string{"reason"})
+	for _, reason := range CaptureDropReasons {
+		m.inspectionDropped.WithLabelValues(reason)
+	}
 	m.captureTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "hookway_capture_total",
 		Help: "Captured failures by flow and outcome (uploaded or dropped).",
@@ -270,7 +277,7 @@ func New() *Metrics {
 	}, []string{"reason"})
 	m.captureBufferBytes = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "hookway_capture_buffer_bytes",
-		Help: "Bytes of captured failures waiting for upload, including in-flight uploads.",
+		Help: "Bytes of captured failures and inspections waiting for upload, including in-flight uploads.",
 	})
 	for _, reason := range CaptureDropReasons {
 		m.captureDropped.WithLabelValues(reason)
@@ -292,7 +299,7 @@ func New() *Metrics {
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
 		m.destinationReady, m.panics, m.buildInfo, m.compensationFailed, m.flowOutcomes, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
-		m.captureTotal, m.captureDropped, m.captureBufferBytes, m.controlRuns, m.controlInflight,
+		m.inspectionTotal, m.inspectionDropped, m.captureTotal, m.captureDropped, m.captureBufferBytes, m.controlRuns, m.controlInflight,
 	)
 	return m
 }
@@ -372,8 +379,8 @@ func (m *Metrics) DuplicateRejected(endpoint, destinationQueueID, queue string) 
 	m.duplicateRejected.WithLabelValues(endpoint, destinationQueueID, queue).Inc()
 }
 
-// Filtered counts a delivery dropped by a filter chain. level is "endpoint" or
-// "route".
+// Filtered counts intentional filter and sampling drops. level is a finite
+// scope or drop reason, such as "flow" or "sampled_out".
 func (m *Metrics) Filtered(endpoint, destinationQueueID, queue, level string) {
 	m.filtered.WithLabelValues(endpoint, destinationQueueID, queue, level).Inc()
 }
@@ -576,4 +583,12 @@ func (m *Metrics) AdmissionWaiting(delta float64) { m.admissionWaiting.Add(delta
 func (m *Metrics) AdmissionWait(flow, result string, duration time.Duration) {
 	m.admissionWaits.WithLabelValues(flow, result).Inc()
 	m.admissionWaitDuration.WithLabelValues(flow, result).Observe(duration.Seconds())
+}
+
+func (m *Metrics) InspectionUploaded(flow string) {
+	m.inspectionTotal.WithLabelValues(flow, "uploaded").Inc()
+}
+func (m *Metrics) InspectionDropped(flow, reason string) {
+	m.inspectionTotal.WithLabelValues(flow, "dropped").Inc()
+	m.inspectionDropped.WithLabelValues(reason).Inc()
 }

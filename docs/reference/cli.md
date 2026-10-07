@@ -326,12 +326,14 @@ hookway-replay serve [--config FILE]
 
 Runs, until `SIGINT` or `SIGTERM`:
 
-- **The API** on `server.addr`: `GET /v1/failures` (filter by `status`,
-  `flow`, `node_id`, `destination_id`, `kind`, `retryable`; page with `limit`
-  and `cursor`), `GET /v1/failures/{id}`,
-  `GET /v1/failures/{id}/payload`, `POST /v1/failures/{id}/retries`,
-  `POST /v1/failures/{id}/dismiss`, `POST /v1/retries` (a batch), and
-  `GET /v1/retries/{run_id}`, plus `POST /v1/failures`, where core uploads.
+- **The API** on `server.addr`: `GET /v1/records` (filter by `kind`, `delivery_status`, `replay_mode`, `dismissed`,
+  `flow`, `node_id`, `destination_id`, `retryable`; page with `limit`
+  and `cursor`), `GET /v1/records/{id}`,
+  `GET /v1/records/{id}/payload`, `POST /v1/records/{id}/retries`,
+  `POST /v1/records/{id}/dismiss`, `POST /v1/retries` (a batch), and
+  `GET /v1/retries/{run_id}`, `POST /v1/records/{id}/resolve`,
+  `GET /v1/me`, `POST /v1/actions/validate`, and `POST /v1/records`, where core
+  uploads. Omitted kind lists both failures and inspections.
   Each route needs a key with the matching scope (`capture`, `read`,
   `payload`, `retry`). `/healthz` and `/readyz` are open.
 - **Metrics** on `metrics.path`, with its own listener on `metrics.addr` when
@@ -374,10 +376,13 @@ fails.
 hookway-replay migrate --config replay.yaml
 ```
 
-Operator resolutions require schema version 2. Quiesce replay
-workers, back up the database, run the migration, then start all replicas of the
-new binary. The service never applies it automatically. Operator resolution is
-an authenticated HTTP operation, not a command that bypasses API scopes; see
+The initial generic-record schema includes operator resolutions and inspections.
+It has database migration version 1 and uses API/WASM contract version 1; these
+version numbers describe different contracts. Initialize a fresh database before
+starting matching core, replay and console binaries. Existing failure-shaped
+databases are outside this baseline's compatibility scope. The service never
+applies migrations automatically. Operator resolution is an authenticated HTTP
+operation, not a command that bypasses API scopes; see
 [Replay investigation](../operations/replay-investigation.md).
 
 ### hookway-replay gc

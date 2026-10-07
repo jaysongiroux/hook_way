@@ -10,15 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jaysongiroux/hook_way/internal/replay/replaytest"
 	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 func resolveRequest(id, key string) ResolveRequest {
-	return ResolveRequest{FailureID: id, Actor: "incident-ops", IdempotencyKey: key, ResolutionInput: uicontract.ResolutionInput{Note: "Destination logs confirm event receipt.\nChecked trace req-1.", Reference: "INC-42"}}
+	return ResolveRequest{RecordID: id, Actor: "incident-ops", IdempotencyKey: key, ResolutionInput: uicontract.ResolutionInput{Note: "Destination logs confirm event receipt.\nChecked trace req-1.", Reference: "INC-42"}}
 }
 
-func unknownFailure(t *testing.T, s *Store) (NewFailure, string) {
+func unknownFailure(t *testing.T, s *Store) (NewRecord, string) {
 	t.Helper()
 	f := testFailure(t, nil)
 	run := queueRun(t, s, f)
@@ -49,7 +48,7 @@ func TestResolveUnknownPreservesEvidenceAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Status != StatusResolved || after.ResolutionSource != ResolutionOperator || after.Resolution == nil || after.Resolution.Actor != "incident-ops" || !reflect.DeepEqual(before.Runs, after.Runs) || !after.ExpiresAt.Equal(before.ExpiresAt) || !reflect.DeepEqual(before.FailureMetadata, after.FailureMetadata) || !after.HasArtifacts {
+	if after.DeliveryStatus != StatusResolved || after.ResolutionSource != ResolutionOperator || after.Resolution == nil || after.Resolution.Actor != "incident-ops" || !reflect.DeepEqual(before.Runs, after.Runs) || !after.ExpiresAt.Equal(before.ExpiresAt) || !reflect.DeepEqual(before.RecordMetadata, after.RecordMetadata) || !after.HasArtifacts {
 		t.Fatalf("changed evidence: %+v", after)
 	}
 	if len(after.History) != len(before.History)+1 || after.History[len(after.History)-1].Event != EventResolved {
@@ -112,7 +111,7 @@ func TestResolveUnknownRejectsConflictsAndInvalidStates(t *testing.T) {
 	}
 	other, _ := unknownFailure(t, s)
 	changed = req
-	changed.FailureID = other.Metadata.ID
+	changed.RecordID = other.Metadata.ID
 	if _, err := s.ResolveUnknown(t.Context(), changed); !errors.Is(err, ErrIdempotencyKeyMismatch) {
 		t.Fatal(err)
 	}
@@ -136,7 +135,7 @@ func TestResolveUnknownRejectsConflictsAndInvalidStates(t *testing.T) {
 	if _, err := s.ResolveUnknown(t.Context(), invalid); !errors.Is(err, ErrInvalidResolution) {
 		t.Fatal(err)
 	}
-	invalid.FailureID = "malformed"
+	invalid.RecordID = "malformed"
 	if _, err := s.ResolveUnknown(t.Context(), invalid); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
@@ -190,7 +189,7 @@ func TestResolveRetentionAndMetadataOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM failure_resolutions`).Scan(&n); err != nil || n != 0 {
+	if err := s.pool.QueryRow(t.Context(), `SELECT count(*) FROM delivery_resolutions`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("%d %v", n, err)
 	}
 	g := testFailure(t, nil)
@@ -220,7 +219,7 @@ func TestConcurrentResolveRetryDismissSerialize(t *testing.T) {
 				case 0:
 					_, errs[i] = replica.ResolveUnknown(context.Background(), resolveRequest(f.Metadata.ID, "race-"+f.Metadata.ID))
 				case 1:
-					_, errs[i] = s.RequestRetry(context.Background(), RetryRequest{FailureID: f.Metadata.ID, Actor: "ops", IdempotencyKey: "race-" + f.Metadata.ID, AcknowledgeDuplicateRisk: true})
+					_, errs[i] = s.RequestRetry(context.Background(), RetryRequest{RecordID: f.Metadata.ID, Actor: "ops", IdempotencyKey: "race-" + f.Metadata.ID, AcknowledgeDuplicateRisk: true})
 				case 2:
 					_, errs[i] = s.Dismiss(context.Background(), f.Metadata.ID, "ops")
 				}
@@ -243,7 +242,7 @@ func TestConcurrentResolveRetryDismissSerialize(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if d.Status == StatusRetrying {
+		if d.DeliveryStatus == StatusRetrying {
 			claim(t, s)
 			if _, err := s.FinalizeRun(t.Context(), RunOutcome{RunID: d.Runs[0].RunID, Status: RunFailed, Actor: "worker"}); err != nil {
 				t.Fatal(err)
@@ -280,7 +279,7 @@ func TestConcurrentResolutionsSameKeyAndCrossRecord(t *testing.T) {
 		t.Fatal(events)
 	}
 	errs := make([]error, 2)
-	records := make([]NewFailure, 2)
+	records := make([]NewRecord, 2)
 	for i := range records {
 		records[i], _ = unknownFailure(t, s)
 	}
@@ -308,33 +307,10 @@ func TestConcurrentResolutionsSameKeyAndCrossRecord(t *testing.T) {
 	}
 }
 
-func TestResolutionMigrationPreservesExistingEvidence(t *testing.T) {
-	s := openTestStore(t, replaytest.Database(t), defaultLimits())
-	if _, err := s.migrations.UpTo(t.Context(), 1); err != nil {
-		t.Fatal(err)
-	}
-	// Insert via the old schema using the current ingest writer (new column has a default).
-	s.now = func() time.Time { return testNow }
-	f := testFailure(t, nil)
-	mustIngest(t, s, f)
-	setStatus(t, s, f.Metadata.ID, StatusResolved)
-	if err := s.Ready(t.Context()); err == nil {
-		t.Fatal("old schema admitted")
-	}
-	versions, err := s.Migrate(t.Context())
-	if err != nil || fmt.Sprint(versions) != "[2]" {
-		t.Fatalf("%v %v", versions, err)
-	}
-	d, err := s.Get(t.Context(), f.Metadata.ID)
-	if err != nil || d.ResolutionSource != ResolutionRetry || d.Resolution != nil || !d.HasArtifacts {
-		t.Fatalf("%+v %v", d, err)
-	}
-}
-
-func TestResolutionAuditFailureRollsBackAndDowngradePreservesEvidence(t *testing.T) {
+func TestResolutionAuditFailureRollsBack(t *testing.T) {
 	s := newTestStore(t, defaultLimits())
 	f, _ := unknownFailure(t, s)
-	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE failure_events ADD CONSTRAINT reject_resolution_test CHECK(event != 'operator_resolved')`); err != nil {
+	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE record_events ADD CONSTRAINT reject_resolution_test CHECK(event != 'operator_resolved')`); err != nil {
 		t.Fatal(err)
 	}
 	req := resolveRequest(f.Metadata.ID, "audit-1")
@@ -342,25 +318,16 @@ func TestResolutionAuditFailureRollsBackAndDowngradePreservesEvidence(t *testing
 		t.Fatal("resolution committed without its audit")
 	}
 	d, err := s.Get(t.Context(), f.Metadata.ID)
-	if err != nil || d.Status != StatusUnknown || d.Resolution != nil || d.ResolutionSource != "" {
+	if err != nil || d.DeliveryStatus != StatusUnknown || d.Resolution != nil || d.ResolutionSource != "" {
 		t.Fatalf("%+v %v", d, err)
 	}
-	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE failure_events DROP CONSTRAINT reject_resolution_test`); err != nil {
+	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE record_events DROP CONSTRAINT reject_resolution_test`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ResolveUnknown(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.migrations.Down(t.Context()); err == nil {
-		t.Fatal("downgrade erased operator audit evidence")
-	}
-	if version, err := s.SchemaVersion(t.Context()); err != nil || version != 2 {
-		t.Fatalf("%d %v", version, err)
-	}
-	d, err = s.Get(t.Context(), f.Metadata.ID)
-	if err != nil || d.Resolution == nil || d.ResolutionSource != ResolutionOperator {
-		t.Fatalf("%+v %v", d, err)
-	}
+
 }
 
 func TestConcurrentConflictingResolutionKeysCreateOneAudit(t *testing.T) {

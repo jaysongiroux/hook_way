@@ -113,7 +113,7 @@ groups:
           severity: critical
         annotations:
           summary: The replay service is refusing captures at capacity
-          description: Captures were answered 507; core drops them (hookway_capture_dropped_total{reason="capacity"}).
+          description: Capture requests were answered 507. Core counts failure drops in hookway_capture_dropped_total and inspection drops in hookway_inspection_dropped_total, with reason="capacity".
       - alert: HookwayReplayQueuedRunStale
         expr: max(hookway_replay_oldest_queued_run_seconds) > 300
         for: 1m
@@ -123,7 +123,7 @@ groups:
           summary: Retry runs have waited over 5 minutes
           description: Workers are not claiming queued runs. Check that replay replicas are running, workers.concurrency, and core's control listener.
       - alert: HookwayReplayUnknownRecords
-        expr: max(hookway_replay_records{status="unknown"}) > 0
+        expr: max(hookway_replay_records{kind="failure",delivery_status="unknown",dismissed="false"}) > 0
         for: 0m
         labels:
           severity: warning

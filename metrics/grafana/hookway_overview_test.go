@@ -324,11 +324,13 @@ func TestDashboardQueriesOnlyDeclaredMetrics(t *testing.T) {
 func TestCaptureAndRedrivePanels(t *testing.T) {
 	d := loadDashboard(t)
 	want := map[string]string{
-		"Captured failures":  "hookway_capture_total",
-		"Capture drops":      "hookway_capture_dropped_total",
-		"Capture buffer":     "hookway_capture_buffer_bytes",
-		"Redrives":           "hookway_control_runs_total",
-		"Redrives in flight": "hookway_control_inflight",
+		"Captured failures":    "hookway_capture_total",
+		"Captured inspections": "hookway_inspection_total",
+		"Inspection drops":     "hookway_inspection_dropped_total",
+		"Capture drops":        "hookway_capture_dropped_total",
+		"Capture buffer":       "hookway_capture_buffer_bytes",
+		"Redrives":             "hookway_control_runs_total",
+		"Redrives in flight":   "hookway_control_inflight",
 	}
 	for _, p := range d.Panels {
 		needle, ok := want[p.Title]

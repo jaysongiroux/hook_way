@@ -43,7 +43,7 @@ type ReplayActionInput struct {
 	Note           string   `json:"note,omitempty"`
 	Reference      string   `json:"reference,omitempty"`
 	IdempotencyKey string   `json:"idempotency_key"`
-	FailureIDs     []string `json:"failure_ids,omitempty"`
+	RecordIDs      []string `json:"record_ids,omitempty"`
 }
 
 type ReplayActionResult struct {
@@ -68,20 +68,20 @@ func ValidateReplayAction(input ReplayActionInput) ReplayActionResult {
 		}
 	case ActionResolve:
 		result.Issues = append(result.Issues, ValidateResolutionInput(ResolutionInput{Note: input.Note, Reference: input.Reference}).Issues...)
-		if input.FailureIDs != nil {
-			result.Issues = append(result.Issues, ActionIssue{"failure_ids", "resolution applies to one failure; batch resolution is not supported"})
+		if input.RecordIDs != nil {
+			result.Issues = append(result.Issues, ActionIssue{"record_ids", "resolution applies to one failure; batch resolution is not supported"})
 		}
 	default:
 		result.Issues = append(result.Issues, ActionIssue{"action", "action must be retry or resolve"})
 	}
-	if input.FailureIDs != nil && input.Action != ActionResolve {
-		if len(input.FailureIDs) == 0 || len(input.FailureIDs) > MaxBatchSize {
-			result.Issues = append(result.Issues, ActionIssue{"failure_ids", fmt.Sprintf("failure_ids must list 1 to %d record ids", MaxBatchSize)})
+	if input.RecordIDs != nil && input.Action != ActionResolve {
+		if len(input.RecordIDs) == 0 || len(input.RecordIDs) > MaxBatchSize {
+			result.Issues = append(result.Issues, ActionIssue{"record_ids", fmt.Sprintf("record_ids must list 1 to %d record ids", MaxBatchSize)})
 		}
-		seen := make(map[string]bool, len(input.FailureIDs))
-		for _, id := range input.FailureIDs {
+		seen := make(map[string]bool, len(input.RecordIDs))
+		for _, id := range input.RecordIDs {
 			if seen[id] {
-				result.Issues = append(result.Issues, ActionIssue{"failure_ids", fmt.Sprintf("failure_ids lists %q more than once", id)})
+				result.Issues = append(result.Issues, ActionIssue{"record_ids", fmt.Sprintf("record_ids lists %q more than once", id)})
 				break
 			}
 			seen[id] = true

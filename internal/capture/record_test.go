@@ -72,11 +72,11 @@ func TestFromFailureBuildsAPublishRecord(t *testing.T) {
 	if err := m.Validate(); err != nil {
 		t.Fatalf("metadata invalid: %v", err)
 	}
-	want := replaywire.FailureMetadata{
-		ID: m.ID, Kind: replaywire.KindResume, Flow: "orders", NodeID: "out", NodeType: "publish",
+	want := replaywire.RecordMetadata{
+		ID: m.ID, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out", NodeType: "publish",
 		DestinationID: "queue", DestinationType: "sqs", Target: "orders-{tenant}", RenderedTarget: "orders-acme",
 		EventID: "evt-1", RequestID: "req-1", TraceID: "trace-1", IdempotencyKey: "idem-1",
-		ReceivedAt: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC), FailedAt: fixedNow, InboundStatus: 202,
+		ReceivedAt: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC), OccurredAt: fixedNow, InboundStatus: 202,
 		ErrorClass: replaywire.ErrorClass5xx, ErrorMessage: "sqs: 503", Attempts: 3,
 		NodeConfigHash: m.NodeConfigHash, DestinationHash: m.DestinationHash, CoreVersion: "v1.2.3", CoreInstance: "core-0",
 		Retryable: true,
@@ -145,8 +145,8 @@ func TestFromTerminalBuildsAPublishOnlyRecord(t *testing.T) {
 	if err := m.Validate(); err != nil {
 		t.Fatalf("metadata invalid: %v", err)
 	}
-	if m.Kind != replaywire.KindPublishOnly || m.Flow != "orders" || m.NodeID != "hook" || m.DestinationType != "webhook" ||
-		m.RenderedTarget != "inbound" || m.EventID != "evt-9" || m.ErrorClass != replaywire.ErrorClass4xx || !m.FailedAt.Equal(failedAt) || !m.Retryable {
+	if m.ReplayMode != replaywire.ReplayPublishOnly || m.Flow != "orders" || m.NodeID != "hook" || m.DestinationType != "webhook" ||
+		m.RenderedTarget != "inbound" || m.EventID != "evt-9" || m.ErrorClass != replaywire.ErrorClass4xx || !m.OccurredAt.Equal(failedAt) || !m.Retryable {
 		t.Fatalf("metadata = %+v", m)
 	}
 	s, err := deliverysnapshot.Decode(rec.Snapshot)

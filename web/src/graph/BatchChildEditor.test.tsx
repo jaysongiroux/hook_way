@@ -62,7 +62,7 @@ test("catalog-aware children expose the permitted types and delegate option edit
   const select = screen.getByLabelText("New child node type");
   expect(
     [...select.querySelectorAll("option")].map((option) => option.value),
-  ).toEqual(["transform", "code", "filter", "if_else", "switch", "publish"]);
+  ).toEqual(["transform", "code", "filter", "if_else", "switch", "publish", "sample"]);
   fireEvent.change(screen.getByLabelText("transform example option"), {
     target: { value: "authored" },
   });

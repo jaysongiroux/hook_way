@@ -293,3 +293,14 @@ test("each comparison cell links to its supporting source", () => {
     }
   }
 });
+
+test("sampled inspection copy points to the runnable observation branch", () => {
+  wrap(<UseCases />);
+  const pattern = USE_CASES.find((item) => item.id === "sampled-inspection")!;
+  expect(pattern.examplePath).toBe("examples/inspect.yaml");
+  expect(pattern.detail).toMatch(/separate observation branch/);
+  expect(pattern.detail).toMatch(/Publish receives every event/);
+  expect(pattern.detail).toMatch(/view only/);
+  expect(pattern.detail).toMatch(/best effort/);
+  expect(screen.getByRole("link", { name: "inspect.yaml" })).toHaveAttribute("href", repoBlob("examples/inspect.yaml"));
+});

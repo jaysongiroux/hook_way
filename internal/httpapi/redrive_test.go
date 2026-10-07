@@ -94,8 +94,9 @@ func (p *redrivePublisher) messages() []sentMessage {
 }
 
 type upload struct {
-	meta     replaywire.FailureMetadata
+	meta     replaywire.RecordMetadata
 	snapshot []byte
+	payload  []byte
 }
 
 // uploadSink is a fake replay service that keeps each captured record.
@@ -123,6 +124,8 @@ func (s *uploadSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = json.Unmarshal(data, &u.meta)
 		case replaywire.PartSnapshot:
 			u.snapshot = data
+		case replaywire.PartPayload:
+			u.payload = data
 		}
 	}
 	s.mu.Lock()
@@ -192,8 +195,8 @@ func capturedBad(t *testing.T) (upload, *redrivePublisher, string) {
 	return sink.got[0], pub, replay.URL
 }
 
-func requestFor(m replaywire.FailureMetadata) replaywire.DeliverRequest {
-	return replaywire.DeliverRequest{RunID: "run-1", FailureID: m.ID, Kind: m.Kind, Flow: m.Flow, NodeID: m.NodeID,
+func requestFor(m replaywire.RecordMetadata) replaywire.DeliverRequest {
+	return replaywire.DeliverRequest{RunID: "run-1", RecordID: m.ID, Kind: m.Kind, Flow: m.Flow, NodeID: m.NodeID,
 		NodeType: m.NodeType, DestinationID: m.DestinationID, DestinationType: m.DestinationType,
 		RenderedTarget: m.RenderedTarget, NodeConfigHash: m.NodeConfigHash, DestinationHash: m.DestinationHash,
 		SnapshotSHA256: m.Snapshot.SHA256, SnapshotVersion: m.Snapshot.Version, DeadlineMS: 5000,
@@ -241,6 +244,37 @@ func TestRedriveResumesAtTheFailedNodeInline(t *testing.T) {
 	}
 	if res.NodeConfigHash != up.meta.NodeConfigHash || res.DestinationHash != up.meta.DestinationHash || len(res.Children) != 0 {
 		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestRedriveDoesNotCollectDownstreamInspections(t *testing.T) {
+	up, pub, _ := capturedBad(t)
+	var uploads int
+	var mu sync.Mutex
+	replay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		uploads++
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer replay.Close()
+	pub.setFail(nil)
+	cfg := redriveConfig(t, replay.URL, func(src string) string {
+		src = strings.Replace(src, "    edges:", "      - {id: look, type: inspect}\n    edges:", 1)
+		return strings.Replace(src, "bad>after]", "bad>look, look>after]", 1)
+	})
+	srv := redriveServer(t, cfg, pub)
+	res, err := redrive(t, srv, requestFor(up.meta), decode(t, up.snapshot))
+	if err != nil || len(pub.messages()) != 2 || outcomes(res)["after"] != replaywire.NodeDelivered {
+		t.Fatalf("redrive: result=%+v err=%v sent=%+v", res, err, pub.messages())
+	}
+	_ = srv.Close()
+	_ = srv.capture.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if uploads != 0 {
+		t.Fatalf("redrive collected %d inspection uploads", uploads)
 	}
 }
 
@@ -355,7 +389,7 @@ func publishOnlySnapshot(t *testing.T, id string) deliverysnapshot.Snapshot {
 }
 
 func publishOnlyRequest() replaywire.DeliverRequest {
-	return replaywire.DeliverRequest{RunID: "run-2", FailureID: "fail-2", Kind: replaywire.KindPublishOnly, Flow: "orders",
+	return replaywire.DeliverRequest{RunID: "run-2", RecordID: "fail-2", Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayPublishOnly, Flow: "orders",
 		NodeID: "bad", NodeType: "publish", DestinationID: "broken", DestinationType: "webhook", RenderedTarget: "b",
 		DeadlineMS: 5000, InboundStatus: 202}
 }

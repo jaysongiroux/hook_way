@@ -48,7 +48,7 @@ test("builder opens without authentication and local WASM recovery keeps editing
 
 test("route switches keep investigation state and pause API polling until return", async ({ page }) => {
   let polls = 0;
-  page.on("request", (request) => { if (new URL(request.url()).pathname === "/v1/failures") polls++; });
+  page.on("request", (request) => { if (new URL(request.url()).pathname === "/v1/records") polls++; });
   await login(page);
   await page.getByRole("button", { name: `Inspect ${ID}`, exact: true }).click();
   await expect(page.getByRole("region", { name: "Selected failure" })).toBeVisible();
@@ -84,7 +84,7 @@ test("an uncertain mutation survives builder navigation without automatic resubm
   await page.getByRole("button", { name: `Inspect ${ID}`, exact: true }).click();
   await page.getByRole("button", { name: "Retry delivery", exact: true }).click();
   const bodies: (string | null)[] = [];
-  await page.route(`**/v1/failures/${ID}/retries`, async (route) => {
+  await page.route(`**/v1/records/${ID}/retries`, async (route) => {
     bodies.push(route.request().postData());
     if (bodies.length === 1) { await route.fetch(); await route.abort("failed"); }
     else await route.continue();
@@ -136,8 +136,12 @@ for (const size of [
     const selected = page.getByRole("region", { name: "Selected failure" });
     await expect(selected.getByRole("button", { name: "Retry delivery", exact: true })).toBeVisible();
     const panel = await selected.boundingBox();
-    expect(panel!.y).toBeLessThan(105);
-    expect(panel!.height).toBeGreaterThan(size.height - 125);
+    // The new record-kind navigation occupies one compact row above evidence.
+    // Account for that row while retaining the existing viewport-space budget.
+    const recordNavigation = await page.getByRole("tablist", { name: "Record kind" }).boundingBox();
+    expect(recordNavigation!.height).toBeLessThan(54);
+    expect(panel!.y).toBeLessThan(105 + recordNavigation!.height);
+    expect(panel!.height).toBeGreaterThan(size.height - 125 - recordNavigation!.height);
     const evidence = await selected.locator(".evidence-scroll").first().boundingBox();
     expect(evidence!.height).toBeGreaterThan(size.height < 600 ? 130 : 250);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

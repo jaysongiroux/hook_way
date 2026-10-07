@@ -53,19 +53,19 @@ var (
 	testPayload  = []byte(`{"event":"created"}`)
 )
 
-func testMetadata() replaywire.FailureMetadata {
+func testMetadata() replaywire.RecordMetadata {
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
-	return replaywire.FailureMetadata{
-		ID: testID, Kind: replaywire.KindResume, Flow: "orders", NodeID: "out", NodeType: "publish",
+	return replaywire.RecordMetadata{
+		ID: testID, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out", NodeType: "publish",
 		DestinationID: "archive", DestinationType: "s3", Target: "uploads", RenderedTarget: "uploads",
-		EventID: "evt-1", ReceivedAt: at, FailedAt: at.Add(time.Second), InboundStatus: 202,
+		EventID: "evt-1", ReceivedAt: at, OccurredAt: at.Add(time.Second), InboundStatus: 202,
 		ErrorClass: replaywire.ErrorClass5xx, Attempts: 1, Retryable: true,
 		Snapshot: &replaywire.ArtifactInfo{Size: int64(len(testSnapshot)), SHA256: digest(testSnapshot), Version: 1},
 		Payload:  &replaywire.ArtifactInfo{Size: int64(len(testPayload)), SHA256: digest(testPayload), ContentType: "application/json"},
 	}
 }
 
-func metadataPart(t *testing.T, m replaywire.FailureMetadata) part {
+func metadataPart(t *testing.T, m replaywire.RecordMetadata) part {
 	t.Helper()
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -80,24 +80,26 @@ func captureCount(h *harness, outcome string) float64 {
 		if f.GetName() != "hookway_replay_captures_total" {
 			continue
 		}
+		var total float64
 		for _, m := range f.GetMetric() {
 			for _, l := range m.GetLabel() {
 				if l.GetName() == "outcome" && l.GetValue() == outcome {
-					return m.GetCounter().GetValue()
+					total += m.GetCounter().GetValue()
 				}
 			}
 		}
+		return total
 	}
 	return 0
 }
 
 func TestIngestCreatesARecord(t *testing.T) {
-	var got store.NewFailure
+	var got store.NewRecord
 	fs := notFoundStore()
-	fs.ingest = func(nf store.NewFailure) (store.IngestResult, error) { got = nf; return store.Created, nil }
+	fs.ingest = func(nf store.NewRecord) (store.IngestResult, error) { got = nf; return store.Created, nil }
 	h := newHarness(t, fs)
 	body, header := multipartBody(t, metadataPart(t, testMetadata()), part{replaywire.PartSnapshot, testSnapshot}, part{replaywire.PartPayload, testPayload})
-	rec := h.do(t, "POST", "/v1/failures", captureToken, body, header)
+	rec := h.do(t, "POST", "/v1/records", captureToken, body, header)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
@@ -116,23 +118,24 @@ func TestIngestCreatesARecord(t *testing.T) {
 
 func TestIngestDuplicateIs200(t *testing.T) {
 	fs := notFoundStore()
-	fs.ingest = func(store.NewFailure) (store.IngestResult, error) { return store.Duplicate, nil }
+	fs.ingest = func(store.NewRecord) (store.IngestResult, error) { return store.Duplicate, nil }
 	h := newHarness(t, fs)
 	body, header := multipartBody(t, metadataPart(t, testMetadata()), part{replaywire.PartSnapshot, testSnapshot}, part{replaywire.PartPayload, testPayload})
-	if rec := h.do(t, "POST", "/v1/failures", captureToken, body, header); rec.Code != http.StatusOK || captureCount(h, "duplicate") != 1 {
+	if rec := h.do(t, "POST", "/v1/records", captureToken, body, header); rec.Code != http.StatusOK || captureCount(h, "duplicate") != 1 {
 		t.Fatalf("status %d", rec.Code)
 	}
 }
 
 func TestIngestMetadataOnly(t *testing.T) {
-	var got store.NewFailure
+	var got store.NewRecord
 	fs := notFoundStore()
-	fs.ingest = func(nf store.NewFailure) (store.IngestResult, error) { got = nf; return store.Created, nil }
+	fs.ingest = func(nf store.NewRecord) (store.IngestResult, error) { got = nf; return store.Created, nil }
 	h := newHarness(t, fs)
 	m := testMetadata()
 	m.Retryable, m.NotRetryableReason, m.Snapshot, m.Payload = false, replaywire.NotRetryableTooLarge, nil, nil
+	m.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
 	body, header := multipartBody(t, metadataPart(t, m))
-	if rec := h.do(t, "POST", "/v1/failures", captureToken, body, header); rec.Code != http.StatusCreated {
+	if rec := h.do(t, "POST", "/v1/records", captureToken, body, header); rec.Code != http.StatusCreated {
 		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
 	if got.Snapshot != nil || got.Payload != nil {
@@ -150,10 +153,10 @@ func TestIngestMapsStoreErrors(t *testing.T) {
 		{store.ErrCapacity, http.StatusInsufficientStorage, "capacity_exceeded", "capacity"},
 	} {
 		fs := notFoundStore()
-		fs.ingest = func(store.NewFailure) (store.IngestResult, error) { return 0, c.err }
+		fs.ingest = func(store.NewRecord) (store.IngestResult, error) { return 0, c.err }
 		h := newHarness(t, fs)
 		body, header := multipartBody(t, metadataPart(t, testMetadata()), part{replaywire.PartSnapshot, testSnapshot}, part{replaywire.PartPayload, testPayload})
-		rec := h.do(t, "POST", "/v1/failures", captureToken, body, header)
+		rec := h.do(t, "POST", "/v1/records", captureToken, body, header)
 		if rec.Code != c.status || problemCode(t, rec) != c.code || captureCount(h, c.outcome) != 1 {
 			t.Errorf("%v: status %d code %q", c.err, rec.Code, problemCode(t, rec))
 		}
@@ -164,7 +167,7 @@ func TestIngestRejects(t *testing.T) {
 	good := func(t *testing.T) []part {
 		return []part{metadataPart(t, testMetadata()), {replaywire.PartSnapshot, testSnapshot}, {replaywire.PartPayload, testPayload}}
 	}
-	withMeta := func(mutate func(*replaywire.FailureMetadata)) func(t *testing.T) []part {
+	withMeta := func(mutate func(*replaywire.RecordMetadata)) func(t *testing.T) []part {
 		return func(t *testing.T) []part {
 			m := testMetadata()
 			mutate(&m)
@@ -189,14 +192,14 @@ func TestIngestRejects(t *testing.T) {
 			p.data = append(p.data, []byte(" {}")...)
 			return []part{p}
 		}, 400, "invalid_metadata", "invalid"},
-		"metadata invalid": {withMeta(func(m *replaywire.FailureMetadata) { m.InboundStatus = 503 }), 400, "invalid_metadata", "invalid"},
+		"metadata invalid": {withMeta(func(m *replaywire.RecordMetadata) { m.InboundStatus = 503 }), 400, "invalid_metadata", "invalid"},
 		"repeated part":    {func(t *testing.T) []part { return append(good(t), part{replaywire.PartPayload, testPayload}) }, 400, "invalid_request", "invalid"},
 		"unexpected part":  {func(t *testing.T) []part { return append(good(t), part{"extra", []byte("x")}) }, 400, "invalid_request", "invalid"},
 		"snapshot too large": {func(t *testing.T) []part {
 			return []part{metadataPart(t, testMetadata()), {replaywire.PartSnapshot, bytes.Repeat([]byte("s"), 1025)}}
 		}, 413, "record_too_large", "too_large"},
-		"size mismatch": {withMeta(func(m *replaywire.FailureMetadata) { m.Payload.Size++ }), 400, "artifact_mismatch", "invalid"},
-		"digest mismatch": {withMeta(func(m *replaywire.FailureMetadata) {
+		"size mismatch": {withMeta(func(m *replaywire.RecordMetadata) { m.Payload.Size++ }), 400, "artifact_mismatch", "invalid"},
+		"digest mismatch": {withMeta(func(m *replaywire.RecordMetadata) {
 			m.Snapshot.SHA256 = strings.Repeat("0", 64)
 		}), 400, "artifact_mismatch", "invalid"},
 		"declared part missing": {func(t *testing.T) []part {
@@ -205,16 +208,17 @@ func TestIngestRejects(t *testing.T) {
 		"undeclared part present": {func(t *testing.T) []part {
 			m := testMetadata()
 			m.Retryable, m.NotRetryableReason, m.Snapshot, m.Payload = false, replaywire.NotRetryableTooLarge, nil, nil
+			m.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
 			return []part{metadataPart(t, m), {replaywire.PartSnapshot, testSnapshot}}
 		}, 400, "artifact_mismatch", "invalid"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			fs := notFoundStore()
-			fs.ingest = func(store.NewFailure) (store.IngestResult, error) { t.Fatal("store reached"); return 0, nil }
+			fs.ingest = func(store.NewRecord) (store.IngestResult, error) { t.Fatal("store reached"); return 0, nil }
 			h := newHarness(t, fs)
 			body, header := multipartBody(t, c.parts(t)...)
-			rec := h.do(t, "POST", "/v1/failures", captureToken, body, header)
+			rec := h.do(t, "POST", "/v1/records", captureToken, body, header)
 			if rec.Code != c.status || problemCode(t, rec) != c.code {
 				t.Fatalf("status %d code %q, want %d %q (body %q)", rec.Code, problemCode(t, rec), c.status, c.code, rec.Body.String())
 			}
@@ -227,7 +231,7 @@ func TestIngestRejects(t *testing.T) {
 
 func TestIngestRejectsANonMultipartBody(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	rec := h.do(t, "POST", "/v1/failures", captureToken, strings.NewReader("{}"), http.Header{"Content-Type": {"application/json"}})
+	rec := h.do(t, "POST", "/v1/records", captureToken, strings.NewReader("{}"), http.Header{"Content-Type": {"application/json"}})
 	if rec.Code != 400 || problemCode(t, rec) != "invalid_request" {
 		t.Fatalf("status %d code %q", rec.Code, problemCode(t, rec))
 	}
@@ -240,7 +244,7 @@ func TestIngestRejectsAnOversizedBody(t *testing.T) {
 	// limit. Short lines, so the multipart reader reads it rather than
 	// failing on a line longer than its buffer.
 	padded := bytes.NewBuffer(append(bytes.Repeat([]byte("preamble\r\n"), 220000), body.Bytes()...))
-	rec := h.do(t, "POST", "/v1/failures", captureToken, padded, header)
+	rec := h.do(t, "POST", "/v1/records", captureToken, padded, header)
 	if rec.Code != http.StatusRequestEntityTooLarge || problemCode(t, rec) != "request_too_large" {
 		t.Fatalf("status %d code %q", rec.Code, problemCode(t, rec))
 	}

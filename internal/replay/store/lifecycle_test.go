@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func queueRun(t *testing.T, s *Store, f NewFailure) string {
+func queueRun(t *testing.T, s *Store, f NewRecord) string {
 	t.Helper()
 	mustIngest(t, s, f)
 	res, err := retry(s, f.Metadata.ID, "key-"+f.Metadata.ID, false)
@@ -32,9 +32,9 @@ func claim(t *testing.T, s *Store) ClaimedRun {
 }
 
 // childOf builds a downstream failure of parent's event.
-func childOf(t *testing.T, parent NewFailure, mutate func(*NewFailure)) NewFailure {
+func childOf(t *testing.T, parent NewRecord, mutate func(*NewRecord)) NewRecord {
 	t.Helper()
-	return testFailure(t, func(c *NewFailure) {
+	return testFailure(t, func(c *NewRecord) {
 		c.Metadata.NodeID, c.Metadata.EventID, c.Actor = "out_lambda", parent.Metadata.EventID, ""
 		if mutate != nil {
 			mutate(c)
@@ -57,7 +57,7 @@ func TestClaimRunsMovesTheOldestQueuedRunsToRunning(t *testing.T) {
 	}
 	for i, c := range claimed {
 		if c.Run.RunID != runIDs[i] || c.Run.Status != RunRunning || c.Run.WorkerID != "worker-1" ||
-			c.Run.LeaseExpiresAt == nil || !c.Run.LeaseExpiresAt.Equal(testNow.Add(2*time.Minute)) || c.Failure.ID != c.Run.FailureID {
+			c.Run.LeaseExpiresAt == nil || !c.Run.LeaseExpiresAt.Equal(testNow.Add(2*time.Minute)) || c.Record.ID != c.Run.RecordID {
 			t.Fatalf("claimed[%d] = %+v", i, c)
 		}
 	}
@@ -119,7 +119,7 @@ func TestSnapshotIsVerified(t *testing.T) {
 	if data, err := s.Snapshot(ctx, f.Metadata.ID); err != nil || string(data) != string(f.Snapshot) {
 		t.Fatalf("Snapshot = %q, %v", data, err)
 	}
-	if _, err := s.pool.Exec(ctx, `UPDATE failure_artifacts SET snapshot = 'tampered' WHERE failure_id = $1`, f.Metadata.ID); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE record_artifacts SET snapshot = 'tampered' WHERE record_id = $1`, f.Metadata.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Snapshot(ctx, f.Metadata.ID); !errors.Is(err, ErrCorrupt) {
@@ -159,7 +159,7 @@ func TestFinalizeSucceededResolvesAndCreatesChildren(t *testing.T) {
 	child, metaOnly := childOf(t, parent, nil), childOf(t, parent, metadataOnly)
 	s.now = func() time.Time { return testNow.Add(time.Hour) }
 	res, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Result: json.RawMessage(`{"deliver":{}}`),
-		Children: []NewFailure{child, metaOnly}, Actor: "worker:w1"})
+		Children: []NewRecord{child, metaOnly}, Actor: "worker:w1"})
 	if err != nil || res.Late || len(res.ChildIDs) != 2 {
 		t.Fatalf("FinalizeRun = %+v, %v", res, err)
 	}
@@ -168,8 +168,8 @@ func TestFinalizeSucceededResolvesAndCreatesChildren(t *testing.T) {
 	sort.Strings(want)
 	gotChildren := append([]string(nil), d.Children...)
 	sort.Strings(gotChildren)
-	if d.Status != StatusResolved || !reflect.DeepEqual(gotChildren, want) {
-		t.Fatalf("parent status %q children %v", d.Status, d.Children)
+	if d.DeliveryStatus != StatusResolved || !reflect.DeepEqual(gotChildren, want) {
+		t.Fatalf("parent status %q children %v", d.DeliveryStatus, d.Children)
 	}
 	if n := len(d.History); n < 3 || d.History[n-2].Event != EventRunFinished || d.History[n-1].Event != EventChildrenCreated || d.History[n-1].Actor != "worker:w1" {
 		t.Fatalf("parent history = %+v", d.History)
@@ -179,7 +179,7 @@ func TestFinalizeSucceededResolvesAndCreatesChildren(t *testing.T) {
 	}
 	jsonEqual(t, d.Runs[0].Result, `{"deliver":{}}`)
 	c, err := s.Get(ctx, child.Metadata.ID)
-	if err != nil || c.ParentID != parent.Metadata.ID || c.RootID != parent.Metadata.ID || c.Status != StatusOpen ||
+	if err != nil || c.ParentID != parent.Metadata.ID || c.RootID != parent.Metadata.ID || c.DeliveryStatus != StatusOpen ||
 		!c.ExpiresAt.Equal(d.ExpiresAt) || !c.CapturedAt.Equal(testNow.Add(time.Hour)) || c.History[0].Actor != "worker:w1" {
 		t.Fatalf("child = %+v, %v", c, err)
 	}
@@ -196,7 +196,7 @@ func TestFinalizeGrandchildKeepsTheRoot(t *testing.T) {
 	runID := queueRun(t, s, root)
 	claim(t, s)
 	child := childOf(t, root, nil)
-	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewFailure{child}, Actor: "w"}); err != nil {
+	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewRecord{child}, Actor: "w"}); err != nil {
 		t.Fatal(err)
 	}
 	childRun, err := retry(s, child.Metadata.ID, "child-key", false)
@@ -204,8 +204,8 @@ func TestFinalizeGrandchildKeepsTheRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	claim(t, s)
-	grandchild := childOf(t, root, func(g *NewFailure) { g.Metadata.NodeID = "out_final" })
-	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: childRun.RunID, Status: RunSucceeded, Children: []NewFailure{grandchild}, Actor: "w"}); err != nil {
+	grandchild := childOf(t, root, func(g *NewRecord) { g.Metadata.NodeID = "out_final" })
+	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: childRun.RunID, Status: RunSucceeded, Children: []NewRecord{grandchild}, Actor: "w"}); err != nil {
 		t.Fatal(err)
 	}
 	g, _ := s.Get(ctx, grandchild.Metadata.ID)
@@ -227,8 +227,8 @@ func TestFinalizeMovesTheRecord(t *testing.T) {
 				t.Fatal(err)
 			}
 			d, _ := s.Get(ctx, f.Metadata.ID)
-			if d.Status != want || d.Runs[0].Status != status {
-				t.Fatalf("record %q run %q, want %q %q", d.Status, d.Runs[0].Status, want, status)
+			if d.DeliveryStatus != want || d.Runs[0].Status != status {
+				t.Fatalf("record %q run %q, want %q %q", d.DeliveryStatus, d.Runs[0].Status, want, status)
 			}
 		})
 	}
@@ -246,13 +246,13 @@ func TestFinalizeAfterLeaseExpiryIsLate(t *testing.T) {
 		t.Fatalf("ExpireLeases = %v, %v", expired, err)
 	}
 	r0, b0 := usage(t, s)
-	res, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewFailure{childOf(t, f, nil)}, Actor: "worker:w1"})
+	res, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewRecord{childOf(t, f, nil)}, Actor: "worker:w1"})
 	if err != nil || !res.Late || len(res.ChildIDs) != 0 {
 		t.Fatalf("late FinalizeRun = %+v, %v", res, err)
 	}
 	d, _ := s.Get(ctx, f.Metadata.ID)
-	if d.Status != StatusUnknown || d.Runs[0].Status != RunUnknown || len(d.Children) != 0 {
-		t.Fatalf("record %q run %q children %v", d.Status, d.Runs[0].Status, d.Children)
+	if d.DeliveryStatus != StatusUnknown || d.Runs[0].Status != RunUnknown || len(d.Children) != 0 {
+		t.Fatalf("record %q run %q children %v", d.DeliveryStatus, d.Runs[0].Status, d.Children)
 	}
 	jsonEqual(t, d.Runs[0].Result, `{"reason":"lease_expired"}`)
 	events := []string{}
@@ -275,7 +275,7 @@ func TestFinalizeRejectsChildArtifactsThatDoNotMatchTheirSizes(t *testing.T) {
 	claim(t, s)
 	child := childOf(t, f, nil)
 	child.Payload = append(child.Payload, 'x') // one byte more than declared
-	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewFailure{child}, Actor: "w"}); err == nil {
+	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewRecord{child}, Actor: "w"}); err == nil {
 		t.Fatal("a child whose bytes differ from its declared size was stored")
 	}
 	if d, _ := s.Get(ctx, f.Metadata.ID); d.Runs[0].Status != RunRunning {
@@ -289,7 +289,7 @@ func TestFinalizeRejectsInvalidOutcomes(t *testing.T) {
 	f := testFailure(t, nil)
 	runID := queueRun(t, s, f)
 	claim(t, s)
-	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunFailed, Children: []NewFailure{childOf(t, f, nil)}}); err == nil {
+	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunFailed, Children: []NewRecord{childOf(t, f, nil)}}); err == nil {
 		t.Fatal("a failed run created children")
 	}
 	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: "exploded"}); err == nil {
@@ -310,8 +310,8 @@ func TestExpireLeasesLeavesLiveLeases(t *testing.T) {
 	if expired, err := s.ExpireLeases(ctx, "w"); err != nil || len(expired) != 0 {
 		t.Fatalf("ExpireLeases = %v, %v", expired, err)
 	}
-	if d, _ := s.Get(ctx, f.Metadata.ID); d.Status != StatusRetrying || d.Runs[0].Status != RunRunning {
-		t.Fatalf("record %q run %q", d.Status, d.Runs[0].Status)
+	if d, _ := s.Get(ctx, f.Metadata.ID); d.DeliveryStatus != StatusRetrying || d.Runs[0].Status != RunRunning {
+		t.Fatalf("record %q run %q", d.DeliveryStatus, d.Runs[0].Status)
 	}
 }
 
@@ -327,5 +327,35 @@ func TestStatsCountsRuns(t *testing.T) {
 	st, err := s.Stats(ctx)
 	if err != nil || st.RunsByStatus[RunQueued] != 2 || st.RunsByStatus[RunRunning] != 1 || st.OldestQueuedAge != 50*time.Second {
 		t.Fatalf("stats = %+v, %v", st, err)
+	}
+}
+
+func TestFinalizeRejectsChildArtifactDigestMismatch(t *testing.T) {
+	for _, artifact := range []string{"snapshot", "payload"} {
+		t.Run(artifact, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestStore(t, defaultLimits())
+			parent := testFailure(t, nil)
+			runID := queueRun(t, s, parent)
+			claim(t, s)
+			child := childOf(t, parent, nil)
+			if artifact == "snapshot" {
+				child.Snapshot = append([]byte(nil), child.Snapshot...)
+				child.Snapshot[0] ^= 1
+			} else {
+				child.Payload = append([]byte(nil), child.Payload...)
+				child.Payload[0] ^= 1
+			}
+			if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewRecord{child}, Actor: "w"}); err == nil {
+				t.Fatal("stored corrupted child bytes")
+			}
+			detail, err := s.Get(ctx, parent.Metadata.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.DeliveryStatus != StatusRetrying || detail.Runs[0].Status != RunRunning || len(detail.Children) != 0 {
+				t.Fatalf("rejected result changed lifecycle: %+v", detail)
+			}
+		})
 	}
 }

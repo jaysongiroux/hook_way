@@ -11,11 +11,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
 
 // RetryRequest asks for one run of one record.
 type RetryRequest struct {
-	FailureID                string
+	RecordID                 string
 	Actor                    string // key name; scopes the idempotency key
 	IdempotencyKey           string
 	AcknowledgeDuplicateRisk bool
@@ -30,7 +31,7 @@ type RetryResult struct {
 
 // Stats is one sample for the state gauges.
 type Stats struct {
-	RecordsByStatus map[string]int64
+	RecordsByState  map[replaywire.RecordState]int64
 	UsageRecords    int64
 	UsageBytes      int64
 	SchemaVersion   int64
@@ -39,7 +40,7 @@ type Stats struct {
 }
 
 func retryRequestHash(r RetryRequest) string {
-	sum := sha256.Sum256([]byte(r.FailureID + "\x00" + strconv.FormatBool(r.AcknowledgeDuplicateRisk)))
+	sum := sha256.Sum256([]byte(r.RecordID + "\x00" + strconv.FormatBool(r.AcknowledgeDuplicateRisk)))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -54,7 +55,7 @@ func uniqueViolation(err error, index string) bool {
 // idempotency key returns the first request's run, whatever the record's
 // status is now; a repeated key with a different request is rejected.
 func (s *Store) RequestRetry(ctx context.Context, req RetryRequest) (RetryResult, error) {
-	if !validID(req.FailureID) {
+	if !validID(req.RecordID) {
 		return RetryResult{}, ErrNotFound
 	}
 	hash := retryRequestHash(req)
@@ -77,9 +78,11 @@ func (s *Store) requestRetry(ctx context.Context, req RetryRequest, hash string)
 			return err
 		}
 		var status string
+		var dismissedAt *time.Time
 		var retryable bool
+		var kind string
 		var expiresAt time.Time
-		err := tx.QueryRow(ctx, `SELECT status, retryable, expires_at FROM failures WHERE id = $1 FOR UPDATE`, req.FailureID).Scan(&status, &retryable, &expiresAt)
+		err := tx.QueryRow(ctx, `SELECT COALESCE(delivery_status, ''), retryable, expires_at, kind, dismissed_at FROM records WHERE id = $1 FOR UPDATE`, req.RecordID).Scan(&status, &retryable, &expiresAt, &kind, &dismissedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -94,7 +97,7 @@ func (s *Store) requestRetry(ctx context.Context, req RetryRequest, hash string)
 		switch {
 		case !expiresAt.After(s.now().UTC()):
 			return ErrExpired
-		case !retryable || status == StatusResolved || status == StatusDismissed:
+		case kind != "failure" || !retryable || status == StatusResolved || dismissedAt != nil:
 			return ErrNotRetryable
 		case status == StatusRetrying:
 			return ErrRunActive
@@ -103,16 +106,16 @@ func (s *Store) requestRetry(ctx context.Context, req RetryRequest, hash string)
 		}
 		runID := uuid.Must(uuid.NewV7()).String()
 		now := s.now().UTC()
-		if _, err := tx.Exec(ctx, `INSERT INTO retry_runs (run_id, failure_id, status, requested_by, idempotency_key,
+		if _, err := tx.Exec(ctx, `INSERT INTO retry_runs (run_id, record_id, status, requested_by, idempotency_key,
 			request_hash, ack_duplicate_risk, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			runID, req.FailureID, RunQueued, req.Actor, req.IdempotencyKey, hash, req.AcknowledgeDuplicateRisk, now); err != nil {
+			runID, req.RecordID, RunQueued, req.Actor, req.IdempotencyKey, hash, req.AcknowledgeDuplicateRisk, now); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE failures SET status = $2 WHERE id = $1`, req.FailureID, StatusRetrying); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE records SET delivery_status = $2 WHERE id = $1`, req.RecordID, StatusRetrying); err != nil {
 			return err
 		}
 		res = RetryResult{RunID: runID, Created: true}
-		return appendEvent(ctx, tx, req.FailureID, EventRunRequested, req.Actor, now,
+		return appendEvent(ctx, tx, req.RecordID, EventRunRequested, req.Actor, now,
 			map[string]any{"run_id": runID, "acknowledge_duplicate_risk": req.AcknowledgeDuplicateRisk})
 	})
 	if err != nil {
@@ -153,21 +156,21 @@ func (s *Store) GetRun(ctx context.Context, runID string) (Run, error) {
 
 // Dismiss closes an open or unknown record: its artifacts are deleted at
 // once, it stops counting against capacity, and the dismissal is logged.
-func (s *Store) Dismiss(ctx context.Context, id, actor string) (Failure, error) {
+func (s *Store) Dismiss(ctx context.Context, id, actor string) (Record, error) {
 	if !validID(id) {
-		return Failure{}, ErrNotFound
+		return Record{}, ErrNotFound
 	}
-	var f Failure
+	var f Record
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
-		f, err = scanFailure(tx.QueryRow(ctx, `SELECT `+failureColumns+` FROM failures WHERE id = $1 FOR UPDATE`, id))
+		f, err = scanRecord(tx.QueryRow(ctx, `SELECT `+recordColumns+` FROM records WHERE id = $1 FOR UPDATE`, id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
-		if f.Status != StatusOpen && f.Status != StatusUnknown {
+		if f.DismissedAt != nil || (f.Kind != "inspection" && f.DeliveryStatus != StatusOpen && f.DeliveryStatus != StatusUnknown) {
 			return ErrInvalidState
 		}
 		var freed int64
@@ -178,46 +181,47 @@ func (s *Store) Dismiss(ctx context.Context, id, actor string) (Failure, error) 
 			if f.Payload != nil {
 				freed += f.Payload.Size
 			}
-			if _, err := tx.Exec(ctx, `DELETE FROM failure_artifacts WHERE failure_id = $1`, id); err != nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM record_artifacts WHERE record_id = $1`, id); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE failures SET status = $2, has_artifacts = false WHERE id = $1`, id, StatusDismissed); err != nil {
+		at := s.now().UTC().Truncate(time.Microsecond)
+		if _, err := tx.Exec(ctx, `UPDATE records SET dismissed_at = $2, has_artifacts = false WHERE id = $1`, id, at); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE usage SET records = records - 1, bytes = bytes - $1`, freed); err != nil {
 			return err
 		}
-		f.Status, f.HasArtifacts = StatusDismissed, false
-		return appendEvent(ctx, tx, id, EventDismissed, actor, s.now().UTC(), map[string]any{"freed_bytes": freed})
+		f.DismissedAt, f.HasArtifacts = &at, false
+		return appendEvent(ctx, tx, id, EventDismissed, actor, at, map[string]any{"freed_bytes": freed})
 	})
 	if err != nil {
-		return Failure{}, err
+		return Record{}, err
 	}
 	return f, nil
 }
 
-// Stats samples record counts by status, usage, and the schema version.
+// Stats samples record counts by kind, delivery status and dismissal, usage, and the schema version.
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
-	st := Stats{RecordsByStatus: map[string]int64{}}
-	rows, err := s.pool.Query(ctx, `SELECT status, count(*) FROM failures GROUP BY status`)
+	st := Stats{RecordsByState: map[replaywire.RecordState]int64{}}
+	rows, err := s.pool.Query(ctx, `SELECT kind, COALESCE(delivery_status, ''), dismissed_at IS NOT NULL, count(*) FROM records GROUP BY 1, 2, 3`)
 	if err != nil {
 		return Stats{}, err
 	}
 	type count struct {
-		status string
-		n      int64
+		state replaywire.RecordState
+		n     int64
 	}
 	counts, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (count, error) {
 		var c count
-		err := r.Scan(&c.status, &c.n)
+		err := r.Scan(&c.state.Kind, &c.state.DeliveryStatus, &c.state.Dismissed, &c.n)
 		return c, err
 	})
 	if err != nil {
 		return Stats{}, err
 	}
 	for _, c := range counts {
-		st.RecordsByStatus[c.status] = c.n
+		st.RecordsByState[c.state] = c.n
 	}
 	st.RunsByStatus = map[string]int64{RunQueued: 0, RunRunning: 0}
 	rows, err = s.pool.Query(ctx, `SELECT status, count(*), min(created_at) FROM retry_runs WHERE status IN ($1, $2) GROUP BY status`, RunQueued, RunRunning)

@@ -71,6 +71,36 @@ const auth = {
   signature_header: "X-Signature",
 };
 
+test("sample preserves leading decimal zeros while typing small rates", () => {
+  const { change } = setup("sample", { rate: 1 });
+  const input = screen.getByLabelText("Sampling rate");
+  for (const value of ["0", "0.", "0.0", "0.00", "0.001"]) {
+    fireEvent.change(input, { target: { value } });
+    expect(input).toHaveValue(value);
+  }
+  expect(change).toHaveBeenLastCalledWith({ rate: 0.001 });
+  fireEvent.blur(input);
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+});
+
+test("sample edits decimals and zero without changing unrelated options", () => {
+  const { change } = setup("sample", { rate: 1 });
+  const input = screen.getByLabelText("Sampling rate");
+  expect(input).toBeRequired();
+  expect(screen.getByText(/0 drops all; 1 keeps all/)).toBeInTheDocument();
+  for (const rate of [0.235, 0.001, 0.00001, 0, 1]) {
+    fireEvent.change(input, { target: { value: String(rate) } });
+    expect(change).toHaveBeenLastCalledWith({ rate });
+  }
+  fireEvent.change(input, { target: { value: "1.1" } });
+  fireEvent.blur(input);
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByText("Maximum: 1.")).toBeInTheDocument();
+  fireEvent.change(input, { target: { value: "" } });
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(change).toHaveBeenLastCalledWith({ rate: undefined });
+});
+
 for (const [scheme, capability] of Object.entries(
   NODE_SCHEMAS.auth.auth_schemes ?? {},
 )) {
@@ -610,4 +640,13 @@ test("Temporal settings are editable and switching destinations removes only inc
   fireEvent.click(screen.getByRole("option", { name: "standard" }));
   expect(change.mock.calls.at(-1)?.[0]).not.toHaveProperty("temporal");
   expect(change.mock.calls.at(-1)?.[0].target).toBe("orders");
+});
+
+test("Inspect explains replay setup and observation branches without inventing options", () => {
+  setup("inspect", {});
+  expect(screen.getByText(/Configure the global Replay service connection/)).toBeVisible();
+  expect(screen.getByText(/separate branch before Publish/)).toBeVisible();
+  expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  expect(defaultNodeOptions("inspect", "inspect_demo")).toEqual({});
+  expect(NODE_SCHEMAS.inspect.allow_leaf).toBe(true);
 });

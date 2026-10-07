@@ -24,7 +24,7 @@ func otherConn(t *testing.T, s *Store) *pgx.Conn {
 func eventCount(t *testing.T, s *Store, id string) int {
 	t.Helper()
 	var n int
-	if err := s.pool.QueryRow(context.Background(), `SELECT count(*) FROM failure_events WHERE failure_id = $1`, id).Scan(&n); err != nil {
+	if err := s.pool.QueryRow(context.Background(), `SELECT count(*) FROM record_events WHERE record_id = $1`, id).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -51,7 +51,7 @@ func TestSweepDeletesExpiredRecordsExceptActiveOnes(t *testing.T) {
 	if err != nil || res.Records != 2 || res.Bytes != openBytes {
 		t.Fatalf("Sweep = %+v, %v; want 2 records and %d bytes (the dismissed record holds no artifacts)", res, err, openBytes)
 	}
-	for _, f := range []NewFailure{open, dismissed} {
+	for _, f := range []NewRecord{open, dismissed} {
 		if _, err := s.Get(ctx, f.Metadata.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("expired record survived: %v", err)
 		}
@@ -59,7 +59,7 @@ func TestSweepDeletesExpiredRecordsExceptActiveOnes(t *testing.T) {
 			t.Fatal("history of a deleted record survived")
 		}
 	}
-	for _, f := range []NewFailure{active, fresh} {
+	for _, f := range []NewRecord{active, fresh} {
 		if _, err := s.Get(ctx, f.Metadata.ID); err != nil {
 			t.Fatalf("GC deleted a record it must keep: %v", err)
 		}
@@ -121,7 +121,7 @@ func TestSweepOrphansChildrenOfADeletedParent(t *testing.T) {
 	runID := queueRun(t, s, parent)
 	claim(t, s)
 	child := childOf(t, parent, nil)
-	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewFailure{child}, Actor: "w"}); err != nil {
+	if _, err := s.FinalizeRun(ctx, RunOutcome{RunID: runID, Status: RunSucceeded, Children: []NewRecord{child}, Actor: "w"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := retry(s, child.Metadata.ID, "child-key", false); err != nil { // an active run keeps the child
@@ -152,7 +152,7 @@ func TestSweepRechecksActiveRunsAfterLocking(t *testing.T) {
 		if _, err := other.Exec(ctx, `SET session_replication_role = replica`); err != nil {
 			t.Error(err)
 		}
-		if _, err := other.Exec(ctx, `INSERT INTO retry_runs (run_id, failure_id, status, requested_by, idempotency_key, request_hash,
+		if _, err := other.Exec(ctx, `INSERT INTO retry_runs (run_id, record_id, status, requested_by, idempotency_key, request_hash,
 			ack_duplicate_risk, created_at) VALUES (gen_random_uuid(), $1, 'queued', 'ops', 'late', 'h', false, now())`, f.Metadata.ID); err != nil {
 			t.Error(err)
 		}

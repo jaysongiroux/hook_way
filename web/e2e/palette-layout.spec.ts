@@ -19,10 +19,10 @@ for (const viewport of [
       if ((await nodes.getAttribute("aria-pressed")) !== "true")
         await nodes.click();
       const cards = page.locator(".hookway-palette-item");
-      await expect(cards).toHaveCount(22);
+      await expect(cards).toHaveCount(23);
       for (const tab of ["Nodes", "Templates"]) {
         await page.getByRole("tab", { name: tab, exact: true }).click();
-        await expect(cards).toHaveCount(tab === "Nodes" ? 22 : 5);
+        await expect(cards).toHaveCount(tab === "Nodes" ? 23 : 5);
         const measurements = await cards.evaluateAll((items) =>
           items.map((item) => {
             const button = item.querySelector("button")!;

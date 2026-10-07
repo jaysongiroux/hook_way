@@ -56,7 +56,7 @@ func testReplacement(t *testing.T, restore, protected bool) {
 	}
 	waitFor(t, "captured failure before replacement", 30*time.Second, func() bool {
 		open.Items = nil
-		return s.api(t, http.MethodGet, "/v1/failures?status=open&node_id=audit", nil, &open) == http.StatusOK && len(open.Items) == 1
+		return s.api(t, http.MethodGet, "/v1/records?kind=failure&delivery_status=open&dismissed=false&node_id=audit", nil, &open) == http.StatusOK && len(open.Items) == 1
 	})
 	failure := open.Items[0]
 	// No additional ingress or operator retries: capture has reached PostgreSQL,
@@ -140,7 +140,7 @@ func testReplacement(t *testing.T, restore, protected bool) {
 			RunID  string `json:"run_id"`
 		} `json:"results"`
 	}
-	if code := s.api(t, http.MethodPost, "/v1/retries", map[string]any{"failure_ids": []string{failure.ID}}, &batch, "Idempotency-Key", "replacement-retry"); code != http.StatusOK || len(batch.Results) != 1 || batch.Results[0].Status != http.StatusAccepted {
+	if code := s.api(t, http.MethodPost, "/v1/retries", map[string]any{"record_ids": []string{failure.ID}}, &batch, "Idempotency-Key", "replacement-retry"); code != http.StatusOK || len(batch.Results) != 1 || batch.Results[0].Status != http.StatusAccepted {
 		t.Fatalf("retry status %d result %+v", code, batch)
 	}
 	waitFor(t, "replacement retry success", 60*time.Second, func() bool {

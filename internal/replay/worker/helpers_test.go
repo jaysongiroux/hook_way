@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	testFailureID = "01926d3c-8d6f-7b3a-9c1e-2f4a5b6c7d8e"
-	testRunID     = "01926d3c-9999-7b3a-9c1e-2f4a5b6c7d8e"
+	testRecordID = "01926d3c-8d6f-7b3a-9c1e-2f4a5b6c7d8e"
+	testRunID    = "01926d3c-9999-7b3a-9c1e-2f4a5b6c7d8e"
 )
 
 var testSnapshot = []byte("gzip-snapshot-bytes")
@@ -32,26 +32,27 @@ func artifact(b []byte, version int) *replaywire.ArtifactInfo {
 func testRun() store.ClaimedRun {
 	at := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	return store.ClaimedRun{
-		Run: store.Run{RunID: testRunID, FailureID: testFailureID, Status: store.RunRunning},
-		Failure: store.Failure{
-			FailureMetadata: replaywire.FailureMetadata{
-				ID: testFailureID, Kind: replaywire.KindResume, Flow: "orders", NodeID: "out_s3", NodeType: "publish",
+		Run: store.Run{RunID: testRunID, RecordID: testRecordID, Status: store.RunRunning},
+		Record: store.Record{
+			RecordMetadata: replaywire.RecordMetadata{
+				ID: testRecordID, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out_s3", NodeType: "publish",
 				DestinationID: "archive", DestinationType: "s3", Target: "uploads", RenderedTarget: "uploads",
-				EventID: "evt-1", ReceivedAt: at, FailedAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx,
+				EventID: "evt-1", ReceivedAt: at, OccurredAt: at, InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx,
 				Retryable: true, NodeConfigHash: "node-hash", DestinationHash: "dest-hash",
 				Snapshot: artifact(testSnapshot, 1), Payload: artifact([]byte("{}"), 0),
 			},
-			Status: store.StatusRetrying, RootID: testFailureID,
+			DeliveryStatus: store.StatusRetrying, RootID: testRecordID,
 		},
 	}
 }
 
 // childMetadata is a valid downstream failure of testRun's event.
-func childMetadata(id string, snapshot, payload []byte) replaywire.FailureMetadata {
-	m := testRun().Failure.FailureMetadata
+func childMetadata(id string, snapshot, payload []byte) replaywire.RecordMetadata {
+	m := testRun().Record.RecordMetadata
 	m.ID, m.NodeID, m.Snapshot, m.Payload = id, "out_lambda", nil, nil
 	if snapshot == nil {
 		m.Retryable, m.NotRetryableReason = false, replaywire.NotRetryableTooLarge
+		m.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
 		return m
 	}
 	m.Snapshot, m.Payload = artifact(snapshot, 1), artifact(payload, 0)

@@ -2,7 +2,7 @@
 
 Use the console to inspect captured failures and request recovery from a running
 replay service. It shows payloads, delivery history, and evidence for uncertain
-outcomes. The public builder writes configuration separately; it does not manage
+outcomes. Inspect nodes provide separate view-only observations in **Inspections**. The public builder writes configuration separately; it does not manage
 core. Accepting a retry only queues work, so check its result before concluding
 that delivery succeeded.
 
@@ -134,6 +134,11 @@ Desktop keeps the inbox and evidence independently scrollable, with recovery
 controls at the top of the detail panel. Mobile opens a focused detail view;
 **Back to inbox** preserves filters and restores focus to the inspected record.
 
+Dismissed failures retain their previous delivery state in the details while
+the badge and guidance show that recovery has stopped. The console requires API
+contract version 1 and the `record_api` capability; incompatible services are
+rejected before record queries, with no old-route fallback.
+
 The page refreshes current list and selected details every three seconds while
 visible, without overlapping polls. Hidden pages stop polling; returning resumes
 refresh. A failed refresh identifies potentially stale data. Action eligibility
@@ -142,6 +147,88 @@ transactions remain authoritative if another operator acts or retention expires.
 New retries and confirmations reject expired records even before physical GC.
 Already accepted idempotent requests can still return their prior result while
 that retained record exists. Retryability at capture alone is not eligibility now.
+
+## View-only inspections
+
+**Failures** is the default record tab. **Inspections** is available when the
+connected version-1 replay API advertises `inspection_records`; matching APIs
+without that capability keep the failure workflow. Each tab retains its own filters, page and selection.
+The console always requests an explicit kind: `kind=inspection` or `kind=failure`.
+The API itself returns both kinds when kind is omitted. Available inspections use
+`dismissed=false`; Dismissed uses `dismissed=true`; All inspections omits that filter.
+Failure delivery-state tabs combine `delivery_status` with `dismissed=false`; their
+Dismissed tab filters dismissal alone, preserving the recorded delivery state. **Available**, **Dismissed** and
+**All inspections** filter inspection state, not delivery outcome.
+
+Select an observation to see its time, flow/node, event/request/trace IDs, expiry
+and final inbound response. Both lists use `occurred_at`, labeled Observed at for
+inspections and Failed at for failures. An HTTP 503 describes the response to the webhook
+sender; it is not a fabricated failed delivery. Records are labeled **View only**.
+They have no retry, confirm-outcome, batch-retry or retry-history controls.
+**Audit history** retains capture, payload access and dismissal events.
+
+**Load body and context** explicitly retrieves the payload with `payload` scope.
+It shows the current rendered body, content type/encoding, method/path, redacted
+headers and variables. Text is escaped; the body preview renders captured text
+directly, preserving JSON number precision. Binary bodies are labeled base64;
+empty bodies are explicit.
+The preview reads at most 1 MiB of the versioned JSON artifact and displays at
+most 64 KiB of body text. Larger artifacts offer **Download inspection JSON**,
+which contains the full body and context, with binary bodies still base64 encoded.
+Read-only metadata access never retrieves this context. Closing a preview discards
+it. Oversized/unsupported captures explain why only metadata is available.
+
+**Files** is available for both failures and inspections with stored payloads.
+**Load file information** reads the complete payload with `payload` permission
+and shows each file's name, content type, size and multipart form field, where
+present. **Download file** saves the individual file's bytes without opening a
+viewer. Multipart files and single-file bodies are supported; when no filename
+was recorded, **Download name** identifies the suggested name. Binary inspection
+bodies are decoded from base64 for the download. Downloads are complete even
+when the payload exceeds the text-preview limit, subject to the existing capture
+and storage limits.
+
+With `multipart.include_content: false`, file information remains available but
+individual downloads explain that contents were omitted. Empty files can still
+be downloaded. Invalid base64 or a size mismatch makes the affected file
+unavailable; the complete stored payload remains downloadable for investigation.
+No file information or contents are loaded for keys without `payload` scope.
+**Close files**, leaving the record and signing out discard the loaded files.
+
+With `retry` scope, **Dismiss inspection** confirms deletion of the stored body
+and context, retaining metadata/audit history until expiry. Dismissal makes no
+claim about delivery. Inspections share failures' retention and storage caps;
+collection is best effort, independent of `capture_failures`, and cannot affect
+webhook responses when replay is unavailable.
+
+To run the [sampling example](../../examples/inspect.yaml) locally, start
+`make dev-up` (Docker), then in another terminal:
+
+```sh
+export REPLAY_CAPTURE_TOKEN=dev-capture-token-0123456789abcdef
+export REPLAY_CONTROL_TOKEN=dev-control-token-0123456789abcdef
+go run ./cmd/hookway serve --config examples/inspect.yaml
+```
+
+Send a set of local requests from a third terminal:
+
+```sh
+for i in $(seq 1 100); do
+  curl -fsS -o /dev/null -H 'Content-Type: application/json' \
+    --data "{\"event\":\"spot-check\",\"sequence\":$i}" \
+    http://localhost:8083/webhooks/inspect
+done
+```
+
+Open `http://localhost:8082`, sign in with the default local operator token
+`dev-operator-token-0123456789abcde`, select **Inspections**, and filter flow
+`inspected_events`. About five observations are expected; random selection can
+produce a different count. RabbitMQ receives all 100 requests in the
+`inspected_events` queue (management UI at `http://localhost:15672`, guest/guest).
+For a deterministic demonstration, change `rate` to `1` to inspect every request
+or `0` to inspect none. This example's public access and demo credentials are for
+local use. The replay stack's configured core control URL is irrelevant to these
+view-only records, which can never be redriven.
 
 ## Uncertain submission responses
 

@@ -58,13 +58,14 @@ type Options struct {
 	CoreInstance string
 }
 
-// Capturer records failures core acknowledged to their sender and uploads
-// them to the replay service. It never blocks a request and never touches a
+// Capturer uploads acknowledged failures and explicitly requested inspections
+// to the replay service. Uploads never block a request or change a
 // response or readiness (docs/development/invariants.md I15).
 type Capturer struct {
-	builder  *Builder
-	uploader *Uploader
-	enabled  map[string]bool
+	builder        *Builder
+	uploader       *Uploader
+	enabled        map[string]bool
+	inspectEnabled map[string]bool
 }
 
 func New(o Options) (*Capturer, error) {
@@ -77,9 +78,17 @@ func New(o Options) (*Capturer, error) {
 	for name, fc := range o.Config.Flows {
 		enabled[name] = fc.CapturesFailures()
 	}
-	b := NewBuilder(BuilderOptions{Flows: o.Config.Flows, Credentials: o.Config.Credentials, Destinations: o.Config.Destinations,
+	inspectEnabled := make(map[string]bool)
+	for name, flow := range o.Config.Flows {
+		for _, node := range flow.Nodes {
+			if node.Type == "inspect" {
+				inspectEnabled[name] = true
+			}
+		}
+	}
+	b := NewBuilder(BuilderOptions{Flows: o.Config.Flows, Credentials: o.Config.Credentials, HeaderAllowlist: o.Config.Security.ForwardedHeaderAllowlist, HeaderDenylist: o.Config.Security.RedactedHeaderDenylist, Destinations: o.Config.Destinations,
 		MaxRecordBytes: r.MaxRecordBytes, CoreVersion: o.CoreVersion, CoreInstance: o.CoreInstance})
-	return &Capturer{builder: b, uploader: up, enabled: enabled}, nil
+	return &Capturer{builder: b, uploader: up, enabled: enabled, inspectEnabled: inspectEnabled}, nil
 }
 
 // Builder returns the capturer's record builder, or nil for a nil capturer.
@@ -94,21 +103,22 @@ func (c *Capturer) Builder() *Builder {
 // Close drains pending uploads within a bounded wait.
 func (c *Capturer) Close() error { return c.uploader.Close() }
 
-// Request collects one inbound request's failures until its final status is
+// Request collects one inbound request's failures and inspections until its final status is
 // known.
 type Request struct {
-	c       *Capturer
-	flow    string
-	head    graph.RequestHead
-	settled *queue.Settled
-	mu      sync.Mutex
-	events  []graph.FailureEvent
+	c           *Capturer
+	flow        string
+	head        graph.RequestHead
+	settled     *queue.Settled
+	mu          sync.Mutex
+	events      []graph.FailureEvent
+	inspections []pending
 }
 
 // Begin starts collecting for a request, or returns nil when the flow does
-// not capture failures. Every Request method accepts a nil receiver.
+// not capture failures or inspections. Every Request method accepts a nil receiver.
 func (c *Capturer) Begin(flow string, head graph.RequestHead) *Request {
-	if c == nil || !c.enabled[flow] {
+	if c == nil || (!c.enabled[flow] && !c.inspectEnabled[flow]) {
 		return nil
 	}
 	return &Request{c: c, flow: flow, head: head, settled: queue.NewSettled()}
@@ -117,7 +127,7 @@ func (c *Capturer) Begin(flow string, head graph.RequestHead) *Request {
 // OnFailure is the executor's RunOptions.OnFailure hook. It only records;
 // building happens on the uploader, after the response.
 func (r *Request) OnFailure(ev graph.FailureEvent) {
-	if r == nil {
+	if r == nil || !r.c.enabled[r.flow] {
 		return
 	}
 	r.mu.Lock()
@@ -128,7 +138,7 @@ func (r *Request) OnFailure(ev graph.FailureEvent) {
 // WithOrigin marks a publish so an async webhook delivery that fails for good
 // can be captured.
 func (r *Request) WithOrigin(ctx context.Context, nodeID string) context.Context {
-	if r == nil {
+	if r == nil || !r.c.enabled[r.flow] {
 		return ctx
 	}
 	return queue.WithOrigin(ctx, queue.Origin{Flow: r.flow, NodeID: nodeID, Settled: r.settled})
@@ -144,11 +154,22 @@ func (r *Request) Settle(status int) {
 	r.mu.Lock()
 	events := r.events
 	r.events = nil
+	inspections := r.inspections
+	r.inspections = nil
 	r.mu.Unlock()
 	if acknowledged(status) {
 		for _, ev := range events {
 			r.c.submitFailure(r.flow, r.head, status, ev)
 		}
+	}
+	for _, p := range inspections {
+		buildInspection := p.build
+		p.build = func() (Record, bool) {
+			rec, ok := buildInspection()
+			rec.Metadata.InboundStatus = status
+			return rec, ok
+		}
+		r.c.uploader.submitReserved(p)
 	}
 	r.settled.Resolve(status)
 }

@@ -38,7 +38,7 @@ func (s *Server) encode(req replaywire.DeliverRequest, res Result) ([]byte, stri
 		kept = append(kept, rec)
 	}
 	result := replaywire.DeliverResult{
-		Nodes: res.Nodes, Children: make([]replaywire.FailureMetadata, 0, len(kept)),
+		Nodes: res.Nodes, Children: make([]replaywire.RecordMetadata, 0, len(kept)),
 		NodeConfigHash: res.NodeConfigHash, DestinationHash: res.DestinationHash,
 		CoreVersion: s.opts.CoreVersion, CoreInstance: s.opts.CoreInstance,
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func childMetadata() FailureMetadata {
+func childMetadata() RecordMetadata {
 	m := validResume()
 	m.ID, m.NodeID = "01926d3c-aaaa-7b3a-9c1e-2f4a5b6c7d8e", "out_lambda"
 	return m
@@ -19,7 +19,7 @@ func validResult() DeliverResult {
 			{NodeID: "out_s3", Outcome: NodeDelivered, Attempts: 1},
 			{NodeID: "out_lambda", Outcome: NodeFailed, ErrorClass: ErrorClass5xx, ErrorMessage: "503", Attempts: 1},
 		},
-		Children:    []FailureMetadata{childMetadata()},
+		Children:    []RecordMetadata{childMetadata()},
 		CoreVersion: "v1", CoreInstance: "core-0",
 	}
 }
@@ -50,7 +50,7 @@ func TestDeliverResultValidate(t *testing.T) {
 		"too many children":    {func(r *DeliverResult) { *r = many }, "out_s3", "exceed the limit"},
 		"duplicate child":      {func(r *DeliverResult) { r.Children = append(r.Children, r.Children[0]) }, "out_s3", "twice"},
 		"invalid child":        {func(r *DeliverResult) { r.Children[0].InboundStatus = 500 }, "out_s3", "inbound_status"},
-		"child not resume":     {func(r *DeliverResult) { r.Children[0].Kind = KindPublishOnly }, "out_s3", "resume"},
+		"child not resume":     {func(r *DeliverResult) { r.Children[0].ReplayMode = ReplayPublishOnly }, "out_s3", "resume"},
 		"child at resume node": {func(r *DeliverResult) { r.Children[0].NodeID = "out_s3" }, "out_s3", "downstream"},
 		"nul in message":       {func(r *DeliverResult) { r.Nodes[1].ErrorMessage = "bad\x00byte" }, "out_s3", "error_message"},
 		"latin-1 in message":   {func(r *DeliverResult) { r.Nodes[1].ErrorMessage = "caf\xe9" }, "out_s3", "error_message"},
@@ -84,12 +84,12 @@ func TestChildPartNames(t *testing.T) {
 }
 
 func TestDeliverRequestJSONNames(t *testing.T) {
-	b, err := json.Marshal(DeliverRequest{RunID: "r", FailureID: "f", Kind: KindResume, Flow: "orders", NodeID: "out",
+	b, err := json.Marshal(DeliverRequest{RunID: "r", RecordID: "f", Kind: KindFailure, ReplayMode: ReplayResume, Flow: "orders", NodeID: "out",
 		NodeType: "publish", SnapshotSHA256: digest, SnapshotVersion: 1, DeadlineMS: 25000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{`"run_id"`, `"failure_id"`, `"kind"`, `"flow"`, `"node_id"`, `"node_type"`, `"snapshot_sha256"`, `"snapshot_version"`, `"deadline_ms"`} {
+	for _, key := range []string{`"run_id"`, `"record_id"`, `"kind"`, `"flow"`, `"node_id"`, `"node_type"`, `"snapshot_sha256"`, `"snapshot_version"`, `"deadline_ms"`} {
 		if !strings.Contains(string(b), key) {
 			t.Errorf("request JSON %s lacks %s", b, key)
 		}

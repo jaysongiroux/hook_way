@@ -34,6 +34,13 @@ test("new nodes receive independent nested starting values", () => {
 });
 
 test("canvas summaries and labelled outputs retain their configured meaning", () => {
+  expect(defaultNodeOptions("sample", "first")).toEqual({ rate: 1 });
+  expect(nodeSummary("sample", { rate: 0.2 })).toBe("20% kept");
+  expect(nodeSummary("sample", { rate: 0.001 })).toBe("0.1% kept");
+  expect(nodeSummary("sample", { rate: 0.00001 })).toBe("0.001% kept");
+  expect(nodeSummary("sample", { rate: 0 })).toBe("0% kept");
+  expect(nodeSummary("sample", { rate: 1 })).toBe("100% kept");
+  expect(nodeSummary("sample", {})).toBe("");
   expect(nodeSummary("publish", { destination: "events", target: "orders" })).toBe("events → orders");
   expect(nodeSummary("filter", { conditions: [{ path: "event.type", operator: "eq" }] })).toBe("event.type eq");
   expect(nodeSummary("respond", { passthrough: true, status: 200 })).toBe("passthrough");

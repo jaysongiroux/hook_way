@@ -128,7 +128,7 @@ func TestReplayAlerts(t *testing.T) {
 		"HookwayReplayUsageHigh":          "hookway_replay_capacity_bytes",
 		"HookwayReplayCapacityRejections": `hookway_replay_captures_total{outcome="capacity"}`,
 		"HookwayReplayQueuedRunStale":     "hookway_replay_oldest_queued_run_seconds",
-		"HookwayReplayUnknownRecords":     `hookway_replay_records{status="unknown"}`,
+		"HookwayReplayUnknownRecords":     `hookway_replay_records{kind="failure",delivery_status="unknown",dismissed="false"}`,
 		"HookwayReplayRunFailureRatio":    `hookway_replay_runs_total{status="failed"}`,
 		"HookwayReplayDatabaseDown":       "hookway_replay_db_up",
 		"HookwayReplayGCStalled":          "hookway_replay_gc_last_success_timestamp_seconds",

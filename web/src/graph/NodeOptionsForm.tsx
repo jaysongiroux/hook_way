@@ -1,4 +1,4 @@
-import { Alert, Button, Stack } from "@mantine/core";
+import { Alert, Button, Stack, Text } from "@mantine/core";
 import { AuthOptionsForm } from "./AuthOptionsForm";
 import { PublishOptionsForm, RespondOptionsForm } from "./DeliveryOptionsForm";
 import { HTTPOptionsForm, RoutingOptionsForm } from "./ProxyOptionsForm";
@@ -83,6 +83,14 @@ function NodeOptionsFields(props: OptionsProps) {
       <Alert color="yellow" title="Public access">
         No options required. Connect Read request body before this node. Requests continue without checking the sender’s identity.
       </Alert>
+    );
+  if (nodeType === "inspect")
+    return (
+      <Stack gap="xs">
+        <Text size="sm">No node options. Configure the global Replay service connection to collect inspections, even when failure capture is disabled.</Text>
+        <Text size="sm" c="dimmed">Passes the webhook onward, or ends an observation branch when unconnected. Place Sample → Inspect on a separate branch before Publish to spot-check traffic while every webhook is delivered.</Text>
+        <Text size="xs" c="dimmed">Body and variables are captured as authored. Header policies and credential redactions apply. Uploads are best effort; inspections cannot be replayed.</Text>
+      </Stack>
     );
   if (editor === "simple") return <SimpleOptionsForm {...props} />;
   return (

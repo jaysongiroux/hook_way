@@ -37,7 +37,7 @@ func (p *destPublisher) Close() error                { return nil }
 // replayRecorder is a fake replay service that records uploaded metadata.
 type replayRecorder struct {
 	mu      sync.Mutex
-	records []replaywire.FailureMetadata
+	records []replaywire.RecordMetadata
 	block   chan struct{}
 }
 
@@ -57,7 +57,7 @@ func (r *replayRecorder) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		data, _ := io.ReadAll(p)
 		if p.FormName() == replaywire.PartMetadata {
-			var m replaywire.FailureMetadata
+			var m replaywire.RecordMetadata
 			_ = json.Unmarshal(data, &m)
 			r.mu.Lock()
 			r.records = append(r.records, m)
@@ -311,7 +311,7 @@ func TestI20_AsyncWebhookFailures(t *testing.T) {
 			}
 			if c.captured > 0 {
 				rec := sink.wait(t, c.captured)[0]
-				if rec.meta.Kind != replaywire.KindPublishOnly || rec.meta.InboundStatus != http.StatusAccepted || rec.meta.NodeID != "out" {
+				if rec.meta.ReplayMode != replaywire.ReplayPublishOnly || rec.meta.InboundStatus != http.StatusAccepted || rec.meta.NodeID != "out" {
 					t.Fatalf("captured %+v", rec.meta)
 				}
 			}

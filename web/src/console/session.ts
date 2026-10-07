@@ -1,8 +1,8 @@
 import { createReplayClient } from "../shared/contracts/replayClient";
 import type { components } from "../shared/contracts/generated/replay";
 
-export type Failure = components["schemas"]["FailureSummary"];
-export type Detail = components["schemas"]["FailureDetail"];
+export type ReplayRecord = components["schemas"]["RecordSummary"];
+export type RecordDetailData = components["schemas"]["RecordDetail"];
 export type Identity = components["schemas"]["Identity"];
 export type Session = ReturnType<typeof createSession>;
 export class APIError extends Error {
@@ -94,23 +94,21 @@ export function createSession(credential: string, unauthorized: () => void, apiU
     },
   };
 }
-export function statusLabel(f: Pick<Failure, "status" | "resolution_source">) {
-  if (f.status === "resolved")
+export function deliveryStatusLabel(f: Pick<ReplayRecord, "delivery_status" | "resolution_source">) {
+  if (f.delivery_status === "resolved")
     return f.resolution_source === "operator_confirmed"
       ? "Resolved — operator confirmed"
       : "Resolved — retry succeeded";
-  return (
-    (
-      {
-        open: "Open",
-        retrying: "Retry in progress",
-        unknown: "Unknown outcome",
-        dismissed: "Dismissed",
-      } as Record<string, string>
-    )[f.status] || f.status
-  );
+  return ({ open: "Open", retrying: "Retry in progress", unknown: "Unknown outcome" } as Record<string, string>)[f.delivery_status || ""] || "Delivery state unavailable";
 }
-export function timestamp(value: string) {
+export function statusLabel(f: Pick<ReplayRecord, "kind" | "delivery_status" | "resolution_source" | "dismissed_at">) {
+  if (f.dismissed_at) return "Dismissed";
+  if (f.kind === "inspection") return "Available";
+  return deliveryStatusLabel(f);
+}
+
+export function timestamp(value?: string) {
+  if (!value) return "—";
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }

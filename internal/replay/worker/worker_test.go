@@ -81,6 +81,16 @@ func (f *fakeStore) finalizedCount() int {
 
 type deliverFunc func(ctx context.Context, run store.ClaimedRun, snapshot []byte) Outcome
 
+func TestWorkerBlocksInspectionBeforeLoadingSnapshotOrDelivering(t *testing.T) {
+	// Nil dependencies make any attempt to load a snapshot or deliver fail.
+	w := New(Options{})
+	run := store.ClaimedRun{Record: store.Record{RecordMetadata: replaywire.RecordMetadata{Kind: replaywire.KindInspection}}}
+	got := w.execute(t.Context(), run)
+	if got.Status != store.RunBlocked || got.Reason != replaywire.NotRetryableInspectionOnly {
+		t.Fatalf("inspection outcome = %+v", got)
+	}
+}
+
 func (d deliverFunc) Deliver(ctx context.Context, run store.ClaimedRun, snapshot []byte) Outcome {
 	return d(ctx, run, snapshot)
 }
@@ -100,10 +110,10 @@ func runsFor(n int) ([]store.ClaimedRun, map[string][]byte) {
 	for i := range n {
 		r := testRun()
 		r.Run.RunID = fmt.Sprintf("01926d3c-9999-7b3a-9c1e-%012x", i)
-		r.Failure.ID = fmt.Sprintf("01926d3c-8d6f-7b3a-9c1e-%012x", i)
-		r.Run.FailureID = r.Failure.ID
+		r.Record.ID = fmt.Sprintf("01926d3c-8d6f-7b3a-9c1e-%012x", i)
+		r.Run.RecordID = r.Record.ID
 		runs = append(runs, r)
-		snaps[r.Failure.ID] = testSnapshot
+		snaps[r.Record.ID] = testSnapshot
 	}
 	return runs, snaps
 }
@@ -282,7 +292,7 @@ func TestWorkerCountsChildren(t *testing.T) {
 	m := metrics.New()
 	d := deliverFunc(func(ctx context.Context, run store.ClaimedRun, snap []byte) Outcome {
 		out := succeeded(ctx, run, snap)
-		out.Children = []store.NewFailure{{Metadata: replaywire.FailureMetadata{ID: "c1"}}, {Metadata: replaywire.FailureMetadata{ID: "c2"}}}
+		out.Children = []store.NewRecord{{Metadata: replaywire.RecordMetadata{ID: "c1"}}, {Metadata: replaywire.RecordMetadata{ID: "c2"}}}
 		return out
 	})
 	startWorker(t, fs, d, m, 1)

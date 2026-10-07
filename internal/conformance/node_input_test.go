@@ -92,6 +92,9 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 			return e
 		}},
 		"route":        {typ: "route", options: "profile: sample\nfixed: sample\n", opts: flowconfig.RegistryOptions{RoutingRegistry: registry}, input: func() graph.Payload { return inputEnvelope() }},
+		"inspect":      {typ: "inspect", input: func() graph.Payload { return inputEnvelope() }},
+		"sample/keep":  {typ: "sample", options: "rate: 1\n", input: func() graph.Payload { return inputEnvelope() }},
+		"sample/drop":  {typ: "sample", options: "rate: 0\n", input: func() graph.Payload { return inputEnvelope() }},
 		"loop_guard":   {typ: "loop_guard", options: "max_hops: 3\n", input: func() graph.Payload { return inputHead() }},
 		"ip_allowlist": {typ: "ip_allowlist", options: "cidrs: [10.0.0.0/8]\n", input: func() graph.Payload { return inputHead() }},
 		"rate_limit":   {typ: "rate_limit", options: "store: test\nrpm: 600\nburst: 10\nkey_by: source_ip\n", input: func() graph.Payload { return inputHead() }},

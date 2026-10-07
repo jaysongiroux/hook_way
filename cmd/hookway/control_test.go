@@ -66,7 +66,7 @@ func deliverBody(t *testing.T) ([]byte, string) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(snap)
-	req, err := json.Marshal(replaywire.DeliverRequest{RunID: "run-1", FailureID: "fail-1", Kind: replaywire.KindResume,
+	req, err := json.Marshal(replaywire.DeliverRequest{RunID: "run-1", RecordID: "fail-1", Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume,
 		Flow: "orders", NodeID: "out", NodeType: "publish", SnapshotSHA256: hex.EncodeToString(sum[:]),
 		SnapshotVersion: deliverysnapshot.Version, DeadlineMS: 5000, InboundStatus: 202})
 	if err != nil {

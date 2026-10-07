@@ -240,13 +240,6 @@ export const MARKETING_CSS = `
   color: ${DARK.muted};
   background: ${DARK.bg};
 }
-.hookway-compare-product[data-product="hookway"] {
-  box-shadow: inset 3px 0 0 ${DARK.accent};
-}
-.hookway-compare-mark {
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
 .hookway-compare-differs {
   background: ${DARK.surface};
   border: 1px solid ${DARK.border};

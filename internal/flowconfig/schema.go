@@ -20,6 +20,7 @@ type AuthSchemeSchema struct {
 }
 
 type NodeSchema struct {
+	AllowLeaf       bool                        `json:"allow_leaf,omitempty"`
 	BatchChildOrder int                         `json:"batch_child_order,omitempty"`
 	StagePorts      map[string]StagePorts       `json:"stage_ports,omitempty"`
 	Input           string                      `json:"input"`
@@ -45,6 +46,7 @@ func NodeSchemas() map[string]NodeSchema {
 	for _, def := range definitions {
 		metadata := NodeSchema{
 			Input: def.in.String(), Output: def.out.String(), Detached: def.detached,
+			AllowLeaf:       def.allowLeaf,
 			OnError:         def.in != graph.PortNone && !def.noErrorEdge,
 			BatchChildOrder: def.batchChildOrder,
 			Schema:          reflector.Reflect(def.newOptions()),

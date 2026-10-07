@@ -14,6 +14,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
 	"github.com/jaysongiroux/hook_way/internal/replayresult"
+	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
 
 const (
@@ -174,7 +175,7 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 		Children: out.Children, Actor: w.actor()})
 	if err != nil {
 		w.o.Logger.Error("finalize retry run failed; its lease will expire it to unknown",
-			"run_id", run.Run.RunID, "failure_id", run.Failure.ID, "status", out.Status, "error", err)
+			"run_id", run.Run.RunID, "record_id", run.Record.ID, "status", out.Status, "error", err)
 		return
 	}
 	if res.Late {
@@ -186,12 +187,15 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 	if n := len(res.ChildIDs); n > 0 {
 		w.o.Metrics.ChildrenCreated(n)
 	}
-	w.o.Logger.Info("retry run finished", "run_id", run.Run.RunID, "failure_id", run.Failure.ID,
-		"status", out.Status, "reason", out.Reason, "children", len(res.ChildIDs))
+	w.o.Logger.Info("retry run finished", "run_id", run.Run.RunID, "record_id", run.Record.ID,
+		"kind", run.Record.Kind, "status", out.Status, "reason", out.Reason, "children", len(res.ChildIDs))
 }
 
 func (w *Worker) execute(ctx context.Context, run store.ClaimedRun) Outcome {
-	snapshot, err := w.o.Store.Snapshot(ctx, run.Failure.ID)
+	if run.Record.Kind == replaywire.KindInspection {
+		return Outcome{Status: store.RunBlocked, Reason: replaywire.NotRetryableInspectionOnly}
+	}
+	snapshot, err := w.o.Store.Snapshot(ctx, run.Record.ID)
 	if err != nil {
 		return Outcome{Status: store.RunFailed, Reason: ReasonSnapshotUnavailable, Detail: detail(err.Error())}
 	}

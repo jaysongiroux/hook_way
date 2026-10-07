@@ -609,10 +609,15 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	ctx = context.WithValue(ctx, captureRequestKey{}, creq)
 	var dropped atomic.Bool
 	var publishFailed atomic.Bool
+	var inspected atomic.Bool
+	ctx = flowconfig.WithInspectionObserver(ctx, creq.OnInspection)
 	opts := graph.RunOptions{
 		PublishTimeout:    s.cfg.Server.PublishTimeout,
 		FanoutConcurrency: s.cfg.Server.FanoutConcurrencyLimit(),
 		OnNode: func(ev graph.NodeEvent) {
+			if ev.NodeType == "inspect" && ev.Err == nil {
+				inspected.Store(true)
+			}
 			outcome := "ok"
 			if ev.Dropped {
 				outcome = "dropped"
@@ -688,6 +693,9 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	}
 	published, failed := deliveryMaps(mf, term)
 	executionOutcome = flowOutcome(mf, term, runErr, dropped.Load(), publishFailed.Load())
+	if executionOutcome == "error" && runErr == nil && inspected.Load() {
+		executionOutcome = "inspected"
+	}
 	if runErr != nil {
 		s.recordFlowError(mf, statusFromNodeError(runErr), runErr)
 	}

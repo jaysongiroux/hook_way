@@ -64,8 +64,11 @@ handled them. Capture is bounded and can be dropped if core crashes, the buffer
 fills, uploads fail, or replay refuses a record. It must not delay healthy
 ingestion or change readiness. Monitor capture drops and delivery failures.
 
-No replay configuration means no capture. `capture_failures: false` disables it
-for a flow even when replay is configured. Batch failure capture is unsupported;
+No replay configuration means no capture. `capture_failures: false` disables
+failure capture for a flow even when replay is configured. Explicit Inspect
+nodes still collect view-only observations independently of failures and the
+final response status. They use the same bounded, best-effort upload pipeline
+and shared replay storage limits. Batch failure capture is unsupported;
 batch flows must explicitly disable capture when replay is configured. Their
 operators need a separate reconciliation process for child outcomes.
 

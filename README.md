@@ -21,6 +21,9 @@ builder, then run core as a Go binary or Docker container.
   Store decoded upload bytes in S3 or Redis key/value storage.
 - **Call HTTP APIs:** forward requests, manage outbound credentials, and return
   upstream responses to the caller.
+- **Spot-check webhooks:** Sample → Inspect on an observation branch captures current
+  bodies and context for view-only records while every webhook continues to Publish.
+  Download captured files from the console; uploads share replay retention and limits.
 - **Recover failures:** optional replay service and console to inspect, download,
   retry, dismiss, or investigate missed deliveries after the sender got a success
   response. Recovery is operator initiated; capture is best effort.

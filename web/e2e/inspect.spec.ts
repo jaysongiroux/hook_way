@@ -1,0 +1,43 @@
+import { expect, test } from "@playwright/test";
+import { readFileSync, mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { parse, stringify } from "yaml";
+import { BuilderPage } from "./builder";
+
+const fixture = readFileSync(new URL("../../examples/inspect.yaml", import.meta.url), "utf8");
+
+test("Inspect palette, leaf/inline YAML round trips and real WASM validation", async ({ page }) => {
+  const builder = new BuilderPage(page);
+  await builder.gotoReady();
+  const nodes = page.getByRole("button", { name: "Nodes", exact: true });
+  if ((await nodes.getAttribute("aria-pressed")) !== "true") await nodes.click();
+  await page.getByRole("button", { name: "Add Inspect", exact: true }).click();
+  await expect(builder.inspector()).toContainText("No node options");
+  await expect(builder.inspector()).toContainText("separate branch before Publish");
+  await builder.importYaml(fixture);
+  await builder.selectNode("inspect_sample");
+  await expect(builder.inspector()).toContainText("YAML type: inspect");
+  const directory = resolve("../.impeccable/review"); mkdirSync(directory, { recursive: true });
+  await page.screenshot({ path: `${directory}/inspect-builder.png`, fullPage: true, animations: "disabled" });
+  let dialog = await builder.openConfigItem("Export YAML");
+  await expect(dialog.getByTestId("validation-errors")).toHaveCount(0);
+  const exported = await dialog.getByTestId("export-core.yaml").innerText();
+  const cfg = parse(exported);
+  expect(cfg.flows.inspected_events.nodes.find((n: { id: string }) => n.id === "inspect_sample")).toEqual({ id: "inspect_sample", type: "inspect" });
+  expect(cfg.flows.inspected_events.edges).toEqual(parse(fixture).flows.inspected_events.edges);
+  await builder.closeDialog();
+  await builder.importYaml(exported); await page.reload();
+  await builder.selectNode("inspect_sample");
+  await expect(builder.inspector()).toContainText("No node options");
+  cfg.flows.inspected_events.edges = cfg.flows.inspected_events.edges.filter((e: string) => e !== "env>send_all");
+  cfg.flows.inspected_events.edges.push("inspect_sample>send_all");
+  await builder.importYaml(stringify(cfg));
+  dialog = await builder.openConfigItem("Export YAML");
+  await expect(dialog.getByTestId("validation-errors")).toHaveCount(0);
+  await builder.closeDialog();
+  delete cfg.replay;
+  await builder.importYaml(stringify(cfg));
+  dialog = await builder.openConfigItem("Export YAML");
+  await expect(dialog.getByTestId("validation-errors")).toContainText("inspect requires the global replay configuration");
+  await expect(dialog.getByRole("button", { name: "Download core.yaml" })).toBeDisabled();
+});

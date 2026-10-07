@@ -112,7 +112,7 @@ export function Inspector() {
         )}
         {captureFailures === false && (
           <Text size="sm" c="dimmed">
-            Replay capture is disabled for this flow. Plan recovery separately;
+            Failure capture is disabled for this flow. Inspect nodes still collect observations when Replay is configured. Plan recovery separately;
             batch flows do not support replay capture.
           </Text>
         )}

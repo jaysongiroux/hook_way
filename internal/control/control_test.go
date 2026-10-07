@@ -104,7 +104,7 @@ func testSnapshot(t *testing.T) []byte {
 }
 
 func validRequest(snapshot []byte) replaywire.DeliverRequest {
-	return replaywire.DeliverRequest{RunID: "run-1", FailureID: "fail-1", Kind: replaywire.KindResume, Flow: "orders",
+	return replaywire.DeliverRequest{RunID: "run-1", RecordID: "fail-1", Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders",
 		NodeID: "out", NodeType: "publish", SnapshotSHA256: digest(snapshot), SnapshotVersion: deliverysnapshot.Version,
 		DeadlineMS: 5000, InboundStatus: 202, MaxRecordBytes: 1 << 20}
 }
@@ -215,11 +215,12 @@ var at = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
 // childRecord is a valid downstream failure of validRequest's run.
 func childRecord(i int, snapshot, payload []byte) capture.Record {
-	m := replaywire.FailureMetadata{ID: fmt.Sprintf("01926d3c-aaaa-7b3a-9c1e-%012x", i), Kind: replaywire.KindResume,
-		Flow: "orders", NodeID: "after", NodeType: "publish", EventID: "evt-1", ReceivedAt: at, FailedAt: at,
+	m := replaywire.RecordMetadata{ID: fmt.Sprintf("01926d3c-aaaa-7b3a-9c1e-%012x", i), Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume,
+		Flow: "orders", NodeID: "after", NodeType: "publish", EventID: "evt-1", ReceivedAt: at, OccurredAt: at,
 		InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Attempts: 1}
 	if snapshot == nil {
 		m.NotRetryableReason = replaywire.NotRetryableTooLarge
+		m.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
 		return capture.Record{Metadata: m}
 	}
 	m.Retryable = true
@@ -301,12 +302,13 @@ func TestDeliverRefusesBeforeStarting(t *testing.T) {
 		"duplicate part":  {post(multipartBody(t, part{replaywire.PartRequest, good}, part{replaywire.PartRequest, good}, part{replaywire.PartSnapshot, snap})), 400},
 		"unknown field":   {post(multipartBody(t, part{replaywire.PartRequest, []byte(`{"run_id":"r","bogus":1}`)}, part{replaywire.PartSnapshot, snap})), 400},
 		"trailing json":   {post(multipartBody(t, part{replaywire.PartRequest, append(append([]byte{}, good...), []byte(` {}`)...)}, part{replaywire.PartSnapshot, snap})), 400},
+		"inspect kind":    {post(multipartBody(t, part{replaywire.PartRequest, mutated(func(r *replaywire.DeliverRequest) { r.Kind = replaywire.KindInspection })}, part{replaywire.PartSnapshot, snap})), 400},
 		"bad kind":        {post(multipartBody(t, part{replaywire.PartRequest, mutated(func(r *replaywire.DeliverRequest) { r.Kind = "replay" })}, part{replaywire.PartSnapshot, snap})), 400},
 		"no deadline":     {post(multipartBody(t, part{replaywire.PartRequest, mutated(func(r *replaywire.DeliverRequest) { r.DeadlineMS = 0 })}, part{replaywire.PartSnapshot, snap})), 400},
 		"huge deadline":   {post(multipartBody(t, part{replaywire.PartRequest, mutated(func(r *replaywire.DeliverRequest) { r.DeadlineMS = 1 << 62 })}, part{replaywire.PartSnapshot, snap})), 400},
 		"refused inbound": {post(multipartBody(t, part{replaywire.PartRequest, mutated(func(r *replaywire.DeliverRequest) { r.InboundStatus = 503 })}, part{replaywire.PartSnapshot, snap})), 400},
 		"publish_only without target": {post(multipartBody(t, part{replaywire.PartRequest, mutated(func(r *replaywire.DeliverRequest) {
-			r.Kind, r.DestinationID = replaywire.KindPublishOnly, "notify"
+			r.ReplayMode, r.DestinationID = replaywire.ReplayPublishOnly, "notify"
 		})}, part{replaywire.PartSnapshot, snap})), 400},
 		"snapshot over the limit": {post(multipartBody(t, part{replaywire.PartRequest, good}, part{replaywire.PartSnapshot, bytes.Repeat([]byte("x"), 1<<20+1)})), 413},
 	}
@@ -516,7 +518,7 @@ func TestDeliverServesOnlyTheDeliverRoute(t *testing.T) {
 	if rec := serve(s, get); rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET = %d", rec.Code)
 	}
-	other := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/failures", nil)
+	other := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/records", nil)
 	if rec := serve(s, other); rec.Code != http.StatusNotFound {
 		t.Fatalf("other path = %d", rec.Code)
 	}

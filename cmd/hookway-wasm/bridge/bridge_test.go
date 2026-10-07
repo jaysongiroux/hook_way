@@ -53,6 +53,35 @@ func TestValidateMalformedHasIssues(t *testing.T) {
 	}
 }
 
+func TestSampleValidationMatchesNative(t *testing.T) {
+	fixture, err := os.ReadFile("../../../examples/sample.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rate := range []string{"0", "1", "0.235", "missing", "null", "-0.01", "1.01", ".nan", ".inf", "'0.2'"} {
+		input := strings.Replace(string(fixture), "rate: 0.2", "rate: "+rate, 1)
+		if rate == "missing" {
+			input = strings.Replace(string(fixture), ", rate: 0.2", "", 1)
+		}
+		want, err := json.Marshal(configapi.Validate([]byte(input)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := bridge.Validate(input)
+		if err != nil || got != string(want) {
+			t.Fatalf("rate=%s: bridge=%s native=%s error=%v", rate, got, want, err)
+		}
+		valid := rate == "0" || rate == "1" || rate == "0.235"
+		hasError := false
+		for _, issue := range configapi.Validate([]byte(input)).Issues {
+			hasError = hasError || issue.Severity == "error"
+		}
+		if hasError == valid {
+			t.Fatalf("rate=%s valid=%v response=%s", rate, valid, got)
+		}
+	}
+}
+
 func TestSchemaMatchesConfig(t *testing.T) {
 	want, err := configapi.Schema()
 	if err != nil {
@@ -126,7 +155,7 @@ func TestContractInfoAndReplayActionInput(t *testing.T) {
 		t.Fatalf("contract mismatch: %s", got)
 	}
 
-	got, err = bridge.ReplayActionValidate(`{"idempotency_key":"bad key","failure_ids":["unknown","unknown"]}`)
+	got, err = bridge.ReplayActionValidate(`{"idempotency_key":"bad key","record_ids":["unknown","unknown"]}`)
 	if err != nil {
 		t.Fatal(err)
 	}

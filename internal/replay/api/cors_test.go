@@ -18,10 +18,10 @@ func TestOperatorCORSPreflightsAreAnonymousAndRouteAware(t *testing.T) {
 		want                  int
 	}{
 		{"/v1/me", "GET", "Authorization", 204},
-		{"/v1/failures", "GET", "Authorization, Content-Type", 204},
-		{"/v1/failures/" + testID + "/retries", "POST", "authorization, content-type, idempotency-key", 204},
+		{"/v1/records", "GET", "Authorization, Content-Type", 204},
+		{"/v1/records/" + testID + "/retries", "POST", "authorization, content-type, idempotency-key", 204},
 		{"/v1/actions/validate", "POST", "Authorization, Content-Type", 204},
-		{"/v1/failures", "POST", "Authorization, Content-Type", 403},
+		{"/v1/records", "POST", "Authorization, Content-Type", 403},
 		{"/v1/me", "POST", "Authorization", 403},
 		{"/v1/me", "DELETE", "Authorization", 403},
 		{"/v1/me", "GET", "Authorization, Cookie", 403},
@@ -41,7 +41,7 @@ func TestOperatorCORSPreflightsAreAnonymousAndRouteAware(t *testing.T) {
 		if c.want != 204 && rec.Header().Get("Access-Control-Allow-Methods") != "" {
 			t.Fatal("failed preflight grants methods")
 		}
-		if c.path == "/v1/failures" && c.method == "POST" && rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		if c.path == "/v1/records" && c.method == "POST" && rec.Header().Get("Access-Control-Allow-Origin") != "" {
 			t.Fatal("capture preflight grants browser origin")
 		}
 	}
@@ -51,7 +51,7 @@ func TestOperatorCORSRejectsForeignOriginsBeforeStoreOrAuthentication(t *testing
 	h := newHarness(t, &fakeStore{}, func(o *Options) { o.AllowedOrigins = []string{consoleOrigin, "*", "null"} })
 	for _, origin := range []string{"", "null", "*", "http://127.0.0.1:5184", consoleOrigin + "/", "https://evil.test", consoleOrigin + ", https://evil.test"} {
 		for _, token := range []string{"", opsToken} {
-			rec := h.do(t, "GET", "/v1/failures", token, nil, http.Header{"Origin": {origin}})
+			rec := h.do(t, "GET", "/v1/records", token, nil, http.Header{"Origin": {origin}})
 			if rec.Code != 403 || problemCode(t, rec) != "origin_forbidden" || rec.Header().Get("Access-Control-Allow-Origin") != "" || !strings.Contains(rec.Header().Get("Vary"), "Origin") {
 				t.Fatalf("%q: %d %v", origin, rec.Code, rec.Header())
 			}
@@ -72,10 +72,10 @@ func TestOperatorCORSIncludesErrorsAndDownloadHeaders(t *testing.T) {
 		status      int
 	}{
 		{"/v1/me", opsToken, 200}, {"/v1/me", "", 401},
-		{"/v1/failures/" + testID + "/payload", readToken, 403},
-		{"/v1/failures/" + testID, opsToken, 404},
-		{"/v1/failures?unexpected=true", opsToken, 400},
-		{"/v1/failures", opsToken, 500},
+		{"/v1/records/" + testID + "/payload", readToken, 403},
+		{"/v1/records/" + testID, opsToken, 404},
+		{"/v1/records?unexpected=true", opsToken, 400},
+		{"/v1/records", opsToken, 500},
 	} {
 		rec := h.do(t, "GET", c.path, c.token, nil, http.Header{"Origin": {consoleOrigin}})
 		if rec.Code != c.status || rec.Header().Get("Access-Control-Allow-Origin") != consoleOrigin || !strings.Contains(rec.Header().Get("Vary"), "Origin") {
@@ -105,7 +105,7 @@ func TestCaptureHealthAndMetricsHaveNoCORSPermissions(t *testing.T) {
 	for _, c := range []struct {
 		method, path string
 		want         int
-	}{{"POST", "/v1/failures", 401}, {"GET", "/healthz", 200}, {"GET", "/readyz", 200}, {"GET", "/metrics", 401}} {
+	}{{"POST", "/v1/records", 401}, {"GET", "/healthz", 200}, {"GET", "/readyz", 200}, {"GET", "/metrics", 401}} {
 		rec := h.do(t, c.method, c.path, "", nil, http.Header{"Origin": {"https://evil.test"}})
 		if rec.Code != c.want || rec.Header().Get("Access-Control-Allow-Origin") != "" || rec.Header().Get("Access-Control-Expose-Headers") != "" {
 			t.Fatalf("%s: %d %v", c.path, rec.Code, rec.Header())

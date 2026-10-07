@@ -26,7 +26,7 @@ const maxTextLen = 1024
 // Record is one failure ready to upload. Snapshot and Payload are nil for a
 // metadata-only record.
 type Record struct {
-	Metadata replaywire.FailureMetadata
+	Metadata replaywire.RecordMetadata
 	Snapshot []byte
 	Payload  []byte
 }
@@ -38,35 +38,47 @@ func (r Record) size() int64 { return int64(len(r.Snapshot) + len(r.Payload)) }
 func (r Record) MetadataOnly(reason string) Record {
 	m := r.Metadata
 	m.Retryable, m.NotRetryableReason, m.Snapshot, m.Payload = false, reason, nil, nil
+	m.PayloadUnavailableReason = reason
+	if m.Kind == replaywire.KindInspection {
+		m.NotRetryableReason = replaywire.NotRetryableInspectionOnly
+	}
 	return Record{Metadata: m}
 }
 
 // BuilderOptions configures a Builder.
 type BuilderOptions struct {
-	Flows          map[string]graph.FlowConfig
-	Credentials    map[string]flowconfig.CredentialProfile
-	Destinations   map[string]config.DestinationConfig
-	MaxRecordBytes int64
-	CoreVersion    string
-	CoreInstance   string
-	Now            func() time.Time
+	Flows           map[string]graph.FlowConfig
+	Credentials     map[string]flowconfig.CredentialProfile
+	Destinations    map[string]config.DestinationConfig
+	HeaderAllowlist []string
+	HeaderDenylist  []string
+	MaxRecordBytes  int64
+	CoreVersion     string
+	CoreInstance    string
+	Now             func() time.Time
 }
 
 // Builder turns failures into records.
 type Builder struct {
-	nodes             map[string]map[string]graph.NodeConfig
-	creationOnly      map[string]bool
-	credentialHeaders map[string][]string
-	dests             map[string]config.DestinationConfig
-	maxBytes          int64
-	version           string
-	instance          string
-	now               func() time.Time
+	nodes                 map[string]map[string]graph.NodeConfig
+	creationOnly          map[string]bool
+	credentialHeaders     map[string][]string
+	dests                 map[string]config.DestinationConfig
+	maxBytes              int64
+	version               string
+	inspectionAllowlist   []string
+	inspectionDenylist    []string
+	inspectionAuthHeaders []string
+	instance              string
+	now                   func() time.Time
 }
 
 func NewBuilder(o BuilderOptions) *Builder {
 	b := &Builder{creationOnly: map[string]bool{}, credentialHeaders: map[string][]string{}, nodes: map[string]map[string]graph.NodeConfig{}, dests: o.Destinations, maxBytes: o.MaxRecordBytes,
 		version: o.CoreVersion, instance: o.CoreInstance, now: o.Now}
+	b.inspectionAllowlist = o.HeaderAllowlist
+	b.inspectionDenylist = o.HeaderDenylist
+	b.inspectionAuthHeaders, _ = flowconfig.AuthenticationRedactions(flowconfig.Config{Flows: o.Flows, Credentials: o.Credentials})
 	if b.now == nil {
 		b.now = time.Now
 	}
@@ -142,9 +154,9 @@ func (b *Builder) fromFailure(flow string, head graph.RequestHead, status int, e
 	}
 	nc := b.nodes[flow][ev.NodeID]
 	m := b.base(flow, ev.NodeID, nc, ev.NodeType, status, ev.Err)
-	m.Kind = replaywire.KindResume
+	m.Kind, m.ReplayMode = replaywire.KindFailure, replaywire.ReplayResume
 	m.EventID, m.RequestID, m.TraceID = head.EventID, head.RequestID, head.TraceID
-	m.ReceivedAt = m.FailedAt
+	m.ReceivedAt = m.OccurredAt
 	if ce, ok := env.Extra.(flowconfig.CapturedEvent); ok {
 		m.IdempotencyKey = ce.Event.IdempotencyKey
 		if !ce.Event.ReceivedAt.IsZero() {
@@ -209,16 +221,16 @@ func (b *Builder) TooLargeFromTerminal(tf queue.TerminalFailure, status int) Rec
 func (b *Builder) fromTerminal(tf queue.TerminalFailure, status int, metadataOnly bool) Record {
 	nc := b.nodes[tf.Origin.Flow][tf.Origin.NodeID]
 	m := b.base(tf.Origin.Flow, tf.Origin.NodeID, nc, "publish", status, tf.Err)
-	m.Kind = replaywire.KindPublishOnly
+	m.Kind, m.ReplayMode = replaywire.KindFailure, replaywire.ReplayPublishOnly
 	if !tf.FailedAt.IsZero() {
-		m.FailedAt = tf.FailedAt.UTC()
+		m.OccurredAt = tf.FailedAt.UTC()
 	}
 	m.ErrorClass, m.Attempts = classFromOutcome(tf.Outcome), max(tf.Attempts, 1)
 	msg := tf.Message
 	m.EventID, m.RequestID, m.TraceID, m.IdempotencyKey = msg.ID, msg.RequestID, msg.TraceID, msg.IdempotencyKey
 	m.ReceivedAt = msg.ReceivedAt.UTC()
 	if m.ReceivedAt.IsZero() {
-		m.ReceivedAt = m.FailedAt
+		m.ReceivedAt = m.OccurredAt
 	}
 	dest := b.dests[tf.DestinationID]
 	m.DestinationID, m.DestinationType, m.Target, m.RenderedTarget = tf.DestinationID, dest.Type, tf.Target, tf.RenderedTarget
@@ -231,10 +243,10 @@ func (b *Builder) fromTerminal(tf queue.TerminalFailure, status int, metadataOnl
 	return b.finish(m, snapshot, payload, errors.Join(err, snapErr))
 }
 
-func (b *Builder) base(flow, nodeID string, nc graph.NodeConfig, nodeType string, status int, err error) replaywire.FailureMetadata {
-	return replaywire.FailureMetadata{
+func (b *Builder) base(flow, nodeID string, nc graph.NodeConfig, nodeType string, status int, err error) replaywire.RecordMetadata {
+	return replaywire.RecordMetadata{
 		ID: uuid.Must(uuid.NewV7()).String(), Flow: flow, NodeID: nodeID, NodeType: nodeType,
-		FailedAt: b.now().UTC(), InboundStatus: status,
+		OccurredAt: b.now().UTC(), InboundStatus: status,
 		ErrorClass: ErrorClass(err), ErrorMessage: ErrorMessage(err), Attempts: attempts(err),
 		NodeConfigHash: NodeConfigHash(nc), CoreVersion: b.version, CoreInstance: b.instance,
 	}
@@ -242,7 +254,7 @@ func (b *Builder) base(flow, nodeID string, nc graph.NodeConfig, nodeType string
 
 // publishPayload renders what the failed publish node sent, exactly as the
 // node prepares it, and records the destination on m.
-func (b *Builder) publishPayload(m *replaywire.FailureMetadata, nc graph.NodeConfig, env graph.Envelope) (Payload, error) {
+func (b *Builder) publishPayload(m *replaywire.RecordMetadata, nc graph.NodeConfig, env graph.Envelope) (Payload, error) {
 	opts, prepared, err := b.publishTarget(m, nc, env)
 	if err != nil {
 		return Payload{}, err
@@ -258,7 +270,7 @@ func (b *Builder) publishPayload(m *replaywire.FailureMetadata, nc graph.NodeCon
 // publishTarget records the failed publish node's destination and rendered
 // target on m, exactly as the node prepares them, and returns the prepared
 // envelope.
-func (b *Builder) publishTarget(m *replaywire.FailureMetadata, nc graph.NodeConfig, env graph.Envelope) (flowconfig.PublishOptions, graph.Envelope, error) {
+func (b *Builder) publishTarget(m *replaywire.RecordMetadata, nc graph.NodeConfig, env graph.Envelope) (flowconfig.PublishOptions, graph.Envelope, error) {
 	opts, err := flowconfig.PublishNodeOptions(nc)
 	if err != nil {
 		return opts, env, err
@@ -272,8 +284,9 @@ func (b *Builder) publishTarget(m *replaywire.FailureMetadata, nc graph.NodeConf
 }
 
 // tooLarge finishes m as a metadata-only too_large record.
-func (b *Builder) tooLarge(m replaywire.FailureMetadata) Record {
+func (b *Builder) tooLarge(m replaywire.RecordMetadata) Record {
 	m.NotRetryableReason = replaywire.NotRetryableTooLarge
+	m.PayloadUnavailableReason = m.NotRetryableReason
 	sanitize(&m)
 	return Record{Metadata: m}
 }
@@ -302,13 +315,15 @@ func digest(b []byte) string {
 // finish attaches the artifacts, or makes the record metadata-only when
 // they cannot be built exactly (unsupported) or exceed max_record_bytes
 // (too_large).
-func (b *Builder) finish(m replaywire.FailureMetadata, snapshot []byte, payload Payload, err error) Record {
+func (b *Builder) finish(m replaywire.RecordMetadata, snapshot []byte, payload Payload, err error) Record {
 	rec := Record{}
 	switch {
 	case err != nil:
 		m.NotRetryableReason = replaywire.NotRetryableUnsupported
+		m.PayloadUnavailableReason = m.NotRetryableReason
 	case int64(len(snapshot)) > b.maxBytes || int64(len(payload.Bytes)) > b.maxBytes:
 		m.NotRetryableReason = replaywire.NotRetryableTooLarge
+		m.PayloadUnavailableReason = m.NotRetryableReason
 	default:
 		if payload.Bytes == nil {
 			payload.Bytes = []byte{}
@@ -326,7 +341,7 @@ func (b *Builder) finish(m replaywire.FailureMetadata, snapshot []byte, payload 
 
 // sanitize makes every text field storable. Request ids, trace ids, and
 // idempotency keys come from the sender; targets can carry request data.
-func sanitize(m *replaywire.FailureMetadata) {
+func sanitize(m *replaywire.RecordMetadata) {
 	for _, f := range []*string{&m.Flow, &m.NodeID, &m.NodeType, &m.DestinationID, &m.DestinationType, &m.Target,
 		&m.RenderedTarget, &m.EventID, &m.RequestID, &m.TraceID, &m.IdempotencyKey, &m.NodeConfigHash,
 		&m.DestinationHash, &m.CoreVersion, &m.CoreInstance} {

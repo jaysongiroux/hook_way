@@ -133,7 +133,7 @@ func TestDeliverSendsTheRequest(t *testing.T) {
 	if out.Status != store.RunSucceeded {
 		t.Fatalf("outcome = %+v", out)
 	}
-	want := replaywire.DeliverRequest{RunID: testRunID, FailureID: testFailureID, Kind: replaywire.KindResume, Flow: "orders",
+	want := replaywire.DeliverRequest{RunID: testRunID, RecordID: testRecordID, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders",
 		NodeID: "out_s3", NodeType: "publish", DestinationID: "archive", DestinationType: "s3", RenderedTarget: "uploads",
 		NodeConfigHash: "node-hash", DestinationHash: "dest-hash", SnapshotSHA256: digest(testSnapshot), SnapshotVersion: 1, DeadlineMS: 25000,
 		InboundStatus: 202, MaxRecordBytes: 1 << 20}
@@ -183,7 +183,7 @@ func TestDeliverReturnsChildren(t *testing.T) {
 	srv, _ := fakeCore(t, func(w http.ResponseWriter, _ *http.Request, _ coreRequest) {
 		result := delivered(replaywire.NodeDelivered)
 		result.Nodes = append(result.Nodes, replaywire.NodeOutcome{NodeID: "out_lambda", Outcome: replaywire.NodeFailed})
-		result.Children = []replaywire.FailureMetadata{childMetadata(fullID, childSnap, childPay), childMetadata(metaID, nil, nil)}
+		result.Children = []replaywire.RecordMetadata{childMetadata(fullID, childSnap, childPay), childMetadata(metaID, nil, nil)}
 		writeResult(t, w, result, respPart{replaywire.ChildSnapshotPart(0), childSnap}, respPart{replaywire.ChildPayloadPart(0), childPay})
 	})
 	out := newTestExecutor(t, srv.URL, metrics.New()).Deliver(context.Background(), testRun(), testSnapshot)
@@ -244,12 +244,12 @@ func TestDeliverAmbiguousOutcomesAreNeverResent(t *testing.T) {
 	foreign := delivered(replaywire.NodeDelivered)
 	foreignChild := childMetadata("01926d3c-cccc-7b3a-9c1e-2f4a5b6c7d8e", nil, nil)
 	foreignChild.EventID = "evt-other"
-	foreign.Children = []replaywire.FailureMetadata{foreignChild}
+	foreign.Children = []replaywire.RecordMetadata{foreignChild}
 	mismatch := delivered(replaywire.NodeDelivered)
-	mismatch.Children = []replaywire.FailureMetadata{childMetadata("01926d3c-dddd-7b3a-9c1e-2f4a5b6c7d8e", []byte("a"), []byte("b"))}
+	mismatch.Children = []replaywire.RecordMetadata{childMetadata("01926d3c-dddd-7b3a-9c1e-2f4a5b6c7d8e", []byte("a"), []byte("b"))}
 	big := delivered(replaywire.NodeDelivered)
 	bigSnap := bytes.Repeat([]byte("s"), 64)
-	big.Children = []replaywire.FailureMetadata{childMetadata("01926d3c-eeee-7b3a-9c1e-2f4a5b6c7d8e", bigSnap, []byte("p"))}
+	big.Children = []replaywire.RecordMetadata{childMetadata("01926d3c-eeee-7b3a-9c1e-2f4a5b6c7d8e", bigSnap, []byte("p"))}
 	cases := map[string]func(t *testing.T, w http.ResponseWriter, r *http.Request){
 		"500":                     func(_ *testing.T, w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) },
 		"503 without not_started": func(_ *testing.T, w http.ResponseWriter, _ *http.Request) { writeProblem(w, 503, "overloaded") },
@@ -336,21 +336,21 @@ func TestDeliverRejectsChildrenThatCannotBelongToTheRun(t *testing.T) {
 	childSnap, childPay := []byte("child-snapshot"), []byte("child-payload")
 	cases := map[string]struct {
 		run   func() store.ClaimedRun
-		child func() replaywire.FailureMetadata
+		child func() replaywire.RecordMetadata
 	}{
 		"publish_only run": {
 			run: func() store.ClaimedRun {
 				r := testRun()
-				r.Failure.Kind = replaywire.KindPublishOnly
+				r.Record.ReplayMode = replaywire.ReplayPublishOnly
 				return r
 			},
-			child: func() replaywire.FailureMetadata {
+			child: func() replaywire.RecordMetadata {
 				return childMetadata("01926d3c-aaaa-7b3a-9c1e-2f4a5b6c7d8e", childSnap, childPay)
 			},
 		},
 		"child reuses the record id": {
 			run:   testRun,
-			child: func() replaywire.FailureMetadata { return childMetadata(testFailureID, childSnap, childPay) },
+			child: func() replaywire.RecordMetadata { return childMetadata(testRecordID, childSnap, childPay) },
 		},
 	}
 	for name, c := range cases {
@@ -358,7 +358,7 @@ func TestDeliverRejectsChildrenThatCannotBelongToTheRun(t *testing.T) {
 			srv, _ := fakeCore(t, func(w http.ResponseWriter, _ *http.Request, _ coreRequest) {
 				result := delivered(replaywire.NodeDelivered)
 				result.Nodes = append(result.Nodes, replaywire.NodeOutcome{NodeID: "out_lambda", Outcome: replaywire.NodeFailed})
-				result.Children = []replaywire.FailureMetadata{c.child()}
+				result.Children = []replaywire.RecordMetadata{c.child()}
 				writeResult(t, w, result, respPart{replaywire.ChildSnapshotPart(0), childSnap}, respPart{replaywire.ChildPayloadPart(0), childPay})
 			})
 			out := newTestExecutor(t, srv.URL, metrics.New()).Deliver(context.Background(), c.run(), testSnapshot)
@@ -374,5 +374,17 @@ func TestExecutorDropsIdleConnectionsBeforeCore(t *testing.T) {
 	tr, ok := e.client.Transport.(*http.Transport)
 	if !ok || tr.IdleConnTimeout != replaywire.ControlClientIdleTimeout {
 		t.Fatalf("transport idle timeout = %v, want %v", tr.IdleConnTimeout, replaywire.ControlClientIdleTimeout)
+	}
+}
+
+func TestExecutorRejectsInspectionBeforeNetwork(t *testing.T) {
+	core, calls := fakeCore(t, func(http.ResponseWriter, *http.Request, coreRequest) { t.Error("inspection reached core") })
+	e, err := NewExecutor(ExecutorOptions{ControlURL: core.URL, Token: controlToken, ExecutionTimeout: 30 * time.Second, Metrics: metrics.New()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := e.Deliver(t.Context(), store.ClaimedRun{Record: store.Record{RecordMetadata: replaywire.RecordMetadata{Kind: replaywire.KindInspection, Retryable: true}}}, []byte("forged"))
+	if outcome.Status != store.RunBlocked || calls.Load() != 0 {
+		t.Fatalf("outcome: %+v calls=%d", outcome, calls.Load())
 	}
 }

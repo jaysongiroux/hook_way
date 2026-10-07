@@ -14,13 +14,13 @@ payload, alter the original run result, or verify a receipt for you.
 | Response lost, timeout after possible execution, or expired lease | `unknown` / `unknown` | Investigate the destination before sending again. |
 | Successful retry execution | `resolved`, `resolution_source: retry_succeeded` | Review child failures if present; they remain separate work. |
 | You independently confirmed delivery | `resolved`, `resolution_source: operator_confirmed` | Read the resolution note and original unknown run; this is operator confirmation. |
-| Operator discards recovery work | `dismissed` | Artifacts were deleted. This does not confirm delivery. |
+| Operator discards recovery work | `dismissed_at` set; previous `delivery_status` retained | Artifacts were deleted. This does not confirm delivery. |
 
 1. Use `GET /v1/me` to confirm the key identity and scopes. Give individual
    responders distinct named keys; a shared key identifies that credential,
    not the human who happened to use it. `read` inspects metadata; `payload`
    downloads bytes; `retry` permits retry, dismissal and operator resolution.
-2. Fetch `GET /v1/failures/{id}`. Match the flow, destination, rendered target,
+2. Fetch `GET /v1/records/{id}`. Match the flow, destination, rendered target,
    event/request/trace IDs, timestamps, parent/child IDs and current configuration
    hashes. Review every run's result and the chronological audit history.
 3. Query the destination's receipts, logs, object IDs or consumer-side deduplication
@@ -52,7 +52,7 @@ curl -sS -H "Authorization: Bearer $REPLAY_OPERATOR_TOKEN" \
 Example response for a named operator key:
 
 ```json
-{"key_name":"incident-ops","scopes":["read","payload","retry"],"contract_version":1,"capabilities":["failure_inspection","payload_download","destination_retry","batch_retry","unknown_resolution","action_input_validation","action_eligibility"]}
+{"key_name":"incident-ops","scopes":["read","payload","retry"],"contract_version":1,"capabilities":["record_api","inspection_records","failure_inspection","payload_download","destination_retry","batch_retry","unknown_resolution","action_input_validation","action_eligibility"]}
 ```
 
 Capabilities describe implemented API features; they do not grant scopes or
@@ -65,17 +65,17 @@ current state and permissions when an action arrives.
 curl -sS -X POST -H "Authorization: Bearer $REPLAY_OPERATOR_TOKEN" \
   -H 'Content-Type: application/json' -H 'Idempotency-Key: incident-42-resolution' \
   -d '{"note":"Destination audit confirms event evt-42 was accepted; matched receipt req-9.","reference":"INC-42"}' \
-  "$REPLAY_URL/v1/failures/$FAILURE_ID/resolve"
+  "$REPLAY_URL/v1/records/$FAILURE_ID/resolve"
 ```
 
 Example receipt:
 
 ```json
 {
-  "status":"resolved",
+  "delivery_status":"resolved",
   "resolution_source":"operator_confirmed",
   "resolution":{
-    "failure_id":"01926d3c-8d6f-7b3a-9c1e-2f4a5b6c7d8e",
+    "record_id":"01926d3c-8d6f-7b3a-9c1e-2f4a5b6c7d8e",
     "actor":"incident-ops",
     "idempotency_key":"incident-42-resolution",
     "note":"Destination audit confirms event evt-42 was accepted; matched receipt req-9.",
@@ -150,18 +150,18 @@ curl -sS -X POST -H "Authorization: Bearer $REPLAY_OPERATOR_TOKEN" \
 HTTP 200 with `{"issues":[]}` means input syntax is valid, not that evidence is
 true or resolution is currently permitted. Auth, expiry, active runs and lifecycle
 transitions are checked only by the action endpoint. Retry inputs use `action:
-retry` (or omit action); batch validation accepts up to 100 unique `failure_ids`.
+retry` (or omit action); batch validation accepts up to 100 unique `record_ids`.
 There is no batch resolution.
 
-Run `hookway-replay migrate --config replay.yaml` before serving. Migration 2 adds operator resolutions and resolution source, retaining
-existing failure artifacts and histories. Existing resolved records are labeled
-`retry_succeeded`; no operator confirmation is invented. Serving never migrates.
-Schema-1 serving fails readiness/startup until migration completes. Do not roll
-old workers alongside the new API: stop/quiesce workers, migrate, then roll all
-replay replicas. Restore the database and prior binary together if rollback is
-required. Migration downgrade rejects retained operator audit events instead
-of deleting evidence. Keep a backup and follow the one-shot migration
-procedure in [Replay service](replay-service.md#running-it).
+Run `hookway-replay migrate --config replay.yaml` before serving. The generic-
+record model uses one initial database migration (version 1), including operator
+resolutions, and API/WASM contract version 1. These numbers describe different
+contracts. Use a fresh database for this baseline; existing failure-shaped
+schemas are not upgraded by it. Preserve existing databases and backups rather
+than deleting volumes as an implicit setup step. Start matching core, replay API,
+console and WASM assets together. Legacy failure routes are unsupported; the
+current API uses `/v1/records`. Serving never migrates. See
+[Replay service](replay-service.md#running-it).
 
 The API returns JSON with `Cache-Control: no-store`. The investigation features
 are available through the API and the [operations console](replay-console.md). These operations provide no exactly-once delivery guarantee.

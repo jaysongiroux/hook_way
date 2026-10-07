@@ -16,7 +16,7 @@ type ResponsePolicy struct {
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
 }
 
-var ResponseOutcomes = []string{"responded", "published", "dropped", "publish_error", "partial_failure", "auth_error", "body_error", "lookup_error", "payload_too_large", "error"}
+var ResponseOutcomes = []string{"responded", "published", "inspected", "dropped", "publish_error", "partial_failure", "auth_error", "body_error", "lookup_error", "payload_too_large", "error"}
 
 func ValidateResponses(responses map[string]ResponsePolicy) []string {
 	var problems []string

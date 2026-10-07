@@ -41,15 +41,6 @@ export function Compare() {
       <Box component="section" className={PAGE_HERO_CLASS} pt={56} pb={64} style={{ background: DARK.bg }}>
         <Container size="lg">
           <Stack gap="md" maw={720}>
-            <Text
-              component="p"
-              size="sm"
-              fw={650}
-              c={DARK.accent}
-              style={{ letterSpacing: 0.2, margin: 0 }}
-            >
-              Hookway
-            </Text>
             <Title
               order={1}
               c={DARK.text}
@@ -96,14 +87,10 @@ export function Compare() {
               }}
             >
               <Stack gap={8}>
-                {c.mark && (
-                  <Text className="hookway-compare-mark" size="xs" fw={650} c={DARK.accent}>
-                    {c.mark}
-                  </Text>
-                )}
-                <Text fw={650} c={DARK.text}>
-                  {c.name}
-                </Text>
+                <Group gap="sm">
+                  <Text fw={650} c={DARK.text}>{c.name}</Text>
+                  {c.mark && <Text size="xs" c={DARK.muted}>{c.mark}</Text>}
+                </Group>
                 <Text size="sm" c={DARK.muted} style={{ lineHeight: 1.55 }}>
                   {c.role}
                 </Text>

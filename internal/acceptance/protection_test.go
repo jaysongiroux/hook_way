@@ -162,14 +162,14 @@ func TestAcceptance_SharedProtectionAndReplay(t *testing.T) {
 				Items []failureItem `json:"items"`
 			}
 			waitFor(t, "protected failure captured", 30*time.Second, func() bool {
-				return s.api(t, http.MethodGet, "/v1/failures?flow=protected&status=open", nil, &open) == 200 && len(open.Items) == 1
+				return s.api(t, http.MethodGet, "/v1/records?flow=protected&kind=failure&delivery_status=open&dismissed=false", nil, &open) == 200 && len(open.Items) == 1
 			})
 			failure := open.Items[0]
 			s.audit.failing.Store(false)
 			var retry struct {
 				RunID string `json:"run_id"`
 			}
-			if code := s.api(t, http.MethodPost, "/v1/failures/"+failure.ID+"/retries", map[string]any{}, &retry, "Idempotency-Key", "protected-retry"); code != 202 {
+			if code := s.api(t, http.MethodPost, "/v1/records/"+failure.ID+"/retries", map[string]any{}, &retry, "Idempotency-Key", "protected-retry"); code != 202 {
 				t.Fatal(code)
 			}
 			waitFor(t, "destination-only protected retry", 30*time.Second, func() bool {

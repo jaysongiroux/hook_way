@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/replaywire"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 )
@@ -59,17 +60,25 @@ type RunState struct {
 	OldestQueued time.Duration
 }
 
-// recordStatuses are the records gauge's status values; the sampler zeroes
-// any status absent from a sample.
-var recordStatuses = []string{"open", "retrying", "resolved", "unknown", "dismissed"}
+// recordStates contains only valid, bounded lifecycle combinations.
+var recordStates = []replaywire.RecordState{
+	{Kind: replaywire.KindFailure, DeliveryStatus: "open"},
+	{Kind: replaywire.KindFailure, DeliveryStatus: "retrying"},
+	{Kind: replaywire.KindFailure, DeliveryStatus: "resolved"},
+	{Kind: replaywire.KindFailure, DeliveryStatus: "unknown"},
+	{Kind: replaywire.KindFailure, DeliveryStatus: "open", Dismissed: true},
+	{Kind: replaywire.KindFailure, DeliveryStatus: "unknown", Dismissed: true},
+	{Kind: replaywire.KindInspection},
+	{Kind: replaywire.KindInspection, Dismissed: true},
+}
 
 // State is one sample of the shared database. Every replica reports it, so
 // dashboards aggregate these gauges with max, not sum.
 type State struct {
-	RecordsByStatus map[string]int64
-	UsageRecords    int64
-	UsageBytes      int64
-	SchemaVersion   int64
+	RecordsByState map[replaywire.RecordState]int64
+	UsageRecords   int64
+	UsageBytes     int64
+	SchemaVersion  int64
 }
 
 // PoolStats is a snapshot of the database connection pool.
@@ -89,7 +98,7 @@ type Metrics struct {
 	artifactBytes     *prometheus.HistogramVec
 	payloadDownloads  *prometheus.CounterVec
 	runsCreated       *prometheus.CounterVec
-	dismissals        prometheus.Counter
+	dismissals        *prometheus.CounterVec
 	records           *prometheus.GaugeVec
 	usageRecords      prometheus.Gauge
 	usageBytes        prometheus.Gauge
@@ -135,17 +144,17 @@ func New() *Metrics {
 		Buckets: prometheus.DefBuckets,
 	}, []string{"route", "method"})
 	m.authFailures = counterVec("hookway_replay_auth_failures_total", "Rejected API requests, by reason (missing, invalid, scope, throttled).", "reason")
-	m.captures = counterVec("hookway_replay_captures_total", "Ingest requests, by outcome.", "outcome")
+	m.captures = counterVec("hookway_replay_captures_total", "Ingest requests, by record kind and outcome.", "kind", "outcome")
 	m.artifactBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name: "hookway_replay_capture_artifact_bytes", Help: "Size of stored artifacts, by artifact (snapshot, payload).",
+		Name: "hookway_replay_capture_artifact_bytes", Help: "Size of stored artifacts, by record kind and artifact (snapshot, payload).",
 		Buckets: prometheus.ExponentialBuckets(1024, 4, 10),
-	}, []string{"artifact"})
+	}, []string{"kind", "artifact"})
 	m.payloadDownloads = counterVec("hookway_replay_payload_downloads_total", "Payload download requests, by outcome.", "outcome")
 	m.runsCreated = counterVec("hookway_replay_runs_created_total", "Retry runs created, by request mode (single, batch).", "mode")
-	m.dismissals = prometheus.NewCounter(prometheus.CounterOpts{Name: "hookway_replay_dismissals_total", Help: "Records dismissed."})
+	m.dismissals = counterVec("hookway_replay_dismissals_total", "Record dismissal requests completed, by kind.", "kind")
 	m.records = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "hookway_replay_records", Help: "Records in the shared database, by status (sampled; aggregate replicas with max).",
-	}, []string{"status"})
+		Name: "hookway_replay_records", Help: "Records in the shared database, by kind, delivery status and dismissal (sampled; aggregate replicas with max).",
+	}, []string{"kind", "delivery_status", "dismissed"})
 	m.usageRecords = gauge("hookway_replay_usage_records", "Records counted against retention.max_records (sampled).")
 	m.usageBytes = gauge("hookway_replay_usage_bytes", "Artifact bytes counted against retention.max_bytes (sampled).")
 	m.capacityRecords = gauge("hookway_replay_capacity_records", "Configured retention.max_records.")
@@ -183,14 +192,19 @@ func New() *Metrics {
 		m.lateResults, m.childrenCreated, m.gcRuns, m.gcDeletedRecords, m.gcDeletedBytes, m.gcDuration, m.gcLastSuccess)
 	// Pre-create every bounded series so rate() and absent() queries see a
 	// zero before the first event.
-	for _, s := range recordStatuses {
-		m.records.WithLabelValues(s)
+	for _, s := range recordStates {
+		m.records.WithLabelValues(s.Kind, s.DeliveryStatus, strconv.FormatBool(s.Dismissed))
+	}
+	for _, kind := range []string{replaywire.KindFailure, replaywire.KindInspection, "unknown"} {
+		m.dismissals.WithLabelValues(kind)
 	}
 	for _, r := range []string{"missing", "invalid", "scope", "throttled"} {
 		m.authFailures.WithLabelValues(r)
 	}
 	for _, o := range []string{CaptureCreated, CaptureDuplicate, CaptureConflict, CaptureCapacity, CaptureTooLarge, CaptureInvalid} {
-		m.captures.WithLabelValues(o)
+		for _, kind := range []string{replaywire.KindFailure, replaywire.KindInspection, "unknown"} {
+			m.captures.WithLabelValues(kind, o)
+		}
 	}
 	for _, o := range []string{DownloadOK, DownloadCorrupt, DownloadNotFound, DownloadGone} {
 		m.payloadDownloads.WithLabelValues(o)
@@ -243,10 +257,12 @@ func (m *Metrics) HTTPRequest(route, method string, status int, d time.Duration)
 
 func (m *Metrics) AuthFailure(reason string) { m.authFailures.WithLabelValues(reason).Inc() }
 
-func (m *Metrics) Capture(outcome string) { m.captures.WithLabelValues(outcome).Inc() }
+func (m *Metrics) Capture(kind, outcome string) {
+	m.captures.WithLabelValues(recordKind(kind), outcome).Inc()
+}
 
-func (m *Metrics) CaptureArtifactBytes(artifact string, n int) {
-	m.artifactBytes.WithLabelValues(artifact).Observe(float64(n))
+func (m *Metrics) CaptureArtifactBytes(kind, artifact string, n int) {
+	m.artifactBytes.WithLabelValues(recordKind(kind), artifact).Observe(float64(n))
 }
 
 func (m *Metrics) PayloadDownload(outcome string) { m.payloadDownloads.WithLabelValues(outcome).Inc() }
@@ -255,7 +271,14 @@ func (m *Metrics) RunsCreated(mode string, n int) {
 	m.runsCreated.WithLabelValues(mode).Add(float64(n))
 }
 
-func (m *Metrics) Dismissal() { m.dismissals.Inc() }
+func (m *Metrics) Dismissal(kind string) { m.dismissals.WithLabelValues(recordKind(kind)).Inc() }
+
+func recordKind(kind string) string {
+	if kind == replaywire.KindFailure || kind == replaywire.KindInspection {
+		return kind
+	}
+	return "unknown"
+}
 
 // SetCapacity records the configured retention limits.
 func (m *Metrics) SetCapacity(records, bytes int64) {
@@ -272,11 +295,10 @@ func (m *Metrics) SetDBUp(up bool) {
 	}
 }
 
-// SetState records a successful sample. A status missing from the sample is
-// set to zero, so a status that empties out does not keep its last value.
+// SetState zeroes lifecycle combinations absent from a successful sample.
 func (m *Metrics) SetState(s State) {
-	for _, status := range recordStatuses {
-		m.records.WithLabelValues(status).Set(float64(s.RecordsByStatus[status]))
+	for _, state := range recordStates {
+		m.records.WithLabelValues(state.Kind, state.DeliveryStatus, strconv.FormatBool(state.Dismissed)).Set(float64(s.RecordsByState[state]))
 	}
 	m.usageRecords.Set(float64(s.UsageRecords))
 	m.usageBytes.Set(float64(s.UsageBytes))

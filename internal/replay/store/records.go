@@ -23,12 +23,13 @@ const (
 	MaxListLimit     = 500
 )
 
-// Failure is a stored record: its ingest metadata plus lifecycle state. The
+// Record is a stored record: its ingest metadata plus lifecycle state. The
 // metadata's Snapshot and Payload describe the artifacts as captured; after a
 // dismiss they remain for audit while HasArtifacts turns false.
-type Failure struct {
-	replaywire.FailureMetadata
-	Status           string
+type Record struct {
+	replaywire.RecordMetadata
+	DeliveryStatus   string
+	DismissedAt      *time.Time
 	ParentID         string
 	RootID           string
 	CapturedAt       time.Time
@@ -37,10 +38,10 @@ type Failure struct {
 	ResolutionSource string
 }
 
-// NewFailure is one validated ingest request. Snapshot and Payload are nil
+// NewRecord is one validated ingest request. Snapshot and Payload are nil
 // for a metadata-only record.
-type NewFailure struct {
-	Metadata replaywire.FailureMetadata
+type NewRecord struct {
+	Metadata replaywire.RecordMetadata
 	Snapshot []byte
 	Payload  []byte
 	Actor    string
@@ -57,7 +58,7 @@ const (
 // Run is one retry run.
 type Run struct {
 	RunID                    string
-	FailureID                string
+	RecordID                 string
 	Status                   string
 	RequestedBy              string
 	IdempotencyKey           string
@@ -78,10 +79,10 @@ type Event struct {
 	Detail json.RawMessage
 }
 
-// Detail is a record with its runs (newest first), history (oldest first),
+// RecordDetail is a record with its runs (newest first), history (oldest first),
 // and child record ids.
-type Detail struct {
-	Failure
+type RecordDetail struct {
+	Record
 	Runs       []Run
 	History    []Event
 	Children   []string
@@ -89,23 +90,25 @@ type Detail struct {
 }
 
 // Filter selects records for List. Since is inclusive and Until exclusive,
-// both on failed_at.
+// both on occurred_at.
 type Filter struct {
-	Flow          string
-	NodeID        string
-	DestinationID string
-	Status        string
-	Kind          string
-	Retryable     *bool
-	Since         time.Time
-	Until         time.Time
-	Limit         int
-	Cursor        string
+	Flow           string
+	NodeID         string
+	DestinationID  string
+	DeliveryStatus string
+	ReplayMode     string
+	Dismissed      *bool
+	Kind           string
+	Retryable      *bool
+	Since          time.Time
+	Until          time.Time
+	Limit          int
+	Cursor         string
 }
 
 // Page is one List result. NextCursor is empty on the last page.
 type Page struct {
-	Items      []Failure
+	Items      []Record
 	NextCursor string
 }
 
@@ -116,34 +119,28 @@ type Payload struct {
 	Filename    string
 }
 
-// failureColumns is the column list scanFailure reads, in order.
-const capturedFailureColumns = `id, kind, status, retryable, not_retryable_reason, flow, node_id, node_type,
-	destination_id, destination_type, target, rendered_target, event_id, request_id, trace_id, idempotency_key,
-	received_at, failed_at, inbound_status, error_class, error_message, attempts, node_config_hash,
-	destination_hash, core_version, core_instance, snapshot_version, snapshot_size, snapshot_sha256,
-	payload_size, payload_sha256, payload_content_type, payload_filename, has_artifacts, parent_id, root_id,
-	captured_at, expires_at`
+// recordColumns is the column list scanRecord reads, in order.
+const capturedRecordColumns = `id, kind, replay_mode, delivery_status, dismissed_at, retryable, not_retryable_reason, payload_unavailable_reason, flow, node_id, node_type, destination_id, destination_type, target, rendered_target, event_id, request_id, trace_id, idempotency_key, received_at, occurred_at, inbound_status, error_class, error_message, attempts, node_config_hash, destination_hash, core_version, core_instance, snapshot_version, snapshot_size, snapshot_sha256, payload_size, payload_sha256, payload_content_type, payload_filename, has_artifacts, parent_id, root_id, captured_at, expires_at, resolution_source`
+const recordColumns = `id, kind, COALESCE(replay_mode, ''), COALESCE(delivery_status, ''), dismissed_at, retryable, not_retryable_reason, COALESCE(payload_unavailable_reason, ''), flow, node_id, node_type, COALESCE(destination_id, ''), COALESCE(destination_type, ''), COALESCE(target, ''), COALESCE(rendered_target, ''), event_id, request_id, trace_id, idempotency_key, received_at, occurred_at, inbound_status, COALESCE(error_class, ''), COALESCE(error_message, ''), COALESCE(attempts, 0), node_config_hash, COALESCE(destination_hash, ''), core_version, core_instance, snapshot_version, snapshot_size, snapshot_sha256, payload_size, payload_sha256, payload_content_type, payload_filename, has_artifacts, parent_id, root_id, captured_at, expires_at, COALESCE(resolution_source, '')`
 
-const failureColumns = capturedFailureColumns + `, resolution_source`
-
-const runColumns = `run_id, failure_id, status, requested_by, idempotency_key, ack_duplicate_risk,
+const runColumns = `run_id, record_id, status, requested_by, idempotency_key, ack_duplicate_risk,
 	created_at, claimed_at, lease_expires_at, worker_id, finished_at, result`
 
-func scanFailure(row pgx.Row) (Failure, error) {
-	var f Failure
-	m := &f.FailureMetadata
+func scanRecord(row pgx.Row) (Record, error) {
+	var f Record
+	m := &f.RecordMetadata
 	var snapVersion int
 	var snapSize, paySize int64
 	var snapSHA, paySHA, payType, payName string
 	var parent *string
-	err := row.Scan(&m.ID, &m.Kind, &f.Status, &m.Retryable, &m.NotRetryableReason, &m.Flow, &m.NodeID, &m.NodeType,
+	err := row.Scan(&m.ID, &m.Kind, &m.ReplayMode, &f.DeliveryStatus, &f.DismissedAt, &m.Retryable, &m.NotRetryableReason, &m.PayloadUnavailableReason, &m.Flow, &m.NodeID, &m.NodeType,
 		&m.DestinationID, &m.DestinationType, &m.Target, &m.RenderedTarget, &m.EventID, &m.RequestID, &m.TraceID, &m.IdempotencyKey,
-		&m.ReceivedAt, &m.FailedAt, &m.InboundStatus, &m.ErrorClass, &m.ErrorMessage, &m.Attempts, &m.NodeConfigHash,
+		&m.ReceivedAt, &m.OccurredAt, &m.InboundStatus, &m.ErrorClass, &m.ErrorMessage, &m.Attempts, &m.NodeConfigHash,
 		&m.DestinationHash, &m.CoreVersion, &m.CoreInstance, &snapVersion, &snapSize, &snapSHA,
 		&paySize, &paySHA, &payType, &payName, &f.HasArtifacts, &parent, &f.RootID,
 		&f.CapturedAt, &f.ExpiresAt, &f.ResolutionSource)
 	if err != nil {
-		return Failure{}, err
+		return Record{}, err
 	}
 	if snapSHA != "" {
 		m.Snapshot = &replaywire.ArtifactInfo{Size: snapSize, SHA256: snapSHA, Version: snapVersion}
@@ -154,15 +151,18 @@ func scanFailure(row pgx.Row) (Failure, error) {
 	if parent != nil {
 		f.ParentID = *parent
 	}
-	m.ReceivedAt, m.FailedAt = m.ReceivedAt.UTC(), m.FailedAt.UTC()
+	m.ReceivedAt, m.OccurredAt = m.ReceivedAt.UTC(), m.OccurredAt.UTC()
 	f.CapturedAt, f.ExpiresAt = f.CapturedAt.UTC(), f.ExpiresAt.UTC()
+	if f.DismissedAt != nil {
+		*f.DismissedAt = f.DismissedAt.UTC()
+	}
 	return f, nil
 }
 
 func scanRun(row pgx.Row) (Run, error) {
 	var r Run
 	var result []byte
-	err := row.Scan(&r.RunID, &r.FailureID, &r.Status, &r.RequestedBy, &r.IdempotencyKey, &r.AcknowledgeDuplicateRisk,
+	err := row.Scan(&r.RunID, &r.RecordID, &r.Status, &r.RequestedBy, &r.IdempotencyKey, &r.AcknowledgeDuplicateRisk,
 		&r.CreatedAt, &r.ClaimedAt, &r.LeaseExpiresAt, &r.WorkerID, &r.FinishedAt, &result)
 	if err != nil {
 		return Run{}, err
@@ -191,7 +191,7 @@ func scanEvent(row pgx.CollectableRow) (Event, error) {
 
 // ingestHash identifies a record's content. Core re-sends the same metadata
 // bytes on an upload retry, and the metadata carries both artifact digests.
-func ingestHash(m replaywire.FailureMetadata) (string, error) {
+func ingestHash(m replaywire.RecordMetadata) (string, error) {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return "", err
@@ -208,7 +208,7 @@ func placeholders(n int) string {
 	return strings.Join(p, ", ")
 }
 
-var insertFailureSQL = `INSERT INTO failures (` + capturedFailureColumns + `, ingest_hash) VALUES (` + placeholders(39) + `)`
+var insertRecordSQL = `INSERT INTO records (` + capturedRecordColumns + `, ingest_hash) VALUES (` + placeholders(43) + `)`
 
 // lineage places a record in its family: a root is its own root with no
 // parent; a child points at its parent and keeps the root's expiry.
@@ -221,7 +221,7 @@ type lineage struct {
 
 // sizesMatch checks artifact bytes against their declared sizes, which
 // usage accounting, dismiss, and GC rely on.
-func sizesMatch(f NewFailure) error {
+func sizesMatch(f NewRecord) error {
 	for _, a := range []struct {
 		name string
 		info *replaywire.ArtifactInfo
@@ -234,8 +234,8 @@ func sizesMatch(f NewFailure) error {
 	return nil
 }
 
-// insertFailure stores a record and its artifacts.
-func insertFailure(ctx context.Context, tx pgx.Tx, f NewFailure, hash string, l lineage) error {
+// insertRecord stores a record and its artifacts.
+func insertRecord(ctx context.Context, tx pgx.Tx, f NewRecord, hash string, l lineage) error {
 	if err := sizesMatch(f); err != nil {
 		return err
 	}
@@ -249,29 +249,42 @@ func insertFailure(ctx context.Context, tx pgx.Tx, f NewFailure, hash string, l 
 	if a := m.Payload; a != nil {
 		paySize, paySHA, payType, payName = a.Size, a.SHA256, a.ContentType, a.Filename
 	}
-	hasArtifacts := m.Snapshot != nil
-	if _, err := tx.Exec(ctx, insertFailureSQL,
-		m.ID, m.Kind, StatusOpen, m.Retryable, m.NotRetryableReason, m.Flow, m.NodeID, m.NodeType,
-		m.DestinationID, m.DestinationType, m.Target, m.RenderedTarget, m.EventID, m.RequestID, m.TraceID, m.IdempotencyKey,
-		m.ReceivedAt, m.FailedAt, m.InboundStatus, m.ErrorClass, m.ErrorMessage, m.Attempts, m.NodeConfigHash,
-		m.DestinationHash, m.CoreVersion, m.CoreInstance, snapVersion, snapSize, snapSHA,
+	hasArtifacts := m.Snapshot != nil || m.Payload != nil
+	var deliveryStatus any
+	if m.Kind == replaywire.KindFailure {
+		deliveryStatus = StatusOpen
+	}
+	failureField := func(value any) any {
+		if m.Kind == replaywire.KindInspection {
+			return nil
+		}
+		return value
+	}
+
+	if _, err := tx.Exec(ctx, insertRecordSQL,
+		m.ID, m.Kind, nullableText(m.ReplayMode), deliveryStatus, nil, m.Retryable, m.NotRetryableReason, nullableText(m.PayloadUnavailableReason), m.Flow, m.NodeID, m.NodeType,
+		failureField(m.DestinationID), failureField(m.DestinationType), failureField(m.Target), failureField(m.RenderedTarget), m.EventID, m.RequestID, m.TraceID, m.IdempotencyKey,
+		m.ReceivedAt, m.OccurredAt, m.InboundStatus, failureField(m.ErrorClass), failureField(m.ErrorMessage), failureField(m.Attempts), m.NodeConfigHash,
+		failureField(m.DestinationHash), m.CoreVersion, m.CoreInstance, snapVersion, snapSize, snapSHA,
 		paySize, paySHA, payType, payName, hasArtifacts, l.parentID, l.rootID,
-		l.capturedAt, l.expiresAt, hash); err != nil {
+		l.capturedAt, l.expiresAt, nil, hash); err != nil {
 		return err
 	}
 	if !hasArtifacts {
 		return nil
 	}
-	payload := f.Payload
-	if payload == nil {
-		payload = []byte{} // an empty payload is still a payload: NOT NULL, zero bytes
-	}
-	_, err := tx.Exec(ctx, `INSERT INTO failure_artifacts (failure_id, snapshot, payload) VALUES ($1, $2, $3)`,
-		m.ID, f.Snapshot, payload)
+	_, err := tx.Exec(ctx, `INSERT INTO record_artifacts (record_id, record_kind, snapshot, payload) VALUES ($1, $2, $3, $4)`, m.ID, m.Kind, f.Snapshot, f.Payload)
 	return err
 }
 
-func appendEvent(ctx context.Context, tx pgx.Tx, failureID, event, actor string, at time.Time, detail map[string]any) error {
+func nullableText(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func appendEvent(ctx context.Context, tx pgx.Tx, recordID, event, actor string, at time.Time, detail map[string]any) error {
 	body := []byte("{}")
 	if len(detail) > 0 {
 		b, err := json.Marshal(detail)
@@ -280,16 +293,34 @@ func appendEvent(ctx context.Context, tx pgx.Tx, failureID, event, actor string,
 		}
 		body = b
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO failure_events (failure_id, event, actor, at, detail) VALUES ($1, $2, $3, $4, $5)`,
-		failureID, event, actor, at, body)
+	_, err := tx.Exec(ctx, `INSERT INTO record_events (record_id, event, actor, at, detail) VALUES ($1, $2, $3, $4, $5)`,
+		recordID, event, actor, at, body)
 	return err
+}
+
+func validateRecord(f NewRecord) error {
+	if err := f.Metadata.Validate(); err != nil {
+		return err
+	}
+	if err := replaywire.VerifyArtifact("snapshot", f.Metadata.Snapshot, f.Snapshot != nil, f.Snapshot); err != nil {
+		return err
+	}
+	if err := replaywire.VerifyArtifact("payload", f.Metadata.Payload, f.Payload != nil, f.Payload); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Ingest stores a validated record in one transaction with its artifacts, a
 // captured history event, and the usage update. Ingests serialize on the
 // usage row, which makes the capacity check exact. A re-sent record with the
 // same content is a Duplicate and changes nothing.
-func (s *Store) Ingest(ctx context.Context, f NewFailure) (IngestResult, error) {
+func (s *Store) Ingest(ctx context.Context, f NewRecord) (IngestResult, error) {
+	if err := validateRecord(f); err != nil {
+		return 0, err
+	}
+
 	hash, err := ingestHash(f.Metadata)
 	if err != nil {
 		return 0, err
@@ -302,7 +333,7 @@ func (s *Store) Ingest(ctx context.Context, f NewFailure) (IngestResult, error) 
 			return err
 		}
 		var existing string
-		switch err := tx.QueryRow(ctx, `SELECT ingest_hash FROM failures WHERE id = $1`, f.Metadata.ID).Scan(&existing); {
+		switch err := tx.QueryRow(ctx, `SELECT ingest_hash FROM records WHERE id = $1`, f.Metadata.ID).Scan(&existing); {
 		case err == nil && existing == hash:
 			result = Duplicate
 			return nil
@@ -315,7 +346,7 @@ func (s *Store) Ingest(ctx context.Context, f NewFailure) (IngestResult, error) 
 			return ErrCapacity
 		}
 		now := s.now().UTC()
-		if err := insertFailure(ctx, tx, f, hash, lineage{rootID: f.Metadata.ID, capturedAt: now, expiresAt: now.Add(s.limits.TTL)}); err != nil {
+		if err := insertRecord(ctx, tx, f, hash, lineage{rootID: f.Metadata.ID, capturedAt: now, expiresAt: now.Add(s.limits.TTL)}); err != nil {
 			return err
 		}
 		if err := appendEvent(ctx, tx, f.Metadata.ID, EventCaptured, f.Actor, now, nil); err != nil {
@@ -335,42 +366,42 @@ func (s *Store) Ingest(ctx context.Context, f NewFailure) (IngestResult, error) 
 
 // Get returns one record with its runs, history, and children, read from one
 // snapshot of the database.
-func (s *Store) Get(ctx context.Context, id string) (Detail, error) {
+func (s *Store) Get(ctx context.Context, id string) (RecordDetail, error) {
 	if !validID(id) {
-		return Detail{}, ErrNotFound
+		return RecordDetail{}, ErrNotFound
 	}
-	var d Detail
+	var d RecordDetail
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		f, err := scanFailure(tx.QueryRow(ctx, `SELECT `+failureColumns+` FROM failures WHERE id = $1`, id))
+		f, err := scanRecord(tx.QueryRow(ctx, `SELECT `+recordColumns+` FROM records WHERE id = $1`, id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
-		d.Failure = f
-		resolution, err := scanResolution(tx.QueryRow(ctx, `SELECT `+resolutionColumns+` FROM failure_resolutions WHERE failure_id = $1`, id))
+		d.Record = f
+		resolution, err := scanResolution(tx.QueryRow(ctx, `SELECT `+resolutionColumns+` FROM delivery_resolutions WHERE record_id = $1`, id))
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		if err == nil {
 			d.Resolution = &resolution
 		}
-		rows, err := tx.Query(ctx, `SELECT `+runColumns+` FROM retry_runs WHERE failure_id = $1 ORDER BY created_at DESC, run_id DESC`, id)
+		rows, err := tx.Query(ctx, `SELECT `+runColumns+` FROM retry_runs WHERE record_id = $1 ORDER BY created_at DESC, run_id DESC`, id)
 		if err != nil {
 			return err
 		}
 		if d.Runs, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (Run, error) { return scanRun(r) }); err != nil {
 			return err
 		}
-		rows, err = tx.Query(ctx, `SELECT event, actor, at, detail FROM failure_events WHERE failure_id = $1 ORDER BY id`, id)
+		rows, err = tx.Query(ctx, `SELECT event, actor, at, detail FROM record_events WHERE record_id = $1 ORDER BY id`, id)
 		if err != nil {
 			return err
 		}
 		if d.History, err = pgx.CollectRows(rows, scanEvent); err != nil {
 			return err
 		}
-		rows, err = tx.Query(ctx, `SELECT id::text FROM failures WHERE parent_id = $1 ORDER BY failed_at, id`, id)
+		rows, err = tx.Query(ctx, `SELECT id::text FROM records WHERE parent_id = $1 ORDER BY occurred_at, id`, id)
 		if err != nil {
 			return err
 		}
@@ -378,12 +409,12 @@ func (s *Store) Get(ctx context.Context, id string) (Detail, error) {
 		return err
 	})
 	if err != nil {
-		return Detail{}, err
+		return RecordDetail{}, err
 	}
 	return d, nil
 }
 
-// List returns records newest first by (failed_at, id), with an opaque
+// List returns records newest first by (occurred_at, id), with an opaque
 // keyset cursor for the next page.
 func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 	var where []string
@@ -393,20 +424,23 @@ func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 		where = append(where, fmt.Sprintf(clause, len(args)))
 	}
 	for _, eq := range []struct{ column, value string }{
-		{"flow", f.Flow}, {"node_id", f.NodeID}, {"destination_id", f.DestinationID}, {"status", f.Status}, {"kind", f.Kind},
+		{"flow", f.Flow}, {"node_id", f.NodeID}, {"destination_id", f.DestinationID}, {"delivery_status", f.DeliveryStatus}, {"kind", f.Kind}, {"replay_mode", f.ReplayMode},
 	} {
 		if eq.value != "" {
 			add(eq.column+" = $%d", eq.value)
 		}
 	}
+	if f.Dismissed != nil {
+		add("(dismissed_at IS NOT NULL) = $%d", *f.Dismissed)
+	}
 	if f.Retryable != nil {
 		add("retryable = $%d", *f.Retryable)
 	}
 	if !f.Since.IsZero() {
-		add("failed_at >= $%d", f.Since)
+		add("occurred_at >= $%d", f.Since)
 	}
 	if !f.Until.IsZero() {
-		add("failed_at < $%d", f.Until)
+		add("occurred_at < $%d", f.Until)
 	}
 	if f.Cursor != "" {
 		at, id, err := decodeCursor(f.Cursor)
@@ -414,24 +448,24 @@ func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 			return Page{}, ErrBadCursor
 		}
 		args = append(args, at, id)
-		where = append(where, fmt.Sprintf("(failed_at, id) < ($%d, $%d)", len(args)-1, len(args)))
+		where = append(where, fmt.Sprintf("(occurred_at, id) < ($%d, $%d)", len(args)-1, len(args)))
 	}
 	limit := f.Limit
 	if limit <= 0 {
 		limit = DefaultListLimit
 	}
 	limit = min(limit, MaxListLimit)
-	query := `SELECT ` + failureColumns + ` FROM failures`
+	query := `SELECT ` + recordColumns + ` FROM records`
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, " AND ")
 	}
 	args = append(args, limit+1)
-	query += fmt.Sprintf(` ORDER BY failed_at DESC, id DESC LIMIT $%d`, len(args))
+	query += fmt.Sprintf(` ORDER BY occurred_at DESC, id DESC LIMIT $%d`, len(args))
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return Page{}, err
 	}
-	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Failure, error) { return scanFailure(r) })
+	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Record, error) { return scanRecord(r) })
 	if err != nil {
 		return Page{}, err
 	}
@@ -439,15 +473,16 @@ func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 	if len(items) > limit {
 		page.Items = items[:limit]
 		last := page.Items[limit-1]
-		page.NextCursor = encodeCursor(last.FailedAt, last.ID)
+		at := last.OccurredAt
+		page.NextCursor = encodeCursor(at, last.ID)
 	}
 	return page, nil
 }
 
-// encodeCursor packs the last row's (failed_at, id). failed_at is stored at
+// encodeCursor packs the last row's (occurred_at, id). occurred_at is stored at
 // microsecond precision, so microseconds round-trip exactly.
-func encodeCursor(failedAt time.Time, id string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(failedAt.UnixMicro(), 10) + "|" + id))
+func encodeCursor(occurredAt time.Time, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(occurredAt.UnixMicro(), 10) + "|" + id))
 }
 
 // decodeCursor reverses encodeCursor. A cursor is client input; anything
@@ -489,24 +524,29 @@ func (s *Store) Payload(ctx context.Context, id, actor string) (Payload, error) 
 	}
 	var p Payload
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var status, digest string
+		var digest string
+		var dismissedAt *time.Time
 		var size int64
 		var has bool
-		err := tx.QueryRow(ctx, `SELECT status, has_artifacts, payload_size, payload_sha256, payload_content_type, payload_filename
-			FROM failures WHERE id = $1`, id).Scan(&status, &has, &size, &digest, &p.ContentType, &p.Filename)
+		var expiresAt time.Time
+		err := tx.QueryRow(ctx, `SELECT dismissed_at, has_artifacts, payload_size, payload_sha256, payload_content_type, payload_filename, expires_at
+			FROM records WHERE id = $1 FOR SHARE`, id).Scan(&dismissedAt, &has, &size, &digest, &p.ContentType, &p.Filename, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
+		if !expiresAt.After(s.now().UTC()) {
+			return ErrGone
+		}
 		if !has {
-			if status == StatusDismissed {
+			if dismissedAt != nil {
 				return ErrGone
 			}
 			return ErrNoPayload
 		}
-		if err := tx.QueryRow(ctx, `SELECT payload FROM failure_artifacts WHERE failure_id = $1`, id).Scan(&p.Bytes); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT payload FROM record_artifacts WHERE record_id = $1 AND payload IS NOT NULL`, id).Scan(&p.Bytes); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrGone
 			}

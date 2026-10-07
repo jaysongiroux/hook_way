@@ -152,6 +152,12 @@ type FilterOptions struct {
 	Conditions []FilterConditionOptions `yaml:"conditions" json:"conditions" jsonschema:"required,minItems=1"`
 	OnNoMatch  string                   `yaml:"on_no_match,omitempty" json:"on_no_match,omitempty" jsonschema:"enum=drop,enum=reject"`
 }
+type InspectOptions struct{}
+
+type SampleOptions struct {
+	// A pointer distinguishes an omitted rate from an explicit zero.
+	Rate *float64 `yaml:"rate" json:"rate" jsonschema:"required,minimum=0,maximum=1"`
+}
 type LookupCacheOptions struct {
 	TTL        string `yaml:"ttl,omitempty" json:"ttl,omitempty"`
 	MaxEntries int    `yaml:"max_entries,omitempty" json:"max_entries,omitempty" jsonschema:"minimum=1"`
@@ -359,6 +365,7 @@ type nodeDefinition struct {
 // Zero metadata uses reflected options and ordinary error edges; exceptional
 // rules opt in here without adding another switch over node names.
 type nodeMetadata struct {
+	allowLeaf           bool
 	noErrorEdge         bool
 	successContinuation bool
 	// Positive values permit batch children and preserve their editor order.
@@ -521,6 +528,10 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		define("filter", graph.PortEnvelope, graph.PortEnvelope, false, validateFilter, newFilterNode).withMetadata(nodeMetadata{
 			batchChildOrder: 3, formDefaults: map[string]any{"on_no_match": "drop"}, checkBodyFormat: conditionBodyFormatIssue,
 		}),
+		define("inspect", graph.PortEnvelope, graph.PortEnvelope, false, nil, newInspectNode).withMetadata(nodeMetadata{allowLeaf: true, noErrorEdge: true}),
+		define("sample", graph.PortEnvelope, graph.PortEnvelope, false, validateSample, newSampleNode).withMetadata(nodeMetadata{
+			noErrorEdge: true, batchChildOrder: 7,
+		}),
 		defineErr("register_route", graph.PortEnvelope, graph.PortEnvelope, false, validateRegisterRoute, func(id string, o RegisterRouteOptions) (graph.Node, error) { return newRegisterRouteNode(id, o, opts) }),
 		defineErr("route", graph.PortEnvelope, graph.PortEnvelope, false, validateRoute, func(id string, o RouteOptions) (graph.Node, error) {
 			return newRouteNode(id, o, opts)
@@ -607,6 +618,7 @@ func (d nodeDefinition) spec() graph.NodeSpec {
 		Out:                 d.out,
 		Detached:            d.detached,
 		SuccessContinuation: d.successContinuation,
+		AllowLeaf:           d.allowLeaf,
 		New:                 d.newNode,
 	}
 	if d.stage != nil {

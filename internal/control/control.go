@@ -232,7 +232,7 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		outcome = OutcomeError
 		s.opts.Logger.Error("replay redrive produced a result core cannot report", "run_id", req.RunID,
-			"failure_id", req.FailureID, "error", err.Error())
+			"record_id", req.RecordID, "error", err.Error())
 		writeProblem(w, http.StatusInternalServerError, "internal", "core could not report the redrive's outcome")
 		return
 	}
@@ -261,7 +261,7 @@ func (s *Server) refuse(w http.ResponseWriter, req replaywire.DeliverRequest, er
 		writeProblem(w, http.StatusBadRequest, "malformed_snapshot", err.Error())
 		return OutcomeRejected
 	}
-	s.opts.Logger.Error("replay redrive failed inside core", "run_id", req.RunID, "failure_id", req.FailureID, "error", err.Error())
+	s.opts.Logger.Error("replay redrive failed inside core", "run_id", req.RunID, "record_id", req.RecordID, "error", err.Error())
 	writeProblem(w, http.StatusInternalServerError, "internal", "core could not complete the redrive")
 	return OutcomeError
 }
@@ -272,6 +272,6 @@ func (s *Server) finish(req replaywire.DeliverRequest, outcome string, took time
 		flow = req.Flow
 	}
 	s.opts.Metrics.ControlRun(flow, outcome)
-	s.opts.Logger.Info("replay redrive", "run_id", req.RunID, "failure_id", req.FailureID, "flow", req.Flow,
-		"node_id", req.NodeID, "kind", req.Kind, "outcome", outcome, "duration_ms", took.Milliseconds())
+	s.opts.Logger.Info("replay redrive", "run_id", req.RunID, "record_id", req.RecordID, "flow", req.Flow,
+		"node_id", req.NodeID, "kind", req.Kind, "replay_mode", req.ReplayMode, "outcome", outcome, "duration_ms", took.Milliseconds())
 }

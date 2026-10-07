@@ -25,13 +25,13 @@ import (
 
 // Store is the persistence the API needs; *store.Store implements it.
 type Store interface {
-	Ingest(ctx context.Context, f store.NewFailure) (store.IngestResult, error)
+	Ingest(ctx context.Context, f store.NewRecord) (store.IngestResult, error)
 	List(ctx context.Context, f store.Filter) (store.Page, error)
-	Get(ctx context.Context, id string) (store.Detail, error)
+	Get(ctx context.Context, id string) (store.RecordDetail, error)
 	Payload(ctx context.Context, id, actor string) (store.Payload, error)
 	RequestRetry(ctx context.Context, req store.RetryRequest) (store.RetryResult, error)
 	GetRun(ctx context.Context, runID string) (store.Run, error)
-	Dismiss(ctx context.Context, id, actor string) (store.Failure, error)
+	Dismiss(ctx context.Context, id, actor string) (store.Record, error)
 	ResolveUnknown(ctx context.Context, req store.ResolveRequest) (store.ResolveResult, error)
 	Ready(ctx context.Context) error
 }
@@ -73,7 +73,7 @@ func New(opts Options) http.Handler {
 	}
 	mux := http.NewServeMux()
 	operatorRoutes := http.NewServeMux()
-	handlers := map[string]http.HandlerFunc{"validateAction": a.validateAction, "whoAmI": a.me, "resolveFailure": a.resolve, "captureFailure": a.ingest, "listFailures": a.list, "getFailure": a.get, "downloadPayload": a.payload, "retryFailure": a.retry, "dismissFailure": a.dismiss, "retryFailures": a.retryBatch, "getRetry": a.getRun, "health": a.healthz, "ready": a.readyz}
+	handlers := map[string]http.HandlerFunc{"validateAction": a.validateAction, "whoAmI": a.me, "resolveRecord": a.resolve, "captureRecord": a.ingest, "listRecords": a.list, "getRecord": a.get, "downloadPayload": a.payload, "retryRecord": a.retry, "dismissRecord": a.dismiss, "retryRecords": a.retryBatch, "getRetry": a.getRun, "health": a.healthz, "ready": a.readyz}
 	for _, route := range Routes() {
 		handler := handlers[route.OperationID]
 		if handler == nil {

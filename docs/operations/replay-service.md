@@ -19,7 +19,8 @@ good (retries exhausted or a terminal 4xx) with no dead letter, or whose dead
 letter itself failed. A non-2xx leaves the retry to the sender, so it is never
 captured. A flow opts out with `capture_failures: false`.
 
-Each record carries metadata (flow, node, destination, rendered target, event
+Each failure record uses `kind: failure` and a `replay_mode` of `resume` or
+`publish_only`. It carries metadata (flow, node, destination, rendered target, event
 and request ids, error class and sanitized message, attempts, and hashes of
 the node's and destination's configuration with credentials removed), a
 snapshot of the failed node's input, and the payload the node was sending. A
@@ -29,10 +30,31 @@ failure whose bodies alone would overflow core's 64 MiB upload buffer. Capture n
 changes a response or readiness (I15); uploads are best effort and bounded
 (see [Configuration § Replay](../reference/configuration.md#replay)).
 
+## View-only observations
+
+An inbound `inspect` node captures the current webhook body/context independently
+of failure capture and final response status. Records use `kind: inspection`,
+`retryable: false`, `not_retryable_reason: inspection_only`, and `occurred_at`.
+They have a versioned JSON payload and no replay snapshot, failure message or
+attempt count. Oversized/unsupported inspections are metadata-only with
+`payload_unavailable_reason: too_large` or `unsupported`; their retry prohibition
+remains `not_retryable_reason: inspection_only`. Retry and delivery-resolution paths
+reject them; dismissal, payload permission, byte accounting and expiry use the
+existing record store. Failure validation is unchanged.
+
+`GET /v1/records` lists both kinds by default. Use `kind=failure` for missed
+deliveries and `kind=inspection` for observations. Both use `occurred_at` for
+ordering and date filters. The API advertises `record_api` and `inspection_records`
+with contract version 1. [Configuration](../reference/configuration.md#inspecting-webhooks)
+explains inline and sampled branches; [console instructions](replay-console.md#view-only-inspections)
+include a runnable local example. Retention and upload/storage capacity are shared.
+Apply migrations and deploy the replay API first, then matching console assets,
+then core configurations using Inspect.
+
 ## How a retry runs
 
 ```
-operator ──POST /v1/failures/{id}/retries──▶ replay (queues a run)
+operator ──POST /v1/records/{id}/retries──▶ replay (queues a run)
 replay worker ──POST /internal/replay/v1/deliver──▶ core control listener
 core ──resumes the flow at the failed node──▶ destinations
 core ──per-node outcomes + child records──▶ replay worker
@@ -41,7 +63,7 @@ core ──per-node outcomes + child records──▶ replay worker
 A worker claims a queued run, sends the record's snapshot to a core replica's
 control listener, and records the outcome. Core checks the record against its
 **current** configuration, then resumes the flow at the failed node (a
-`resume` record) or re-sends the prepared message (`publish_only`, async
+`replay_mode: resume` record) or re-sends the prepared message (`publish_only`, async
 webhooks), delivering inline so the reported outcome is real. Upstream gates
 (`replay_guard`, rate limits, auth) never rerun; the envelope `id` and other
 identity values are preserved so consumers can dedupe.
@@ -67,7 +89,7 @@ dead-lettering, or compensations (I21). There is no exactly-once promise: an
 `unknown` record may or may not have been delivered, so retrying it requires
 `"acknowledge_duplicate_risk": true`.
 
-### Record lifecycle
+### Delivery state and dismissal
 
 | From | Event | To |
 |---|---|---|
@@ -77,7 +99,12 @@ dead-lettering, or compensations (I21). There is no exactly-once promise: an
 | `retrying` | response lost or lease expired | `unknown` |
 | `unknown` | independently confirmed by an operator, with evidence and no active retry | `resolved` (`operator_confirmed`) |
 | `unknown` | retry requested with `acknowledge_duplicate_risk` | `retrying` |
-| `open`, `unknown` | dismissed | `dismissed` (terminal; artifacts deleted) |
+
+
+Dismissal is separate from delivery state: `dismissed_at` records when artifacts
+were removed and quota released. It preserves the prior `delivery_status` and
+audit evidence. Available inspections and open/unknown failures can be dismissed;
+retrying and resolved failures cannot. Inspections have no `delivery_status`.
 
 A child record has its own resume node strictly downstream of its parent's,
 the same `event_id`, and the root's expiry.
@@ -138,15 +165,15 @@ Bearer tokens, compared in constant time; errors are RFC 9457
 |---|---|---|
 | `GET /v1/me` | `read` | Authenticated key name, scopes and implemented API capabilities; no credential. |
 | `POST /v1/actions/validate` | `read` | Pure Go/WASM action-input validation. Does not execute an action or check record eligibility. |
-| `POST /v1/failures/{id}/resolve` | `retry` | Resolve an unexpired unknown record with a required investigation note, optional reference and `Idempotency-Key`. Preserves artifacts and original unknown evidence. |
-| `POST /v1/failures` | `capture` | Ingest (core only). `201`; `200` duplicate; `409 conflict`; `413 record_too_large`; `507 capacity_exceeded`. |
-| `GET /v1/failures` | `read` | Summaries, newest first, cursor-paginated. Filters: `flow`, `node_id`, `destination_id`, `status`, `kind`, `retryable`, `since`, `until` (RFC 3339), `limit` (default 50, max 500), `cursor`. |
-| `GET /v1/failures/{id}` | `read` | Metadata, artifact sizes and digests (never bytes), runs, history, parent and children. |
-| `GET /v1/failures/{id}/payload` | `payload` | The stored payload bytes after verifying their digest (`500 payload_corrupt` otherwise). Recorded in history. |
-| `POST /v1/failures/{id}/retries` | `retry` | Requires `Idempotency-Key`. Body `{"acknowledge_duplicate_risk": false}`. `202 {"run_id": …}`; `409 run_active`; `422 not_retryable`, `duplicate_risk_unacknowledged`, `idempotency_key_mismatch`. |
-| `POST /v1/retries` | `retry` | Batch: `{"failure_ids": [...], "acknowledge_duplicate_risk": false}`, up to 100, one `Idempotency-Key`; per-item results. |
+| `POST /v1/records/{id}/resolve` | `retry` | Resolve an unexpired unknown record with a required investigation note, optional reference and `Idempotency-Key`. Preserves artifacts and original unknown evidence. |
+| `POST /v1/records` | `capture` | Ingest (core only). `201`; `200` duplicate; `409 conflict`; `413 record_too_large`; `507 capacity_exceeded`. |
+| `GET /v1/records` | `read` | Summaries, newest first, cursor-paginated. Omitted `kind` lists both failures and inspections, ordered by `occurred_at` then ID. Filters: `flow`, `node_id`, `destination_id`, `delivery_status`, `kind` (`failure` / `inspection`), `replay_mode` (`resume` / `publish_only`), `dismissed` (`true` / `false`), `retryable`, `since`, `until` (RFC 3339), `limit` (default 50, max 500), `cursor`. |
+| `GET /v1/records/{id}` | `read` | Metadata, artifact sizes and digests (never bytes), runs, history, parent and children. |
+| `GET /v1/records/{id}/payload` | `payload` | The stored payload bytes after verifying their digest (`500 payload_corrupt` otherwise). Recorded in history. |
+| `POST /v1/records/{id}/retries` | `retry` | Requires `Idempotency-Key`. Body `{"acknowledge_duplicate_risk": false}`. `202 {"run_id": …}`; `409 run_active`; `422 not_retryable`, `duplicate_risk_unacknowledged`, `idempotency_key_mismatch`. |
+| `POST /v1/retries` | `retry` | Batch: `{"record_ids": [...], "acknowledge_duplicate_risk": false}`, up to 100, one `Idempotency-Key`; per-item results. |
 | `GET /v1/retries/{run_id}` | `read` | Run status and per-node result. |
-| `POST /v1/failures/{id}/dismiss` | `retry` | `open` or `unknown` only; deletes the artifacts. |
+| `POST /v1/records/{id}/dismiss` | `retry` | Available inspections or open/unknown failures only; sets `dismissed_at` and deletes artifacts without changing delivery state. |
 | `GET /healthz`, `GET /readyz` | none | Liveness; readiness is the database reachable and the schema current. |
 
 Set `REPLAY_URL` to the browser/host-reachable API URL, `ID` to a failure ID,
@@ -155,32 +182,55 @@ body if the reply is lost, so resubmission cannot create a second run.
 
 ```bash
 curl -sS -H "Authorization: Bearer $REPLAY_OPERATOR_TOKEN" \
-  "$REPLAY_URL/v1/failures?status=open&flow=orders&limit=20"
+  "$REPLAY_URL/v1/records?kind=failure&delivery_status=open&dismissed=false&flow=orders&limit=20"
 curl -sS -X POST -H "Authorization: Bearer $REPLAY_OPERATOR_TOKEN" \
   -H "Idempotency-Key: $RETRY_KEY" -H "Content-Type: application/json" \
   -d '{"acknowledge_duplicate_risk": false}' \
-  "$REPLAY_URL/v1/failures/$ID/retries"
+  "$REPLAY_URL/v1/records/$ID/retries"
 ```
 
 Resolution is labeled `operator_confirmed`; successful retry execution is labeled
 `retry_succeeded`. An operator note does not convert an unknown run into a
 confirmed adapter result. See the [investigation runbook](replay-investigation.md)
-for evidence, receipts, idempotency, races and migration 2. Resolution retains
+for evidence, receipts, idempotency and races. Resolution retains
 artifacts and capacity usage until ordinary expiry, whereas dismissal deletes
 artifacts immediately.
+
+## Shared record storage
+
+One `records` table holds failures and inspections. `record_artifacts` keeps large
+payload/snapshot bytes separate so list queries read metadata only; NULL means an
+absent artifact, while a non-NULL zero-byte payload remains a downloadable file.
+`retry_runs`, `record_events` and `delivery_resolutions` store execution, audit
+history and operator evidence. Their identifiers use `record_id`. Database
+constraints reject executable inspection artifacts and inspection retry or
+resolution rows. Shared retention, record caps and byte caps apply to both kinds.
+
+The generic-record schema is a fresh initial baseline. Existing failure-shaped
+databases are outside its compatibility scope: use a fresh database rather than
+applying it as an upgrade. Do not delete existing databases or volumes implicitly.
+Core, replay API, console and WASM consumers must use matching version-1 contracts;
+legacy `/v1/failures` routes are not provided.
 
 ## Operations
 
 **Metrics.** Core: `hookway_capture_total{flow,outcome}`,
 `hookway_capture_dropped_total{reason}`, `hookway_capture_buffer_bytes`,
 `hookway_control_runs_total{flow,outcome}`, `hookway_control_inflight`.
+Inspections use `hookway_inspection_total{flow,outcome}` and
+`hookway_inspection_dropped_total{reason}`; they share the capture buffer.
 Replay: every series is prefixed `hookway_replay_` — HTTP, auth, ingest
-(`captures_total{outcome}`), downloads, sampled state gauges (`records{status}`,
+(`captures_total{kind,outcome}`), downloads, sampled state gauges (`records{kind,delivery_status,dismissed}`,
 `runs{status}`, `usage_*`, `capacity_*`, `oldest_queued_run_seconds`, `db_up`,
 `schema_version`), workers (`runs_total{status}`, `executor_calls_total{outcome}`,
 `workers_busy`, `leases_expired_total`, `late_results_total`,
 `children_created_total`), GC, and the database pool. Every replica samples
 the shared database, so aggregate the state gauges with `max`, never `sum`.
+The record gauge keeps kind, retained delivery status and dismissal separate;
+inspections use an empty delivery status. Ingests rejected before validation use
+`kind="unknown"`. Artifact sizes and dismissal counters also carry record kind.
+Structured capture and dismissal logs carry `record_id` and `kind`, without
+logging captured body or request context.
 
 Scrape a private metrics listener with a dedicated metrics-only key. Keep its
 credential file readable only by Prometheus; never put it in the frontend image.
@@ -201,7 +251,7 @@ Missing or incorrect keys are rejected. Use HTTPS when the scrape crosses an
 untrusted network; TLS termination and listener network policy belong to the deployment.
 
 **Dashboards.** `metrics/grafana/hookway-replay.json`; the core overview has
-a "Failure capture and redrive" row.
+a "Capture and redrive" row.
 
 **Alerts** (`metrics/prometheus/alerts.yaml`, group `hookway.replay`): capture drops, usage
 over 80% of a limit, capacity rejections, a queued run older than 5 minutes,
@@ -280,9 +330,9 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO replay_runtime;
 GRANT SELECT ON goose_db_version TO replay_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE
-  ON failures, failure_artifacts, retry_runs, failure_events, usage, failure_resolutions
+  ON records, record_artifacts, retry_runs, record_events, usage, delivery_resolutions
   TO replay_runtime;
-GRANT USAGE, SELECT ON SEQUENCE failure_events_id_seq TO replay_runtime;
+GRANT USAGE, SELECT ON SEQUENCE record_events_id_seq TO replay_runtime;
 ```
 
 Provision database `CONNECT` and the login secret separately. No schema ownership,

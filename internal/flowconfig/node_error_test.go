@@ -129,6 +129,15 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 				Run(context.Background(), graph.Envelope{Body: map[string]any{"event": "deleted"}})
 			return err
 		},
+		"inspect": func(t *testing.T) error {
+			_, err := mustCatalogNode(t, "inspect", "", RegistryOptions{}).Run(context.Background(), graph.RequestHead{})
+			return err
+		},
+		"sample": func(t *testing.T) error {
+			_, err := mustCatalogNode(t, "sample", "rate: 0.2\n", RegistryOptions{}).
+				Run(context.Background(), graph.RequestHead{})
+			return err
+		},
 		"lookup": func(t *testing.T) error {
 			resolve := func(context.Context, string) (string, bool, error) { return "", false, nil }
 			_, err := mustCatalogNode(t, "lookup", "provider: dynamodb\nkey: '{id}'\nname: route\n", RegistryOptions{

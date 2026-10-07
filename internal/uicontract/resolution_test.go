@@ -32,7 +32,7 @@ func TestResolutionEvidenceValidation(t *testing.T) {
 	if got := ValidateReplayAction(ReplayActionInput{Action: "unknown", IdempotencyKey: "k"}); len(got.Issues) != 1 {
 		t.Fatal(got)
 	}
-	if got := ValidateReplayAction(ReplayActionInput{Action: ActionResolve, IdempotencyKey: "k", Note: "receipt", FailureIDs: []string{"id"}}); len(got.Issues) != 1 {
+	if got := ValidateReplayAction(ReplayActionInput{Action: ActionResolve, IdempotencyKey: "k", Note: "receipt", RecordIDs: []string{"id"}}); len(got.Issues) != 1 {
 		t.Fatal(got)
 	}
 }

@@ -1,9 +1,9 @@
-// Package store is the replay service's PostgreSQL persistence: failure
+// Package store is the replay service's PostgreSQL persistence: capture
 // records, their artifacts, retry runs, history, and the usage counter.
 // Every change that spans rows is one transaction. A transaction that locks
-// more than one of a retry_runs row, a failures row, and the usage row locks
+// more than one of a retry_runs row, a records row, and the usage row locks
 // them in that order; ingest locks only the usage row, and GC skips locked
-// failures rows, so the lock graph has no cycle.
+// records rows, so the lock graph has no cycle.
 package store
 
 import (
@@ -21,17 +21,16 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/tlsfiles"
 )
 
-// Record statuses (spec "Record lifecycle").
+// Failure delivery states are independent of record dismissal.
 const (
-	StatusOpen      = "open"
-	StatusRetrying  = "retrying"
-	StatusResolved  = "resolved"
-	StatusUnknown   = "unknown"
-	StatusDismissed = "dismissed"
+	StatusOpen     = "open"
+	StatusRetrying = "retrying"
+	StatusResolved = "resolved"
+	StatusUnknown  = "unknown"
 )
 
-// Statuses lists every record status.
-var Statuses = []string{StatusOpen, StatusRetrying, StatusResolved, StatusUnknown, StatusDismissed}
+// DeliveryStatuses lists the failure delivery states.
+var DeliveryStatuses = []string{StatusOpen, StatusRetrying, StatusResolved, StatusUnknown}
 
 // RunQueued is a new run's status; a worker claims it (lifecycle.go).
 const RunQueued = "queued"
@@ -136,6 +135,13 @@ func (s *Store) Ready(ctx context.Context) error {
 	}
 	if latest := LatestSchemaVersion(); version < latest {
 		return fmt.Errorf("store: database schema version %d is behind %d; run hookway-replay migrate", version, latest)
+	}
+	var recordSchema bool
+	if err := s.pool.QueryRow(ctx, `SELECT to_regclass('records') IS NOT NULL`).Scan(&recordSchema); err != nil {
+		return err
+	}
+	if !recordSchema {
+		return errors.New("store: generic record schema is missing; use a fresh replay database")
 	}
 	return nil
 }

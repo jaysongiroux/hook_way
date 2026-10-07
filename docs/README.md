@@ -12,6 +12,7 @@ setup instructions, configuration details, or help with a specific task.
 | Write or check YAML | [Configuration](reference/configuration.md) and [CLI](reference/cli.md) |
 | Choose what a success response means | [Delivery guarantees](operations/delivery-guarantees.md) |
 | Deploy containers | [Docker images](dockerhub/README.md), [security](reference/security.md), and [upgrades](operations/upgrades.md) |
+| Spot-check webhooks | [Inspect and Sample](reference/configuration.md#inspecting-webhooks) and [view-only console records](operations/replay-console.md#view-only-inspections) |
 | Investigate a failure | [Replay console](operations/replay-console.md) and [uncertain deliveries](operations/replay-investigation.md) |
 | Change the code | [Contributing](../CONTRIBUTING.md) and [extending Hookway](development/extending-hookway.md) |
 
@@ -38,7 +39,7 @@ setup instructions, configuration details, or help with a specific task.
   partial fan-out, duplicates, and who owns recovery.
 - [Replay service](operations/replay-service.md): service configuration, capture,
   retry API, retention, and metrics.
-- [Replay console](operations/replay-console.md): frontend setup, sign-in, and recovery actions.
+- [Replay console](operations/replay-console.md): frontend setup, view-only inspections, file downloads, and recovery actions.
 - [Replay investigation](operations/replay-investigation.md): check downstream evidence
   before retrying an uncertain delivery.
 - [Upgrades](operations/upgrades.md): graceful shutdown, migrations, backup, and rollback.

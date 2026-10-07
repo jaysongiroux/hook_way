@@ -43,8 +43,8 @@ var recordStatusAfter = map[string]string{
 
 // ClaimedRun is a run a worker now owns, with its record.
 type ClaimedRun struct {
-	Run     Run
-	Failure Failure
+	Run    Run
+	Record Record
 }
 
 // RunOutcome is how a run ended. Children are the downstream failures of a
@@ -53,7 +53,7 @@ type RunOutcome struct {
 	RunID    string
 	Status   string
 	Result   json.RawMessage
-	Children []NewFailure
+	Children []NewRecord
 	Actor    string
 }
 
@@ -89,17 +89,17 @@ func (s *Store) ClaimRuns(ctx context.Context, workerID string, n int, lease tim
 		}
 		ids := make([]string, len(runs))
 		for i, r := range runs {
-			ids[i] = r.FailureID
+			ids[i] = r.RecordID
 		}
-		rows, err = tx.Query(ctx, `SELECT `+failureColumns+` FROM failures WHERE id = ANY($1::uuid[])`, ids)
+		rows, err = tx.Query(ctx, `SELECT `+recordColumns+` FROM records WHERE id = ANY($1::uuid[])`, ids)
 		if err != nil {
 			return err
 		}
-		failures, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Failure, error) { return scanFailure(r) })
+		failures, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Record, error) { return scanRecord(r) })
 		if err != nil {
 			return err
 		}
-		byID := make(map[string]Failure, len(failures))
+		byID := make(map[string]Record, len(failures))
 		for _, f := range failures {
 			byID[f.ID] = f
 		}
@@ -110,7 +110,7 @@ func (s *Store) ClaimRuns(ctx context.Context, workerID string, n int, lease tim
 			return runs[i].RunID < runs[j].RunID
 		})
 		for _, r := range runs {
-			claimed = append(claimed, ClaimedRun{Run: r, Failure: byID[r.FailureID]})
+			claimed = append(claimed, ClaimedRun{Run: r, Record: byID[r.RecordID]})
 		}
 		return nil
 	})
@@ -122,15 +122,15 @@ func (s *Store) ClaimRuns(ctx context.Context, workerID string, n int, lease tim
 
 // Snapshot returns a record's snapshot after checking it against the size
 // and digest recorded at ingest.
-func (s *Store) Snapshot(ctx context.Context, failureID string) ([]byte, error) {
-	if !validID(failureID) {
+func (s *Store) Snapshot(ctx context.Context, recordID string) ([]byte, error) {
+	if !validID(recordID) {
 		return nil, ErrNotFound
 	}
 	var data []byte
 	var size int64
 	var digest string
 	err := s.pool.QueryRow(ctx, `SELECT a.snapshot, f.snapshot_size, f.snapshot_sha256
-		FROM failure_artifacts a JOIN failures f ON f.id = a.failure_id WHERE a.failure_id = $1`, failureID).Scan(&data, &size, &digest)
+		FROM record_artifacts a JOIN records f ON f.id = a.record_id WHERE a.record_id = $1 AND a.snapshot IS NOT NULL`, recordID).Scan(&data, &size, &digest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrGone
 	}
@@ -162,31 +162,31 @@ func (s *Store) FinalizeRun(ctx context.Context, o RunOutcome) (FinalizeResult, 
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		res = FinalizeResult{}
 		now := s.now().UTC()
-		var failureID string
+		var recordID string
 		err := tx.QueryRow(ctx, `UPDATE retry_runs SET status = $2, result = $3, finished_at = $4
-			WHERE run_id = $1 AND status = $5 RETURNING failure_id::text`,
-			o.RunID, o.Status, []byte(o.Result), now, RunRunning).Scan(&failureID)
+			WHERE run_id = $1 AND status = $5 RETURNING record_id::text`,
+			o.RunID, o.Status, []byte(o.Result), now, RunRunning).Scan(&recordID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			res.Late = true
-			switch err := tx.QueryRow(ctx, `SELECT failure_id::text FROM retry_runs WHERE run_id = $1`, o.RunID).Scan(&failureID); {
+			switch err := tx.QueryRow(ctx, `SELECT record_id::text FROM retry_runs WHERE run_id = $1`, o.RunID).Scan(&recordID); {
 			case errors.Is(err, pgx.ErrNoRows):
 				return nil // GC removed the record
 			case err != nil:
 				return err
 			}
-			return appendEvent(ctx, tx, failureID, EventLateResult, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status, "result": o.Result})
+			return appendEvent(ctx, tx, recordID, EventLateResult, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status, "result": o.Result})
 		}
 		if err != nil {
 			return err
 		}
-		parent, err := scanFailure(tx.QueryRow(ctx, `SELECT `+failureColumns+` FROM failures WHERE id = $1 FOR UPDATE`, failureID))
+		parent, err := scanRecord(tx.QueryRow(ctx, `SELECT `+recordColumns+` FROM records WHERE id = $1 FOR UPDATE`, recordID))
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE failures SET status = $2, resolution_source = $3 WHERE id = $1`, failureID, next, resolutionSource(next)); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE records SET delivery_status = $2, resolution_source = $3 WHERE id = $1`, recordID, next, nullableText(resolutionSource(next))); err != nil {
 			return err
 		}
-		if err := appendEvent(ctx, tx, failureID, EventRunFinished, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status}); err != nil {
+		if err := appendEvent(ctx, tx, recordID, EventRunFinished, o.Actor, now, map[string]any{"run_id": o.RunID, "status": o.Status}); err != nil {
 			return err
 		}
 		if len(o.Children) == 0 {
@@ -194,12 +194,18 @@ func (s *Store) FinalizeRun(ctx context.Context, o RunOutcome) (FinalizeResult, 
 		}
 		var bytes int64
 		for _, c := range o.Children {
+			if c.Metadata.Kind != "failure" || c.Metadata.ReplayMode != "resume" {
+				return ErrNotRetryable
+			}
+			if err := validateRecord(c); err != nil {
+				return err
+			}
 			hash, err := ingestHash(c.Metadata)
 			if err != nil {
 				return err
 			}
 			l := lineage{parentID: parent.ID, rootID: parent.RootID, capturedAt: now, expiresAt: parent.ExpiresAt}
-			if err := insertFailure(ctx, tx, c, hash, l); err != nil {
+			if err := insertRecord(ctx, tx, c, hash, l); err != nil {
 				return err
 			}
 			if err := appendEvent(ctx, tx, c.Metadata.ID, EventCaptured, o.Actor, now, map[string]any{"parent_id": parent.ID, "run_id": o.RunID}); err != nil {
@@ -211,7 +217,7 @@ func (s *Store) FinalizeRun(ctx context.Context, o RunOutcome) (FinalizeResult, 
 		if _, err := tx.Exec(ctx, `UPDATE usage SET records = records + $1, bytes = bytes + $2`, len(o.Children), bytes); err != nil {
 			return err
 		}
-		return appendEvent(ctx, tx, failureID, EventChildrenCreated, o.Actor, now, map[string]any{"run_id": o.RunID, "children": res.ChildIDs})
+		return appendEvent(ctx, tx, recordID, EventChildrenCreated, o.Actor, now, map[string]any{"run_id": o.RunID, "children": res.ChildIDs})
 	})
 	if err != nil {
 		return FinalizeResult{}, err
@@ -234,7 +240,7 @@ func (s *Store) ExpireLeases(ctx context.Context, actor string) ([]string, error
 		rows, err := tx.Query(ctx, `UPDATE retry_runs SET status = $1, finished_at = $2, result = $3
 			WHERE run_id IN (SELECT run_id FROM retry_runs WHERE status = $4 AND lease_expires_at < $2
 			                 ORDER BY lease_expires_at LIMIT $5 FOR UPDATE SKIP LOCKED)
-			RETURNING run_id::text, failure_id::text`,
+			RETURNING run_id::text, record_id::text`,
 			RunUnknown, now, result, RunRunning, expireBatch)
 		if err != nil {
 			return err
@@ -249,7 +255,7 @@ func (s *Store) ExpireLeases(ctx context.Context, actor string) ([]string, error
 			return err
 		}
 		for _, p := range pairs {
-			if _, err := tx.Exec(ctx, `UPDATE failures SET status = $2 WHERE id = $1 AND status = $3`, p.failure, StatusUnknown, StatusRetrying); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE records SET delivery_status = $2 WHERE id = $1 AND delivery_status = $3`, p.failure, StatusUnknown, StatusRetrying); err != nil {
 				return err
 			}
 			if err := appendEvent(ctx, tx, p.failure, EventRunFinished, actor, now,

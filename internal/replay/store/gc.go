@@ -86,9 +86,9 @@ func (s *Store) sweepBatch(ctx context.Context, conn *pgxpool.Conn, batchSize in
 	var res SweepResult
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		selected, res = 0, SweepResult{}
-		rows, err := tx.Query(ctx, `SELECT f.id::text FROM failures f
+		rows, err := tx.Query(ctx, `SELECT f.id::text FROM records f
 			WHERE f.expires_at < $1
-			  AND NOT EXISTS (SELECT 1 FROM retry_runs r WHERE r.failure_id = f.id AND r.status IN ($2, $3))
+			  AND NOT EXISTS (SELECT 1 FROM retry_runs r WHERE r.record_id = f.id AND r.status IN ($2, $3))
 			ORDER BY f.expires_at
 			LIMIT $4
 			FOR UPDATE OF f SKIP LOCKED`, s.now().UTC(), RunQueued, RunRunning, batchSize)
@@ -103,21 +103,21 @@ func (s *Store) sweepBatch(ctx context.Context, conn *pgxpool.Conn, batchSize in
 		if s.afterGCLock != nil {
 			s.afterGCLock()
 		}
-		rows, err = tx.Query(ctx, `DELETE FROM failures f
+		rows, err = tx.Query(ctx, `DELETE FROM records f
 			WHERE f.id = ANY($1::uuid[])
-			  AND NOT EXISTS (SELECT 1 FROM retry_runs r WHERE r.failure_id = f.id AND r.status IN ($2, $3))
-			RETURNING f.status, f.has_artifacts, f.snapshot_size + f.payload_size`, ids, RunQueued, RunRunning)
+			  AND NOT EXISTS (SELECT 1 FROM retry_runs r WHERE r.record_id = f.id AND r.status IN ($2, $3))
+			RETURNING f.dismissed_at, f.has_artifacts, f.snapshot_size + f.payload_size`, ids, RunQueued, RunRunning)
 		if err != nil {
 			return err
 		}
 		type gone struct {
-			status string
-			has    bool
-			size   int64
+			dismissedAt *time.Time
+			has         bool
+			size        int64
 		}
 		deletedRows, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (gone, error) {
 			var g gone
-			err := r.Scan(&g.status, &g.has, &g.size)
+			err := r.Scan(&g.dismissedAt, &g.has, &g.size)
 			return g, err
 		})
 		if err != nil {
@@ -125,7 +125,7 @@ func (s *Store) sweepBatch(ctx context.Context, conn *pgxpool.Conn, batchSize in
 		}
 		var live int64
 		for _, g := range deletedRows {
-			if g.status != StatusDismissed {
+			if g.dismissedAt == nil {
 				live++
 			}
 			if g.has {

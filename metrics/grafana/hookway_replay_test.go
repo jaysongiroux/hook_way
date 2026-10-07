@@ -25,7 +25,7 @@ func loadNamed(t *testing.T, file string) dashboard {
 func TestReplayDashboard(t *testing.T) {
 	d := loadNamed(t, "hookway-replay.json")
 	want := map[string]string{
-		"Records by status":            "hookway_replay_records",
+		"Records by kind and state":    "hookway_replay_records",
 		"Usage of retention limits":    "hookway_replay_capacity_bytes",
 		"Ingest outcomes":              "hookway_replay_captures_total",
 		"Runs queued and running":      "hookway_replay_runs",
@@ -70,6 +70,9 @@ func TestReplayDashboard(t *testing.T) {
 			if sampled.MatchString(target.Expr) {
 				t.Errorf("panel %q sums a sampled gauge across replicas (use max): %s", p.Title, target.Expr)
 			}
+		}
+		if p.Title == "Records by kind and state" && !strings.Contains(joined, "max by (kind, delivery_status, dismissed)") {
+			t.Error("record gauge must preserve kind, delivery state and dismissal across replicas")
 		}
 		if needle, ok := want[p.Title]; ok {
 			found[p.Title] = true

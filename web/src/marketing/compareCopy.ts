@@ -249,7 +249,7 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookway: {
         level: "yes",
         detail:
-          "Optional hookway-replay: inspect, download, retry individually or in batches, dismiss, and investigate via scoped operations console or API. Best-effort recovery of eligible misses after the sender’s 2xx; resumes at the failed node. No automatic re-drive",
+          "Optional hookway-replay: inspect, download, retry individually or in batches, dismiss, and investigate via scoped operations console or API. Best-effort recovery of eligible misses after the sender’s 2xx; resumes at the failed node. No automatic re-drive. Sample → Inspect adds view-only webhook observations and downloads when file contents are retained",
       },
       hookdeck: {
         level: "yes",

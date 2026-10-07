@@ -13,10 +13,10 @@ func keyHeader(key string) http.Header { return http.Header{"Idempotency-Key": {
 
 func TestRetryRequiresAValidIdempotencyKey(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	if rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, nil, nil); rec.Code != 400 || problemCode(t, rec) != "idempotency_key_required" {
+	if rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, nil, nil); rec.Code != 400 || problemCode(t, rec) != "idempotency_key_required" {
 		t.Fatalf("no key: status %d", rec.Code)
 	}
-	if rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, nil, keyHeader("has space")); rec.Code != 400 || problemCode(t, rec) != "invalid_request" {
+	if rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, nil, keyHeader("has space")); rec.Code != 400 || problemCode(t, rec) != "invalid_request" {
 		t.Fatalf("bad key: status %d", rec.Code)
 	}
 }
@@ -29,13 +29,13 @@ func TestRetryQueuesARun(t *testing.T) {
 		return store.RetryResult{RunID: testRunID, Created: true}, nil
 	}
 	h := newHarness(t, fs)
-	rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, strings.NewReader(`{"acknowledge_duplicate_risk": true}`), keyHeader("key-1"))
+	rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, strings.NewReader(`{"acknowledge_duplicate_risk": true}`), keyHeader("key-1"))
 	var resp map[string]string
 	decode(t, rec, &resp)
 	if rec.Code != http.StatusAccepted || resp["run_id"] != testRunID {
 		t.Fatalf("status %d body %v", rec.Code, resp)
 	}
-	want := store.RetryRequest{FailureID: testID, Actor: "ops", IdempotencyKey: "key-1", AcknowledgeDuplicateRisk: true}
+	want := store.RetryRequest{RecordID: testID, Actor: "ops", IdempotencyKey: "key-1", AcknowledgeDuplicateRisk: true}
 	if got != want {
 		t.Fatalf("request = %+v, want %+v", got, want)
 	}
@@ -49,14 +49,14 @@ func TestRetryAcceptsAnEmptyBody(t *testing.T) {
 		return store.RetryResult{RunID: testRunID}, nil
 	}
 	h := newHarness(t, fs)
-	if rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, nil, keyHeader("key-1")); rec.Code != http.StatusAccepted || got.AcknowledgeDuplicateRisk {
+	if rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, nil, keyHeader("key-1")); rec.Code != http.StatusAccepted || got.AcknowledgeDuplicateRisk {
 		t.Fatalf("status %d request %+v", rec.Code, got)
 	}
 }
 
 func TestRetryRejectsUnknownBodyFields(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, strings.NewReader(`{"ack": true}`), keyHeader("key-1"))
+	rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, strings.NewReader(`{"ack": true}`), keyHeader("key-1"))
 	if rec.Code != 400 || problemCode(t, rec) != "invalid_request" {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -77,7 +77,7 @@ func TestRetryMapsStoreErrors(t *testing.T) {
 		fs := notFoundStore()
 		fs.requestRetry = func(store.RetryRequest) (store.RetryResult, error) { return store.RetryResult{}, c.err }
 		h := newHarness(t, fs)
-		rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, nil, keyHeader("key-1"))
+		rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, nil, keyHeader("key-1"))
 		if rec.Code != c.status || problemCode(t, rec) != c.code {
 			t.Errorf("%v: status %d code %q", c.err, rec.Code, problemCode(t, rec))
 		}
@@ -90,7 +90,7 @@ func TestBatchRetry(t *testing.T) {
 	fs := notFoundStore()
 	fs.requestRetry = func(r store.RetryRequest) (store.RetryResult, error) {
 		keys = append(keys, r.IdempotencyKey)
-		switch r.FailureID {
+		switch r.RecordID {
 		case ids[0]:
 			return store.RetryResult{RunID: testRunID, Created: true}, nil
 		case ids[1]:
@@ -99,14 +99,14 @@ func TestBatchRetry(t *testing.T) {
 		return store.RetryResult{}, store.ErrNotFound
 	}
 	h := newHarness(t, fs)
-	body := `{"failure_ids": ["` + strings.Join(ids, `","`) + `"]}`
+	body := `{"record_ids": ["` + strings.Join(ids, `","`) + `"]}`
 	rec := h.do(t, "POST", "/v1/retries", opsToken, strings.NewReader(body), keyHeader("batch-1"))
 	var resp struct {
 		Results []struct {
-			FailureID string `json:"failure_id"`
-			Status    int    `json:"status"`
-			RunID     string `json:"run_id"`
-			Code      string `json:"code"`
+			RecordID string `json:"record_id"`
+			Status   int    `json:"status"`
+			RunID    string `json:"run_id"`
+			Code     string `json:"code"`
 		} `json:"results"`
 	}
 	decode(t, rec, &resp)
@@ -136,8 +136,8 @@ func TestBatchRetryRejects(t *testing.T) {
 		many[i] = `"` + testID + `"`
 	}
 	for name, body := range map[string]string{
-		"missing body": "", "empty list": `{"failure_ids": []}`, "too many": `{"failure_ids": [` + strings.Join(many, ",") + `]}`,
-		"duplicates": `{"failure_ids": ["` + testID + `","` + testID + `"]}`, "unknown field": `{"ids": []}`,
+		"missing body": "", "empty list": `{"record_ids": []}`, "too many": `{"record_ids": [` + strings.Join(many, ",") + `]}`,
+		"duplicates": `{"record_ids": ["` + testID + `","` + testID + `"]}`, "unknown field": `{"ids": []}`,
 	} {
 		rec := h.do(t, "POST", "/v1/retries", opsToken, strings.NewReader(body), keyHeader("batch-1"))
 		if rec.Code != 400 || problemCode(t, rec) != "invalid_request" {
@@ -149,7 +149,7 @@ func TestBatchRetryRejects(t *testing.T) {
 func TestGetRun(t *testing.T) {
 	fs := notFoundStore()
 	fs.getRun = func(id string) (store.Run, error) {
-		return store.Run{RunID: id, FailureID: testID, Status: store.RunQueued, RequestedBy: "ops", IdempotencyKey: "k",
+		return store.Run{RunID: id, RecordID: testID, Status: store.RunQueued, RequestedBy: "ops", IdempotencyKey: "k",
 			CreatedAt: time.Date(2026, 9, 23, 14, 0, 0, 0, time.UTC)}, nil
 	}
 	h := newHarness(t, fs)

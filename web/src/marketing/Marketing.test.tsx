@@ -211,3 +211,10 @@ test("the page does not restate the documentation it links to", () => {
   // rather than duplicating the reference.
   expect(copy.length).toBeLessThan(10000);
 });
+
+test("replay section distinguishes spot checks from recovery and offers file downloads", () => {
+  wrap();
+  expect(screen.getByText(/For spot checks, put Sample/)).toHaveTextContent(/Inspections are view only/);
+  expect(screen.getByText(/For spot checks, put Sample/)).toHaveTextContent(/download captured files/);
+  expect(screen.getByRole("link", { name: "See the sampled inspection example" })).toHaveAttribute("href", repoBlob("examples/inspect.yaml"));
+});

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APIError, createSession, requestError, result } from "./session";
+import { APIError, createSession, requestError, result, statusLabel, deliveryStatusLabel } from "./session";
 
 afterEach(() => vi.unstubAllGlobals());
 describe("console request failures", () => {
@@ -56,5 +56,17 @@ describe("console request failures", () => {
         },
       }),
     ).toThrow("Another operator queued a retry");
+  });
+});
+
+describe("record state labels", () => {
+  it("keeps dismissal separate from the retained delivery evidence", () => {
+    const record = { kind: "failure" as const, delivery_status: "unknown" as const, dismissed_at: "2026-10-06T12:00:00Z" };
+    expect(statusLabel(record)).toBe("Dismissed");
+    expect(deliveryStatusLabel(record)).toBe("Unknown outcome");
+  });
+  it("labels inspections without fabricating a delivery state", () => {
+    expect(statusLabel({ kind: "inspection" })).toBe("Available");
+    expect(statusLabel({ kind: "inspection", dismissed_at: "2026-10-06T12:00:00Z" })).toBe("Dismissed");
   });
 });

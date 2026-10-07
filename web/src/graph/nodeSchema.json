@@ -847,6 +847,19 @@
       ]
     }
   },
+  "inspect": {
+    "allow_leaf": true,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
   "ip_allowlist": {
     "input": "RequestHead",
     "output": "RequestHead",
@@ -1638,6 +1651,28 @@
       "type": "object",
       "required": [
         "profile"
+      ]
+    }
+  },
+  "sample": {
+    "batch_child_order": 7,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "rate": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "rate"
       ]
     }
   },

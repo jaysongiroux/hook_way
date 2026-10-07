@@ -69,8 +69,8 @@ These rules depend on node and executor behavior, not just port types.
 | I17 | A duplicate reservation is released only by its owner when no delivery side effect occurred. Successful, partial, or uncertain effects retain it. |
 | I18 | Secret/digest comparisons use `hmac.Equal` or `subtle.ConstantTimeCompare`. The conformance check is structural, not a timing benchmark. |
 | I19 | Nodes leave their input unchanged and return a changed copy. Failure capture depends on retaining the input that the failed node actually received. |
-| I20 | Capture retains eligible failures only after a final 2xx response and when no successful error path or dead-letter delivery handled them. Async webhook capture waits for the final inbound status. |
-| I21 | A redrive executes at most once per run and does not capture, dead-letter, or compensate its own failure. Core reads the full control request before execution. Replay resubmits only when core explicitly reports `not_started`, or the request was incomplete before execution could begin. Destination retry settings can still make several delivery attempts. |
+| I20 | Failure capture retains eligible failures only after a final 2xx response and when no successful error path or dead-letter delivery handled them. Async webhook capture waits for the final inbound status. Explicit Inspect observations freeze current body/context, survive later failures/non-2xx responses and never contribute delivery side effects. |
+| I21 | A redrive executes at most once per run and does not collect inspections, capture, dead-letter, or compensate its own failure. Core reads the full control request before execution. Replay resubmits only when core explicitly reports `not_started`, or the request was incomplete before execution could begin. Destination retry settings can still make several delivery attempts. |
 
 See [Delivery guarantees](../operations/delivery-guarantees.md) for acknowledgement
 policies and [Replay service](../operations/replay-service.md) for captured retries.

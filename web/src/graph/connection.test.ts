@@ -99,3 +99,14 @@ test("publish cannot connect to respond", () => {
   const { from, to, nodes } = pair("publish", "respond");
   expect(isValidConnection(connect(from, to), nodes, [])).toBe(false);
 });
+
+test("Inspect accepts envelope paths, continues inline and has no error edge", () => {
+  for (const [fromType, toType] of [["envelope", "inspect"], ["sample", "inspect"], ["inspect", "publish"], ["inspect", "respond"]]) {
+    const { from, to, nodes } = pair(fromType, toType);
+    expect(isValidConnection(connect(from, to), nodes, [])).toBe(true);
+  }
+  const raw = pair("read_body", "inspect");
+  expect(isValidConnection(connect(raw.from, raw.to), raw.nodes, [])).toBe(false);
+  const observer = pair("inspect", "publish");
+  expect(isValidConnection(connect(observer.from, observer.to, "on_error"), observer.nodes, [])).toBe(false);
+});

@@ -69,8 +69,9 @@ const (
 // configuration identity it was captured under, and core's budget.
 type DeliverRequest struct {
 	RunID           string `json:"run_id"`
-	FailureID       string `json:"failure_id"`
+	RecordID        string `json:"record_id"`
 	Kind            string `json:"kind"`
+	ReplayMode      string `json:"replay_mode"`
 	Flow            string `json:"flow"`
 	NodeID          string `json:"node_id"`
 	NodeType        string `json:"node_type"`
@@ -105,12 +106,12 @@ type NodeOutcome struct {
 // child record, its artifacts in parts ChildSnapshotPart(i) and
 // ChildPayloadPart(i). The hashes are the current configuration's.
 type DeliverResult struct {
-	Nodes           []NodeOutcome     `json:"nodes"`
-	Children        []FailureMetadata `json:"children"`
-	NodeConfigHash  string            `json:"node_config_hash,omitempty"`
-	DestinationHash string            `json:"destination_hash,omitempty"`
-	CoreVersion     string            `json:"core_version,omitempty"`
-	CoreInstance    string            `json:"core_instance,omitempty"`
+	Nodes           []NodeOutcome    `json:"nodes"`
+	Children        []RecordMetadata `json:"children"`
+	NodeConfigHash  string           `json:"node_config_hash,omitempty"`
+	DestinationHash string           `json:"destination_hash,omitempty"`
+	CoreVersion     string           `json:"core_version,omitempty"`
+	CoreInstance    string           `json:"core_instance,omitempty"`
 }
 
 // ResumeOutcome returns nodeID's outcome.
@@ -170,7 +171,7 @@ func (r DeliverResult) Validate(resumeNodeID string) error {
 		if err := c.Validate(); err != nil {
 			v.addf("children[%d]: %v", i, err)
 		}
-		if c.Kind != KindResume {
+		if c.Kind != KindFailure || c.ReplayMode != ReplayResume {
 			v.addf("children[%d] must be a resume record", i)
 		}
 		if c.NodeID == resumeNodeID {

@@ -30,7 +30,7 @@ async function status(page: Page, label: string) {
   await page.getByRole("tab", { name: label, exact: true }).click();
 }
 async function detail(request: APIRequestContext, n: number) {
-  const response = await request.get(`${API_URL}/v1/failures/${id(n)}`, { headers });
+  const response = await request.get(`${API_URL}/v1/records/${id(n)}`, { headers });
   expect(response.ok()).toBe(true);
   return response.json();
 }
@@ -97,7 +97,7 @@ test("lost retry response keeps its key and body across inspection and resubmiss
     .click();
   const sent: { key: string | undefined; body: string | null }[] = [];
   let lose = true;
-  await page.route(`**/v1/failures/${id(1)}/retries`, async (route) => {
+  await page.route(`**/v1/records/${id(1)}/retries`, async (route) => {
     sent.push({
       key: route.request().headers()["idempotency-key"],
       body: route.request().postData(),
@@ -149,7 +149,7 @@ test("batch displays accepted and stale-state outcomes for exactly the selected 
   await page.getByLabel(`Select ${id(1)}`, { exact: true }).check();
   await page.getByLabel(`Select ${id(2)}`, { exact: true }).check();
   await page.getByRole("button", { name: "Retry selected (2)" }).click();
-  const stale = await request.post(`${API_URL}/v1/failures/${id(2)}/retries`, {
+  const stale = await request.post(`${API_URL}/v1/records/${id(2)}/retries`, {
     headers: { ...headers, "Idempotency-Key": "another-operator" },
     data: {},
   });
@@ -230,7 +230,7 @@ test("operator confirmation preserves unknown history and evidence", async ({
   const selected = page.getByRole("region", { name: "Selected failure" });
   await expect(selected).toContainText("INC-DEMO-42");
   const record = await detail(request, 3);
-  expect(record.status).toBe("resolved");
+  expect(record.delivery_status).toBe("resolved");
   expect(record.runs[0].status).toBe("unknown");
   expect(record.artifacts.stored).toBe(true);
   expect(record.resolution.actor).toBe("demo-operator");
@@ -253,7 +253,7 @@ test("confirmation rejects eligibility that changed after opening the dialog", a
     .getByRole("button", { name: "Confirm outcome", exact: true })
     .click();
   await page.getByLabel("Evidence note").fill("Receipt confirmed externally.");
-  const retry = await request.post(`${API_URL}/v1/failures/${id(3)}/retries`, {
+  const retry = await request.post(`${API_URL}/v1/records/${id(3)}/retries`, {
     headers: { ...headers, "Idempotency-Key": "concurrent-operator" },
     data: { acknowledge_duplicate_risk: true },
   });
@@ -511,7 +511,7 @@ test("lost batch and resolution responses reuse identical bodies and keys", asyn
     .fill("Verified receipt with the destination audit team.");
   const resolutions: { key: string | undefined; body: string | null }[] = [];
   let firstResolution = true;
-  await page.route(`**/v1/failures/${id(3)}/resolve`, async (route) => {
+  await page.route(`**/v1/records/${id(3)}/resolve`, async (route) => {
     resolutions.push({
       key: route.request().headers()["idempotency-key"],
       body: route.request().postData(),
@@ -546,7 +546,7 @@ test("visible-page polling stops while hidden and resumes on visibility", async 
 }) => {
   let polls = 0;
   page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/v1/failures") polls++;
+    if (new URL(request.url()).pathname === "/v1/records") polls++;
   });
   await signIn(page);
   await page.evaluate(() => {
@@ -837,7 +837,7 @@ test("a rejected active session clears evidence and explains why sign-in is need
   page,
 }) => {
   await signIn(page);
-  await page.route("**/v1/failures?*", (route) =>
+  await page.route("**/v1/records?*", (route) =>
     route.fulfill({
       status: 401,
       contentType: "application/problem+json",
@@ -899,7 +899,7 @@ test("inbox service errors stay readable and preserve previously loaded records"
   page,
 }, info) => {
   await signIn(page);
-  await page.route("**/v1/failures?*", (route) =>
+  await page.route("**/v1/records?*", (route) =>
     route.fulfill({
       status: 503,
       contentType: "application/problem+json",
@@ -923,4 +923,31 @@ test("inbox service errors stay readable and preserve previously loaded records"
     fullPage: true,
     animations: "disabled",
   });
+});
+
+test("dismissing an unknown failure preserves delivery evidence and disables recovery", async ({ page, request }) => {
+  await signIn(page);
+  await status(page, "Unknown outcome");
+  await page.getByRole("button", { name: `Inspect ${id(3)}`, exact: true }).click();
+  const selected = page.getByRole("region", { name: "Selected failure" });
+  await selected.getByRole("button", { name: "Dismiss failure", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Dismiss failure", exact: true });
+  await dialog.getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "Dismiss and delete artifacts", exact: true }).click();
+  await expect(dialog).toContainText("Dismissed");
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(selected.locator(".delivery-state")).toHaveText("Dismissed");
+  await expect(selected.getByRole("button", { name: "Retry delivery", exact: true })).toBeDisabled();
+  await expect(selected.getByRole("button", { name: "Confirm outcome", exact: true })).toHaveCount(0);
+  await expect(selected).toContainText("Last delivery state");
+  await expect(selected.locator(".delivery-metadata")).toContainText("Unknown outcome");
+  await selected.getByText("Delivery guidance", { exact: true }).click();
+  await expect(selected).toContainText("Recovery was stopped");
+  const record = await detail(request, 3);
+  expect(record.delivery_status).toBe("unknown");
+  expect(record.dismissed_at).toBeTruthy();
+  expect(record.runs[0].status).toBe("unknown");
+  expect(record.artifacts.stored).toBe(false);
+  await page.getByRole("tab", { name: "Dismissed", exact: true }).click();
+  await expect(page.getByRole("button", { name: `Inspect ${id(3)}`, exact: true })).toBeVisible();
 });

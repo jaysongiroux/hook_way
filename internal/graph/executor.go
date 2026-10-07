@@ -348,7 +348,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 	if b.spec.Detached && (!isTerminal || len(terminal.Deliveries) == 0) {
 		e.addDelivery(e.delivery(b, err, false))
 	}
-	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err, Target: b.target, Dropped: isTerminal && b.spec.Type == "filter" && err == nil, DropReason: terminal.DropReason})
+	observe(e.opts.OnNode, NodeEvent{NodeID: id, NodeType: b.spec.Type, Duration: time.Since(started), Err: err, Target: b.target, Dropped: isTerminal && (b.spec.Type == "filter" || b.spec.Type == "sample") && err == nil, DropReason: terminal.DropReason})
 	// A successful reservation must be released even when its output is malformed.
 	if runErr == nil && isComp {
 		if capture, ok := comp.(CompensationInput); ok {

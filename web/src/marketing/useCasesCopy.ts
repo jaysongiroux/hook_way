@@ -20,6 +20,15 @@ export const USE_CASES_INTRO = {
 
 export const USE_CASES: UseCase[] = [
   {
+    id: "sampled-inspection",
+    title: "Spot-check webhooks while delivering every event",
+    summary: "Capture a sample of incoming webhook bodies and context for your team to inspect.",
+    detail: "Sample → Inspect runs on a separate observation branch while Publish receives every event. The example samples about 5%. Inspections are view only; uploads are best effort and share replay retention and storage limits.",
+    examplePath: "examples/inspect.yaml",
+    exampleHref: repoBlob("examples/inspect.yaml"),
+    exampleLabel: "inspect.yaml",
+  },
+  {
     id: "multipart-s3",
     title: "Store upload attachments in S3, metadata elsewhere",
     summary:

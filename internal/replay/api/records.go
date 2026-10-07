@@ -23,7 +23,7 @@ import (
 const maxFilterLen = 1024
 
 var listParams = map[string]bool{
-	"flow": true, "node_id": true, "destination_id": true, "status": true, "kind": true,
+	"flow": true, "node_id": true, "destination_id": true, "delivery_status": true, "kind": true, "replay_mode": true, "dismissed": true,
 	"retryable": true, "since": true, "until": true, "limit": true, "cursor": true,
 }
 
@@ -38,7 +38,7 @@ func (a *api) list(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	resp := listResponse{Items: make([]failureSummary, 0, len(page.Items)), NextCursor: page.NextCursor}
+	resp := RecordList{Items: make([]RecordSummary, 0, len(page.Items)), NextCursor: page.NextCursor}
 	for _, f := range page.Items {
 		resp.Items = append(resp.Items, summaryOf(f))
 	}
@@ -65,12 +65,22 @@ func parseFilter(q url.Values) (store.Filter, error) {
 		}
 	}
 	f := store.Filter{Flow: q.Get("flow"), NodeID: q.Get("node_id"), DestinationID: q.Get("destination_id"),
-		Status: q.Get("status"), Kind: q.Get("kind"), Cursor: q.Get("cursor")}
-	if f.Status != "" && !slices.Contains(store.Statuses, f.Status) {
-		return store.Filter{}, newError(http.StatusBadRequest, "invalid_parameter", "status must be one of %s", strings.Join(store.Statuses, ", "))
+		DeliveryStatus: q.Get("delivery_status"), ReplayMode: q.Get("replay_mode"), Kind: q.Get("kind"), Cursor: q.Get("cursor")}
+	if f.DeliveryStatus != "" && !slices.Contains(store.DeliveryStatuses, f.DeliveryStatus) {
+		return store.Filter{}, newError(http.StatusBadRequest, "invalid_parameter", "delivery_status must be one of %s", strings.Join(store.DeliveryStatuses, ", "))
 	}
-	if f.Kind != "" && f.Kind != replaywire.KindResume && f.Kind != replaywire.KindPublishOnly {
-		return store.Filter{}, newError(http.StatusBadRequest, "invalid_parameter", "kind must be resume or publish_only")
+	if f.Kind != "" && f.Kind != replaywire.KindFailure && f.Kind != replaywire.KindInspection {
+		return store.Filter{}, newError(http.StatusBadRequest, "invalid_parameter", "kind must be failure or inspection")
+	}
+	if f.ReplayMode != "" && f.ReplayMode != replaywire.ReplayResume && f.ReplayMode != replaywire.ReplayPublishOnly {
+		return store.Filter{}, newError(http.StatusBadRequest, "invalid_parameter", "replay_mode must be resume or publish_only")
+	}
+	if value := q.Get("dismissed"); value != "" {
+		b, err := strconv.ParseBool(value)
+		if err != nil || (value != "true" && value != "false") {
+			return store.Filter{}, newError(http.StatusBadRequest, "invalid_parameter", "dismissed must be true or false")
+		}
+		f.Dismissed = &b
 	}
 	switch v := q.Get("retryable"); v {
 	case "":
@@ -120,7 +130,7 @@ func (a *api) payload(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, store.ErrCorrupt):
 			a.metrics.PayloadDownload(metrics.DownloadCorrupt)
-			a.logger.Error("stored payload failed its integrity check", "failure_id", id)
+			a.logger.Error("stored payload failed its integrity check", "record_id", id)
 		case errors.Is(err, store.ErrGone):
 			a.metrics.PayloadDownload(metrics.DownloadGone)
 		case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrNoPayload):
@@ -163,6 +173,7 @@ func (a *api) dismiss(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	a.metrics.Dismissal()
+	a.metrics.Dismissal(f.Kind)
+	a.logger.Info("record dismissed", "record_id", f.ID, "kind", f.Kind, "delivery_status", f.DeliveryStatus, "dismissed", true)
 	writeJSON(w, http.StatusOK, summaryOf(f))
 }

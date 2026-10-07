@@ -25,7 +25,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Records in the shared database (sampled by every replica; max across replicas).",
+      "description": "Shared records grouped by kind, retained delivery state and dismissal. Inspections have no delivery state. Aggregate sampled replicas with max.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -52,12 +52,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (status) (hookway_replay_records{job=~\"$job\"})",
-          "legendFormat": "{{status}}",
+          "expr": "max by (kind, delivery_status, dismissed) (hookway_replay_records{job=~\"$job\"})",
+          "legendFormat": "{{kind}} {{delivery_status}} dismissed={{dismissed}}",
           "refId": "A"
         }
       ],
-      "title": "Records by status",
+      "title": "Records by kind and state",
       "type": "timeseries",
       "options": {
         "legend": {
@@ -126,7 +126,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "POST /v1/failures by outcome: created, duplicate, conflict, capacity, too_large, invalid.",
+      "description": "POST /v1/records by kind and outcome: created, duplicate, conflict, capacity, too_large, invalid. Unvalidated uploads use kind=unknown.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -147,8 +147,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (outcome) (increase(hookway_replay_captures_total{job=~\"$job\"}[$__rate_interval]))",
-          "legendFormat": "{{outcome}}",
+          "expr": "sum by (kind, outcome) (increase(hookway_replay_captures_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{kind}} {{outcome}}",
           "refId": "A"
         }
       ],

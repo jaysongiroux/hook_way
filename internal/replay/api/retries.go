@@ -14,16 +14,16 @@ type retryBody struct {
 }
 
 type batchBody struct {
-	FailureIDs               []string `json:"failure_ids"`
+	RecordIDs                []string `json:"record_ids"`
 	AcknowledgeDuplicateRisk bool     `json:"acknowledge_duplicate_risk"`
 }
 
 type batchItem struct {
-	FailureID string `json:"failure_id"`
-	Status    int    `json:"status"`
-	RunID     string `json:"run_id,omitempty"`
-	Code      string `json:"code,omitempty"`
-	Detail    string `json:"detail,omitempty"`
+	RecordID string `json:"record_id"`
+	Status   int    `json:"status"`
+	RunID    string `json:"run_id,omitempty"`
+	Code     string `json:"code,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 type retryResponse struct {
@@ -64,7 +64,7 @@ func (a *api) retry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.store.RequestRetry(r.Context(), store.RetryRequest{
-		FailureID: r.PathValue("id"), Actor: auth.Actor(r.Context()), IdempotencyKey: key,
+		RecordID: r.PathValue("id"), Actor: auth.Actor(r.Context()), IdempotencyKey: key,
 		AcknowledgeDuplicateRisk: body.AcknowledgeDuplicateRisk,
 	})
 	if err != nil {
@@ -91,21 +91,21 @@ func (a *api) retryBatch(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	ids := body.FailureIDs
+	ids := body.RecordIDs
 	if ids == nil {
 		ids = []string{}
 	} // nil means a single action to the shared input validator
-	issues := uicontract.ValidateReplayAction(uicontract.ReplayActionInput{IdempotencyKey: key, FailureIDs: ids}).Issues
+	issues := uicontract.ValidateReplayAction(uicontract.ReplayActionInput{IdempotencyKey: key, RecordIDs: ids}).Issues
 	if len(issues) > 0 {
 		a.fail(w, r, newError(http.StatusBadRequest, "invalid_request", "%s", issues[0].Message))
 		return
 	}
-	items := make([]batchItem, 0, len(body.FailureIDs))
+	items := make([]batchItem, 0, len(body.RecordIDs))
 	created := 0
 	defer func() { a.metrics.RunsCreated(metrics.ModeBatch, created) }()
-	for _, id := range body.FailureIDs {
+	for _, id := range body.RecordIDs {
 		res, err := a.store.RequestRetry(r.Context(), store.RetryRequest{
-			FailureID: id, Actor: auth.Actor(r.Context()), IdempotencyKey: key + ":" + id,
+			RecordID: id, Actor: auth.Actor(r.Context()), IdempotencyKey: key + ":" + id,
 			AcknowledgeDuplicateRisk: body.AcknowledgeDuplicateRisk,
 		})
 		if err != nil {
@@ -114,13 +114,13 @@ func (a *api) retryBatch(w http.ResponseWriter, r *http.Request) {
 				a.fail(w, r, err)
 				return
 			}
-			items = append(items, batchItem{FailureID: id, Status: ae.status, Code: ae.code, Detail: ae.detail})
+			items = append(items, batchItem{RecordID: id, Status: ae.status, Code: ae.code, Detail: ae.detail})
 			continue
 		}
 		if res.Created {
 			created++
 		}
-		items = append(items, batchItem{FailureID: id, Status: http.StatusAccepted, RunID: res.RunID})
+		items = append(items, batchItem{RecordID: id, Status: http.StatusAccepted, RunID: res.RunID})
 	}
 	writeJSON(w, http.StatusOK, batchResponse{Results: items})
 }

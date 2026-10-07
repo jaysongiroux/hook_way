@@ -14,7 +14,7 @@ import {
 } from "./nodeSchema";
 
 test("every catalog node type has palette metadata", () => {
-  expect(NODE_TYPES).toHaveLength(22);
+  expect(NODE_TYPES).toHaveLength(24);
   for (const type of NODE_TYPES) {
     const meta = NODE_SCHEMAS[type];
     expect(meta.input, type).toBeTruthy();
@@ -27,6 +27,8 @@ test("every catalog node type has palette metadata", () => {
   expect(NODE_SCHEMAS.no_auth.on_error).toBe(false);
   // if_else cannot fail: a condition that does not hold is the false branch.
   expect(NODE_SCHEMAS.if_else.on_error).toBe(false);
+  expect(NODE_SCHEMAS.sample.on_error).toBe(false);
+  expect(NODE_SCHEMAS.inspect.on_error).toBe(false);
   expect(NODE_SCHEMAS.rate_limit.on_error).toBe(true);
   expect(NODE_SCHEMAS.auth.on_error).toBe(true);
   expect(NODE_SCHEMAS.envelope.on_error).toBe(true);
@@ -133,5 +135,6 @@ test("generated batch capabilities preserve the supported children and their ord
     "if_else",
     "switch",
     "publish",
+    "sample",
   ]);
 });

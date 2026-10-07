@@ -1,0 +1,35 @@
+# Local spot-checking: start the replay service/console with `make dev-up`.
+# Run this core separately on :8083 using the default local capture/control tokens.
+# Every request is published to RabbitMQ. Approximately 5% is also inspected.
+server:
+  addr: ":8083"
+  max_body_bytes: 1048576
+replay:
+  url: "http://localhost:8081"
+  capture_token: "${REPLAY_CAPTURE_TOKEN}"
+  control:
+    addr: ":9093"
+    token: "${REPLAY_CONTROL_TOKEN}"
+destinations:
+  all_events:
+    type: rabbitmq
+    rabbitmq:
+      url: "amqp://guest:guest@localhost:5672/"
+      exchange: "hookway.inspected"
+      exchange_type: direct
+      durable: true
+      declare_queues: true
+flows:
+  inspected_events:
+    capture_failures: false
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/inspect, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      # Public access is only for this local demonstration.
+      - {id: public, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: sample_events, type: sample, rate: 0.05}
+      - {id: inspect_sample, type: inspect}
+      - {id: send_all, type: publish, destination: all_events, target: inspected_events, create: true}
+    # The observation branch executes first, then Publish receives all traffic.
+    edges: [in>body, body>public, public>env, env>sample_events, sample_events>inspect_sample, env>send_all]

@@ -54,11 +54,11 @@ func TestConsoleBrowserFixture(t *testing.T) {
 	}
 	defer pool.Close()
 	seed := func() error {
-		if _, err := pool.Exec(ctx, "TRUNCATE failures CASCADE; UPDATE usage SET records=0, bytes=0"); err != nil {
+		if _, err := pool.Exec(ctx, "TRUNCATE records CASCADE; UPDATE usage SET records=0, bytes=0"); err != nil {
 			return err
 		}
 		now := time.Now().UTC()
-		makeFailure := func(n int) store.NewFailure {
+		makeFailure := func(n int) store.NewRecord {
 			payload := []byte(`{"event":"order.created","amount":9007199254740993,"decimal":0.1234567890123456789,"unsafe":"<script>window.payloadExecuted=true</script>"}`)
 			if n == 7 {
 				payload = []byte(strings.Repeat("x", 80*1024))
@@ -66,8 +66,18 @@ func TestConsoleBrowserFixture(t *testing.T) {
 			if n == 8 {
 				payload = []byte{0, 1, 2, 255}
 			}
+			if n == 68 {
+				payload = []byte(`{"body":{"fields":{"account":"synthetic"},"files":{"document":{"filename":"receipt.pdf","content_type":"application/pdf","size":4,"content":"AAEC/w=="},"notes":{"filename":"notes.txt","content_type":"text/plain","size":12,"content_omitted":true}}}}`)
+			}
 			snapshot := []byte("browser-fixture-snapshot")
-			f := store.NewFailure{Metadata: replaywire.FailureMetadata{ID: fixtureID(n), Kind: replaywire.KindPublishOnly, Flow: "orders", NodeID: "publish_receipt", NodeType: "publish", DestinationID: "receipt-webhook", DestinationType: "webhook", Target: "https://destination.example.test/hooks/orders", RenderedTarget: "https://destination.example.test/hooks/orders", EventID: fmt.Sprintf("evt-demo-%d", n), FailedAt: now.Add(-time.Duration(n) * time.Minute), ReceivedAt: now.Add(-time.Duration(n)*time.Minute - time.Second), InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, ErrorMessage: "Destination returned HTTP 503. No receipt was confirmed.", Attempts: 2, Retryable: true, Snapshot: artifact(snapshot, 1, ""), Payload: artifact(payload, 0, "application/json")}, Snapshot: snapshot, Payload: payload, Actor: "demo-capture"}
+			f := store.NewRecord{Metadata: replaywire.RecordMetadata{ID: fixtureID(n), Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayPublishOnly, Flow: "orders", NodeID: "publish_receipt", NodeType: "publish", DestinationID: "receipt-webhook", DestinationType: "webhook", Target: "https://destination.example.test/hooks/orders", RenderedTarget: "https://destination.example.test/hooks/orders", EventID: fmt.Sprintf("evt-demo-%d", n), OccurredAt: now.Add(-time.Duration(n) * time.Minute), ReceivedAt: now.Add(-time.Duration(n)*time.Minute - time.Second), InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, ErrorMessage: "Destination returned HTTP 503. No receipt was confirmed.", Attempts: 2, Retryable: true, Snapshot: artifact(snapshot, 1, ""), Payload: artifact(payload, 0, "application/json")}, Snapshot: snapshot, Payload: payload, Actor: "demo-capture"}
+			if n == 4 || n == 100 {
+				f.Metadata.ReplayMode = replaywire.ReplayResume
+			}
+			if n == 8 {
+				f.Metadata.Payload.ContentType = "application/octet-stream"
+				f.Metadata.Payload.Filename = "original.bin"
+			}
 			if n == 6 {
 				f.Snapshot = nil
 				f.Payload = nil
@@ -75,6 +85,7 @@ func TestConsoleBrowserFixture(t *testing.T) {
 				f.Metadata.Payload = nil
 				f.Metadata.Retryable = false
 				f.Metadata.NotRetryableReason = replaywire.NotRetryableTooLarge
+				f.Metadata.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
 			}
 			if n > 8 {
 				f.Metadata.Flow = "archive"
@@ -90,7 +101,7 @@ func TestConsoleBrowserFixture(t *testing.T) {
 				return err
 			}
 			if n >= 2 && n <= 4 {
-				run, err := st.RequestRetry(ctx, store.RetryRequest{FailureID: f.Metadata.ID, Actor: "demo-operator", IdempotencyKey: fmt.Sprintf("fixture-%d", n)})
+				run, err := st.RequestRetry(ctx, store.RetryRequest{RecordID: f.Metadata.ID, Actor: "demo-operator", IdempotencyKey: fmt.Sprintf("fixture-%d", n)})
 				if err != nil {
 					return err
 				}
@@ -105,13 +116,55 @@ func TestConsoleBrowserFixture(t *testing.T) {
 				}
 				if n == 4 {
 					outcome.Result = json.RawMessage(`{"delivered":true}`)
-					outcome.Children = []store.NewFailure{makeFailure(100)}
+					outcome.Children = []store.NewRecord{makeFailure(100)}
 				}
 				if _, err := st.FinalizeRun(ctx, outcome); err != nil {
 					return err
 				}
 			}
 			if n == 5 {
+				if _, err := st.Dismiss(ctx, f.Metadata.ID, "demo-operator"); err != nil {
+					return err
+				}
+			}
+		}
+		for n := 201; n <= 210; n++ {
+			body := replaywire.InspectionBody{ContentType: "application/json", Encoding: "utf8", Content: `{"event":"order.created","amount":9007199254740993,"decimal":0.1234567890123456789,"unsafe":"<script>window.payloadExecuted=true</script>"}`}
+			switch n {
+			case 202:
+				body = replaywire.InspectionBody{ContentType: "application/octet-stream", Encoding: "base64", Content: "AAEC/w=="}
+			case 204:
+				body.Content = strings.Repeat("x", 1100*1024)
+			case 205:
+				body.Content = ""
+			case 206:
+				body = replaywire.InspectionBody{ContentType: "application/xml", Encoding: "utf8", Content: `<order><id>42</id><script>window.payloadExecuted=true</script></order>`}
+			case 207:
+				body.Content = strings.Repeat("x", 80*1024)
+			case 209:
+				body.Content = `{"fields":{"account":"synthetic"},"files":{"document":{"filename":"receipt.pdf","content_type":"application/pdf","size":4,"content":"AAEC/w=="},"document#2":{"filename":"second receipt.pdf","content_type":"application/pdf","size":0,"content":""},"notes":{"filename":"notes.txt","content_type":"text/plain","size":12,"content_omitted":true}}}`
+			case 210:
+				// Larger than the text preview limit: file downloads must not be truncated.
+				body.Content = fmt.Sprintf(`{"fields":{},"files":{"large":{"filename":"large.txt","content_type":"text/plain","size":%d,"content":"%s"}}}`, 900*1024, strings.Repeat("eHh4", 300*1024))
+			}
+			payload, err := json.Marshal(replaywire.InspectionPayload{Version: replaywire.InspectionPayloadVersion, Body: body, Headers: http.Header{"authorization": {"[REDACTED]"}, "content-type": {body.ContentType}}, Variables: map[string]string{"tenant": "north", "order_id": "42"}, Method: "POST", Path: "/webhooks/orders/42"})
+			if err != nil {
+				return err
+			}
+			observed := now.Add(-time.Duration(n-200) * time.Minute)
+			f := store.NewRecord{Metadata: replaywire.RecordMetadata{ID: fixtureID(n), Kind: replaywire.KindInspection, Flow: "orders", NodeID: "inspect_sample", NodeType: "inspect", EventID: fmt.Sprintf("evt-inspect-%d", n), RequestID: "request-inspect-42", TraceID: "trace-inspect-42", OccurredAt: observed, ReceivedAt: observed.Add(-time.Second), InboundStatus: 503, Retryable: false, NotRetryableReason: replaywire.NotRetryableInspectionOnly, Payload: artifact(payload, 0, "application/json")}, Payload: payload, Actor: "demo-capture"}
+			if n == 203 {
+				f.Metadata.Payload = nil
+				f.Payload = nil
+				f.Metadata.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
+			}
+			if err := f.Metadata.Validate(); err != nil {
+				return err
+			}
+			if _, err := st.Ingest(ctx, f); err != nil {
+				return err
+			}
+			if n == 208 {
 				if _, err := st.Dismiss(ctx, f.Metadata.ID, "demo-operator"); err != nil {
 					return err
 				}

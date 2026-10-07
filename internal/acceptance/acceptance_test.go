@@ -484,10 +484,10 @@ func metric(t *testing.T, u, name string) float64 {
 }
 
 type failureItem struct {
-	ID      string `json:"id"`
-	EventID string `json:"event_id"`
-	NodeID  string `json:"node_id"`
-	Status  string `json:"status"`
+	ID             string `json:"id"`
+	EventID        string `json:"event_id"`
+	NodeID         string `json:"node_id"`
+	DeliveryStatus string `json:"delivery_status"`
 }
 
 // Spec acceptance: an outage under a partial skip_failed failure is
@@ -507,7 +507,7 @@ func TestAcceptance_OutageThenBatchRetryDeliversOnce(t *testing.T) {
 	}
 	waitFor(t, "every failed audit publish captured", 30*time.Second, func() bool {
 		open.Items = nil
-		return s.api(t, http.MethodGet, "/v1/failures?status=open&node_id=audit&limit=500", nil, &open) == http.StatusOK &&
+		return s.api(t, http.MethodGet, "/v1/records?kind=failure&delivery_status=open&dismissed=false&node_id=audit&limit=500", nil, &open) == http.StatusOK &&
 			len(open.Items) == n
 	})
 	if orders := s.orders.counts(); len(orders) != n {
@@ -523,13 +523,13 @@ func TestAcceptance_OutageThenBatchRetryDeliversOnce(t *testing.T) {
 	}
 	var batch struct {
 		Results []struct {
-			FailureID string `json:"failure_id"`
-			Status    int    `json:"status"`
-			RunID     string `json:"run_id"`
-			Code      string `json:"code"`
+			RecordID string `json:"record_id"`
+			Status   int    `json:"status"`
+			RunID    string `json:"run_id"`
+			Code     string `json:"code"`
 		} `json:"results"`
 	}
-	if code := s.api(t, http.MethodPost, "/v1/retries", map[string]any{"failure_ids": ids}, &batch, "Idempotency-Key", "acceptance-batch-1"); code != http.StatusOK {
+	if code := s.api(t, http.MethodPost, "/v1/retries", map[string]any{"record_ids": ids}, &batch, "Idempotency-Key", "acceptance-batch-1"); code != http.StatusOK {
 		t.Fatalf("batch retry answered %d", code)
 	}
 	for _, r := range batch.Results {
@@ -565,7 +565,7 @@ func TestAcceptance_OutageThenBatchRetryDeliversOnce(t *testing.T) {
 	var resolved struct {
 		Items []failureItem `json:"items"`
 	}
-	s.api(t, http.MethodGet, "/v1/failures?status=resolved&limit=500", nil, &resolved)
+	s.api(t, http.MethodGet, "/v1/records?kind=failure&delivery_status=resolved&dismissed=false&limit=500", nil, &resolved)
 	if len(resolved.Items) != n {
 		t.Fatalf("%d records resolved, want %d", len(resolved.Items), n)
 	}

@@ -130,7 +130,7 @@ type Terminal struct {
 	// SideEffects is monotonic request-local evidence: an outbound operation
 	// succeeded or may have reached its destination. Such requests retain guards.
 	SideEffects bool
-	// DropReason is finite, configuration-supplied filter metadata.
+	// DropReason is finite metadata identifying an intentional filter or sample drop.
 	DropReason string
 	Response   *Response
 	Deliveries []Delivery

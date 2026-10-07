@@ -58,7 +58,7 @@ type Outcome struct {
 	Call     string                    // the last executor_calls_total outcome ("" when core was never called)
 	Detail   string                    // error text for the run's result
 	Result   *replaywire.DeliverResult // core's report, when it sent a valid one
-	Children []store.NewFailure        // downstream failures of a succeeded run
+	Children []store.NewRecord         // downstream failures of a succeeded run
 }
 
 // ExecutorOptions configures the client to core's control listener.
@@ -138,6 +138,9 @@ func rejected(format string, args ...any) Outcome {
 // Deliver sends one run to core within execution_timeout and classifies the
 // answer. It resends only when core provably did not start the delivery.
 func (e *Executor) Deliver(ctx context.Context, run store.ClaimedRun, snapshot []byte) Outcome {
+	if run.Record.Kind != replaywire.KindFailure || (run.Record.ReplayMode != replaywire.ReplayResume && run.Record.ReplayMode != replaywire.ReplayPublishOnly) {
+		return Outcome{Status: store.RunBlocked, Reason: "inspection_only", Detail: "This record has no executable replay snapshot."}
+	}
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 	body, contentType, err := e.requestBody(run, snapshot)
@@ -164,9 +167,9 @@ func (e *Executor) Deliver(ctx context.Context, run store.ClaimedRun, snapshot [
 }
 
 func (e *Executor) requestBody(run store.ClaimedRun, snapshot []byte) ([]byte, string, error) {
-	f := run.Failure
+	f := run.Record
 	req := replaywire.DeliverRequest{
-		RunID: run.Run.RunID, FailureID: f.ID, Kind: f.Kind, Flow: f.Flow, NodeID: f.NodeID, NodeType: f.NodeType,
+		RunID: run.Run.RunID, RecordID: f.ID, Kind: f.Kind, ReplayMode: f.ReplayMode, Flow: f.Flow, NodeID: f.NodeID, NodeType: f.NodeType,
 		DestinationID: f.DestinationID, DestinationType: f.DestinationType, RenderedTarget: f.RenderedTarget,
 		NodeConfigHash: f.NodeConfigHash, DestinationHash: f.DestinationHash, DeadlineMS: e.budget.Milliseconds(),
 		InboundStatus: f.InboundStatus, MaxRecordBytes: e.maxRecordBytes,
@@ -302,11 +305,11 @@ func (e *Executor) readResult(resp *http.Response, run store.ClaimedRun) Outcome
 	if err := dec.Decode(&result); err != nil {
 		return ambiguous("decode the result: %v", err)
 	}
-	f := run.Failure
+	f := run.Record
 	if err := result.Validate(f.NodeID); err != nil {
 		return ambiguous("%v", err)
 	}
-	if f.Kind == replaywire.KindPublishOnly && len(result.Children) > 0 {
+	if f.ReplayMode == replaywire.ReplayPublishOnly && len(result.Children) > 0 {
 		return ambiguous("a publish_only run cannot have children")
 	}
 	out := Outcome{Status: store.RunSucceeded, Call: metrics.CallOK, Result: &result}
@@ -331,7 +334,7 @@ func (e *Executor) readResult(resp *http.Response, run store.ClaimedRun) Outcome
 		}
 		delete(parts, snapName)
 		delete(parts, payName)
-		out.Children = append(out.Children, store.NewFailure{Metadata: child, Snapshot: snap, Payload: pay})
+		out.Children = append(out.Children, store.NewRecord{Metadata: child, Snapshot: snap, Payload: pay})
 	}
 	if len(parts) > 0 {
 		extra := make([]string, 0, len(parts))

@@ -322,7 +322,7 @@ func TestCaptureMetrics(t *testing.T) {
 	m.CaptureDropped("orders", "capacity")
 	m.SetCaptureBufferBytes(4096)
 	const want = `
-# HELP hookway_capture_buffer_bytes Bytes of captured failures waiting for upload, including in-flight uploads.
+# HELP hookway_capture_buffer_bytes Bytes of captured failures and inspections waiting for upload, including in-flight uploads.
 # TYPE hookway_capture_buffer_bytes gauge
 hookway_capture_buffer_bytes 4096
 # HELP hookway_capture_dropped_total Captured failures dropped before reaching the replay service, by reason.

@@ -55,109 +55,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/failures": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Cursor pagination, newest failed records first (failed_at then id descending). Unknown or repeated query parameters are rejected. Empty filters are omitted. Text filters accept at most 1024 bytes printable UTF-8. */
-        get: operations["listFailures"];
-        put?: never;
-        /** @description Captures one failure as multipart/form-data. Metadata is strict JSON, maximum 1 MiB, without duplicate or unknown parts. Snapshot and payload are exact binary bytes, required exactly when metadata declares them (both for retryable records). Each artifact is bounded by configured retention.max_record_bytes; the entire request by twice that plus 1 MiB metadata and 64 KiB framing. Digests and sizes must match. Repeated identical capture returns 200. */
-        post: operations["captureFailure"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/failures/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Failure metadata, current action eligibility, artifact descriptions, run history and child IDs. Eligibility is independent of scopes and rechecked at action time. Artifact bytes are not included. */
-        get: operations["getFailure"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/failures/{id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Dismisses a failure and removes stored artifacts. Running or invalid states reject dismissal. Request body is ignored. */
-        post: operations["dismissFailure"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/failures/{id}/payload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** @description Downloads exact captured bytes after integrity verification. Missing capture returns 404; expired or dismissed artifact returns 410. */
-        get: operations["downloadPayload"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/failures/{id}/resolve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Records independent operator confirmation of an unknown outcome; it sends nothing. Requires an investigation note and no active retry. Preserves original runs, results, artifacts and retention expiry. An identical actor/key/body repeat returns the original resolution; changed body/key conflicts reject. Idempotency keys are scoped separately from retry keys, until record retention deletes the resolution. */
-        post: operations["resolveFailure"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/failures/{id}/retries": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** @description Queues a retry for an unexpired record. Both a newly created run and an idempotent repeated request return 202. Unknown JSON fields or trailing data are rejected; an empty body is allowed. Unknown prior delivery outcomes require duplicate-risk acknowledgement. */
-        post: operations["retryFailure"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -175,6 +72,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Cursor pagination, newest records first by failure or inspection time then id. Omitted kind lists both failures and inspections; filter kind to select one. Unknown or repeated query parameters are rejected. Empty filters are omitted. Text filters accept at most 1024 bytes printable UTF-8. */
+        get: operations["listRecords"];
+        put?: never;
+        /** @description Captures one failure or inspection as multipart/form-data. Metadata is strict JSON, maximum 1 MiB, without duplicate or unknown parts. Snapshot and payload are exact binary bytes, required exactly when metadata declares them (both for retryable records). Each artifact is bounded by configured retention.max_record_bytes; the entire request by twice that plus 1 MiB metadata and 64 KiB framing. Digests and sizes must match. Repeated identical capture returns 200. */
+        post: operations["captureRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/records/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Record metadata, current action eligibility, artifact descriptions, run history and child IDs. Eligibility is independent of scopes and rechecked at action time. Artifact bytes are not included. */
+        get: operations["getRecord"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/records/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Dismisses an eligible record and removes stored artifacts. Running or invalid states reject dismissal. Request body is ignored. */
+        post: operations["dismissRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/records/{id}/payload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Downloads exact captured bytes after integrity verification. Missing capture returns 404; expired or dismissed artifact returns 410. */
+        get: operations["downloadPayload"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/records/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Records independent operator confirmation of an unknown outcome; it sends nothing. Requires an investigation note and no active retry. Preserves original runs, results, artifacts and retention expiry. An identical actor/key/body repeat returns the original resolution; changed body/key conflicts reject. Idempotency keys are scoped separately from retry keys, until record retention deletes the resolution. */
+        post: operations["resolveRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/records/{id}/retries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Queues a retry for an unexpired record. Both a newly created run and an idempotent repeated request return 202. Unknown JSON fields or trailing data are rejected; an empty body is allowed. Unknown prior delivery outcomes require duplicate-risk acknowledgement. */
+        post: operations["retryRecord"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/retries": {
         parameters: {
             query?: never;
@@ -184,8 +184,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description Requests one run per unique failure ID, using <Idempotency-Key>:<failure_id> for each item. HTTP 200 includes per-item 202 successes and classified errors; unexpected failures return 500 and earlier items may already have been accepted. */
-        post: operations["retryFailures"];
+        /** @description Requests one run per unique failure ID, using <Idempotency-Key>:<record_id> for each item. HTTP 200 includes per-item 202 successes and classified errors; unexpected failures return 500 and earlier items may already have been accepted. */
+        post: operations["retryRecords"];
         delete?: never;
         options?: never;
         head?: never;
@@ -228,9 +228,9 @@ export interface components {
         };
         ActionValidationInput: {
             action?: string;
-            failure_ids?: string[] | null;
             idempotency_key: string;
             note?: string;
+            record_ids?: string[] | null;
             reference?: string;
         };
         ActionValidationResult: {
@@ -255,7 +255,7 @@ export interface components {
         BatchRetryItem: {
             code?: string;
             detail?: string;
-            failure_id: string;
+            record_id: string;
             run_id?: string;
             status: number;
         } & {
@@ -264,7 +264,7 @@ export interface components {
         BatchRetryRequest: {
             /** @default false */
             acknowledge_duplicate_risk?: boolean | null;
-            failure_ids: (string | null)[];
+            record_ids: (string | null)[];
         };
         BatchRetryResponse: {
             results: components["schemas"]["BatchRetryItem"][];
@@ -277,7 +277,7 @@ export interface components {
             [key: string]: unknown;
         };
         DeliverResult: {
-            children: components["schemas"]["FailureMetadata"][] | null;
+            children: components["schemas"]["RecordMetadata"][] | null;
             core_instance?: string;
             core_version?: string;
             destination_hash?: string;
@@ -295,132 +295,32 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        FailureActions: {
-            dismiss: components["schemas"]["ActionEligibility"];
-            resolve: components["schemas"]["ActionEligibility"];
-            retry: components["schemas"]["ActionEligibility"];
-        } & {
-            [key: string]: unknown;
-        };
-        FailureDetail: {
-            actions: components["schemas"]["FailureActions"];
-            artifacts: components["schemas"]["ArtifactsView"];
-            attempts: number;
-            /** Format: date-time */
-            captured_at: string;
-            children: string[];
-            core_instance?: string;
-            core_version?: string;
-            destination_hash?: string;
-            destination_id?: string;
-            destination_type?: string;
-            error_class: string;
-            error_message?: string;
-            event_id: string;
-            /** Format: date-time */
-            expires_at: string;
-            /** Format: date-time */
-            failed_at: string;
-            flow: string;
-            history: components["schemas"]["EventView"][];
-            id: string;
-            idempotency_key?: string;
-            inbound_status: number;
-            kind: string;
-            node_config_hash?: string;
-            node_id: string;
-            node_type: string;
-            not_retryable_reason?: string;
-            parent_id?: string;
-            /** Format: date-time */
-            received_at: string;
-            rendered_target?: string;
-            request_id?: string;
-            resolution?: components["schemas"]["Resolution"] | null;
-            /** @enum {string} */
-            resolution_source?: "operator_confirmed" | "retry_succeeded";
-            retryable: boolean;
-            root_id: string;
-            runs: components["schemas"]["Run"][];
-            status: string;
-            target?: string;
-            trace_id?: string;
-        } & {
-            [key: string]: unknown;
-        };
-        FailureList: {
-            items: components["schemas"]["FailureSummary"][];
-            next_cursor?: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description Strict metadata JSON. Text fields are bounded printable UTF-8 (normally 1024 bytes); error_message permits newlines and is bounded to 4096 bytes. publish_only requires destination_id, destination_type, target and rendered_target. Retryable records require snapshot and payload declarations; non-retryable records carry no artifacts and require too_large or unsupported reason. Snapshot size/version must be positive; payload size may be zero. Artifact size and SHA256 must exactly match the binary parts. */
-        FailureMetadata: {
-            attempts?: number;
-            core_instance?: string;
-            core_version?: string;
-            destination_hash?: string;
-            destination_id?: string;
-            destination_type?: string;
-            error_class: string;
-            error_message?: string;
-            event_id: string;
-            /** Format: date-time */
-            failed_at: string;
-            flow: string;
-            id: string;
-            idempotency_key?: string;
-            inbound_status: number;
-            /** @enum {string} */
-            kind: "resume" | "publish_only";
-            node_config_hash?: string;
-            node_id: string;
-            node_type: string;
-            not_retryable_reason?: string;
-            payload?: components["schemas"]["ArtifactInfo"] | null;
-            /** Format: date-time */
-            received_at: string;
-            rendered_target?: string;
-            request_id?: string;
-            retryable?: boolean;
-            snapshot?: components["schemas"]["ArtifactInfo"] | null;
-            target?: string;
-            trace_id?: string;
-        };
-        FailureSummary: {
-            actions: components["schemas"]["FailureActions"];
-            /** Format: date-time */
-            captured_at: string;
-            destination_id?: string;
-            destination_type?: string;
-            error_class: string;
-            event_id: string;
-            /** Format: date-time */
-            expires_at: string;
-            /** Format: date-time */
-            failed_at: string;
-            flow: string;
-            id: string;
-            kind: string;
-            node_id: string;
-            node_type: string;
-            not_retryable_reason?: string;
-            parent_id?: string;
-            rendered_target?: string;
-            /** @enum {string} */
-            resolution_source?: "operator_confirmed" | "retry_succeeded";
-            retryable: boolean;
-            root_id: string;
-            status: string;
-            target?: string;
-        } & {
-            [key: string]: unknown;
-        };
         Identity: {
             capabilities: string[];
             contract_version: number;
             key_name: string;
             scopes: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        InspectionBody: {
+            content: string;
+            content_type: string;
+            encoding: string;
+        } & {
+            [key: string]: unknown;
+        };
+        InspectionPayload: {
+            body: components["schemas"]["InspectionBody"];
+            headers: {
+                [key: string]: string[] | null;
+            } | null;
+            method: string;
+            path: string;
+            variables: {
+                [key: string]: string;
+            } | null;
+            version: number;
         } & {
             [key: string]: unknown;
         };
@@ -452,11 +352,150 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        RecordActions: {
+            dismiss: components["schemas"]["ActionEligibility"];
+            resolve: components["schemas"]["ActionEligibility"];
+            retry: components["schemas"]["ActionEligibility"];
+        } & {
+            [key: string]: unknown;
+        };
+        RecordDetail: {
+            actions: components["schemas"]["RecordActions"];
+            artifacts: components["schemas"]["ArtifactsView"];
+            attempts?: number | null;
+            /** Format: date-time */
+            captured_at: string;
+            children: string[];
+            core_instance?: string;
+            core_version?: string;
+            /** @enum {string} */
+            delivery_status?: "open" | "retrying" | "resolved" | "unknown";
+            destination_hash?: string;
+            destination_id?: string;
+            destination_type?: string;
+            dismissed_at?: string | null;
+            error_class?: string;
+            error_message?: string;
+            event_id: string;
+            /** Format: date-time */
+            expires_at: string;
+            flow: string;
+            history: components["schemas"]["EventView"][];
+            id: string;
+            idempotency_key?: string;
+            inbound_status: number;
+            /** @enum {string} */
+            kind: "failure" | "inspection";
+            node_config_hash?: string;
+            node_id: string;
+            node_type: string;
+            not_retryable_reason?: string;
+            /** Format: date-time */
+            occurred_at: string;
+            parent_id?: string;
+            /** @enum {string} */
+            payload_unavailable_reason?: "too_large" | "unsupported";
+            /** Format: date-time */
+            received_at: string;
+            rendered_target?: string;
+            /** @enum {string} */
+            replay_mode?: "resume" | "publish_only";
+            request_id?: string;
+            resolution?: components["schemas"]["Resolution"] | null;
+            /** @enum {string} */
+            resolution_source?: "operator_confirmed" | "retry_succeeded";
+            retryable: boolean;
+            root_id: string;
+            runs: components["schemas"]["Run"][];
+            target?: string;
+            trace_id?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        RecordList: {
+            items: components["schemas"]["RecordSummary"][];
+            next_cursor?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Strict capture metadata. kind is failure or inspection; replay_mode is required only for failures. occurred_at is the capture occurrence time. Retryable failures require snapshot and payload; non-retryable failures retain metadata only and use too_large or unsupported. Inspections are view-only, have no failure/destination fields or snapshot, and always use inspection_only as their retry prohibition. Missing payloads require payload_unavailable_reason too_large or unsupported independently of retry policy. Inspection payload format remains version 1. Text bounds, SHA256 validation, and exact artifact sizes are enforced at ingest. */
+        RecordMetadata: {
+            attempts?: number;
+            core_instance?: string;
+            core_version?: string;
+            destination_hash?: string;
+            destination_id?: string;
+            destination_type?: string;
+            error_class?: string;
+            error_message?: string;
+            event_id: string;
+            flow: string;
+            id: string;
+            idempotency_key?: string;
+            inbound_status: number;
+            /** @enum {string} */
+            kind: "failure" | "inspection";
+            node_config_hash?: string;
+            node_id: string;
+            node_type: string;
+            not_retryable_reason?: string;
+            /** Format: date-time */
+            occurred_at: string;
+            payload?: components["schemas"]["ArtifactInfo"] | null;
+            /** @enum {string} */
+            payload_unavailable_reason?: "too_large" | "unsupported";
+            /** Format: date-time */
+            received_at: string;
+            rendered_target?: string;
+            /** @enum {string} */
+            replay_mode?: "resume" | "publish_only";
+            request_id?: string;
+            retryable: boolean;
+            snapshot?: components["schemas"]["ArtifactInfo"] | null;
+            target?: string;
+            trace_id?: string;
+        } & unknown;
+        RecordSummary: {
+            actions: components["schemas"]["RecordActions"];
+            /** Format: date-time */
+            captured_at: string;
+            /** @enum {string} */
+            delivery_status?: "open" | "retrying" | "resolved" | "unknown";
+            destination_id?: string;
+            destination_type?: string;
+            dismissed_at?: string | null;
+            error_class?: string;
+            event_id: string;
+            /** Format: date-time */
+            expires_at: string;
+            flow: string;
+            id: string;
+            /** @enum {string} */
+            kind: "failure" | "inspection";
+            node_id: string;
+            node_type: string;
+            not_retryable_reason?: string;
+            /** Format: date-time */
+            occurred_at: string;
+            parent_id?: string;
+            /** @enum {string} */
+            payload_unavailable_reason?: "too_large" | "unsupported";
+            rendered_target?: string;
+            /** @enum {string} */
+            replay_mode?: "resume" | "publish_only";
+            /** @enum {string} */
+            resolution_source?: "operator_confirmed" | "retry_succeeded";
+            retryable: boolean;
+            root_id: string;
+            target?: string;
+        } & {
+            [key: string]: unknown;
+        };
         Resolution: {
             actor: string;
-            failure_id: string;
             idempotency_key: string;
             note: string;
+            record_id: string;
             reference?: string;
             /** Format: date-time */
             resolved_at: string;
@@ -470,9 +509,9 @@ export interface components {
             reference?: string | null;
         };
         ResolutionResponse: {
+            delivery_status: string;
             resolution: components["schemas"]["Resolution"];
             resolution_source: string;
-            status: string;
         } & {
             [key: string]: unknown;
         };
@@ -490,10 +529,10 @@ export interface components {
             claimed_at: string | null;
             /** Format: date-time */
             created_at: string;
-            failure_id: string;
             finished_at: string | null;
             idempotency_key: string;
             lease_expires_at: string | null;
+            record_id: string;
             requested_by: string;
             /** @description Raw persisted JSON, including null for queued runs. Newly written result objects follow RunResult. Historical unknown keys and JSON are passed through unchanged. */
             result: unknown;
@@ -683,7 +722,65 @@ export interface operations {
             };
         };
     };
-    listFailures: {
+    whoAmI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authenticated operator capabilities. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Identity"];
+                };
+            };
+            /** @description Unauthorized; stable code in problem body. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Forbidden; stable code in problem body. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unsupported method (ServeMux plain text response; includes Allow header). */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable. */
+            429: {
+                headers: {
+                    /** @description Seconds until the next failed-attempt allowance is available. */
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listRecords: {
         parameters: {
             query?: {
                 /** @description Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination. */
@@ -694,15 +791,19 @@ export interface operations {
                 destination_id?: string;
                 /** @description Printable UTF-8; cursor is opaque; reuse with the same filters for consistent pagination. */
                 cursor?: string;
-                /** @description Failure status. */
-                status?: "open" | "retrying" | "resolved" | "unknown" | "dismissed";
-                /** @description Captured failure kind. */
-                kind?: "resume" | "publish_only";
+                /** @description Failure delivery state; absent for inspections. */
+                delivery_status?: "open" | "retrying" | "resolved" | "unknown";
+                /** @description Failure replay execution mode. */
+                replay_mode?: "resume" | "publish_only";
+                /** @description Filter by dismissal; omitted includes both states. */
+                dismissed?: boolean;
+                /** @description Record purpose. Omitted kind includes both purposes. */
+                kind?: "failure" | "inspection";
                 /** @description Literal true or false. */
                 retryable?: boolean;
-                /** @description Inclusive failed_at lower bound (RFC 3339). */
+                /** @description Inclusive failure or inspection time lower bound (RFC 3339). */
                 since?: string;
-                /** @description Exclusive failed_at upper bound (RFC 3339). */
+                /** @description Exclusive failure or inspection time upper bound (RFC 3339). */
                 until?: string;
                 /** @description Maximum returned records. */
                 limit?: number;
@@ -713,13 +814,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Failure summaries and optional next cursor. */
+            /** @description Record summaries and optional next cursor. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FailureList"];
+                    "application/json": components["schemas"]["RecordList"];
                 };
             };
             /** @description Bad Request; stable code in problem body. */
@@ -780,7 +881,7 @@ export interface operations {
             };
         };
     };
-    captureFailure: {
+    captureRecord: {
         parameters: {
             query?: never;
             header?: never;
@@ -791,7 +892,7 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": {
-                    metadata: components["schemas"]["FailureMetadata"];
+                    metadata: components["schemas"]["RecordMetadata"];
                     /** Format: binary */
                     payload?: string;
                     /** Format: binary */
@@ -903,25 +1004,25 @@ export interface operations {
             };
         };
     };
-    getFailure: {
+    getRecord: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Failure record ID; malformed or absent records return 404. */
+                /** @description Captured record ID; malformed or absent records return 404. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Failure detail. */
+            /** @description Record detail. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FailureDetail"];
+                    "application/json": components["schemas"]["RecordDetail"];
                 };
             };
             /** @description Unauthorized; stable code in problem body. */
@@ -982,25 +1083,25 @@ export interface operations {
             };
         };
     };
-    dismissFailure: {
+    dismissRecord: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description Failure record ID; malformed or absent records return 404. */
+                /** @description Captured record ID; malformed or absent records return 404. */
                 id: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Updated failure summary. */
+            /** @description Updated record summary. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FailureSummary"];
+                    "application/json": components["schemas"]["RecordSummary"];
                 };
             };
             /** @description Unauthorized; stable code in problem body. */
@@ -1084,7 +1185,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Failure record ID; malformed or absent records return 404. */
+                /** @description Captured record ID; malformed or absent records return 404. */
                 id: string;
             };
             cookie?: never;
@@ -1172,7 +1273,7 @@ export interface operations {
             };
         };
     };
-    resolveFailure: {
+    resolveRecord: {
         parameters: {
             query?: never;
             header: {
@@ -1180,7 +1281,7 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                /** @description Failure record ID; malformed or absent records return 404. */
+                /** @description Captured record ID; malformed or absent records return 404. */
                 id: string;
             };
             cookie?: never;
@@ -1304,7 +1405,7 @@ export interface operations {
             };
         };
     };
-    retryFailure: {
+    retryRecord: {
         parameters: {
             query?: never;
             header: {
@@ -1312,7 +1413,7 @@ export interface operations {
                 "Idempotency-Key": string;
             };
             path: {
-                /** @description Failure record ID; malformed or absent records return 404. */
+                /** @description Captured record ID; malformed or absent records return 404. */
                 id: string;
             };
             cookie?: never;
@@ -1436,65 +1537,7 @@ export interface operations {
             };
         };
     };
-    whoAmI: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Authenticated operator capabilities. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Identity"];
-                };
-            };
-            /** @description Unauthorized; stable code in problem body. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Forbidden; stable code in problem body. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-            /** @description Unsupported method (ServeMux plain text response; includes Allow header). */
-            405: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": string;
-                };
-            };
-            /** @description Failed authentication attempts exceeded the peer or process allowance; valid credentials remain usable. */
-            429: {
-                headers: {
-                    /** @description Seconds until the next failed-attempt allowance is available. */
-                    "Retry-After"?: string;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": components["schemas"]["Problem"];
-                };
-            };
-        };
-    };
-    retryFailures: {
+    retryRecords: {
         parameters: {
             query?: never;
             header: {
@@ -1504,7 +1547,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description Strict JSON, maximum 64 KiB; failure_ids contains 1-100 unique IDs. Missing acknowledgement defaults to false. */
+        /** @description Strict JSON, maximum 64 KiB; record_ids contains 1-100 unique IDs. Missing acknowledgement defaults to false. */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["BatchRetryRequest"];

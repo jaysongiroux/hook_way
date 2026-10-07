@@ -16,14 +16,15 @@ import {
   APIError,
   requestError,
   result,
-  type Failure,
+  statusLabel,
+  type ReplayRecord,
   type Session,
 } from "./session";
 
 type Action = "retry" | "resolve" | "dismiss";
 export interface Intent {
   action: Action;
-  records: Failure[];
+  records: ReplayRecord[];
 }
 type Submission = {
   key: string;
@@ -61,6 +62,7 @@ export function ActionDialog({
   const [outcomes, setOutcomes] = React.useState<string[]>();
   const [apiValidation, setAPIValidation] = React.useState(false);
   const { action, records } = intent;
+  const inspection = records.every((record) => record.kind === "inspection");
   const ids = records.map((record) => record.id);
   const needsAck =
     action === "retry" &&
@@ -76,7 +78,7 @@ export function ActionDialog({
       ? `Retry ${records.length === 1 ? "delivery" : `${records.length} deliveries`}`
       : action === "resolve"
         ? "Confirm delivery outcome"
-        : "Dismiss failure";
+        : inspection ? "Dismiss inspection" : "Dismiss failure";
 
   async function submit() {
     if (busy) return;
@@ -98,7 +100,7 @@ export function ActionDialog({
           idempotency_key: saved.key,
           ...(action === "resolve"
             ? { note: saved.note, reference: saved.reference }
-            : { failure_ids: ids }),
+            : { record_ids: ids }),
         };
         let validation: components["schemas"]["ActionValidationResult"];
         if (local)
@@ -131,7 +133,7 @@ export function ActionDialog({
       const headers = { "Idempotency-Key": saved.key };
       if (action === "resolve") {
         result(
-          await session.client.POST("/v1/failures/{id}/resolve", {
+          await session.client.POST("/v1/records/{id}/resolve", {
             params: { path: { id: ids[0] }, header: headers },
             body: { note: saved.note, reference: saved.reference },
             signal: session.signal,
@@ -142,7 +144,7 @@ export function ActionDialog({
         ]);
       } else if (action === "dismiss") {
         result(
-          await session.client.POST("/v1/failures/{id}/dismiss", {
+          await session.client.POST("/v1/records/{id}/dismiss", {
             params: { path: { id: ids[0] } },
             signal: session.signal,
           }),
@@ -152,7 +154,7 @@ export function ActionDialog({
         ]);
       } else if (ids.length === 1) {
         const response = result(
-          await session.client.POST("/v1/failures/{id}/retries", {
+          await session.client.POST("/v1/records/{id}/retries", {
             params: { path: { id: ids[0] }, header: headers },
             body: { acknowledge_duplicate_risk: saved.ack },
             signal: session.signal,
@@ -165,14 +167,14 @@ export function ActionDialog({
         const response = result(
           await session.client.POST("/v1/retries", {
             params: { header: headers },
-            body: { failure_ids: ids, acknowledge_duplicate_risk: saved.ack },
+            body: { record_ids: ids, acknowledge_duplicate_risk: saved.ack },
             signal: session.signal,
           }),
         );
         setOutcomes(
           response.results.map(
             (item) =>
-              `${item.failure_id}: ${item.status === 202 ? `queued ${item.run_id}` : `${item.code} — ${item.detail}`}`,
+              `${item.record_id}: ${item.status === 202 ? `queued ${item.run_id}` : `${item.code} — ${item.detail}`}`,
           ),
         );
       }
@@ -198,17 +200,17 @@ export function ActionDialog({
     setBusy(true);
     try {
       const record = result(
-        await session.client.GET("/v1/failures/{id}", {
+        await session.client.GET("/v1/records/{id}", {
           params: { path: { id: ids[0] } },
           signal: session.signal,
         }),
       );
-      if (record.status === "dismissed") {
+      if (!!record.dismissed_at) {
         setOutcomes(["Dismissal confirmed by current API state."]);
         setUncertain(false);
       } else {
         setError(
-          `Current state: ${record.status}. Dismissal is not confirmed. Inspect the record before making another decision.`,
+          `Current state: ${statusLabel(record)}. Dismissal is not confirmed. Inspect the record before making another decision.`,
         );
       }
       onRefresh();
@@ -235,9 +237,9 @@ export function ActionDialog({
             ? "Only these captured records will be retried. Publish failures retry the selected destination; resume failures continue from the captured node. Successful earlier work is not rerun."
             : action === "resolve"
               ? "Confirm only after checking the destination's receipt or audit trail. This records your conclusion; it does not prove delivery or erase the unknown result."
-              : "Dismissal stops recovery for this record and permanently deletes its stored payload and snapshot. Metadata and history remain until retention expires."}
+              : inspection ? "Dismissal permanently deletes this inspection’s stored body and context. Metadata and audit history remain until retention expires." : "Dismissal stops recovery for this record and permanently deletes its stored payload and snapshot. Metadata and history remain until retention expires."}
         </Text>
-        <div className="action-records" aria-label="Selected deliveries">
+        <div className="action-records" aria-label={inspection ? "Selected inspections" : "Selected deliveries"}>
           {records.map((record) => (
             <div className="action-record" key={record.id}>
               <Text size="sm" fw={600}>
@@ -304,7 +306,7 @@ export function ActionDialog({
         {action === "dismiss" && (
           <Checkbox
             data-autofocus
-            label="I understand the stored payload and snapshot will be deleted."
+            label={inspection ? "I understand the captured body and context will be deleted." : "I understand the stored payload and snapshot will be deleted."}
             checked={confirmed}
             onChange={(e) => setConfirmed(e.currentTarget.checked)}
             disabled={frozen}

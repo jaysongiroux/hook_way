@@ -20,8 +20,8 @@ func TestRuntimeRoleCanOperateWithoutMigrationPrivileges(t *testing.T) {
 	if _, err := admin.pool.Exec(ctx, `CREATE ROLE replay_runtime LOGIN PASSWORD 'synthetic-runtime';
 		GRANT USAGE ON SCHEMA public TO replay_runtime;
 		GRANT SELECT ON goose_db_version TO replay_runtime;
-		GRANT SELECT,INSERT,UPDATE,DELETE ON failures,failure_artifacts,retry_runs,failure_events,usage,failure_resolutions TO replay_runtime;
-		GRANT USAGE,SELECT ON SEQUENCE failure_events_id_seq TO replay_runtime`); err != nil {
+		GRANT SELECT,INSERT,UPDATE,DELETE ON records,record_artifacts,retry_runs,record_events,usage,delivery_resolutions TO replay_runtime;
+		GRANT USAGE,SELECT ON SEQUENCE record_events_id_seq TO replay_runtime`); err != nil {
 		t.Fatal(err)
 	}
 	u, err := url.Parse(adminURL)
@@ -53,8 +53,8 @@ func TestRuntimeRoleCanOperateWithoutMigrationPrivileges(t *testing.T) {
 }
 
 func TestLatestSchemaVersionMatchesTheEmbeddedMigrations(t *testing.T) {
-	if got := LatestSchemaVersion(); got != 2 {
-		t.Fatalf("LatestSchemaVersion = %d, want 2 (00002_operator_resolution.sql)", got)
+	if got := LatestSchemaVersion(); got != 1 {
+		t.Fatalf("LatestSchemaVersion = %d, want 1 (00001_init.sql)", got)
 	}
 }
 
@@ -85,8 +85,8 @@ func TestMigrateAppliesEachVersionOnce(t *testing.T) {
 		t.Fatal("SchemaVersion or Ready wrote to the database")
 	}
 	applied, err := s.Migrate(ctx)
-	if err != nil || len(applied) != 2 || applied[0] != 1 || applied[1] != 2 {
-		t.Fatalf("Migrate = %v, %v; want [1 2]", applied, err)
+	if err != nil || len(applied) != 1 || applied[0] != 1 {
+		t.Fatalf("Migrate = %v, %v; want [1]", applied, err)
 	}
 	if v, err := s.SchemaVersion(ctx); err != nil || v != LatestSchemaVersion() {
 		t.Fatalf("SchemaVersion after migrate = %d, %v", v, err)
@@ -132,44 +132,20 @@ func TestSchemaVersionIgnoresRolledBackMigrations(t *testing.T) {
 	if _, err := s.migrations.Down(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.SchemaVersion(ctx); err != nil || got != 1 {
-		t.Fatalf("SchemaVersion after rollback = %d, %v; want 1", got, err)
+	if got, err := s.SchemaVersion(ctx); err != nil || got != 0 {
+		t.Fatalf("SchemaVersion after rollback = %d, %v; want 0", got, err)
 	}
 	if err := s.Ready(ctx); err == nil {
 		t.Fatal("Ready accepted a database whose migration was rolled back")
 	}
 }
 
-func TestUpgradeFromVersionOnePreservesArtifactsAndOutcome(t *testing.T) {
-	s := openTestStore(t, replaytest.Database(t), defaultLimits())
-	ctx := t.Context()
-	if _, err := s.migrations.UpTo(ctx, 1); err != nil {
+func TestReadyRejectsFailureShapedVersionOneSchema(t *testing.T) {
+	s := newTestStore(t, defaultLimits())
+	if _, err := s.pool.Exec(t.Context(), `ALTER TABLE records RENAME TO failures`); err != nil {
 		t.Fatal(err)
 	}
-	f := testFailure(t, nil)
-	if _, err := s.Ingest(ctx, f); err != nil {
-		t.Fatal(err)
-	}
-	// Version 1 did not record a resolution source. Backfill must distinguish
-	// existing worker success without deleting the retained captured bytes.
-	if _, err := s.pool.Exec(ctx, `UPDATE failures SET status='resolved' WHERE id=$1`, f.Metadata.ID); err != nil {
-		t.Fatal(err)
-	}
-	if applied, err := s.Migrate(ctx); err != nil || len(applied) != 1 || applied[0] != 2 {
-		t.Fatal(applied, err)
-	}
-	detail, err := s.Get(ctx, f.Metadata.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if detail.Status != "resolved" || detail.ResolutionSource != "retry_succeeded" {
-		t.Fatalf("upgrade outcome%+v", detail.Failure)
-	}
-	payload, err := s.Payload(ctx, f.Metadata.ID, "upgrade-ops")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(payload.Bytes) != string(f.Payload) {
-		t.Fatal("upgrade changed payload bytes")
+	if err := s.Ready(t.Context()); err == nil || !strings.Contains(err.Error(), "fresh replay database") {
+		t.Fatalf("legacy schema admitted: %v", err)
 	}
 }

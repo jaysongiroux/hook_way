@@ -75,6 +75,7 @@ docs/scratch/
 .agents/
 .claude/
 .codex/
+.codex-doc-bridge/
 .cursor/
 CLAUDE.md
 AGENTS.md

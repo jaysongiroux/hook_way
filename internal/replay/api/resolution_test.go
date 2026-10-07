@@ -35,36 +35,36 @@ func TestResolveValidatesEvidenceAndRecordsAuthenticatedActor(t *testing.T) {
 	calls := 0
 	fs.resolve = func(req store.ResolveRequest) (store.ResolveResult, error) {
 		calls++
-		if req.Actor != "ops" || req.FailureID != testID || req.IdempotencyKey != "resolve-1" || req.Note != "Confirmed in downstream logs" || req.Reference != "INC-42" {
+		if req.Actor != "ops" || req.RecordID != testID || req.IdempotencyKey != "resolve-1" || req.Note != "Confirmed in downstream logs" || req.Reference != "INC-42" {
 			t.Fatal(req)
 		}
-		return store.ResolveResult{Created: true, Resolution: store.Resolution{FailureID: testID, Actor: req.Actor, Note: req.Note, Reference: req.Reference, IdempotencyKey: req.IdempotencyKey, ResolvedAt: time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)}}, nil
+		return store.ResolveResult{Created: true, Resolution: store.Resolution{RecordID: testID, Actor: req.Actor, Note: req.Note, Reference: req.Reference, IdempotencyKey: req.IdempotencyKey, ResolvedAt: time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)}}, nil
 	}
 	h := newHarness(t, fs)
-	rec := h.do(t, "POST", "/v1/failures/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"Confirmed in downstream logs","reference":"INC-42"}`), http.Header{"Idempotency-Key": []string{"resolve-1"}})
+	rec := h.do(t, "POST", "/v1/records/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"Confirmed in downstream logs","reference":"INC-42"}`), http.Header{"Idempotency-Key": []string{"resolve-1"}})
 	if rec.Code != 200 || calls != 1 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 	var body resolveResponse
 	decode(t, rec, &body)
-	if body.Status != "resolved" || body.ResolutionSource != "operator_confirmed" {
+	if body.DeliveryStatus != "resolved" || body.ResolutionSource != "operator_confirmed" {
 		t.Fatal(body)
 	}
 	assertContractBody(t, contractDocument(t), "ResolutionResponse", rec.Body.Bytes())
 	for _, input := range []string{`null`, `{}`, `{"note":"  "}`, `{"note":"x","reference":"\n"}`, `{"note":"x","actor":"forged"}`, `{"note":"x"} {}`, `{"note":"\u0000"}`, `{"note":"` + strings.Repeat("a", 4097) + `"}`} {
-		rec = h.do(t, "POST", "/v1/failures/"+testID+"/resolve", opsToken, strings.NewReader(input), http.Header{"Idempotency-Key": []string{"resolve-1"}})
+		rec = h.do(t, "POST", "/v1/records/"+testID+"/resolve", opsToken, strings.NewReader(input), http.Header{"Idempotency-Key": []string{"resolve-1"}})
 		if rec.Code != 400 || calls != 1 {
 			t.Fatalf("%s: %d %s", input, rec.Code, rec.Body.String())
 		}
 		assertContractBody(t, contractDocument(t), "Problem", rec.Body.Bytes())
 	}
 	for _, header := range []http.Header{nil, {"Idempotency-Key": []string{"a", "b"}}, {"Idempotency-Key": []string{"bad key"}}} {
-		rec = h.do(t, "POST", "/v1/failures/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"Confirmed"}`), header)
+		rec = h.do(t, "POST", "/v1/records/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"Confirmed"}`), header)
 		if rec.Code != 400 || calls != 1 {
 			t.Fatal(rec.Code, rec.Body.String())
 		}
 	}
-	rec = h.do(t, "POST", "/v1/failures/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"`+strings.Repeat("a", maxJSONBodyBytes)+`"}`), http.Header{"Idempotency-Key": []string{"large"}})
+	rec = h.do(t, "POST", "/v1/records/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"`+strings.Repeat("a", maxJSONBodyBytes)+`"}`), http.Header{"Idempotency-Key": []string{"large"}})
 	if rec.Code != 413 || calls != 1 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
@@ -86,7 +86,7 @@ func TestResolveMapsStateAndIdempotencyErrors(t *testing.T) {
 		t.Run(tc.code, func(t *testing.T) {
 			fs := notFoundStore()
 			fs.resolve = func(store.ResolveRequest) (store.ResolveResult, error) { return store.ResolveResult{}, tc.err }
-			rec := newHarness(t, fs).do(t, "POST", "/v1/failures/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"Investigated receipt"}`), http.Header{"Idempotency-Key": []string{"k"}})
+			rec := newHarness(t, fs).do(t, "POST", "/v1/records/"+testID+"/resolve", opsToken, strings.NewReader(`{"note":"Investigated receipt"}`), http.Header{"Idempotency-Key": []string{"k"}})
 			if rec.Code != tc.status || problemCode(t, rec) != tc.code {
 				t.Fatal(rec.Code, rec.Body.String())
 			}
@@ -96,7 +96,7 @@ func TestResolveMapsStateAndIdempotencyErrors(t *testing.T) {
 
 func TestActionValidationFallbackMatchesWASMInputs(t *testing.T) {
 	h := newHarness(t, notFoundStore())
-	for _, body := range []string{`{"action":"resolve","idempotency_key":"k","note":"Confirmed receipt"}`, `{"action":"resolve","idempotency_key":"k","note":"\u0000"}`, `{"idempotency_key":"k","failure_ids":["x","x"]}`} {
+	for _, body := range []string{`{"action":"resolve","idempotency_key":"k","note":"Confirmed receipt"}`, `{"action":"resolve","idempotency_key":"k","note":"\u0000"}`, `{"idempotency_key":"k","record_ids":["x","x"]}`} {
 		rec := h.do(t, "POST", "/v1/actions/validate", readToken, strings.NewReader(body), nil)
 		if rec.Code != 200 {
 			t.Fatal(rec.Code, rec.Body.String())

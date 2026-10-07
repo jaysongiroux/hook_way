@@ -29,7 +29,7 @@ const (
 	maxUploadAttempts = 3
 	uploadBudget      = 5 * time.Second
 	defaultDrainWait  = 6 * time.Second
-	failuresPath      = "/v1/failures"
+	recordsPath       = "/v1/records"
 )
 
 // Drop reasons (hookway_capture_dropped_total).
@@ -62,6 +62,7 @@ type UploaderOptions struct {
 // is held against the byte budget until the record is built.
 type pending struct {
 	flow, nodeID, eventID string
+	inspection            bool
 	estimate              int64
 	build                 func() (Record, bool)
 }
@@ -106,7 +107,7 @@ func NewUploader(o UploaderOptions) (*Uploader, error) {
 	}
 	stop, cancel := context.WithCancel(context.Background())
 	u := &Uploader{
-		client: &http.Client{Transport: transport}, url: strings.TrimRight(o.URL, "/") + failuresPath, token: o.Token,
+		client: &http.Client{Transport: transport}, url: strings.TrimRight(o.URL, "/") + recordsPath, token: o.Token,
 		metrics: o.Metrics, logger: logger, jobs: make(chan pending, maxPendingRecords),
 		stop: stop, cancel: cancel, backoff: 100 * time.Millisecond, drainWait: defaultDrainWait,
 	}
@@ -119,21 +120,42 @@ func NewUploader(o UploaderOptions) (*Uploader, error) {
 
 // submit queues a failure without blocking.
 func (u *Uploader) submit(p pending) {
+	if u.reserve(p) {
+		u.submitReserved(p)
+	}
+}
+
+// reserve charges captures awaiting request settlement to the same bounded buffer.
+func (u *Uploader) reserve(p pending) bool {
 	u.mu.Lock()
+	reason := ""
 	switch {
 	case u.closed:
+		reason = DropShutdown
+	case u.records+1 > maxPendingRecords || u.bytes+p.estimate > maxPendingBytes:
+		reason = DropBufferFull
+	default:
+		u.records++
+		u.bytes += p.estimate
+		u.metrics.SetCaptureBufferBytes(u.bytes)
+	}
+	u.mu.Unlock()
+	if reason != "" {
+		u.drop(p, reason, nil)
+		return false
+	}
+	return true
+}
+
+func (u *Uploader) submitReserved(p pending) {
+	u.mu.Lock()
+	if u.closed {
 		u.mu.Unlock()
+		u.release(p.estimate)
 		u.drop(p, DropShutdown, nil)
 		return
-	case u.records+1 > maxPendingRecords || u.bytes+p.estimate > maxPendingBytes:
-		u.mu.Unlock()
-		u.drop(p, DropBufferFull, nil)
-		return
 	}
-	u.records++
-	u.bytes += p.estimate
-	u.metrics.SetCaptureBufferBytes(u.bytes)
-	u.jobs <- p // never blocks: records counts everything in the channel
+	u.jobs <- p
 	u.mu.Unlock()
 }
 
@@ -209,7 +231,13 @@ func (u *Uploader) process(p pending) {
 		u.drop(p, reason, err)
 		return
 	}
-	u.metrics.CaptureUploaded(p.flow)
+	if p.inspection {
+		if m, ok := u.metrics.(InspectionMetrics); ok {
+			m.InspectionUploaded(p.flow)
+		}
+	} else {
+		u.metrics.CaptureUploaded(p.flow)
+	}
 }
 
 // build runs p's builder, turning a panic into an error: records are built
@@ -297,7 +325,10 @@ func encodeUpload(rec Record) ([]byte, string, error) {
 		parts = append(parts, struct {
 			name string
 			data []byte
-		}{replaywire.PartSnapshot, rec.Snapshot}, struct {
+		}{replaywire.PartSnapshot, rec.Snapshot})
+	}
+	if rec.Metadata.Payload != nil {
+		parts = append(parts, struct {
 			name string
 			data []byte
 		}{replaywire.PartPayload, rec.Payload})
@@ -320,10 +351,23 @@ func encodeUpload(rec Record) ([]byte, string, error) {
 }
 
 func (u *Uploader) drop(p pending, reason string, err error) {
-	u.metrics.CaptureDropped(p.flow, reason)
+	if p.inspection {
+		if m, ok := u.metrics.(InspectionMetrics); ok {
+			m.InspectionDropped(p.flow, reason)
+		}
+	} else {
+		u.metrics.CaptureDropped(p.flow, reason)
+	}
 	attrs := []any{"reason", reason, "flow", p.flow, "node_id", p.nodeID, "event_id", p.eventID}
 	if err != nil {
 		attrs = append(attrs, "error", err.Error())
 	}
-	u.logger.Error("failure capture dropped a record", attrs...)
+	kind := replaywire.KindFailure
+	message := "failure capture dropped a record"
+	if p.inspection {
+		kind = replaywire.KindInspection
+		message = "inspection capture dropped a record"
+	}
+	attrs = append(attrs, "kind", kind)
+	u.logger.Error(message, attrs...)
 }

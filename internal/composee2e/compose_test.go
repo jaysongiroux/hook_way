@@ -349,14 +349,14 @@ func (s *stack) rabbitMessages(t *testing.T, queue string) []string {
 }
 
 type failure struct {
-	ID            string `json:"id"`
-	Status        string `json:"status"`
-	Flow          string `json:"flow"`
-	NodeID        string `json:"node_id"`
-	DestinationID string `json:"destination_id"`
-	EventID       string `json:"event_id"`
-	ErrorClass    string `json:"error_class"`
-	Retryable     bool   `json:"retryable"`
+	ID             string `json:"id"`
+	DeliveryStatus string `json:"delivery_status"`
+	Flow           string `json:"flow"`
+	NodeID         string `json:"node_id"`
+	DestinationID  string `json:"destination_id"`
+	EventID        string `json:"event_id"`
+	ErrorClass     string `json:"error_class"`
+	Retryable      bool   `json:"retryable"`
 }
 
 // The dev stack keeps a delivery that failed after the sender got its 202,
@@ -392,7 +392,7 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 	}
 	waitFor(t, "the missed delivery in the replay service", time.Minute, func() bool {
 		open.Items = nil
-		code, _ := s.api(t, http.MethodGet, "/v1/failures?status=open", nil, &open)
+		code, _ := s.api(t, http.MethodGet, "/v1/records?kind=failure&delivery_status=open&dismissed=false", nil, &open)
 		return code == http.StatusOK && len(open.Items) > 0
 	})
 	if len(open.Items) != 1 {
@@ -409,14 +409,14 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 			Stored bool `json:"stored"`
 		} `json:"artifacts"`
 	}
-	s.api(t, http.MethodGet, "/v1/failures/"+missed.ID, nil, &detail)
+	s.api(t, http.MethodGet, "/v1/records/"+missed.ID, nil, &detail)
 	if detail.InboundStatus != http.StatusAccepted || !detail.Artifacts.Stored {
 		t.Fatalf("record detail = %+v; want the 202 the sender got and a stored payload", detail)
 	}
 	var payload struct {
 		ID string `json:"id"`
 	}
-	if code, _ := s.api(t, http.MethodGet, "/v1/failures/"+missed.ID+"/payload", nil, &payload); code != http.StatusOK || payload.ID != missed.EventID {
+	if code, _ := s.api(t, http.MethodGet, "/v1/records/"+missed.ID+"/payload", nil, &payload); code != http.StatusOK || payload.ID != missed.EventID {
 		t.Fatalf("payload = %d %+v; want the envelope of event %s", code, payload, missed.EventID)
 	}
 
@@ -429,7 +429,7 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 	var run struct {
 		RunID string `json:"run_id"`
 	}
-	if code, raw := s.api(t, http.MethodPost, "/v1/failures/"+missed.ID+"/retries", map[string]any{}, &run,
+	if code, raw := s.api(t, http.MethodPost, "/v1/records/"+missed.ID+"/retries", map[string]any{}, &run,
 		"Idempotency-Key", "e2e-retry-1"); code != http.StatusAccepted || run.RunID == "" {
 		t.Fatalf("retry answered %d %s", code, raw)
 	}
@@ -447,9 +447,9 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 		t.Fatalf("sink received %v after the retry, want event %s once", got, missed.EventID)
 	}
 	var after failure
-	s.api(t, http.MethodGet, "/v1/failures/"+missed.ID, nil, &after)
-	if after.Status != "resolved" {
-		t.Fatalf("record is %s after the retry, want resolved", after.Status)
+	s.api(t, http.MethodGet, "/v1/records/"+missed.ID, nil, &after)
+	if after.DeliveryStatus != "resolved" {
+		t.Fatalf("record is %s after the retry, want resolved", after.DeliveryStatus)
 	}
 
 	// RabbitMQ got each event once: the retry re-ran only the missed delivery.
@@ -460,6 +460,7 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("RabbitMQ has events %v, want %v once each", got, want)
 	}
+	t.Run("view-only inspections", s.checkInspections)
 }
 
 // Check the deployed bundle, rather than just source configuration: the console

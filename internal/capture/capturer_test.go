@@ -127,7 +127,7 @@ func TestAsyncFailureWaitsForTheFinalStatus(t *testing.T) {
 	waitUntil(t, "an upload", func() bool { return m.count("uploaded", "orders") == 1 })
 	time.Sleep(50 * time.Millisecond)
 	ups := got()
-	if len(ups) != 1 || ups[0].meta.Kind != replaywire.KindPublishOnly || ups[0].meta.InboundStatus != 202 {
+	if len(ups) != 1 || ups[0].meta.ReplayMode != replaywire.ReplayPublishOnly || ups[0].meta.InboundStatus != 202 {
 		t.Fatalf("uploads = %+v", ups)
 	}
 	if n := m.count("dropped", DropRejected); n != 0 {
@@ -241,7 +241,7 @@ func TestAnAsyncFailureTooLargeToBufferIsUploadedMetadataOnly(t *testing.T) {
 	req.Settle(http.StatusAccepted)
 	waitUntil(t, "an upload", func() bool { return m.count("uploaded", "orders") == 1 })
 	up := got()[0]
-	if up.meta.Kind != replaywire.KindPublishOnly || up.meta.Retryable || up.meta.NotRetryableReason != replaywire.NotRetryableTooLarge {
+	if up.meta.ReplayMode != replaywire.ReplayPublishOnly || up.meta.Retryable || up.meta.NotRetryableReason != replaywire.NotRetryableTooLarge {
 		t.Fatalf("upload = %+v", up.meta)
 	}
 }

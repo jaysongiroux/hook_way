@@ -19,8 +19,8 @@ claims and runs queued retries against core's control listener, and deletes
 expired records every retention.gc_interval, until SIGINT or SIGTERM. Shutdown
 drains the API and waits for running retries to finish.
 
-API: GET /v1/failures, GET /v1/failures/{id}, GET /v1/failures/{id}/payload,
-POST /v1/failures/{id}/retries, POST /v1/failures/{id}/dismiss,
+API: GET /v1/records, GET /v1/records/{id}, GET /v1/records/{id}/payload,
+POST /v1/records/{id}/retries, POST /v1/records/{id}/dismiss,
 POST /v1/retries (batch), GET /v1/retries/{run_id}. Each needs a key with the
 matching scope; see docs/operations/replay-service.md.
 

@@ -16,15 +16,6 @@ export function UseCases() {
       <Box component="section" className={PAGE_HERO_CLASS} pt={56} pb={64} style={{ background: DARK.bg }}>
         <Container size="lg">
           <Stack gap="md" maw={720}>
-            <Text
-              component="p"
-              size="sm"
-              fw={650}
-              c={DARK.accent}
-              style={{ letterSpacing: 0.2, margin: 0 }}
-            >
-              Hookway
-            </Text>
             <Title
               order={1}
               c={DARK.text}
@@ -62,7 +53,7 @@ export function UseCases() {
       >
         <Bento>
           {USE_CASES.map((uc, index) => (
-            <Tile key={uc.id} span={index === 0 ? 6 : 3}>
+            <Tile key={uc.id} span={index === 0 || index === USE_CASES.length - 1 ? 6 : 3}>
               <Stack gap={10} className={USE_CASE_REVEAL_CLASS} style={{ animationDelay: `${index * 40}ms` }}>
                 <Text fw={650} c={DARK.text} size="md">
                   {uc.title}

@@ -15,7 +15,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
 
-var testFailedAt = time.Date(2026, 9, 23, 12, 0, 1, 0, time.UTC)
+var testOccurredAt = time.Date(2026, 9, 23, 12, 0, 1, 0, time.UTC)
 
 func artifactInfo(data []byte, version int, contentType string) *replaywire.ArtifactInfo {
 	if data == nil {
@@ -27,15 +27,15 @@ func artifactInfo(data []byte, version int, contentType string) *replaywire.Arti
 
 // testFailure builds a valid resume record; mutate runs before the artifact
 // digests are computed, so it may change the artifact bytes.
-func testFailure(t *testing.T, mutate func(*NewFailure)) NewFailure {
+func testFailure(t *testing.T, mutate func(*NewRecord)) NewRecord {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7()).String()
-	f := NewFailure{
-		Metadata: replaywire.FailureMetadata{
-			ID: id, Kind: replaywire.KindResume, Flow: "orders", NodeID: "out_s3", NodeType: "publish",
+	f := NewRecord{
+		Metadata: replaywire.RecordMetadata{
+			ID: id, Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out_s3", NodeType: "publish",
 			DestinationID: "archive", DestinationType: "s3", Target: "uploads", RenderedTarget: "uploads",
 			EventID: "evt-" + id, RequestID: "req-1", TraceID: "trace-1", IdempotencyKey: "idem-1",
-			ReceivedAt: testFailedAt.Add(-time.Second), FailedAt: testFailedAt, InboundStatus: 202,
+			ReceivedAt: testOccurredAt.Add(-time.Second), OccurredAt: testOccurredAt, InboundStatus: 202,
 			ErrorClass: replaywire.ErrorClass5xx, ErrorMessage: "s3: 503 Slow Down", Attempts: 1,
 			NodeConfigHash: "node-hash", DestinationHash: "dest-hash", CoreVersion: "v1.2.3", CoreInstance: "core-0",
 			Retryable: true,
@@ -55,12 +55,13 @@ func testFailure(t *testing.T, mutate func(*NewFailure)) NewFailure {
 	return f
 }
 
-func metadataOnly(f *NewFailure) {
+func metadataOnly(f *NewRecord) {
 	f.Snapshot, f.Payload = nil, nil
 	f.Metadata.Retryable, f.Metadata.NotRetryableReason = false, replaywire.NotRetryableTooLarge
+	f.Metadata.PayloadUnavailableReason = replaywire.NotRetryableTooLarge
 }
 
-func mustIngest(t *testing.T, s *Store, f NewFailure) {
+func mustIngest(t *testing.T, s *Store, f NewRecord) {
 	t.Helper()
 	if res, err := s.Ingest(context.Background(), f); err != nil || res != Created {
 		t.Fatalf("Ingest = %v, %v; want Created", res, err)
@@ -84,11 +85,11 @@ func TestIngestStoresARecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(d.FailureMetadata, f.Metadata) {
-		t.Fatalf("metadata = %+v\nwant       %+v", d.FailureMetadata, f.Metadata)
+	if !reflect.DeepEqual(d.RecordMetadata, f.Metadata) {
+		t.Fatalf("metadata = %+v\nwant       %+v", d.RecordMetadata, f.Metadata)
 	}
-	if d.Status != StatusOpen || d.RootID != f.Metadata.ID || d.ParentID != "" || !d.HasArtifacts {
-		t.Fatalf("status %q root %q parent %q artifacts %v", d.Status, d.RootID, d.ParentID, d.HasArtifacts)
+	if d.DeliveryStatus != StatusOpen || d.RootID != f.Metadata.ID || d.ParentID != "" || !d.HasArtifacts {
+		t.Fatalf("status %q root %q parent %q artifacts %v", d.DeliveryStatus, d.RootID, d.ParentID, d.HasArtifacts)
 	}
 	if !d.CapturedAt.Equal(testNow) || !d.ExpiresAt.Equal(testNow.Add(24*time.Hour)) {
 		t.Fatalf("captured %v expires %v", d.CapturedAt, d.ExpiresAt)
@@ -194,20 +195,20 @@ func ids(page Page) []string {
 func TestListOrdersAndFilters(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t, defaultLimits())
-	var all []NewFailure
-	for i, mutate := range []func(*NewFailure){
-		func(f *NewFailure) { f.Metadata.Flow = "orders" },
-		func(f *NewFailure) {
+	var all []NewRecord
+	for i, mutate := range []func(*NewRecord){
+		func(f *NewRecord) { f.Metadata.Flow = "orders" },
+		func(f *NewRecord) {
 			f.Metadata.Flow = "payments"
 			f.Metadata.NodeID = "out_sqs"
 			f.Metadata.DestinationID = "queue"
 		},
-		func(f *NewFailure) { f.Metadata.Kind = replaywire.KindPublishOnly },
+		func(f *NewRecord) { f.Metadata.ReplayMode = replaywire.ReplayPublishOnly },
 		metadataOnly,
 	} {
-		f := testFailure(t, func(f *NewFailure) {
+		f := testFailure(t, func(f *NewRecord) {
 			mutate(f)
-			f.Metadata.FailedAt = testFailedAt.Add(time.Duration(i) * time.Minute)
+			f.Metadata.OccurredAt = testOccurredAt.Add(time.Duration(i) * time.Minute)
 		})
 		mustIngest(t, s, f)
 		all = append(all, f)
@@ -221,11 +222,11 @@ func TestListOrdersAndFilters(t *testing.T) {
 		"flow":             {Filter{Flow: "payments"}, []int{1}},
 		"node_id":          {Filter{NodeID: "out_sqs"}, []int{1}},
 		"destination_id":   {Filter{DestinationID: "queue"}, []int{1}},
-		"kind":             {Filter{Kind: replaywire.KindPublishOnly}, []int{2}},
-		"status":           {Filter{Status: StatusOpen}, []int{3, 2, 1, 0}},
+		"kind":             {Filter{Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayPublishOnly}, []int{2}},
+		"status":           {Filter{DeliveryStatus: StatusOpen}, []int{3, 2, 1, 0}},
 		"retryable":        {Filter{Retryable: &no}, []int{3}},
-		"since":            {Filter{Since: testFailedAt.Add(2 * time.Minute)}, []int{3, 2}},
-		"until":            {Filter{Until: testFailedAt.Add(time.Minute)}, []int{0}},
+		"since":            {Filter{Since: testOccurredAt.Add(2 * time.Minute)}, []int{3, 2}},
+		"until":            {Filter{Until: testOccurredAt.Add(time.Minute)}, []int{0}},
 		"combined":         {Filter{Flow: "orders", Retryable: &no}, []int{3}},
 	}
 	for name, c := range cases {
@@ -250,7 +251,7 @@ func TestListPaginatesTiesWithoutGapsOrRepeats(t *testing.T) {
 	s := newTestStore(t, defaultLimits())
 	want := map[string]bool{}
 	for range 7 {
-		f := testFailure(t, nil) // every record has the same failed_at
+		f := testFailure(t, nil) // every record has the same occurred_at
 		mustIngest(t, s, f)
 		want[f.Metadata.ID] = true
 	}
@@ -329,7 +330,7 @@ func TestPayloadDetectsCorruption(t *testing.T) {
 	s := newTestStore(t, defaultLimits())
 	f := testFailure(t, nil)
 	mustIngest(t, s, f)
-	if _, err := s.pool.Exec(ctx, `UPDATE failure_artifacts SET payload = 'tampered' WHERE failure_id = $1`, f.Metadata.ID); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE record_artifacts SET payload = 'tampered' WHERE record_id = $1`, f.Metadata.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Payload(ctx, f.Metadata.ID, "ops"); !errors.Is(err, ErrCorrupt) {
@@ -363,10 +364,58 @@ func TestPayloadDetectsSameLengthCorruption(t *testing.T) {
 	s := newTestStore(t, defaultLimits())
 	f := testFailure(t, nil)
 	mustIngest(t, s, f)
-	if _, err := s.pool.Exec(ctx, `UPDATE failure_artifacts SET payload = set_byte(payload, 0, get_byte(payload, 0) # 1) WHERE failure_id = $1`, f.Metadata.ID); err != nil {
+	if _, err := s.pool.Exec(ctx, `UPDATE record_artifacts SET payload = set_byte(payload, 0, get_byte(payload, 0) # 1) WHERE record_id = $1`, f.Metadata.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Payload(ctx, f.Metadata.ID, "ops"); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("Payload = %v, want ErrCorrupt", err)
+	}
+}
+
+func TestPayloadWaitsForConcurrentDismissal(t *testing.T) {
+	s := newTestStore(t, defaultLimits())
+	f := testFailure(t, nil)
+	mustIngest(t, s, f)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	// Hold the same write lock as Dismiss while its changes are uncommitted.
+	if _, err := tx.Exec(ctx, `UPDATE records SET dismissed_at=now(), has_artifacts=false WHERE id=$1`, f.Metadata.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM record_artifacts WHERE record_id=$1`, f.Metadata.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE usage SET records=0, bytes=0`); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { _, err := s.Payload(ctx, f.Metadata.ID, "ops"); result <- err }()
+	// Wait for an actual database lock, rather than guessing query timing.
+	for {
+		var waiting bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid())`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("download did not wait for dismissal: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, ErrGone) {
+		t.Fatalf("download served pre-dismissal bytes: %v", err)
 	}
 }

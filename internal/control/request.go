@@ -104,13 +104,15 @@ func (s *Server) readRequest(w http.ResponseWriter, r *http.Request) (replaywire
 
 func validateRequest(r replaywire.DeliverRequest) error {
 	switch {
-	case r.RunID == "" || r.FailureID == "":
-		return badRequest("run_id and failure_id are required")
-	case r.Kind != replaywire.KindResume && r.Kind != replaywire.KindPublishOnly:
-		return badRequest("kind must be %s or %s", replaywire.KindResume, replaywire.KindPublishOnly)
+	case r.RunID == "" || r.RecordID == "":
+		return badRequest("run_id and record_id are required")
+	case r.Kind != replaywire.KindFailure:
+		return badRequest("kind must be failure: inspections are view only")
+	case r.ReplayMode != replaywire.ReplayResume && r.ReplayMode != replaywire.ReplayPublishOnly:
+		return badRequest("replay_mode must be %s or %s", replaywire.ReplayResume, replaywire.ReplayPublishOnly)
 	case r.Flow == "" || r.NodeID == "" || r.NodeType == "":
 		return badRequest("flow, node_id, and node_type are required")
-	case r.Kind == replaywire.KindPublishOnly && (r.DestinationID == "" || r.RenderedTarget == ""):
+	case r.ReplayMode == replaywire.ReplayPublishOnly && (r.DestinationID == "" || r.RenderedTarget == ""):
 		return badRequest("a publish_only request needs destination_id and rendered_target")
 	case !sha256Hex.MatchString(r.SnapshotSHA256):
 		return badRequest("snapshot_sha256 must be 64 lowercase hex characters")
@@ -141,8 +143,8 @@ func checkSnapshot(req replaywire.DeliverRequest, raw []byte) (deliverysnapshot.
 		return snap, Blockf(replaywire.BlockUnsupportedSnapshotVersion, "%v", err)
 	case err != nil:
 		return snap, fmt.Errorf("%w: %w", ErrMalformedSnapshot, err)
-	case snap.Kind != deliverysnapshot.Kind(req.Kind):
-		return snap, fmt.Errorf("%w: a %s snapshot for a %s request", ErrMalformedSnapshot, snap.Kind, req.Kind)
+	case snap.Kind != deliverysnapshot.Kind(req.ReplayMode):
+		return snap, fmt.Errorf("%w: a %s snapshot for a %s request", ErrMalformedSnapshot, snap.Kind, req.ReplayMode)
 	case snap.Kind == deliverysnapshot.KindResume && snap.Envelope == nil,
 		snap.Kind == deliverysnapshot.KindPublishOnly && snap.Message == nil:
 		return snap, fmt.Errorf("%w: the %s snapshot is empty", ErrMalformedSnapshot, snap.Kind)

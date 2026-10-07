@@ -120,6 +120,13 @@ func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.Val
 	issues = append(issues, CredentialConfigurationIssues(cfg)...)
 	issues = append(issues, RoutingConfigurationIssues(cfg)...)
 	issues = append(issues, ProtectionConfigurationIssues(cfg)...)
+	for name, flow := range cfg.Flows {
+		for _, node := range flow.Nodes {
+			if node.Type == "inspect" && !cfg.Replay.Configured {
+				issues = append(issues, cfgIssue("flows."+name+".nodes."+node.ID, "inspect requires the global replay configuration", "configure replay.url and replay.capture_token"))
+			}
+		}
+	}
 	issues = append(issues, compileFlows(cfg)...)
 	issues = append(issues, crossFlowIssues(cfg)...)
 	return cfg, issues

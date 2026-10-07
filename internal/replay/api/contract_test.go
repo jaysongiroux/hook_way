@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -46,17 +47,18 @@ func assertContractBody(t *testing.T, doc map[string]any, name string, body []by
 }
 func TestReplayContractResponsesAndRouting(t *testing.T) {
 	doc := contractDocument(t)
+	now := time.Now().UTC()
 	fs := &fakeStore{
 		list: func(store.Filter) (store.Page, error) { return store.Page{}, nil },
-		get: func(string) (store.Detail, error) {
-			return store.Detail{Failure: store.Failure{FailureMetadata: replaywire.FailureMetadata{ID: testID, Kind: "resume"}, Status: store.StatusOpen}}, nil
+		get: func(string) (store.RecordDetail, error) {
+			return store.RecordDetail{Record: store.Record{RecordMetadata: replaywire.RecordMetadata{ID: testID, Kind: "failure", ReplayMode: "resume"}, DeliveryStatus: store.StatusOpen}}, nil
 		},
 		requestRetry: func(store.RetryRequest) (store.RetryResult, error) { return store.RetryResult{RunID: testRunID}, nil },
-		dismiss: func(string, string) (store.Failure, error) {
-			return store.Failure{FailureMetadata: replaywire.FailureMetadata{ID: testID}, Status: store.StatusDismissed}, nil
+		dismiss: func(string, string) (store.Record, error) {
+			return store.Record{RecordMetadata: testMetadata(), DeliveryStatus: store.StatusOpen, DismissedAt: &now}, nil
 		},
 		getRun: func(string) (store.Run, error) {
-			return store.Run{RunID: testRunID, FailureID: testID, Status: store.RunQueued}, nil
+			return store.Run{RunID: testRunID, RecordID: testID, Status: store.RunQueued}, nil
 		},
 		payload: func(string, string) (store.Payload, error) {
 			return store.Payload{Bytes: []byte{0, 255}, Filename: "payload.bin"}, nil
@@ -67,11 +69,11 @@ func TestReplayContractResponsesAndRouting(t *testing.T) {
 		method, path, body, component string
 		status                        int
 	}{
-		{"GET", "/v1/failures", "", "FailureList", 200},
-		{"GET", "/v1/failures/" + testID, "", "FailureDetail", 200},
-		{"POST", "/v1/failures/" + testID + "/retries", "", "RetryResponse", 202},
-		{"POST", "/v1/retries", `{"failure_ids":["` + testID + `"]}`, "BatchRetryResponse", 200},
-		{"POST", "/v1/failures/" + testID + "/dismiss", "", "FailureSummary", 200},
+		{"GET", "/v1/records", "", "RecordList", 200},
+		{"GET", "/v1/records/" + testID, "", "RecordDetail", 200},
+		{"POST", "/v1/records/" + testID + "/retries", "", "RetryResponse", 202},
+		{"POST", "/v1/retries", `{"record_ids":["` + testID + `"]}`, "BatchRetryResponse", 200},
+		{"POST", "/v1/records/" + testID + "/dismiss", "", "RecordSummary", 200},
 		{"GET", "/v1/retries/" + testRunID, "", "Run", 200},
 	} {
 		t.Run(tc.component, func(t *testing.T) {
@@ -159,18 +161,18 @@ func TestReplayContractNullRetryBody(t *testing.T) {
 		}
 		return store.RetryResult{RunID: testRunID}, nil
 	}})
-	rec := h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, strings.NewReader("null"), http.Header{"Idempotency-Key": []string{"null-body"}})
+	rec := h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, strings.NewReader("null"), http.Header{"Idempotency-Key": []string{"null-body"}})
 	if rec.Code != 202 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
 	assertContractBody(t, doc, "RetryResponse", rec.Body.Bytes())
-	requestSchema := doc["paths"].(map[string]any)["/v1/failures/{id}/retries"].(map[string]any)["post"].(map[string]any)["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"]
+	requestSchema := doc["paths"].(map[string]any)["/v1/records/{id}/retries"].(map[string]any)["post"].(map[string]any)["requestBody"].(map[string]any)["content"].(map[string]any)["application/json"].(map[string]any)["schema"]
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(jsonschema.Draft2020)
 	if err := c.AddResource("https://hookway.invalid/null-request", doc); err != nil {
 		t.Fatal(err)
 	}
-	schema, err := c.Compile("https://hookway.invalid/null-request#/paths/~1v1~1failures~1{id}~1retries/post/requestBody/content/application~1json/schema")
+	schema, err := c.Compile("https://hookway.invalid/null-request#/paths/~1v1~1records~1{id}~1retries/post/requestBody/content/application~1json/schema")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,8 +188,8 @@ func TestReplayContractNullRetryBody(t *testing.T) {
 
 func TestReplayContractCaptureBatchAndBinaryTransport(t *testing.T) {
 	doc := contractDocument(t)
-	fs := &fakeStore{ingest: func(store.NewFailure) (store.IngestResult, error) { return store.Created, nil }, requestRetry: func(req store.RetryRequest) (store.RetryResult, error) {
-		if req.FailureID == "missing" {
+	fs := &fakeStore{ingest: func(store.NewRecord) (store.IngestResult, error) { return store.Created, nil }, requestRetry: func(req store.RetryRequest) (store.RetryResult, error) {
+		if req.RecordID == "missing" {
 			return store.RetryResult{}, store.ErrNotFound
 		}
 		return store.RetryResult{RunID: testRunID}, nil
@@ -197,16 +199,16 @@ func TestReplayContractCaptureBatchAndBinaryTransport(t *testing.T) {
 	h := newHarness(t, fs)
 	for _, status := range []int{201, 200} {
 		if status == 200 {
-			fs.ingest = func(store.NewFailure) (store.IngestResult, error) { return store.Duplicate, nil }
+			fs.ingest = func(store.NewRecord) (store.IngestResult, error) { return store.Duplicate, nil }
 		}
 		body, header := multipartBody(t, metadataPart(t, testMetadata()), part{replaywire.PartSnapshot, testSnapshot}, part{replaywire.PartPayload, testPayload})
-		rec := h.do(t, "POST", "/v1/failures", captureToken, body, header)
+		rec := h.do(t, "POST", "/v1/records", captureToken, body, header)
 		if rec.Code != status {
 			t.Fatalf("capture %d: %d %s", status, rec.Code, rec.Body.String())
 		}
 		assertContractBody(t, doc, "CaptureResponse", rec.Body.Bytes())
 	}
-	rec := h.do(t, "POST", "/v1/retries", opsToken, strings.NewReader(`{"failure_ids":["`+testID+`","missing"]}`), http.Header{"Idempotency-Key": []string{"mixed"}})
+	rec := h.do(t, "POST", "/v1/retries", opsToken, strings.NewReader(`{"record_ids":["`+testID+`","missing"]}`), http.Header{"Idempotency-Key": []string{"mixed"}})
 	if rec.Code != 200 {
 		t.Fatal(rec.Code, rec.Body.String())
 	}
@@ -218,12 +220,12 @@ func TestReplayContractCaptureBatchAndBinaryTransport(t *testing.T) {
 	if batch.Results[0].Status != 202 || batch.Results[1].Status != 404 {
 		t.Fatal(batch)
 	}
-	rec = h.do(t, "POST", "/v1/failures/"+testID+"/retries", opsToken, strings.NewReader(`{"unknown":true}`), http.Header{"Idempotency-Key": []string{"strict"}})
+	rec = h.do(t, "POST", "/v1/records/"+testID+"/retries", opsToken, strings.NewReader(`{"unknown":true}`), http.Header{"Idempotency-Key": []string{"strict"}})
 	if rec.Code != 400 {
 		t.Fatal(rec.Code)
 	}
 	assertContractBody(t, doc, "Problem", rec.Body.Bytes())
-	rec = h.do(t, "GET", "/v1/failures/"+testID+"/payload", opsToken, nil, nil)
+	rec = h.do(t, "GET", "/v1/records/"+testID+"/payload", opsToken, nil, nil)
 	if rec.Code != 200 || rec.Body.String() != string([]byte{0, 255, 13, 10}) || rec.Header().Get("Content-Type") != "application/octet-stream" || rec.Header().Get("X-Hookway-Payload-Content-Type") != "image/png" {
 		t.Fatalf("binary payload transport changed: %d %q %v", rec.Code, rec.Body.Bytes(), rec.Header())
 	}

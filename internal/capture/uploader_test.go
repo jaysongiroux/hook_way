@@ -44,7 +44,7 @@ func (m *fakeMetrics) count(kind, key string) int {
 
 type upload struct {
 	auth  string
-	meta  replaywire.FailureMetadata
+	meta  replaywire.RecordMetadata
 	parts map[string][]byte
 }
 

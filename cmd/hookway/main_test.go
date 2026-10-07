@@ -110,13 +110,13 @@ func TestRun_SchemaNodesListsCatalog(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
 		t.Fatalf("node schema output not valid JSON: %v", err)
 	}
-	for _, name := range []string{"http_trigger", "publish", "respond", "auth", "read_body", "json_validate"} {
+	for _, name := range []string{"http_trigger", "publish", "respond", "auth", "read_body", "json_validate", "sample", "inspect"} {
 		if _, ok := doc[name]; !ok {
 			t.Errorf("schema --nodes missing %s", name)
 		}
 	}
-	if len(doc) != 22 {
-		t.Fatalf("schema --nodes listed %d types, want 22", len(doc))
+	if len(doc) != 24 {
+		t.Fatalf("schema --nodes listed %d types, want 24", len(doc))
 	}
 }
 

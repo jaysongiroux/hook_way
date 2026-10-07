@@ -36,7 +36,7 @@ func TestDeliveryGuaranteeWarnings(t *testing.T) {
 			flow := cfg.Flows["demo"]
 			flow.Responses = map[string]graph.ResponsePolicy{outcome: {Status: 202}}
 			cfg.Flows["demo"] = flow
-			want := outcome != "responded" && outcome != "published" && outcome != "dropped"
+			want := outcome != "inspected" && outcome != "responded" && outcome != "published" && outcome != "dropped"
 			if got := containsMessage(Lint(cfg), "despite a failure"); got != want {
 				t.Fatalf("outcome %s warning = %v, want %v", outcome, got, want)
 			}

@@ -17,7 +17,7 @@ func TestNodeSchemasMatchCatalogAndRoundTrip(t *testing.T) {
 	}
 	for name, want := range nodeFixtures {
 		got, ok := schemas[name]
-		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != (name != "http_trigger" && name != "read_body" && name != "no_auth" && name != "if_else") || got.Schema == nil {
+		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != (name != "http_trigger" && name != "read_body" && name != "no_auth" && name != "if_else" && name != "sample" && name != "inspect") || got.Schema == nil {
 			t.Errorf("%s schema metadata = %+v, found=%v", name, got, ok)
 		}
 		if got.Schema != nil && got.Schema.Type != "object" {
@@ -87,7 +87,7 @@ func propertyType(schema *jsonschema.Schema, field string) string {
 // Keep these expectations independent of the catalog: generated authoring
 // metadata must not silently widen the runtime's child admission rules.
 func TestBatchChildSchemaMatchesAdmission(t *testing.T) {
-	order := map[string]int{"transform": 1, "code": 2, "filter": 3, "if_else": 4, "switch": 5, "publish": 6}
+	order := map[string]int{"transform": 1, "code": 2, "filter": 3, "if_else": 4, "switch": 5, "publish": 6, "sample": 7}
 	schemas := NodeSchemas()
 	types := []string{"unknown"}
 	for name := range nodeFixtures {

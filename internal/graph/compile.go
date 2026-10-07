@@ -332,7 +332,7 @@ func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, er
 	// SuccessContinuation leaf that only has on_error edges.
 	for _, id := range f.order {
 		spec := f.nodes[id].spec
-		if len(f.out[id]) == 0 && spec.Out != PortTerminal && !spec.SuccessContinuation {
+		if len(f.out[id]) == 0 && spec.Out != PortTerminal && !spec.SuccessContinuation && !spec.AllowLeaf {
 			ce.Problems = append(ce.Problems, fmt.Sprintf(
 				"node %q (%s) has no outgoing edge but produces %s, not Terminal: "+
 					"events reaching it would be silently dropped",
@@ -349,7 +349,7 @@ func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, er
 				break
 			}
 		}
-		if !hasSuccess && len(f.out[id]) > 0 && !spec.SuccessContinuation {
+		if !hasSuccess && len(f.out[id]) > 0 && !spec.SuccessContinuation && !spec.AllowLeaf {
 			ce.Problems = append(ce.Problems, fmt.Sprintf(
 				"node %q (%s) has only on_error successors; a success path is required",
 				id, spec.Type))

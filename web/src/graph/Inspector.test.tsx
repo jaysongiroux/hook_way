@@ -37,7 +37,7 @@ test("partial delivery guidance follows the policy without changing imported rec
     screen.getByText("Partial delivery can return success"),
   ).toBeInTheDocument();
   expect(
-    screen.getByText(/Replay capture is disabled for this flow/),
+    screen.getByText(/Failure capture is disabled for this flow.*Inspect nodes still collect observations/),
   ).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("Delivery failure policy"));
   fireEvent.click(

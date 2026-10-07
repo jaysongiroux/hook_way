@@ -30,7 +30,7 @@ describe("generated API clients", () => {
     });
     editorToken = "editor-b";
     await editor.GET("/contract");
-    await replay.GET("/v1/failures");
+    await replay.GET("/v1/records");
     expect(requests.map((r) => r.headers.get("Authorization"))).toEqual([
       "Bearer editor-a",
       "Bearer editor-b",
@@ -39,7 +39,7 @@ describe("generated API clients", () => {
     expect(requests.map((r) => r.url)).toEqual([
       "https://builder.example/validate",
       "https://builder.example/contract",
-      "https://replay.example/v1/failures",
+      "https://replay.example/v1/records",
     ]);
     expect(await requests[0].text()).toBe(yaml);
     expect(requests[0].headers.get("Content-Type")).toBe("application/yaml");
@@ -49,9 +49,9 @@ describe("generated API clients", () => {
   it("retains mixed batch outcomes and structured problem details", async () => {
     const outcomes = {
       results: [
-        { failure_id: "one", status: 202, run_id: "run" },
+        { record_id: "one", status: 202, run_id: "run" },
         {
-          failure_id: "two",
+          record_id: "two",
           status: 404,
           code: "not_found",
           message: "Missing",
@@ -83,10 +83,10 @@ describe("generated API clients", () => {
     const client = createReplayClient({ fetch: transport });
     const batch = await client.POST("/v1/retries", {
       params: { header: { "Idempotency-Key": "batch" } },
-      body: { failure_ids: ["one", "two"] },
+      body: { record_ids: ["one", "two"] },
     });
     expect(batch.data).toEqual(outcomes);
-    const retry = await client.POST("/v1/failures/{id}/retries", {
+    const retry = await client.POST("/v1/records/{id}/retries", {
       params: { path: { id: "one" }, header: { "Idempotency-Key": "retry" } },
       body: {},
     });
@@ -104,7 +104,7 @@ describe("generated API clients", () => {
           }),
       ),
     });
-    const result = await client.GET("/v1/failures/{id}/payload", {
+    const result = await client.GET("/v1/records/{id}/payload", {
       params: { path: { id: "payload" } },
       parseAs: "arrayBuffer",
     });

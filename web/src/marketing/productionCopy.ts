@@ -33,7 +33,7 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "metrics",
     title: "Exports Prometheus metrics",
-    value: "63",
+    value: "65",
     valueLabel: "core Prometheus metrics exported",
     line: "Enable Prometheus metrics to track requests, failures, and delivery latency. Grafana dashboards are included.",
   },
@@ -53,9 +53,9 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   },
   {
     id: "replay",
-    title: "Keeps what a destination missed",
+    title: "Recover failures and inspect webhooks",
     value: "7",
     valueLabel: "days of replay retention by default",
-    line: "After the sender gets its 2xx, use the optional replay console or API to inspect failures, retry a destination, and investigate uncertain delivery.",
+    line: "Use the optional replay console to retry failed deliveries after a sender’s 2xx, or spot-check webhooks with view-only inspections.",
   },
 ];

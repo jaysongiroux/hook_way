@@ -3,7 +3,7 @@ state_stores:
     namespace: hookway
     memory: {} # Per process; select Redis or PostgreSQL for shared protection.
 
-# Production showcase: gates, HMAC auth, replay protection, filtering, a
+# Production showcase: gates, HMAC auth, replay protection, sampling, filtering, a
 # switch, transform, code, http_request with on_error, and fan-out publishes.
 # A second flow is the sync proxy; a third is a CIDR-trusted ingest (no_auth).
 # lookup is omitted: the standalone server has no lookup provider binding.
@@ -89,6 +89,8 @@ flows:
             repository: {type: object, required: [private, full_name], properties: {private: {type: boolean}, full_name: {type: string}}}
             ref: {type: string}
       - {id: archive, type: publish, description: "Archives every verified event to S3, unfiltered.", destination: archive, target: github, create: true}
+      # Keep every event initially; lower the rate to sample the push branch.
+      - {id: sample_events, type: sample, description: "Randomly selects events for the push branch; 1 keeps all.", rate: 1}
       - id: pushes
         type: filter
         description: "Keeps only pushes to public repositories."
@@ -141,7 +143,8 @@ flows:
       - replay>env
       - env>shape
       - shape>archive
-      - shape>pushes
+      - shape>sample_events
+      - sample_events>pushes
       - pushes>map
       - map>snippet
       - snippet>ack

@@ -67,6 +67,15 @@ export function ReplayOperations() {
           </Stack>
         ))}
       </SimpleGrid>
+      <Text size="sm" c={DARK.muted} mt={32} maw={760}>
+        For spot checks, put Sample → Inspect on a separate branch while Publish
+        receives every event. Inspections are view only: see the current body and
+        context, or download captured files. Uploads are best effort and share
+        replay storage and retention limits. {" "}
+        <Anchor href={repoBlob("examples/inspect.yaml")} target="_blank" rel="noopener noreferrer">
+          See the sampled inspection example
+        </Anchor>.
+      </Text>
       <Group justify="space-between" align="center" gap="md" mt={32}>
         <Text size="sm" c={DARK.muted} maw={620}>
           The same application includes the public visual builder: create a

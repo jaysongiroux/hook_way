@@ -27,6 +27,8 @@ var nodeFixtures = map[string]struct {
 	"replay_guard":   {graph.PortVerified, graph.PortVerified, false, "store: test\nttl: 5m\nmax_entries: 10000\nkey: '{id}'\n"},
 	"envelope":       {graph.PortVerified, graph.PortEnvelope, false, "body_format: json\n"},
 	"filter":         {graph.PortEnvelope, graph.PortEnvelope, false, "conditions: [{source: body, path: event, operator: eq, value: created}]\non_no_match: drop\n"},
+	"inspect":        {graph.PortEnvelope, graph.PortEnvelope, false, ""},
+	"sample":         {graph.PortEnvelope, graph.PortEnvelope, false, "rate: 0.2\n"},
 	"register_route": {graph.PortEnvelope, graph.PortEnvelope, false, "mode: after_create\nstore: primary\nprofile: sandbox\nenvironment_variable: route\nid_source: upstream\nid_path: created_id\nid_type: record_a\n"},
 	"route":          {graph.PortEnvelope, graph.PortEnvelope, false, "profile: sandbox\nfixed: demo\n"},
 	"lookup":         {graph.PortEnvelope, graph.PortEnvelope, false, "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n"},

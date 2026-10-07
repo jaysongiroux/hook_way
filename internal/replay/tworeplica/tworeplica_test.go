@@ -56,19 +56,19 @@ func digest(b []byte) string {
 }
 
 // record is a valid, retryable resume record with its own artifacts.
-func record() store.NewFailure {
+func record() store.NewRecord {
 	n := seq.Add(1)
 	snap, pay := []byte(fmt.Sprintf("snapshot-%d", n)), []byte(fmt.Sprintf("payload-%d", n))
 	at := time.Now().UTC().Truncate(time.Microsecond)
-	m := replaywire.FailureMetadata{
-		ID: uuid.Must(uuid.NewV7()).String(), Kind: replaywire.KindResume, Flow: "orders", NodeID: "out",
+	m := replaywire.RecordMetadata{
+		ID: uuid.Must(uuid.NewV7()).String(), Kind: replaywire.KindFailure, ReplayMode: replaywire.ReplayResume, Flow: "orders", NodeID: "out",
 		NodeType: "publish", DestinationID: "archive", DestinationType: "s3", Target: "uploads",
-		RenderedTarget: "uploads", EventID: fmt.Sprintf("evt-%d", n), ReceivedAt: at, FailedAt: at,
+		RenderedTarget: "uploads", EventID: fmt.Sprintf("evt-%d", n), ReceivedAt: at, OccurredAt: at,
 		InboundStatus: 202, ErrorClass: replaywire.ErrorClass5xx, Attempts: 1, Retryable: true,
 		Snapshot: &replaywire.ArtifactInfo{Size: int64(len(snap)), SHA256: digest(snap), Version: 1},
 		Payload:  &replaywire.ArtifactInfo{Size: int64(len(pay)), SHA256: digest(pay)},
 	}
-	return store.NewFailure{Metadata: m, Snapshot: snap, Payload: pay, Actor: "core"}
+	return store.NewRecord{Metadata: m, Snapshot: snap, Payload: pay, Actor: "core"}
 }
 
 func ingest(t *testing.T, s *store.Store) string {
@@ -82,7 +82,7 @@ func ingest(t *testing.T, s *store.Store) string {
 
 func retry(t *testing.T, s *store.Store, id string) string {
 	t.Helper()
-	res, err := s.RequestRetry(context.Background(), store.RetryRequest{FailureID: id, Actor: "ops", IdempotencyKey: "retry-" + id})
+	res, err := s.RequestRetry(context.Background(), store.RetryRequest{RecordID: id, Actor: "ops", IdempotencyKey: "retry-" + id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func (d *countingDeliverer) Deliver(_ context.Context, run store.ClaimedRun, _ [
 	d.mu.Unlock()
 	time.Sleep(5 * time.Millisecond) // widen the window a double claim would need
 	return worker.Outcome{Status: store.RunSucceeded, Call: metrics.CallOK, Result: &replaywire.DeliverResult{
-		Nodes: []replaywire.NodeOutcome{{NodeID: run.Failure.NodeID, Outcome: replaywire.NodeDelivered, Attempts: 1}}}}
+		Nodes: []replaywire.NodeOutcome{{NodeID: run.Record.NodeID, Outcome: replaywire.NodeDelivered, Attempts: 1}}}}
 }
 
 // runWorker runs a worker until the test ends and waits for it to stop.
@@ -150,7 +150,7 @@ func TestConcurrentRetryRequestsCreateOneRun(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := s.RequestRetry(context.Background(), store.RetryRequest{FailureID: id, Actor: "ops", IdempotencyKey: fmt.Sprintf("k-%d", i)})
+			_, err := s.RequestRetry(context.Background(), store.RetryRequest{RecordID: id, Actor: "ops", IdempotencyKey: fmt.Sprintf("k-%d", i)})
 			switch {
 			case err == nil:
 				created.Add(1)
@@ -185,7 +185,7 @@ func TestEachRunIsDeliveredOnceAcrossReplicas(t *testing.T) {
 	}
 	waitFor(t, "every record resolved", 30*time.Second, func() bool {
 		st, err := a.Stats(context.Background())
-		return err == nil && st.RecordsByStatus[store.StatusResolved] == n
+		return err == nil && st.RecordsByState[replaywire.RecordState{Kind: replaywire.KindFailure, DeliveryStatus: store.StatusResolved}] == n
 	})
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -221,7 +221,7 @@ func TestADeadReplicasRunExpiresToUnknownOnTheOther(t *testing.T) {
 		r, err := b.GetRun(context.Background(), runID)
 		return err == nil && r.Status == store.RunUnknown
 	})
-	if d, err := b.Get(context.Background(), id); err != nil || d.Status != store.StatusUnknown {
+	if d, err := b.Get(context.Background(), id); err != nil || d.DeliveryStatus != store.StatusUnknown {
 		t.Fatalf("record = %+v, %v; want unknown", d, err)
 	}
 	res, err := a.FinalizeRun(context.Background(), store.RunOutcome{RunID: runID, Status: store.RunSucceeded,
@@ -229,8 +229,8 @@ func TestADeadReplicasRunExpiresToUnknownOnTheOther(t *testing.T) {
 	if err != nil || !res.Late {
 		t.Fatalf("late finalize = %+v, %v; want Late", res, err)
 	}
-	if d, _ := b.Get(context.Background(), id); d.Status != store.StatusUnknown {
-		t.Fatalf("a late result changed the record to %s", d.Status)
+	if d, _ := b.Get(context.Background(), id); d.DeliveryStatus != store.StatusUnknown {
+		t.Fatalf("a late result changed the record to %s", d.DeliveryStatus)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestCorruptedArtifactsAreDetectedOnEveryReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	if _, err := conn.Exec(context.Background(), `UPDATE failure_artifacts SET payload = $1, snapshot = $1`, []byte("tampered")); err != nil {
+	if _, err := conn.Exec(context.Background(), `UPDATE record_artifacts SET payload = $1, snapshot = $1`, []byte("tampered")); err != nil {
 		t.Fatal(err)
 	}
 	for name, s := range map[string]*store.Store{"a": a, "b": b} {

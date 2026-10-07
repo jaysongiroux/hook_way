@@ -65,6 +65,9 @@ type NodeSpec struct {
 	// the same publish_timeout budget. Zero success edges remains a legal
 	// leaf. Set only for publish.
 	SuccessContinuation bool
+	// AllowLeaf permits an observation node to finish successfully without a successor.
+	// It is not a detached destination and never contributes delivery outcomes.
+	AllowLeaf bool
 	// New builds a node from its config. Returning an error fails the load.
 	New func(NodeConfig) (Node, error)
 	// ResolvePorts specializes a configured node's phase while preserving a
@@ -94,6 +97,8 @@ func (r *Registry) Register(s NodeSpec) error {
 		return fmt.Errorf("graph: NodeSpec %q declares Out=None; only In may be None", s.Type)
 	case s.In > PortTerminal || s.Out > PortTerminal || s.In == PortTerminal:
 		return fmt.Errorf("graph: NodeSpec %q has invalid ports %s -> %s", s.Type, s.In, s.Out)
+	case s.AllowLeaf && (s.Detached || s.In != PortEnvelope || s.Out != PortEnvelope):
+		return fmt.Errorf("graph: AllowLeaf %q must be a non-detached Envelope observer", s.Type)
 	case s.SuccessContinuation && !s.Detached:
 		return fmt.Errorf("graph: SuccessContinuation %q must be detached", s.Type)
 	case s.SuccessContinuation && s.Out != PortEnvelope:
