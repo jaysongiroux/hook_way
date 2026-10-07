@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/egress"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	"github.com/jaysongiroux/hook_way/internal/retry"
 	"github.com/jaysongiroux/hook_way/internal/routing"
@@ -78,27 +79,7 @@ func egressDialContext(ctx context.Context, network, addr string) (net.Conn, err
 	if !egressGuarded(ctx) {
 		return egressDialer.DialContext(ctx, network, addr)
 	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	lastErr := fmt.Errorf("no allowed address for %q", host)
-	for _, ip := range ips {
-		if reason := blockedIPReason(ip.IP); reason != "" {
-			lastErr = fmt.Errorf("host %q resolves to %s, which is not an allowed egress target (%s)", host, ip.IP, reason)
-			continue
-		}
-		conn, err := egressDialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	return nil, lastErr
+	return egress.DialContext(ctx, network, addr, net.DefaultResolver, egressDialer)
 }
 
 type httpRequestNode struct {

@@ -23,7 +23,6 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   govulncheck:
@@ -45,6 +44,9 @@ jobs:
 
   image:
     name: Image scan
+    permissions:
+      contents: read
+      security-events: write
     runs-on: [self-hosted, Linux, X64, debian]
     timeout-minutes: 30
     steps:
@@ -152,5 +154,5 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version: "22"
       - run: cd web && npm ci && npm audit --audit-level=high

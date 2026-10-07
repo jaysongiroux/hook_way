@@ -105,6 +105,7 @@ type Metrics struct {
 	capacityRecords   prometheus.Gauge
 	capacityBytes     prometheus.Gauge
 	dbUp              prometheus.Gauge
+	stateLastSuccess  prometheus.Gauge
 	schemaVersion     prometheus.Gauge
 	runs              *prometheus.GaugeVec
 	oldestQueued      prometheus.Gauge
@@ -120,8 +121,11 @@ type Metrics struct {
 	gcDeletedBytes    prometheus.Counter
 	gcDuration        prometheus.Histogram
 	gcLastSuccess     prometheus.Gauge
+	gcInterval        prometheus.Gauge
 	runtimeRegistered bool
 	poolRegistered    bool
+	logsSuppressed    prometheus.Counter
+	storeFailures     *prometheus.CounterVec
 }
 
 func counterVec(name, help string, labels ...string) *prometheus.CounterVec {
@@ -134,6 +138,13 @@ func gauge(name, help string) prometheus.Gauge {
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.logsSuppressed = prometheus.NewCounter(prometheus.CounterOpts{Name: "hookway_replay_logs_suppressed_total", Help: "Repetitive runtime log records omitted by the fixed hot-path storm budget; outcome metrics are not sampled."})
+	m.registry.MustRegister(m.logsSuppressed)
+	m.storeFailures = counterVec("hookway_replay_store_failures_total", "Unexpected API or readiness store failures, by bounded reason (storage_exhausted or other).", "reason")
+	for _, reason := range []string{"storage_exhausted", "other"} {
+		m.storeFailures.WithLabelValues(reason)
+	}
+	m.registry.MustRegister(m.storeFailures)
 	m.buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hookway_replay_build_info", Help: "Build of the running replay service; always 1.",
 	}, []string{"version", "commit"})
@@ -160,6 +171,7 @@ func New() *Metrics {
 	m.capacityRecords = gauge("hookway_replay_capacity_records", "Configured retention.max_records.")
 	m.capacityBytes = gauge("hookway_replay_capacity_bytes", "Configured retention.max_bytes.")
 	m.dbUp = gauge("hookway_replay_db_up", "1 when the last state sample reached the database.")
+	m.stateLastSuccess = gauge("hookway_replay_state_last_success_timestamp_seconds", "Unix time of this replica's last successful shared-state sample; zero until its first sample.")
 	m.schemaVersion = gauge("hookway_replay_schema_version", "Applied database schema version (sampled).")
 	m.runs = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hookway_replay_runs", Help: "Retry runs queued or running (sampled; aggregate replicas with max).",
@@ -182,14 +194,15 @@ func New() *Metrics {
 		Name: "hookway_replay_gc_duration_seconds", Help: "GC sweep duration.", Buckets: prometheus.DefBuckets,
 	})
 	m.gcLastSuccess = gauge("hookway_replay_gc_last_success_timestamp_seconds", "Unix time of this replica's last successful GC sweep (its start time until the first).")
+	m.gcInterval = gauge("hookway_replay_gc_interval_seconds", "Configured interval between GC sweeps; zero disables automatic GC.")
 	// Until the first sweep, report the start time: "time since the last
 	// success" then means "since start", not decades, after every rollout.
 	m.gcLastSuccess.SetToCurrentTime()
 	m.registry.MustRegister(m.buildInfo, m.panics, m.httpRequests, m.httpDuration, m.authFailures, m.captures,
 		m.artifactBytes, m.payloadDownloads, m.runsCreated, m.dismissals, m.records, m.usageRecords, m.usageBytes,
-		m.capacityRecords, m.capacityBytes, m.dbUp, m.schemaVersion,
+		m.capacityRecords, m.capacityBytes, m.dbUp, m.stateLastSuccess, m.schemaVersion,
 		m.runs, m.oldestQueued, m.runsTotal, m.runDuration, m.executorCalls, m.workersBusy, m.leasesExpired,
-		m.lateResults, m.childrenCreated, m.gcRuns, m.gcDeletedRecords, m.gcDeletedBytes, m.gcDuration, m.gcLastSuccess)
+		m.lateResults, m.childrenCreated, m.gcRuns, m.gcDeletedRecords, m.gcDeletedBytes, m.gcDuration, m.gcLastSuccess, m.gcInterval)
 	// Pre-create every bounded series so rate() and absent() queries see a
 	// zero before the first event.
 	for _, s := range recordStates {
@@ -239,6 +252,15 @@ func (m *Metrics) EnableRuntimeCollectors() {
 
 func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
 
+func (m *Metrics) LogSuppressed() { m.logsSuppressed.Inc() }
+
+func (m *Metrics) StoreFailure(reason string) {
+	if reason != "storage_exhausted" {
+		reason = "other"
+	}
+	m.storeFailures.WithLabelValues(reason).Inc()
+}
+
 // SetBuildInfo records the compiled-in version and commit.
 func (m *Metrics) SetBuildInfo(version, commit string) {
 	m.buildInfo.WithLabelValues(version, commit).Set(1)
@@ -286,6 +308,8 @@ func (m *Metrics) SetCapacity(records, bytes int64) {
 	m.capacityBytes.Set(float64(bytes))
 }
 
+func (m *Metrics) SetGCInterval(interval time.Duration) { m.gcInterval.Set(interval.Seconds()) }
+
 // SetDBUp records whether the last state sample reached the database.
 func (m *Metrics) SetDBUp(up bool) {
 	if up {
@@ -303,6 +327,7 @@ func (m *Metrics) SetState(s State) {
 	m.usageRecords.Set(float64(s.UsageRecords))
 	m.usageBytes.Set(float64(s.UsageBytes))
 	m.schemaVersion.Set(float64(s.SchemaVersion))
+	m.stateLastSuccess.SetToCurrentTime()
 }
 
 // RegisterPool exposes connection-pool statistics, read at scrape time (an

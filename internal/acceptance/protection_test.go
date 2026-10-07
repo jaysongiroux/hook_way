@@ -53,7 +53,7 @@ func protectionConfig(src, backend string) string {
       - {id: quota, type: rate_limit, stage: verified, key_by: credential_id, store: cluster, policy_id: acceptance-partner, rpm: 6000, burst: 1000}
       - {id: guard, type: replay_guard, store: cluster, key: '{header.X-Event-ID}', ttl: 5m}
       - {id: env, type: envelope, body_format: json}
-      - {id: shape, type: json_validate, schema: {type: object, required: [order], properties: {order: {type: string}}, additionalProperties: false}}
+      - {id: shape, type: json_validate, schema: {type: object, required: [order], properties: {order: {type: string}, event_id: {type: string}}, additionalProperties: false}}
       - {id: orders, type: publish, destination: orders_api, target: created}
       - {id: audit, type: publish, destination: audit_api, target: created}
     edges: [in>body, body>auth, auth>quota, quota>guard, guard>env, env>shape, shape>orders, env>audit]
@@ -151,10 +151,37 @@ func TestAcceptance_SharedProtectionAndReplay(t *testing.T) {
 				t.Fatal("invalid JSON reached a destination")
 			}
 			s.audit.failing.Store(true)
-			body := []byte(`{"order":"protected-replay"}`)
-			if code, err := signedRequest(s.coreURL+"/protected", "fixed-event", body); err != nil || code != 202 {
-				t.Fatalf("guard admission%d %v", code, err)
+			body := []byte(`{"order":"protected-replay","event_id":"fixed-event"}`)
+			const duplicateAttempts = 8
+			duplicateStatuses := make([]int, duplicateAttempts)
+			duplicateErrors := make([]error, duplicateAttempts)
+			startDuplicates := make(chan struct{})
+			for i := range duplicateAttempts {
+				wg.Go(func() {
+					<-startDuplicates
+					url := strings.TrimSuffix(s.coreReady[i%len(s.coreReady)], "/readyz")
+					duplicateStatuses[i], duplicateErrors[i] = signedRequest(url+"/protected", "fixed-event", body)
+				})
 			}
+			close(startDuplicates)
+			wg.Wait()
+			accepted := 0
+			for i, code := range duplicateStatuses {
+				if duplicateErrors[i] != nil {
+					t.Fatal(duplicateErrors[i])
+				}
+				if code == 202 {
+					accepted++
+				} else if code != 409 {
+					t.Fatalf("duplicate wave status %d", code)
+				}
+			}
+			if accepted != 1 {
+				t.Fatalf("duplicate wave accepted %d, want 1", accepted)
+			}
+			t.Logf("duplicate reconciliation backend=%s sender_attempts=%d accepted=1 rejected=7 statuses=%v", backend, duplicateAttempts, duplicateStatuses)
+			s.orders.assertLedger(t, "fixed-event", receiptLedger{Attempts: 1, Receipts: 1, ConsumerOutcomes: 1})
+			s.audit.assertLedger(t, "fixed-event", receiptLedger{Attempts: 1})
 			if code, err := signedRequest(s.coreURL+"/protected", "fixed-event", body); err != nil || code != 409 {
 				t.Fatalf("duplicate across replicas%d %v", code, err)
 			}
@@ -184,6 +211,8 @@ func TestAcceptance_SharedProtectionAndReplay(t *testing.T) {
 					t.Fatalf("%s receipts%v", name, receipts)
 				}
 			}
+			s.orders.assertLedger(t, "fixed-event", receiptLedger{Attempts: 1, Receipts: 1, ConsumerOutcomes: 1})
+			s.audit.assertLedger(t, "fixed-event", receiptLedger{Attempts: 2, Receipts: 1, ConsumerOutcomes: 1})
 			if code, err := signedRequest(s.coreURL+"/protected", "fixed-event", body); err != nil || code != 409 {
 				t.Fatalf("replay reset guard%d %v", code, err)
 			}

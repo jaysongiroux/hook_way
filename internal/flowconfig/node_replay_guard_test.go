@@ -80,3 +80,39 @@ func TestReplayGuardAcceptsAfterTTL(t *testing.T) {
 		t.Fatalf("after TTL: %v", err)
 	}
 }
+
+func TestReplayGuardStaleCompensationCannotReleaseReplacement(t *testing.T) {
+	n := mustReplayGuard(t, "ttl: 250ms\nmax_entries: 100\n")
+	v := graph.Verified{Raw: graph.RawRequest{Body: []byte(`{"event_id":"stable-provider-event"}`)}}
+	first, err := n.Run(context.Background(), v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstOwner := first.(graph.Verified).Reservations[n.id].Owner
+	time.Sleep(275 * time.Millisecond)
+	replacement, err := n.Run(context.Background(), v)
+	if err != nil {
+		t.Fatalf("expired reservation did not admit replacement: %v", err)
+	}
+	replacementOwner := replacement.(graph.Verified).Reservations[n.id].Owner
+	if firstOwner == "" || replacementOwner == "" || firstOwner == replacementOwner {
+		t.Fatal("reservations did not receive independent owner tokens")
+	}
+	if err := n.Compensate(context.Background(), first, errors.New("old validation finally failed")); err != nil {
+		t.Fatal(err)
+	}
+	_, err = n.Run(context.Background(), v)
+	var ne graph.NodeError
+	if !errors.As(err, &ne) || ne.Status != http.StatusConflict {
+		t.Fatalf("stale compensation released new owner: %v", err)
+	}
+	if err := n.Compensate(context.Background(), replacement, errors.New("new validation failed")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Run(context.Background(), v); err != nil {
+		t.Fatalf("current owner could not release its reservation: %v", err)
+	}
+	if len(v.Reservations) != 0 || first.(graph.Verified).Reservations[n.id].Owner != firstOwner {
+		t.Fatal("request-local reservation ownership was mutated")
+	}
+}

@@ -114,7 +114,10 @@ the same `event_id`, and the root's expiry.
 Both services ship from one Dockerfile: `docker build --target core` and
 `docker build --target replay` (scratch images, UID 65532). For commands, flags and exit codes, use the
 [CLI reference](../reference/cli.md#hookway-replay). Run migrations before serving;
-`serve` refuses an older database schema.
+`serve` refuses an older, newer, legacy or incomplete database schema before
+opening listeners or starting workers. Readiness requires the exact embedded
+schema version and the generic-record table/column contract, not just a
+reachable PostgreSQL server or a `records` table.
 
 `--config` defaults to `$HOOKWAY_REPLAY_CONFIG`. The
 [`examples/replay/`](../../examples/replay) Compose stack runs core ×2, replay ×2,
@@ -206,9 +209,36 @@ history and operator evidence. Their identifiers use `record_id`. Database
 constraints reject executable inspection artifacts and inspection retry or
 resolution rows. Shared retention, record caps and byte caps apply to both kinds.
 
-The generic-record schema is a fresh initial baseline. Existing failure-shaped
-databases are outside its compatibility scope: use a fresh database rather than
-applying it as an upgrade. Do not delete existing databases or volumes implicitly.
+The generic-record schema is a fresh initial baseline, **schema version 1**.
+Earlier failure-shaped databases also used version 1: the Goose number alone is
+not proof of compatibility. Both `migrate` and `serve` reject legacy tables,
+future versions and missing/incompatible baseline objects with preservation and
+recovery guidance. The checks read schema metadata; they do not convert records,
+rewrite migration history or repair tables. They also work with the restricted
+runtime database role below. A shape check is not an integrity/tamper attestation.
+
+Existing failure-shaped databases are outside this baseline's compatibility
+scope: preserve the old database, image/configuration pair and downstream receipt
+checkpoints, and use a **separate fresh database** for a deliberate cutover. Keep
+old workers stopped while collecting a quiescent backup; do not let two release
+pairs replay the same event independently. Legacy records do not become generic
+records through a route rename, version-table edit or a database restore into the
+new service. If those records must remain operational, a scoped conversion or
+legacy-service support decision is required before cutover. Do not delete old
+databases or volumes implicitly. See [Upgrades and rollback](upgrades.md) for the
+preservation, reconciliation and deployment gates.
+
+An interrupted or statement-failed initial SQL migration rolls back its baseline
+objects and does not advance version 1. Stop rollout, inspect the error, restore
+database connectivity/permissions if needed, then rerun the **same matching**
+`migrate` command. The Goose version table may exist at version 0 after failure;
+that alone is not a partial generic-record installation. If baseline tables
+exist without the matching applied migration, the preflight refuses to guess or
+delete them: preserve and investigate/restore instead. Require migration exit 0
+and service readiness before admitting traffic or operator retries. Reapplying
+an already-current migration proves idempotent startup, not cross-release upgrade
+or schema downgrade compatibility.
+
 Core, replay API, console and WASM consumers must use matching version-1 contracts;
 legacy `/v1/failures` routes are not provided.
 
@@ -225,7 +255,12 @@ Replay: every series is prefixed `hookway_replay_` — HTTP, auth, ingest
 `schema_version`), workers (`runs_total{status}`, `executor_calls_total{outcome}`,
 `workers_busy`, `leases_expired_total`, `late_results_total`,
 `children_created_total`), GC, and the database pool. Every replica samples
-the shared database, so aggregate the state gauges with `max`, never `sum`.
+the shared database, so aggregate the state gauges with `max` within one logical
+database's scrape job, never `sum`. Give independent databases distinct jobs.
+Failed samples retain previous gauge values: inspect `db_up` and
+`state_last_success_timestamp_seconds` before treating them as current evidence.
+The timestamp is zero until the first successful sample. Process counters count
+this replica's work and have different aggregation semantics.
 The record gauge keeps kind, retained delivery status and dismissal separate;
 inspections use an empty delivery status. Ingests rejected before validation use
 `kind="unknown"`. Artifact sizes and dismissal counters also carry record kind.
@@ -264,8 +299,9 @@ database, and GC failing or stalled.
   64 MiB buffer filled: replay slow or down, or a burst of large failures), `upload_failed` (three attempts in 5 s
   failed), `capacity` (replay at a retention limit), `rejected` (replay
   refused the record or core could not build it; core logs the reason),
-  `shutdown`. Dropped failures are gone; their events are identified in
-  core's Error log by `event_id`.
+  `shutdown`. Dropped failures are gone. Representative core Error logs identify
+  events by `event_id`, but repeated diagnostics are sampled during storms;
+  counters still count every drop. Logs are not a durable per-event loss ledger.
 - **At capacity** — run GC for already expired records, dismiss recovery work
   you intentionally abandon, or raise `max_records`/`max_bytes`. A successful retry
   retains artifacts until expiry and does not free capacity. Shortening
@@ -278,6 +314,10 @@ database, and GC failing or stalled.
   Fix the configuration and retry, or dismiss.
 - **Stale queue** — no replica is claiming: check replica health,
   `workers.concurrency`, and that core's control listener answers.
+
+The complete [incident instructions](observability.md) cover auth/admission,
+protection, storage/cleanup, scrape failures and notification ownership. Monitoring
+is optional; structured logs and health diagnostics do not require it.
 
 ## Security
 

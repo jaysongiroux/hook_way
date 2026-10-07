@@ -19,19 +19,35 @@ def run(*args):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT).strip()
 
 
-def checked_image(image, version, commit, static=False):
-    if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", image):
-        raise ValueError("use an immutable image@sha256 digest")
+def validate_image(image):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}", image):
+        raise ValueError("use an immutable image@sha256 digest, not a tag or option")
+
+
+def validate_identity(version, commit):
+    if len(version) > 128 or not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?", version):
+        raise ValueError("use a release tag vX.Y.Z[-PRERELEASE], without build metadata")
+    if "-" in version:
+        for identifier in version.split("-", 1)[1].split("."):
+            if re.fullmatch(r"0[0-9]+", identifier):
+                raise ValueError("numeric prerelease identifiers must not have leading zeroes")
+    if not re.fullmatch(r"[a-f0-9]{40}", commit):
+        raise ValueError("use a full source commit")
+
+
+def checked_image(image, version, commit, static=False, expected_program="hookway"):
+    validate_image(image)
+    validate_identity(version, commit)
     run("docker", "pull", "--platform", "linux/amd64", image)
     info = json.loads(run("docker", "image", "inspect", image))[0]
     if (info["Os"], info["Architecture"]) != ("linux", "amd64"):
         raise RuntimeError("release architecture must be linux/amd64")
     if static:
-        return {"image": image, "image_id": info["Id"], "platform": "linux/amd64", **console_install(image, version, commit)}
+        return {"image": image, "image_id": info["Id"], "platform": "linux/amd64", **console_install(image, version, commit, platform="linux/amd64")}
     output = run("docker", "run", "--rm", "--platform", "linux/amd64", image, "version")
-    # CLI versions use whitespace-delimited version/commit values. Check whole
-    # tokens so v1.2.3 cannot accidentally match v1.2.30.
-    if version not in output.split() or f"({commit})" not in output.split():
+    # Require the component class as well as exact version/source: a signed core
+    # digest must not accidentally be accepted in the replay slot.
+    if output.split() != [expected_program, version, f"({commit})"]:
         raise RuntimeError(f"unexpected build identity: {output}")
     return {"image": image, "image_id": info["Id"], "platform": "linux/amd64", "version_output": output}
 
@@ -66,8 +82,10 @@ def core_install(image, config):
         subprocess.run(["docker", "rm", "-f", container], check=False, stdout=subprocess.DEVNULL)
 
 
-def console_install(image, version, commit):
-    container = run("docker", "run", "-d", "--platform", "linux/amd64", "-p", "127.0.0.1::8080",
+def console_install(image, version, commit, platform="linux/amd64"):
+    # Unsigned local builds may use their inspected daemon-native platform;
+    # checked_image keeps the published release path restricted to linux/amd64.
+    container = run("docker", "run", "-d", "--platform", platform, "-p", "127.0.0.1::8080",
                     "--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m,mode=1777",
                     "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "128",
                     "-e", "REPLAY_API_URL=http://127.0.0.1:8081", image)
@@ -128,6 +146,18 @@ def main():
     previous = [args.previous_core, args.previous_replay, args.previous_console, args.previous_version, args.previous_commit]
     if any(previous) and not all(previous):
         parser.error("rollback needs all five --previous-* arguments")
+    # Validate all candidate/previous inputs before pulling or executing any
+    # image. Signature verification is still a separate prerequisite.
+    try:
+        validate_identity(args.version, args.commit)
+        for image in (args.core, args.replay, args.console):
+            validate_image(image)
+        if all(previous):
+            validate_identity(args.previous_version, args.previous_commit)
+            for image in (args.previous_core, args.previous_replay, args.previous_console):
+                validate_image(image)
+    except ValueError as error:
+        parser.error(str(error))
     report = {"schema_version": 1, "candidate": {}, "rollback": "not_run", "replay_database": "not_exercised"}
     with tempfile.TemporaryDirectory(prefix="hookway-release-") as directory:
         config = pathlib.Path(directory) / "config.yaml"
@@ -145,13 +175,13 @@ flows:
     edges: [in>body, body>auth, auth>env, env>out]
 ''')
         for service in ("core", "replay", "console"):
-            report["candidate"][service] = checked_image(getattr(args, service), args.version, args.commit, static=service == "console")
+            report["candidate"][service] = checked_image(getattr(args, service), args.version, args.commit, static=service == "console", expected_program="hookway-replay" if service == "replay" else "hookway")
         report["candidate"]["install"] = core_install(args.core, config)
         report["candidate"]["restart"] = core_install(args.core, config)
         if all(previous):
             report["rollback"] = {}
             for service in ("core", "replay", "console"):
-                report["rollback"][service] = checked_image(getattr(args, "previous_" + service), args.previous_version, args.previous_commit, static=service == "console")
+                report["rollback"][service] = checked_image(getattr(args, "previous_" + service), args.previous_version, args.previous_commit, static=service == "console", expected_program="hookway-replay" if service == "replay" else "hookway")
             report["rollback"]["install"] = core_install(args.previous_core, config)
     pathlib.Path(args.output).write_text(json.dumps(report, indent=2) + "\n")
 

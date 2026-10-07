@@ -36,6 +36,10 @@ const COMMON_FIELD_HELP: Record<string, string> = {
   url: "HTTP(S) URL.",
   timeout: "Duration string such as 5s or 1m.",
   // Nested help asks for the qualified path before trying the bare field name.
+  "json.max_depth":
+    "Parsed JSON depth, with the root at depth 0. Default 128; choose 1–1024. Exceeding it returns 413. The read-body byte limit is separate.",
+  "json.max_nodes":
+    "JSON values allowed before returning 413. Default 1000000; choose 1–1000000. Objects, arrays and scalars count, including values under repeated object keys; keys do not.",
   "retry.max_attempts":
     "Total attempts including the first. 1 (or empty) means no retry. Max 10.",
   "multipart.max_parts":
@@ -43,7 +47,7 @@ const COMMON_FIELD_HELP: Record<string, string> = {
   "multipart.max_part_bytes":
     "Per-part size cap in bytes. Default 1048576 (1 MiB).",
   "multipart.include_content":
-    "Carry each file's bytes as base64. Turn off to keep metadata only and copy nothing.",
+    "Carry each file's bytes as base64. Turn off to keep file metadata only without retaining a base64 content copy. Parsing still uses a bounded temporary part buffer.",
   "retry.initial_backoff":
     "Wait before the second HTTP request attempt; waits double with jitter. Defaults to 500ms.",
   "retry.max_backoff":
@@ -147,6 +151,8 @@ const DEST_FIELD_HELP: Record<string, string> = {
     "async (default) acknowledges an in-memory job before HTTP delivery. sync waits for the destination response within the publication timeout.",
   max_queue:
     "Capacity of the in-memory async delivery queue. A process crash can lose queued work.",
+  max_queue_bytes:
+    "Accounted byte budget for queued and active async deliveries, including encoding and metadata headroom. Omitted or 0 uses 67108864 (64 MiB); set a positive limit to override. Sync delivery is unaffected. This is not a process memory limit.",
   drain_timeout:
     "Time allowed to finish queued async deliveries during graceful shutdown; also bounded by the server's total shutdown limit.",
   mode: "Redis topology: single, sentinel, or cluster.",

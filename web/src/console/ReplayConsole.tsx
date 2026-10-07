@@ -400,6 +400,7 @@ function Inbox({
   const [intent, setIntent] = React.useState<Intent>();
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const panelRef = React.useRef<HTMLElement>(null);
+  const actionTriggerRef = React.useRef<HTMLElement | null>(null);
   const focusPending = React.useRef("");
   React.useEffect(() => {
     if (detail?.id && detail.id === focusPending.current) {
@@ -421,6 +422,9 @@ function Inbox({
   const refreshNow = () => setRefresh((value) => value + 1);
   const action = (value: Intent) => {
     if (intent) return;
+    actionTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setIntent(value);
     setDialogOpen(true);
   };
@@ -973,9 +977,16 @@ function Inbox({
           session={session}
           opened={active && dialogOpen}
           onRefresh={refreshNow}
-          onClose={(retain) => {
+          onClose={(retain, completed) => {
             setDialogOpen(false);
             if (!retain) setIntent(undefined);
+            requestAnimationFrame(() => {
+              const trigger = actionTriggerRef.current;
+              // Completed actions can remove their trigger in a later refresh.
+              if (!completed && trigger?.isConnected && !trigger.matches(":disabled"))
+                trigger.focus({ preventScroll: true });
+              else (selected ? panelRef.current : inboxRef.current)?.focus({ preventScroll: true });
+            });
           }}
         />
       )}

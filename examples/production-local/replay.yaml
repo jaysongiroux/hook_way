@@ -1,0 +1,38 @@
+server:
+  addr: ":8080"
+  cors:
+    allowed_origins: ["${REPLAY_CONSOLE_ORIGIN}"]
+logging:
+  level: info
+metrics:
+  enabled: true
+  addr: ":9091"
+  path: /metrics
+database:
+  # Compose binds this variable to the restricted replay_runtime URL, including
+  # when an older private .env still retains the previous administrator URL.
+  url: "${REPLAY_DATABASE_URL}"
+  max_conns: 5
+core:
+  control_url: "http://hookway:9092"
+  control_token: "${REPLAY_CONTROL_TOKEN}"
+retention:
+  ttl: 168h
+  max_records: 10000
+  max_bytes: 268435456
+  max_record_bytes: 2097152
+  gc_interval: 15m
+workers:
+  concurrency: 2
+  execution_timeout: 30s
+  lease: 60s
+keys:
+  - name: core
+    token: "${REPLAY_CAPTURE_TOKEN}"
+    scopes: [capture]
+  - name: operator
+    token: "${REPLAY_OPERATOR_TOKEN}"
+    scopes: [read, payload, retry]
+  - name: metrics
+    token: "${REPLAY_METRICS_TOKEN}"
+    scopes: [metrics]

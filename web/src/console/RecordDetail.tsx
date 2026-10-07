@@ -66,6 +66,7 @@ export function RecordDetail({
     if (!canPayload) setCapturedInspection(undefined);
   }, [canPayload]);
   const canOperate = scopes.includes("retry");
+  const dismissDisabled = !record.actions.dismiss.allowed || actionPending;
   async function readPayload(download: boolean) {
     setBusy(true);
     setPayloadError("");
@@ -252,8 +253,8 @@ export function RecordDetail({
                 size="sm"
                 variant="subtle"
                 color="red.9"
-                c="var(--mantine-color-red-text)"
-                disabled={!record.actions.dismiss.allowed || actionPending}
+                c={dismissDisabled ? undefined : "var(--mantine-color-red-text)"}
+                disabled={dismissDisabled}
                 onClick={() =>
                   onAction({ action: "dismiss", records: [record] })
                 }

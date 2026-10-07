@@ -16,6 +16,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/queue"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
@@ -141,20 +142,11 @@ func stripURL(raw string) string {
 	return u.String()
 }
 
-// urlInText matches a URL in free text up to whitespace or a quote, capturing
-// its scheme and host.
-var urlInText = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)(?:[^/\s@"'?#]*@)?([^/\s"'?#]*)[^\s"']*`)
-
 // ErrorMessage is err's text made storable: every URL cut to its scheme and
 // host (paths and queries carry keys, userinfo carries passwords), invalid
 // UTF-8 and NUL bytes replaced, and the length bounded.
 func ErrorMessage(err error) string {
-	if err == nil {
-		return ""
-	}
-	msg := urlInText.ReplaceAllString(err.Error(), "$1$2")
-	msg = strings.ReplaceAll(strings.ToValidUTF8(msg, "�"), "\x00", "")
-	return truncate(msg, replaywire.MaxErrorMessageLen)
+	return truncate(logging.ErrorText(err), replaywire.MaxErrorMessageLen)
 }
 
 // Attempts is the attempt count a delivery reported, or 1.

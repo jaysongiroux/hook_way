@@ -12,7 +12,7 @@ import (
 // Lint reports presence rules that typed ports cannot express. Warnings stay
 // warnings unless the caller promotes them with --strict.
 func Lint(cfg Config) []config.ValidationIssue {
-	var issues []config.ValidationIssue
+	issues := configurationPolicyIssues(cfg)
 	for _, name := range sortedKeys(cfg.Flows) {
 		issues = append(issues, lintFlow(name, cfg)...)
 	}
@@ -32,6 +32,11 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 	var hasRateLimit, hasNoAuth, hasPublish, hasRespond, hasInspect bool
 	for i, nc := range fc.Nodes {
 		switch nc.Type {
+		case "auth":
+			opts, err := decodeOptions[AuthOptions](nc)
+			if err == nil && isSampleCredential(opts.Secret) {
+				issues = append(issues, sampleCredentialWarning(fmt.Sprintf("%s.nodes[%d].secret", prefix, i)))
+			}
 		case "inspect":
 			hasInspect = true
 		case "rate_limit":

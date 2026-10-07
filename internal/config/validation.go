@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/egress"
 	"github.com/jaysongiroux/hook_way/internal/filter"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
@@ -277,6 +278,9 @@ func validationIssues(c Config) []ValidationIssue {
 		}
 		if dest.Type == "webhook" {
 			w := dest.Webhook
+			if authority, err := vars.Parse(urlAuthority(w.URL)); err == nil && w.AllowPrivateTargets && !authority.HasPlaceholders() {
+				issues = append(issues, validationError(fieldPrefix+".webhook.allow_private_targets", "has no effect unless the url host contains a {variable}", "omit this setting for literal operator-configured hosts; they already support local/private targets"))
+			}
 			if w.URL == "" {
 				issues = append(issues, validationError(fieldPrefix+".webhook.url", "url is required for webhook destinations", "set url to an http(s) endpoint such as \"https://api.example.com/hooks\""))
 			} else if !strings.HasPrefix(w.URL, "http://") && !strings.HasPrefix(w.URL, "https://") {
@@ -1245,12 +1249,12 @@ func webhookURLTemplateIssues(field, rawURL string) []ValidationIssue {
 		return nil
 	}
 	authority := urlAuthority(rawURL)
-	if !strings.Contains(authority, "{") {
-		return nil
-	}
 	authTpl, err := vars.Parse(authority)
 	if err != nil {
 		return []ValidationIssue{validationError(field, "url host template is malformed: "+err.Error(), "use {variable} placeholders with balanced braces")}
+	}
+	if !authTpl.HasPlaceholders() {
+		return nil
 	}
 	suffix := authTpl.LiteralSuffix()
 	host := suffix
@@ -1266,14 +1270,7 @@ func webhookURLTemplateIssues(field, rawURL string) []ValidationIssue {
 // urlAuthority returns the authority (host[:port]) of a raw, possibly
 // templated URL without parsing it, so placeholders survive intact.
 func urlAuthority(rawURL string) string {
-	rest := rawURL
-	if i := strings.Index(rawURL, "://"); i >= 0 {
-		rest = rawURL[i+3:]
-	}
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		rest = rest[:slash]
-	}
-	return rest
+	return egress.Authority(rawURL)
 }
 
 // describeBindings renders enumerated bindings for error messages.

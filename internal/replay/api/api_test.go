@@ -182,10 +182,14 @@ func TestHealthzAndReadyz(t *testing.T) {
 	if rec := h.do(t, "GET", "/readyz", "", nil, nil); rec.Code != 200 {
 		t.Fatalf("readyz = %d", rec.Code)
 	}
-	fs.ready = func() error { return errors.New("store: database schema version 0 is behind 1") }
-	rec := h.do(t, "GET", "/readyz", "", nil, nil)
-	if rec.Code != http.StatusServiceUnavailable || problemCode(t, rec) != "not_ready" || strings.Contains(rec.Body.String(), "schema version 0") {
-		t.Fatalf("readyz = %d %q, want 503 not_ready without internal detail", rec.Code, rec.Body.String())
+	for _, detail := range []string{"store: database schema version 0 is behind 1", "store: database version 999 is ahead", "store: legacy failure-shaped tables exist", "dial tcp 10.0.0.5:5432: connection refused"} {
+		fs.ready = func() error { return errors.New(detail) }
+		rec := h.do(t, "GET", "/readyz", "", nil, nil)
+		if rec.Code != http.StatusServiceUnavailable || problemCode(t, rec) != "not_ready" ||
+			!strings.Contains(rec.Body.String(), "unreachable or incompatible with this binary") ||
+			strings.Contains(rec.Body.String(), detail) || strings.Contains(rec.Body.String(), "10.0.0.5") {
+			t.Fatalf("readyz = %d %q, want 503 not_ready without internal detail", rec.Code, rec.Body.String())
+		}
 	}
 }
 

@@ -204,6 +204,16 @@ func discoverExamples(t *testing.T) (valid, invalid []string) {
 		if d.Name() == "docker-compose.yaml" {
 			return nil
 		}
+		// These three files configure optional monitoring dependencies, not
+		// Hookway. metrics/prometheus validates their actual tool contracts.
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		switch filepath.ToSlash(rel) {
+		case "production-local/monitoring/compose.yaml", "production-local/monitoring/prometheus.yaml", "production-local/monitoring/alertmanager.yaml":
+			return nil
+		}
 		// Every replay.yaml (examples/replay/, examples/dev/) configures
 		// hookway-replay, not core; TestTheReplayExamplesValidate in
 		// internal/replay/config covers them.

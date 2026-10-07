@@ -8,6 +8,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/auth"
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
 )
 
 // AuthSchemeSchema describes registry capabilities for strategy-driven authoring.
@@ -105,6 +106,8 @@ func envelopeFormDefaults() map[string]any {
 	limits := (MultipartOptions{}).limits()
 	return map[string]any{
 		"body_format":               "json",
+		"json.max_depth":            jsonbudget.DefaultMaxDepth,
+		"json.max_nodes":            jsonbudget.DefaultMaxNodes,
 		"multipart.include_content": limits.IncludeContent,
 		"multipart.max_parts":       limits.MaxParts,
 		"multipart.max_part_bytes":  limits.MaxPartBytes,

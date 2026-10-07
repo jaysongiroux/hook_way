@@ -4,6 +4,31 @@ Choose a sender authentication scheme, protect credentials, and restrict the
 interfaces your deployment exposes. Authentication happens before event delivery;
 flows using the explicit `no_auth` node accept unauthenticated requests.
 
+## Deployment trust boundaries
+
+Flow authors are trusted operators; webhook bodies, path variables, forwarded
+headers and browser requests are not. Binding a listener to a private interface
+does not replace its configured authentication. CORS is not authentication.
+
+| Surface | Intended exposure | Authentication and secret owner |
+| --- | --- | --- |
+| Configured webhook routes | Public ingress or an explicitly trusted internal network | Per-flow provider authentication; core owns verifier secrets. `no_auth` remains an explicit operator choice. |
+| Core health/readiness | Deployment probes | Public status; no credential. Core readiness can expose flow and destination status, so restrict probe access if that topology is sensitive. |
+| Core metrics | Private scrape listener, preferably separate from ingress | `security.api_key` when configured; core/scraper own the key. Without it metrics are unauthenticated. |
+| Editor API | Local authoring or a protected authoring origin | Optional `security.api_key`; every protected API route requires one unambiguous Bearer header. It validates submitted documents, not deployed files, and does not load deployment secrets. |
+| Builder/browser assets | Static public assets or an operator-only origin | No deployment credentials; editor wildcard CORS supports stateless authoring and is not a replay API policy. |
+| Replay capture | Core-to-replay private network | Dedicated `capture` key; core and replay own it. |
+| Replay operator API | Operator-only network/origin | Separate named `read`, `payload`, and `retry` scopes; exact configured browser origins. |
+| Replay metrics | Private scrape endpoint | Dedicated `metrics` key; replay/scraper own it. |
+| Replay health/readiness | Deployment probes | Minimal public status, no credential. |
+| Core control | Private replay-to-core listener; never public ingress | Separate `control.token`; replay worker and core own it. This authorizes redrive, not ordinary ingress. |
+| Replay database | Private database network | Runtime DML role; separate owner/migration credential confined to provisioning and migration jobs. Database writers can influence recovery. |
+
+The [local production recipe](../development/local-development.md#persistent-local-production-setup)
+keeps host ports loopback-only and separates database roles without requiring a
+cloud account. Production operators still own firewall/proxy configuration,
+TLS termination, storage/backup encryption and access-log redaction.
+
 ## Choose an authentication format
 
 Set `auth.scheme` to a concrete name from the table below. There is no `family`
@@ -150,6 +175,13 @@ lifecycle.
 
 When `X-Forwarded-For` is honored, Hookway does **not** take the leftmost entry (that value is client-supplied and trivially spoofed). Instead it walks the comma-separated list right to left — the direction proxies append in — skipping any entry that itself falls within `trusted_proxies`, and uses the first (rightmost) entry that isn't a known proxy as the client IP. If every entry is a trusted proxy, the leftmost entry is used. A malformed entry stops the walk immediately and falls back to the last known-good hop rather than continuing toward the client-controlled end, so a crafted invalid entry can't be used to smuggle a different address into scope. This stops a client from spoofing `X-Forwarded-For` (e.g. prepending an allowlisted IP, or rotating fake addresses) to evade the IP allowlist or per-IP rate limit. Configure `trusted_proxies` to your load balancer/ingress ranges in production; leaving `trusted_proxy_headers` on with `trusted_proxies` empty trusts any peer and treats the rightmost `X-Forwarded-For` entry as the client IP with no proxy hops recognized to skip.
 
+Repeated `X-Forwarded-For` fields are combined in wire order before that walk.
+If a present list has no usable hop, identity falls back to the socket peer,
+not `X-Real-IP`. When XFF is absent, `X-Real-IP` is accepted only as one field
+containing one valid IP address. Malformed or repeated values fall back to the
+socket peer. Empty trusted ranges remain supported for compatibility but produce
+a configuration warning; strict validation rejects that warning.
+
 ## Replay Protection
 
 A `replay_guard` requires an explicit store. Redis and PostgreSQL coordinate
@@ -217,9 +249,38 @@ ingress that serves webhooks, restrict database access like a destination
 credential, and rotate the token like one. The token is compared in constant
 time and never logged.
 
+Core control, core metrics and protected editor APIs reject repeated
+`Authorization` fields before invoking the protected operation, even when one
+field contains the correct credential. Send exactly one Bearer header.
+
+Capture uploads and webhook publishers do not follow HTTP redirects, including
+same-origin redirects: configure the canonical receiving URL. Redirect responses
+are delivery failures, not permission to resend a credential or retained payload
+to another endpoint. Direct authenticated local/private HTTP receivers remain
+supported. Capture-upload, dead-letter failure, node and readiness logs, node
+span exception/status text, and stored capture/control transport diagnostics
+remove URL userinfo, paths, queries, fragments
+and credential assignments while retaining destination hosts and failure classes;
+this does not redact legitimate retained snapshot or payload bytes.
+
+Webhook destination authorities containing request variables use the same
+private-address classification and DNS-vetted, pinned dialing as guarded
+`http_request` nodes. Literal operator-selected hosts remain trusted.
+`destinations.<id>.webhook.allow_private_targets: true` permits an intentional
+private templated destination, but does not permit arbitrary authority syntax,
+remove the required literal domain suffix, or enable redirects. Use separate
+network permissions for trusted operator-authored destinations where needed.
+
 ## Logging
 
-Logs include request method, path, flow name (`endpoint` / `flow` depending on the logger), destination id (`destination`), target, status, and duration. Raw webhook payloads and secrets are not logged.
+Logs include request method, path, flow name (`endpoint` / `flow` depending on the logger), destination id (`destination`), target, status, and duration. The request logger does not include raw webhook payloads or resolved authentication secrets.
+
+Do not encode credentials in routing paths, target names, flow/destination names,
+request IDs or other diagnostic labels. These values can be logged; diagnostic
+URL/credential sanitization is not a general secret detector for arbitrary
+operator-authored strings. Ingress access logs and observability exporters need
+their own redaction policy. Retained raw replay artifacts are sensitive data,
+not application log messages.
 
 ## Envelope Compatibility
 
@@ -315,13 +376,13 @@ the path *and* the host. Three protections keep that boundary real.
 
 ## Code node
 
-A `code` node runs operator-authored JavaScript (goja) on the request envelope. **Flow authors are trusted operators.** They can already point destinations at arbitrary URLs and disable auth. The sandbox defends against accidents — infinite loops, unbounded recursion, accidental host I/O — not against a hostile tenant. **If Hookway is ever multi-tenant or hosted, this design does not hold; move the code node to WASM with real resource isolation rather than hardening goja further.**
+A `code` node runs operator-authored JavaScript (goja) on the request envelope. **Flow authors are trusted operators.** They can already point destinations at arbitrary URLs and disable auth. The controls reduce common accidents — interruptible loops, recursion, accidental host I/O — but do not safely contain every script or a hostile tenant. If Hookway is ever multi-tenant or hosted, this design does not hold: an explicitly approved process/worker or engine isolation design with real resource enforcement is required. A different execution engine alone is not an isolation guarantee.
 
-Controls C1–C7 bound wall-clock time, call stack, host access, input/output size, per-request isolation, and panics. See [Configuration § Code node](configuration.md#code-node).
+Controls C1–C7 provide execution interruption, call-stack and input/output limits, restricted host access, separate per-request VMs and panic recovery. They are not hard wall-clock or per-VM heap bounds. See [Configuration § Code node](configuration.md#code-node).
 
-**Memory gap.** goja has no hard memory cap. Controls C1–C7 bound time, call stack, host access, and payload size, but a script doing `let a=[]; while(1) a.push(1)` allocates until the timeout interrupts it — which may be after significant allocation. Hookway is a single process, so that pressure is shared with every other flow. Mitigate with container memory limits plus liveness restart, and deploy split by trust domain for untrusted flows.
+**Memory gap.** goja has no hard memory cap. Controls C1–C7 bound call stack, host access and payload boundaries, with best-effort execution interruption. Repeated allocations can consume significant memory before interruption; a single native allocation can OOM-kill the entire core despite small input/output limits. Container limits contain process memory, not individual VMs, and termination can lose acknowledged volatile jobs. Split trusted scripting domains into separate core processes to limit blast radius; this does not make hostile authors supported.
 
-**Interrupt gap.** A single long-running native operation (a pathological regex) may not be interruptible between statements. Prefer the `filter` node over complex regexes in `code`.
+**Interrupt gap.** A single long-running native operation (a pathological regex) may not be interruptible between statements. Health can remain successful while that operation outlives its configured timeout, so a liveness restart is not a reliable execution deadline. Prefer the `filter` node over complex regexes in `code`. Run pathological checks only in disposable hard-limited containers with an independent kill deadline, never in the developer's host process. See [resource limits and containment](../operations/resource-limits.md) for sizing and the remaining process-level risk.
 
 A `code` node with no explicit `timeout` is a config warning; the 1s default still applies. Set `timeout` deliberately.
 
@@ -392,6 +453,19 @@ startup, so configuration edits alone do not revoke a running process's key.
 Browser sessions receiving 401 clear their credential. Use production HTTPS,
 restrict operator/API access at the network boundary and redact Authorization in
 upstream access logs. CORS is an exact-origin browser policy, not authentication.
+
+The two-process rollout regression exercises old-only, overlapping and new-only
+configurations against PostgreSQL, including per-replica restarts, key names and
+scope separation. Run it locally with Docker available:
+
+```sh
+HOOKWAY_ACCEPTANCE=1 go test ./internal/acceptance -run '^TestAcceptance_NamedKeyRotationAcrossReplayReplicas$' -count=1 -timeout 3m
+```
+
+This verifies native process behavior, not your deployment's rollout controller
+or provider-side webhook rotation. The local production example keeps API/control
+keys distinct from database credentials; migration jobs do not receive its real
+capture, operator or control tokens.
 
 Authentication hashes the bounded submitted token and compares its SHA-256 digest
 against every configured key with constant-time digest comparisons. It does not

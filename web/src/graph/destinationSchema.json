@@ -693,10 +693,16 @@
         "url": {
           "type": "string"
         },
+        "allow_private_targets": {
+          "type": "boolean"
+        },
         "timeout": {
           "type": "string"
         },
         "max_queue": {
+          "type": "integer"
+        },
+        "max_queue_bytes": {
           "type": "integer"
         },
         "drain_timeout": {

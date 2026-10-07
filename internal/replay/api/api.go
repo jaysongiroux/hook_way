@@ -16,6 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/problem"
 	"github.com/jaysongiroux/hook_way/internal/replay/auth"
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
@@ -140,7 +143,7 @@ func (a *api) instrument(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				a.metrics.Panic("handler")
 				a.logger.Error("panic recovered in http handler", "route", routeLabel(r.Pattern),
-					"panic", fmt.Sprint(rec), "stack", string(debug.Stack()))
+					"panic_type", fmt.Sprintf("%T", rec), "stack", string(debug.Stack()))
 				if !sw.wrote {
 					problem.Write(sw, http.StatusInternalServerError, "internal", "internal error")
 				}
@@ -213,7 +216,8 @@ func (a *api) fail(w http.ResponseWriter, r *http.Request, err error) {
 		problem.Write(w, ae.status, ae.code, ae.detail)
 		return
 	}
-	a.logger.Error("replay api request failed", "route", routeLabel(r.Pattern), "error", err)
+	a.metrics.StoreFailure(storeFailureReason(err))
+	a.logger.Error("replay api request failed", "route", routeLabel(r.Pattern), "error", logging.ErrorText(err))
 	problem.Write(w, http.StatusInternalServerError, "internal", "internal error")
 }
 
@@ -222,6 +226,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func storeFailureReason(err error) string {
+	var postgres *pgconn.PgError
+	if errors.As(err, &postgres) && postgres.Code == "53100" {
+		return "storage_exhausted"
+	}
+	return "other"
 }
 
 // decodeJSON reads a small JSON body strictly. An empty body is allowed only
@@ -263,8 +275,9 @@ func (a *api) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
 	defer cancel()
 	if err := a.store.Ready(ctx); err != nil {
-		a.logger.Warn("readiness check failed", "error", err)
-		problem.Write(w, http.StatusServiceUnavailable, "not_ready", "the database is unreachable or its schema is behind this binary")
+		a.metrics.StoreFailure(storeFailureReason(err))
+		a.logger.Warn("readiness check failed", "error", logging.ErrorText(err))
+		problem.Write(w, http.StatusServiceUnavailable, "not_ready", "the database is unreachable or incompatible with this binary")
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

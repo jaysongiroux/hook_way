@@ -164,6 +164,24 @@ fail with exit `1`. It is the only way to gate a build on the policy lints:
 - a `read_body.max_bytes` above `server.max_body_bytes`
 - a `lookup` node with no `cache` block
 - `replay.tls.insecure_skip_verify: true`
+- `server.max_inflight_requests: -1` (request admission is unlimited)
+- a universal `security.trusted_proxies` CIDR (`0.0.0.0/0` or `::/0`)
+- `security.trusted_proxy_headers: true` without any `trusted_proxies`
+  (any socket peer may supply forwarded client identity)
+- exact known sample credentials in flow auth, webhook destination auth, or
+  replay capture/control tokens; warnings identify the field without printing
+  the credential. Secret references are not resolved by offline validation.
+- asynchronous webhook publication (success acknowledges a volatile queue),
+  successful responses for failure outcomes, `skip_failed` fan-out that can
+  acknowledge partial delivery, or `on_error` success without a fallback publish
+- disabled failure capture for publishing flows when replay is configured
+
+Warnings include a correction in both text and JSON output. These supported
+choices remain usable, including intentional `no_auth`, asynchronous delivery,
+and disposable sample setups; `--strict` is an explicit operator policy gate.
+Local HTTP, private destinations, and TLS termination at a trusted proxy are
+supported without a special production mode. Impossible timeout relationships,
+missing required credentials, and other structural errors always fail.
 
 **JSON output.** `{"issues": [ ... ]}`, where each issue has `field` (a
 dotted config path), `message`, an optional `suggestion`, and `severity`

@@ -7,12 +7,15 @@ ingress spool and does not provide exactly-once delivery.
 
 ## Choose the acknowledgement boundary
 
-| Configuration | What a normal successful publish means | Remaining failure window |
-|---|---|---|
-| Durable broker destination, default `stop_on_failure` | The configured broker's publish operation succeeded. RabbitMQ uses publisher confirms, mandatory routing and persistent messages. Other destinations have their own acceptance contract. | Broker durability/replication settings still matter. A lost HTTP response can cause sender retries after a successful publish. Consumers can fail after receiving a message. |
-| Webhook destination with `delivery_mode: sync` | The downstream HTTP delivery completed successfully within the publish budget. | The downstream may commit work and lose its response. Retries can duplicate that work. A 2xx response does not establish the downstream's storage durability. |
-| Webhook destination with `delivery_mode: async` (the default) | The job entered a bounded, process-local memory queue. | A crash, forced termination or expired drain deadline can lose acknowledged queued or in-flight jobs. `dead_letter` and replay cannot remove this window. |
-| `http_request` followed by `respond` | The configured response, optionally the upstream status/body, was returned. | This is a request/response proxy contract. An upstream side effect can succeed even if its response or the caller connection is lost. |
+| Configuration | Success boundary | Retained state | Duplicate / loss window | Recovery owner |
+|---|---|---|---|---|
+| Durable broker, default `stop_on_failure` | Broker publish accepted; RabbitMQ confirms mandatory-routed persistent messages. Other brokers have their own contracts. | Message in the configured broker, subject to its durability and retention settings. | Lost confirm or caller reply can produce duplicates. Consumer receipt is not a completed business transaction. | Sender retries visible failures; broker and consumer operators reconcile receipts and unfinished work. |
+| Webhook `delivery_mode: sync` | Destination returned a successful HTTP response within the publish budget. | Whatever the destination actually committed; Hookway has no ingress spool. | Destination may commit and lose its response. Retries can repeat work; 2xx does not prove durable storage. | Destination owner supplies idempotency and receipts; sender or replay operator recovers eligible failures. |
+| Webhook `delivery_mode: async` (default) | Job admitted to bounded process-local memory. | Volatile queued/active jobs; terminal failures may reach a configured dead-letter target or best-effort capture while core is alive. | Crash, forced kill or expired drain deadline can lose acknowledged jobs, without a recovery record. | Product owner explicitly accepts loss or chooses a durable broker; consumer/provider reconciliation handles gaps. |
+| `http_request` then `respond` | Configured response, optionally upstream status/body, was returned. | Destination-side effects, if any; no delivery snapshot recovery for the HTTP request itself. | Upstream work may commit before either response is lost; configured retries can repeat it. | Caller and upstream owner reconcile stable identities; do not treat a timeout as nondelivery. |
+| Partial fan-out, `skip_failed` | Normally at least one sibling publish succeeded. | Successful branch effects; eligible unhandled failed branches may be captured after final 2xx. | Not atomic multicast. Capture can be dropped; whole-event redelivery can repeat successful branches. | Replay operator retries only captured failed destinations; destination owners reconcile missing records. |
+| `on_error`, fallback or 2xx failure response | The configured recovery/response policy completed, not necessarily the original delivery. | A fallback inherits its destination's contract. A handled error or response-only acknowledgement need not retain recovery work. | Async fallback is still volatile; acknowledging without fallback intentionally accepts the original failure. | Flow owner defines the contract and monitors the chosen fallback or reconciles accepted loss. |
+| Batch child processing | `shared`: best-effort 200 accounting; `dedicated`: eligible failures normally return 502 after attempted children finish. | Individual child destination effects and response accounting; no batch snapshot redrive. | Some children may succeed before others fail or remain unattempted. Parent retry can repeat successful children. | Sender/consumer operators reconcile stable child identities and replay from their own source of truth. |
 
 For reliable ingestion, start with
 [`examples/reliable-ingestion.yaml`](../../examples/reliable-ingestion.yaml): verify
@@ -117,6 +120,33 @@ HTTP acknowledgements, destination receipts and consumer outcomes. A disconnect
 is an uncertain outcome: normal publication continues independently of caller
 cancellation within its timeout, so the safe recovery is an idempotent retry,
 not an assumption that no work happened.
+
+## Reconcile attempts, not just acknowledgements
+
+Use a synthetic, authenticated provider event ID for each failure drill and keep
+an independent ledger outside the core process being terminated. For each event
+and destination, record sender attempt count, observed HTTP status (or no reply),
+destination attempts, accepted receipts and idempotent business outcomes. Preserve
+the Hookway envelope IDs too, but group sender retries by stable provider identity.
+Count failed destination attempts separately from accepted receipts.
+
+For example, one confirmed broker publish followed by a discarded caller reply
+can look like two sender attempts, one observed 202, two broker receipts with
+different envelope IDs, and one idempotent consumer outcome. That is acceptable
+at-least-once recovery, not exactly-once transport. Conversely, an async 202
+followed by a forced kill can have zero receipts and no replay record.
+
+For partial fan-out, reconcile each branch: the good branch must not be included
+in a destination-only replay. For a lost replay action reply, repeat the same
+actor, idempotency key and exact body; do not create a new retry key merely because
+the reply was lost. See [uncertain-delivery investigation](replay-investigation.md)
+before resolving, dismissing or deliberately repeating an unknown outcome.
+
+`make replay-acceptance-test` runs native core/replay replicas with independent
+destination ledgers, real PostgreSQL/Redis protection and a RabbitMQ fixture.
+`make conformance` checks graph and redrive invariants. These local checks also
+work for production-style local development; they do not establish broker HA,
+live deployment health, provider retention or recovery from restored backups.
 
 ## Validation, protection and replay together
 

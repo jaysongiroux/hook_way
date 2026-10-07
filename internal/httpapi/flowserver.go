@@ -85,6 +85,7 @@ type mountedFlow struct {
 	responses  map[string]graph.ResponsePolicy
 	nodeTypes  map[string]string
 	name       string
+	path       string
 	methods    map[string]struct{}
 	allow      string
 	flow       *graph.Flow
@@ -303,7 +304,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		s.flows[name] = mountedFlow{
 			overload:  &overloadLog{},
 			responses: fc.Responses, nodeTypes: nodeTypes,
-			name: name, methods: methodSet(methods), allow: strings.Join(methods, ", "),
+			name: name, path: path, methods: methodSet(methods), allow: strings.Join(methods, ", "),
 			flow: compiled, destByNode: destByNode, destIDs: uniqueDestIDs(destByNode),
 			broken: compileErr != nil || compiled == nil,
 		}
@@ -498,6 +499,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	status := http.StatusInternalServerError
 	flowLabel := ""
+	pathLabel := "unmatched"
 	executionOutcome := "error"
 	var overload *overloadLog
 	defer func() {
@@ -514,7 +516,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		hooklogging.Request(s.logger, hooklogging.RequestAttrs{
-			Method: r.Method, Path: r.URL.Path, Endpoint: flowLabel,
+			Method: r.Method, Path: pathLabel, Endpoint: flowLabel,
 			Status: status, Duration: time.Since(start), RequestID: requestIDFromContext(r.Context()),
 			TraceID: traceIDFromContext(r.Context()), Headers: r.Header,
 			HeaderDenylist:  s.cfg.Security.RedactedHeaderDenylist,
@@ -523,6 +525,9 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	mf, pathVars, ok := s.matchFlow(r.URL.Path)
+	if ok {
+		pathLabel = mf.path
+	}
 	if !ok {
 		status = http.StatusNotFound
 		s.writeJSON(w, r, status, map[string]string{"error": "not found"})
@@ -566,6 +571,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		overload = mf.overload
 		status = http.StatusServiceUnavailable
 		w.Header().Set("Retry-After", "1")
+		closeUnreadRequest(w, r)
 		if result == gateFull || result == gateTimeout {
 			s.metrics.Saturated(mf.name, "", "")
 		}
@@ -578,6 +584,7 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		overload = mf.overload
 		status = http.StatusServiceUnavailable
 		w.Header().Set("Retry-After", "1")
+		closeUnreadRequest(w, r)
 		s.writeJSON(w, r, status, map[string]string{"error": "server closing"})
 		return
 	}
@@ -668,9 +675,14 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 				attrs = append(attrs, "drop_reason", ev.DropReason)
 			}
 			if ev.Err != nil {
-				span.RecordError(ev.Err)
-				span.SetStatus(codes.Error, ev.Err.Error())
-				s.logger.Error("node failed", append(attrs, "error", ev.Err.Error())...)
+				safeText := hooklogging.ErrorText(ev.Err)
+				var panicErr graph.PanicError
+				if errors.As(ev.Err, &panicErr) {
+					safeText = fmt.Sprintf("node panic (%T)", panicErr.Value)
+				}
+				span.RecordError(errors.New(safeText))
+				span.SetStatus(codes.Error, safeText)
+				s.logger.Error("node failed", append(attrs, "error", safeText)...)
 			} else {
 				s.logger.Debug("node", attrs...)
 			}
@@ -747,6 +759,16 @@ func (s *FlowServer) handleFlow(w http.ResponseWriter, r *http.Request) {
 		body["failed_destinations"] = failed
 	}
 	s.writeJSON(w, r, status, body)
+}
+
+// net/http otherwise drains small unread HTTP/1 request bodies before writing
+// the response for keep-alive. A slow rejected sender must not delay admission
+// rejection until ReadTimeout, or retain a handler after its slot is released.
+// Healthy keep-alive and HTTP/2 stream handling remain unchanged.
+func closeUnreadRequest(w http.ResponseWriter, r *http.Request) {
+	if r.ProtoMajor == 1 && r.Body != nil && r.Body != http.NoBody {
+		w.Header().Set("Connection", "close")
+	}
 }
 
 func (s *FlowServer) writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {

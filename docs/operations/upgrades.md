@@ -63,6 +63,19 @@ releases must be checked for the specific upgrade.
 Use pinned image digests, preserve the previous configuration and image digests,
 and treat a release pair plus its replay schema as one deployment unit.
 
+| Boundary | Supported current combination |
+| --- | --- |
+| Application releases | Matching core, replay API and console/WASM from one release; mixed-release rolling upgrades are not assumed safe. |
+| HTTP/WASM record/action contracts | Version 1 consumers and generic `/v1/records` routes; no legacy failure routes. |
+| Replay database | Exact current embedded migration version (1 for this baseline), plus the required generic-record tables/types and fencing constraints/indexes. Legacy/future/incomplete shapes fail without repair before serving. |
+| Core configuration | Strict current configuration contract; offline validation is not live dependency readiness. Explicit store declarations and matching policy fingerprints remain required. |
+| Protection migration | Explicit store-owner migration before core startup; configured runtime roles do not need DDL. |
+
+Schema version and release version are different identifiers. Two databases
+reporting schema 1 can have incompatible failure-shaped versus generic-record
+tables. Do not edit migration bookkeeping to bypass compatibility checks. See
+[legacy preservation and isolated restore](recovery.md#legacy-replay-databases).
+
 The migration CLI applies forward migrations. There is no supported automatic
 schema downgrade. A previous replay binary is not assumed to understand a newer
 schema, even if it starts. Review migration changes before an upgrade.
@@ -84,16 +97,21 @@ restored replay database before using it in production.
    Confirm destination receipts and capture outcomes. If work cannot settle,
    resolve or explicitly reconcile it before proceeding; stopping replay while
    core is still producing captures can lose those best-effort uploads.
-4. Stop all replay replicas, allowing any final claimed runs to finish, then
-   stop all core replicas using their full shutdown budget. Verify both have
-   exited successfully and no running replay jobs remain. Investigate any
-   unfinished work or timeout instead of assuming it was delivered. Do not
-   migrate while old replay processes run.
+4. After queued/running retry work has settled and new actions are paused, stop
+   all core replicas using their full shutdown budget **while replay capture is
+   still reachable**. Then stop replay replicas. Verify successful exits and no
+   running jobs; inspect final capture drops and destination receipts. Do not stop
+   core underneath a known active retry; if work cannot settle, keep maintenance
+   in place and explicitly reconcile the uncertainty. Do not migrate while any
+   old replay process runs. Ordinary parallel Compose `down` is not a substitute
+   for this controlled release-maintenance sequence.
 5. Back up the quiescent replay database and verify the restore procedure. Keep
    old images/configuration and this snapshot together. Record a reconciliation
    checkpoint for downstream deliveries before proceeding.
-6. Run `hookway-replay migrate --config <file>` using the new release. Stop if it
-   fails. Start new core replicas, then the matching replay release. Keep public
+6. Run `hookway-replay migrate --config <file>` using the new release and
+   migration-only owner credentials. Require successful exit, then apply reviewed
+   runtime grants for the candidate objects; stop on any failure. Start new core
+   replicas, then the matching replay release. Keep public
    ingress and operator retries paused until both pass readiness and configuration
    checks. Investigate any expired `unknown` replay runs before reissuing them.
 7. Exercise a signed canary through the real destination, then a controlled
@@ -101,13 +119,22 @@ restored replay database before using it in production.
    outcomes. Resume traffic and retries; monitor errors, latency, capacity,
    capture drops, and queue depth.
 
+Back up coupled protection state too, not replay alone. Use
+[Backup and restore](recovery.md) for isolated targets, logical/artifact/grant
+checks and reconciliation of work delivered after the snapshot. A failed canary
+keeps public ingress and operator retries paused; it is not permission to resume
+the candidate or replay the old queue automatically.
+
 ## Rollback procedure
 
 Before migration, restore the previous image pair and configuration normally.
-After migration, stop both services and repeat the quiescence steps above.
-Restore the previous database snapshot to a separate database, verify it, then
-point the previous replay release at that restored database and start the
-previous core/replay pair. Preserve the upgraded database for reconciliation.
+After migration, reestablish quiescence and use the coordinated stop steps above.
+Restore the previous database snapshot to a separate database and verify it.
+Preserve the upgraded database and reconcile all restored queued/running work
+against post-snapshot receipts **before starting either rollback service**;
+`serve` immediately starts workers. Only after that decision may the matching
+previous image/configuration pair point at the reconciled target and run a
+controlled canary before public traffic/actions resume.
 
 Restoring a snapshot discards replay records and state changes made after it.
 Do not automatically re-run restored jobs: a job marked queued in the snapshot
@@ -115,6 +142,56 @@ may already have delivered. Reconcile downstream receipts/event IDs and the
 preserved upgraded database first. Configuration changes can also make existing
 snapshots incompatible with a flow; a matching binary pair alone cannot repair
 those records.
+
+The initial generic-record baseline has no compatible previous published release
+identified for a cross-release rehearsal. Current initial-install migration
+failure/retry, same-build replacement and isolated restore are testable; none
+establishes an old-release/new-release upgrade. Before the next supported release,
+retain its predecessor and rehearse that exact image/config/schema transition.
+Failure-shaped predecessors require a separate preservation/cutover decision,
+not an automatic schema downgrade or an invented lossless migration.
+
+## ECS deployment ordering and stop budgets
+
+The ECS deployment owner must mirror the same maintenance ordering; this is a
+procedure, not local proof of AWS networking, failover or graceful task removal.
+
+1. Pin the matching candidate digests and prepare migration-only task definitions
+   with owner credentials, configuration and database network access. Keep those
+   credentials out of the runtime tasks and console. Pause ingress/operator
+   actions, settle work and preserve the coupled state/checkpoints first.
+2. Stop old runtime tasks only after their required drains. Disable their service
+   replacement during maintenance; stopping one task in a live service is not
+   quiescence. Keep final core capture reachable before replay is stopped. Verify
+   all old workers exited before migration.
+3. Run the core protection migration if PostgreSQL protection is selected:
+   `hookway state-store migrate --config core.yaml --store cluster`. Then run
+   `hookway-replay migrate --config migrate.yaml` using the replay owner. Apply
+   reviewed runtime grants for the candidate objects.
+4. Require an empty `RunTask.failures` list and exactly the intended task ARN.
+   Waiting for `STOPPED` is insufficient: inspect `DescribeTasks` failures, the
+   expected migration container's presence and numeric `exitCode: 0`, plus
+   `stoppedReason` and logs. Missing exit codes, launch failures or nonzero exit
+   stop the rollout. Retain task definition/digest/config identities and logs.
+5. Start matching core/replay/console tasks with runtime credentials. Keep the
+   edge/actions paused through readiness, signed destination canary and controlled
+   capture/retry receipt reconciliation. Only then resume service traffic.
+
+AWS documents placement failures separately from tasks in
+[RunTask](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RunTask.html)
+and reports task/container outcomes in
+[DescribeTasks](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html).
+Do not interpret a successful API call or a stopped task as successful migration.
+
+Set explicit container `stopTimeout` above core's total shutdown budget and above
+replay's `max(30s, workers.lease)`, with measured margin. For the local recipe's
+60s core total and 60s replay lease, 70s is the documented container allowance;
+load-balancer withdrawal/deregistration must be measured separately. Fargate's
+default 30s is insufficient for that configuration and its maximum is 120s.
+Longer local runtime budgets remain valid, but must be reduced or deployed on
+infrastructure supporting the required grace period before choosing Fargate.
+Do not silently clamp application deadlines to hide this conflict. See the
+[AWS stopTimeout contract](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_ContainerDefinition.html).
 
 ## Release acceptance evidence
 
@@ -124,9 +201,13 @@ shutdown, detached redrive ordering, and the total cleanup ceiling. A process
 SIGTERM test reconciles destination receipts across same-build core replacement.
 `make replay-acceptance-test` also exercises quiescent replacement of both
 services, reruns the current migration, and verifies a retained PostgreSQL failure
-can be retried without redelivering its successful sibling. These tests do not
-demonstrate a production load balancer, database snapshot restore, or an
-old-release/new-release database migration.
+can be retried without redelivering its successful sibling. Its synthetic restore
+drill checks coupled replay/protection rows, artifact digests and independently
+recorded post-snapshot receipts in a separate database. It does not demonstrate
+a production load balancer, off-host recovery, managed failover or an
+old-release/new-release database migration. Test-only queued-run reconciliation
+is not a new operator API or restore-quarantine mode; production restores must
+remain offline until the recovery decision is made.
 
 For each release pair, retain staging evidence of: sender IDs versus destination
 receipts during termination; measured readiness-removal time; no resource close

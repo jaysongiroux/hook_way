@@ -619,6 +619,7 @@ export async function expectNodeOptions(
     },
     code: { script: "JavaScript function body" },
     rate_limit: { rpm: "Requests per minute", burst: "Burst allowance" },
+    sample: { rate: "Sampling rate" },
   };
   if (simple[type]) {
     for (const [key, label] of Object.entries(simple[type]))

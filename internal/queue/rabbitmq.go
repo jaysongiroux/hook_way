@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"sync"
 	"time"
 
@@ -28,8 +29,10 @@ type RabbitMQPublisher struct {
 
 	tlsConfig *tls.Config
 
-	mu   sync.RWMutex
-	conn *amqp.Connection
+	mu          sync.RWMutex
+	conn        *amqp.Connection
+	socket      net.Conn
+	connectGate chan struct{}
 
 	pool      chan *publishChannel
 	closeOnce sync.Once
@@ -82,11 +85,12 @@ func NewRabbitMQPublisher(ctx context.Context, cfg RabbitMQConfig) (*RabbitMQPub
 		logger = slog.Default()
 	}
 	pub := &RabbitMQPublisher{
-		cfg:       cfg,
-		logger:    logger,
-		tlsConfig: tlsConfig,
-		pool:      make(chan *publishChannel, size),
-		closed:    make(chan struct{}),
+		cfg:         cfg,
+		logger:      logger,
+		tlsConfig:   tlsConfig,
+		pool:        make(chan *publishChannel, size),
+		closed:      make(chan struct{}),
+		connectGate: make(chan struct{}, 1),
 	}
 	// Pre-fill the pool with empty slots; channels are created lazily on first
 	// use so an unavailable broker at startup is tolerated.
@@ -182,9 +186,13 @@ func (p *RabbitMQPublisher) Close() error {
 	p.closeOnce.Do(func() { close(p.closed) })
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.conn != nil {
-		err := p.conn.Close()
+	if p.socket != nil {
+		err := p.socket.Close()
 		p.conn = nil
+		p.socket = nil
+		if errors.Is(err, net.ErrClosed) {
+			return nil
+		}
 		return err
 	}
 	return nil
@@ -196,6 +204,8 @@ func (p *RabbitMQPublisher) publishOnce(ctx context.Context, queueName string, m
 		return err
 	}
 	broken := false
+	stop := p.abortOnCancel(ctx, pc.conn)
+	defer stop()
 	defer func() { p.release(pc, broken) }()
 
 	var headers amqp.Table
@@ -275,10 +285,9 @@ func (p *RabbitMQPublisher) acquire(ctx context.Context) (*publishChannel, error
 	if pc != nil && pc.conn == conn && !pc.ch.IsClosed() {
 		return pc, nil
 	}
-	if pc != nil && pc.ch != nil {
-		_ = pc.ch.Close()
-	}
-	fresh, err := p.openChannel(conn)
+	// Stale channels belong to an already closed connection; do not wait for
+	// another channel-close handshake against that broker.
+	fresh, err := p.openChannel(ctx, conn)
 	if err != nil {
 		p.pool <- nil
 		return nil, err
@@ -289,7 +298,7 @@ func (p *RabbitMQPublisher) acquire(ctx context.Context) (*publishChannel, error
 func (p *RabbitMQPublisher) release(pc *publishChannel, broken bool) {
 	if broken {
 		if pc != nil && pc.ch != nil {
-			_ = pc.ch.Close()
+			p.abortConnection(pc.conn)
 		}
 		p.pool <- nil
 		return
@@ -297,13 +306,21 @@ func (p *RabbitMQPublisher) release(pc *publishChannel, broken bool) {
 	p.pool <- pc
 }
 
-func (p *RabbitMQPublisher) openChannel(conn *amqp.Connection) (*publishChannel, error) {
+func (p *RabbitMQPublisher) openChannel(ctx context.Context, conn *amqp.Connection) (*publishChannel, error) {
+	stop := p.abortOnCancel(ctx, conn)
+	defer stop()
 	ch, err := conn.Channel()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	if err := ch.Confirm(false); err != nil {
-		_ = ch.Close()
+		p.abortConnection(conn)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
@@ -311,10 +328,12 @@ func (p *RabbitMQPublisher) openChannel(conn *amqp.Connection) (*publishChannel,
 	return &publishChannel{ch: ch, conn: conn, confirms: confirms, returns: returns}, nil
 }
 
-// connection returns a live connection, dialing once under the write lock when
-// needed. Concurrent callers coalesce: only the first dials, the rest observe
-// the established connection.
+// connection coalesces setup through a context-aware gate. Network work never
+// holds mu, so waiters can honor their own shorter deadlines.
 func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	p.mu.RLock()
 	conn := p.conn
 	p.mu.RUnlock()
@@ -322,27 +341,50 @@ func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, e
 		return conn, nil
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.conn != nil && !p.conn.IsClosed() {
-		return p.conn, nil
-	}
 	select {
+	case p.connectGate <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-p.closed:
 		return nil, errors.New("rabbitmq publisher closed")
-	default:
 	}
-	dialed, err := p.dialBroker()
+	defer func() { <-p.connectGate }()
+	p.mu.RLock()
+	conn = p.conn
+	p.mu.RUnlock()
+	if conn != nil && !conn.IsClosed() {
+		return conn, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, p.dialTimeout())
+	defer cancel()
+	dialed, socket, err := p.dialBroker(ctx)
 	if err != nil {
 		return nil, err
 	}
+	stop := context.AfterFunc(ctx, func() { _ = socket.Close() })
+	defer stop()
 	if err := p.declareTopology(dialed); err != nil {
-		_ = dialed.Close()
+		_ = socket.Close()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		_ = socket.Close()
+		return nil, err
+	}
+	p.mu.Lock()
+	select {
+	case <-p.closed:
+		p.mu.Unlock()
+		_ = socket.Close()
+		return nil, errors.New("rabbitmq publisher closed")
+	default:
+	}
 	p.conn = dialed
+	p.socket = socket
+	p.mu.Unlock()
 	if p.cfg.Metrics != nil {
 		p.cfg.Metrics.RabbitMQReconnect()
 	}
@@ -354,11 +396,56 @@ func (p *RabbitMQPublisher) connection(ctx context.Context) (*amqp.Connection, e
 // dialBroker opens the AMQP connection, using the custom TLS config when one
 // was built. With no custom TLS options, amqp.Dial handles amqps:// using the
 // system trust store.
-func (p *RabbitMQPublisher) dialBroker() (*amqp.Connection, error) {
+func (p *RabbitMQPublisher) dialBroker(ctx context.Context) (*amqp.Connection, net.Conn, error) {
+	var socket net.Conn
+	var stop func() bool
+	defer func() {
+		if stop != nil {
+			stop()
+		}
+	}()
+	cfg := amqp.Config{Dial: func(network, address string) (net.Conn, error) {
+		var err error
+		socket, err = (&net.Dialer{}).DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = socket.SetDeadline(deadline)
+		}
+		stop = context.AfterFunc(ctx, func() { _ = socket.Close() })
+		return socket, nil
+	}}
 	if p.tlsConfig != nil {
-		return amqp.DialTLS(p.cfg.URL, p.tlsConfig)
+		cfg.TLSClientConfig = p.tlsConfig.Clone()
 	}
-	return amqp.Dial(p.cfg.URL)
+	conn, err := amqp.DialConfig(p.cfg.URL, cfg)
+	if ctx.Err() != nil {
+		if socket != nil {
+			_ = socket.Close()
+		}
+		return nil, nil, ctx.Err()
+	}
+	return conn, socket, err
+}
+
+// PublishWithContext does not cancel AMQP socket writes. Closing the socket
+// releases writes/RPCs on expiry. All sends on that connection may then be
+// uncertain; confirmation remains the only successful delivery evidence.
+func (p *RabbitMQPublisher) abortOnCancel(ctx context.Context, conn *amqp.Connection) func() bool {
+	return context.AfterFunc(ctx, func() { p.abortConnection(conn) })
+}
+
+func (p *RabbitMQPublisher) abortConnection(conn *amqp.Connection) {
+	p.mu.RLock()
+	var socket net.Conn
+	if p.conn == conn {
+		socket = p.socket
+	}
+	p.mu.RUnlock()
+	if socket != nil {
+		_ = socket.Close()
+	}
 }
 
 // buildTLSConfig assembles a *tls.Config from the configured options, or returns

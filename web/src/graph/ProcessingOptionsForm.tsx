@@ -356,7 +356,9 @@ function EnvelopeForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
     schemaEnum(schemaProperties(NODE_SCHEMAS.envelope.schema).body_format) ??
     [];
   const active =
-    format === "xml" ? "xml" : format === "multipart" ? "multipart" : undefined;
+    format === "json" || format === "xml" || format === "multipart"
+      ? format
+      : undefined;
   const parser = asRecord(active ? value[active] : undefined);
   return (
     <Stack gap="sm">
@@ -382,7 +384,7 @@ function EnvelopeForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
             ...value,
             body_format: nextFormat,
           };
-          for (const key of ["xml", "multipart"])
+          for (const key of ["json", "xml", "multipart"])
             if (key !== nextFormat) {
               delete next[key];
               clearDraftBranch(scope, key);
@@ -393,7 +395,7 @@ function EnvelopeForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
       <ImportNotice
         value={value}
         allowed={["body_format", ...(active ? [active] : [])]}
-        known={["body_format", "xml", "multipart"]}
+        known={["body_format", "json", "xml", "multipart"]}
         scope={scope}
         onChange={onChange}
       />
@@ -401,12 +403,12 @@ function EnvelopeForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
         {format === "raw"
           ? "Keep the original request bytes without decoding a body object."
           : format === "json"
-            ? "Decode the body as JSON. The read-body limit caps the request."
+            ? "Limit the parsed JSON depth and value count here. Read request body separately caps the original request bytes."
             : "Parser limits apply after the enforced read-body limit; the smaller limit determines what can be accepted. Sizes below are bytes."}
       </Text>
       {active && (
         <Fieldset
-          legend={`${active === "xml" ? "XML" : "Multipart"} parser limits`}
+          legend={`${active === "json" ? "JSON" : active === "xml" ? "XML" : "Multipart"} parser limits`}
           p="sm"
         >
           <Stack gap="xs">
@@ -425,25 +427,33 @@ function EnvelopeForm({ value, onChange, scope }: ProcessingOptionsFormProps) {
               fieldHelp={(field) => nodeFieldHelp("envelope", field)}
               labels={{
                 max_bytes: "Maximum XML bytes",
-                max_depth: "Maximum element depth",
-                max_nodes: "Maximum XML nodes",
+                max_depth:
+                  active === "json"
+                    ? "Maximum JSON depth"
+                    : "Maximum element depth",
+                max_nodes:
+                  active === "json"
+                    ? "Maximum JSON values"
+                    : "Maximum XML nodes",
                 max_total_bytes: "Maximum total multipart bytes",
                 max_parts: "Maximum parts",
                 max_part_bytes: "Maximum bytes per part",
                 include_content: "Include file content",
               }}
               defaults={
-                active === "multipart"
-                  ? {
-                      "multipart.include_content": true,
-                      "multipart.max_parts": 16,
-                      "multipart.max_part_bytes": 1048576,
-                    }
-                  : {
-                      "xml.max_bytes": 1048576,
-                      "xml.max_depth": 256,
-                      "xml.max_nodes": 100000,
-                    }
+                active === "json"
+                  ? undefined
+                  : active === "multipart"
+                    ? {
+                        "multipart.include_content": true,
+                        "multipart.max_parts": 16,
+                        "multipart.max_part_bytes": 1048576,
+                      }
+                    : {
+                        "xml.max_bytes": 1048576,
+                        "xml.max_depth": 256,
+                        "xml.max_nodes": 100000,
+                      }
               }
             />
             {value[active] !== undefined && (

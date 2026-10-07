@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/retry"
 )
 
@@ -27,6 +28,10 @@ var errWebhookEngineClosing = errors.New("webhook: engine closing")
 // ErrWebhookDrainTimeout means workers still own dependent publishers/capture.
 // Shutdown callers must leave those resources open and exit unsuccessfully.
 var ErrWebhookDrainTimeout = errors.New("webhook: drain timed out with deliveries pending")
+
+// Responses are ignored: drain only a small prefix for connection reuse, never
+// spend the complete attempt budget consuming an arbitrarily large body.
+const maxWebhookResponseDrainBytes = 64 << 10
 
 // webhookDelivery is the resolved per-destination delivery config (built by the publisher).
 // (WebhookMetrics interface is defined in publisher.go)
@@ -48,9 +53,10 @@ type webhookDelivery struct {
 }
 
 type webhookJob struct {
-	delivery *webhookDelivery
-	msg      Message
-	origin   Origin
+	delivery       *webhookDelivery
+	msg            Message
+	origin         Origin
+	accountedBytes int64
 }
 
 // deadLetterFunc redirects a terminally-failed delivery to another destination.
@@ -62,6 +68,8 @@ type webhookDeliveryEngine struct {
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	closed       bool
+	maxBytes     int64
+	pendingBytes int64
 	closeOnce    sync.Once
 	closeErr     error
 	drainTimeout time.Duration
@@ -71,7 +79,7 @@ type webhookDeliveryEngine struct {
 	onTerminal   TerminalFailureFunc // set post-build under mu via setTerminalFailure
 }
 
-func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.Duration, m WebhookMetrics, logger *slog.Logger) *webhookDeliveryEngine {
+func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.Duration, m WebhookMetrics, logger *slog.Logger, byteBudget ...int64) *webhookDeliveryEngine {
 	if workers <= 0 {
 		workers = 8
 	}
@@ -86,7 +94,12 @@ func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.
 	}
 	e := &webhookDeliveryEngine{
 		destID: destID, jobs: make(chan webhookJob, queueSize), drainTimeout: drain, metrics: m, logger: logger,
+		maxBytes: 64 << 20,
 	}
+	if len(byteBudget) != 0 && byteBudget[0] > 0 {
+		e.maxBytes = byteBudget[0]
+	}
+	e.reportBytes()
 	for i := 0; i < workers; i++ {
 		e.wg.Add(1)
 		go e.worker()
@@ -133,7 +146,10 @@ func (e *webhookDeliveryEngine) capacity() int { return cap(e.jobs) }
 func (e *webhookDeliveryEngine) saturated() (depth, capacity int, isSaturated bool) {
 	depth = len(e.jobs)
 	capacity = cap(e.jobs)
-	return depth, capacity, depth*10 >= capacity*9
+	e.mu.RLock()
+	bytesFull := e.maxBytes > 0 && e.pendingBytes >= e.maxBytes-e.maxBytes/10
+	e.mu.RUnlock()
+	return depth, capacity, depth*10 >= capacity*9 || bytesFull
 }
 
 func (e *webhookDeliveryEngine) worker() {
@@ -149,13 +165,14 @@ func (e *webhookDeliveryEngine) worker() {
 // silently shrink the engine's worker pool for every job still queued behind
 // the panicking one.
 func (e *webhookDeliveryEngine) deliverRecovered(job webhookJob) {
+	defer func() { e.mu.Lock(); e.pendingBytes -= job.accountedBytes; e.reportBytes(); e.mu.Unlock() }()
 	defer func() {
 		if r := recover(); r != nil {
 			e.logger.Error("panic recovered in webhook delivery worker",
 				"location", "webhook_worker",
 				"destination", e.destID, "target", job.delivery.target,
 				"event_id", job.msg.ID,
-				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+				"panic_type", fmt.Sprintf("%T", r), "stack", string(debug.Stack()))
 			if e.metrics != nil {
 				e.metrics.Panic("webhook_worker")
 			}
@@ -168,19 +185,45 @@ func (e *webhookDeliveryEngine) deliverRecovered(job webhookJob) {
 // or errWebhookEngineClosing if the engine is closing. The RLock/Lock pairing
 // with Close prevents a send on a closed channel.
 func (e *webhookDeliveryEngine) Enqueue(job webhookJob) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.closed {
 		return errWebhookEngineClosing
 	}
+	if len(e.jobs) == cap(e.jobs) {
+		return ErrWebhookQueueFull
+	}
+	limit := e.maxBytes
+	if limit == 0 {
+		limit = 64 << 20
+	}
+	n, ok := webhookMessageCharge(job.msg, limit-e.pendingBytes)
+	if !ok {
+		return fmt.Errorf("%w: accounted bytes exceed max_queue_bytes (%d); raise the finite destination budget for larger deliveries", ErrWebhookQueueFull, limit)
+	}
+	job.accountedBytes = n
 	select {
 	case e.jobs <- job:
+		e.pendingBytes += n
+		e.reportBytes()
 		if e.metrics != nil {
 			e.metrics.WebhookQueueDepth(e.destID, len(e.jobs))
 		}
 		return nil
 	default:
 		return ErrWebhookQueueFull
+	}
+}
+
+// Optional extension keeps existing metrics implementations source-compatible.
+// Call while holding mu after startup to preserve accounting/metric ordering.
+func (e *webhookDeliveryEngine) reportBytes() {
+	if m, ok := e.metrics.(interface{ WebhookQueueBytes(string, int64, int64) }); ok {
+		capacity := e.maxBytes
+		if capacity == 0 {
+			capacity = 64 << 20
+		}
+		m.WebhookQueueBytes(e.destID, e.pendingBytes, capacity)
 	}
 }
 
@@ -253,7 +296,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 		e.logger.Error("webhook dead-letter dispatch failed",
 			slog.String("destination", e.destID), slog.String("target", d.target),
 			slog.String("event_id", job.msg.ID), slog.String("dlq_destination", d.dlqDestination),
-			slog.String("dlq_target", d.dlqTarget), slog.String("error", err.Error()))
+			slog.String("dlq_target", d.dlqTarget), slog.String("error", logging.ErrorText(err)))
 		if e.metrics != nil {
 			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
@@ -360,7 +403,10 @@ func (d *webhookDelivery) attempt(ctx context.Context, msg Message) (outcome str
 	if err != nil {
 		return "timeout", true, 0 // network error / timeout -> retry
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxWebhookResponseDrainBytes))
+		_ = resp.Body.Close()
+	}()
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return "2xx", false, 0

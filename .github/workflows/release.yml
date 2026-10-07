@@ -1,16 +1,15 @@
-# Cut a release from an existing v* tag. Re-runs CI, then publishes the
+# Manually cut a release from main, using an existing tag at that source commit.
+# Re-runs CI, then publishes the
 # Docker Hub images: core, `<image>-replay` and standalone `<image>-console`
 # (semver + latest for non-prereleases), syncs the Hub description, and opens
-# a GitHub Release. Pushes to main do not publish.
+# a GitHub Release. Branch and tag pushes do not publish.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing git tag to release (e.g. v1.2.3)
+        description: Existing tag at the dispatched main commit (e.g. v1.2.3)
         required: true
         type: string
 
@@ -35,21 +34,25 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           TAG_INPUT: ${{ inputs.tag }}
-          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            tag="$TAG_INPUT"
-          else
-            tag="$REF_NAME"
+          if [ "$EVENT" != "workflow_dispatch" ] || [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release must be manually dispatched from main" >&2
+            exit 1
           fi
+          tag="$TAG_INPUT"
           tag="${tag#refs/tags/}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-].*)?$ ]]; then
+          if [[ ${#tag} -gt 128 || ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
             echo "Tag must look like v1.2.3 or v1.2.3-rc.1 (got: $tag)" >&2
             exit 1
           fi
-          if [ "$GITHUB_REF" != "refs/tags/$tag" ]; then
-            echo "Run release from the tag ref itself (gh workflow run release.yml --ref $tag -f tag=$tag)" >&2
-            exit 1
+          if [[ "$tag" == *-* ]]; then
+            IFS='.' read -r -a identifiers <<< "${tag#*-}"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^0[0-9]+$ ]]; then
+                echo "Numeric prerelease identifiers must not have leading zeroes" >&2
+                exit 1
+              fi
+            done
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if [[ "$tag" == *-* ]]; then
@@ -61,9 +64,25 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - id: source
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TAG: ${{ steps.out.outputs.tag }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Expected full event SHA" >&2; exit 1; }
+          sha="$(git rev-parse HEAD)"
+          event_sha="$(git rev-parse "$GITHUB_SHA^{commit}")"
+          tag_sha="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          if [ "$GITHUB_SHA" != "$event_sha" ] || [ "$sha" != "$event_sha" ] || [ "$sha" != "$tag_sha" ]; then
+            echo "Release tag must identify the dispatched main commit" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$sha" refs/remotes/origin/main || {
+            echo "Release source must be a commit on origin/main; review and merge before tagging" >&2
+            exit 1
+          }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
   checks:
     name: Checks

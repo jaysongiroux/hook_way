@@ -62,6 +62,8 @@ type Metrics struct {
 	webhookDeadLetterFailure  *prometheus.CounterVec
 	webhookQueueDepth         *prometheus.GaugeVec
 	webhookQueueCapacity      *prometheus.GaugeVec
+	webhookQueueBytes         *prometheus.GaugeVec
+	webhookQueueByteCapacity  *prometheus.GaugeVec
 	destinationReady          *prometheus.GaugeVec
 	panics                    *prometheus.CounterVec
 	buildInfo                 *prometheus.GaugeVec
@@ -78,10 +80,13 @@ type Metrics struct {
 	controlRuns               *prometheus.CounterVec
 	controlInflight           prometheus.Gauge
 	runtimeRegistered         bool
+	logsSuppressed            prometheus.Counter
 }
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.logsSuppressed = prometheus.NewCounter(prometheus.CounterOpts{Name: "hookway_logs_suppressed_total", Help: "Repetitive runtime log records omitted by the fixed hot-path storm budget; outcome metrics are not sampled."})
+	m.registry.MustRegister(m.logsSuppressed)
 	m.initProtection()
 	m.admissionWaiting = prometheus.NewGauge(prometheus.GaugeOpts{Name: "hookway_admission_waiting_requests", Help: "HTTP handlers waiting for an execution slot; bodies have not been parsed."})
 	m.admissionWaits = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_admission_wait_total", Help: "Contended admission outcomes for configured bounded waiting queues."}, []string{"flow", "result"})
@@ -235,6 +240,8 @@ func New() *Metrics {
 	m.webhookQueueCapacity = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hookway_webhook_queue_capacity", Help: "Configured webhook delivery queue capacity.",
 	}, []string{"destination_queue_id"})
+	m.webhookQueueBytes = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "hookway_webhook_queue_accounted_bytes", Help: "Conservatively accounted queued and active webhook Message bytes, including encoding headroom; not exact wire or heap bytes."}, []string{"destination_queue_id"})
+	m.webhookQueueByteCapacity = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "hookway_webhook_queue_accounted_capacity_bytes", Help: "Configured finite per-destination webhook accounted-byte admission budget."}, []string{"destination_queue_id"})
 	m.destinationReady = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hookway_destination_ready", Help: "Readiness of each configured message queue destination as observed by the background readiness prober (1 ready, 0 not ready).",
 	}, []string{"destination_queue_id"})
@@ -298,6 +305,7 @@ func New() *Metrics {
 		m.rabbitMQConfirms, m.rabbitMQRetries, m.rabbitMQDLQPublishes, m.rabbitMQUnroutable, m.redisPubSubNoSubscribers,
 		m.webhookDelivery, m.webhookRetries, m.webhookDropped,
 		m.webhookDeadLetter, m.webhookDeadLetterFailure, m.webhookQueueDepth, m.webhookQueueCapacity,
+		m.webhookQueueBytes, m.webhookQueueByteCapacity,
 		m.destinationReady, m.panics, m.buildInfo, m.compensationFailed, m.flowOutcomes, m.nodeTotal, m.nodeDuration, m.secretRefreshFailures,
 		m.inspectionTotal, m.inspectionDropped, m.captureTotal, m.captureDropped, m.captureBufferBytes, m.controlRuns, m.controlInflight,
 	)
@@ -321,6 +329,8 @@ func (m *Metrics) EnableRuntimeCollectors() {
 }
 
 func (m *Metrics) Registry() *prometheus.Registry { return m.registry }
+
+func (m *Metrics) LogSuppressed() { m.logsSuppressed.Inc() }
 
 func (m *Metrics) Inflight(delta float64) { m.inflight.Add(delta) }
 
@@ -499,6 +509,11 @@ func (m *Metrics) WebhookQueueDepth(destination string, depth int) {
 
 func (m *Metrics) WebhookQueueCapacity(destination string, capacity int) {
 	m.webhookQueueCapacity.WithLabelValues(destination).Set(float64(capacity))
+}
+
+func (m *Metrics) WebhookQueueBytes(destination string, used, capacity int64) {
+	m.webhookQueueBytes.WithLabelValues(destination).Set(float64(used))
+	m.webhookQueueByteCapacity.WithLabelValues(destination).Set(float64(capacity))
 }
 
 // DestinationReady sets the readiness gauge for a single destination: 1 when

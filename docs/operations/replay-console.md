@@ -81,7 +81,10 @@ the missing permission without interpreting it as success. Sign-out aborts
 requests and removes displayed failures, payload previews and pending actions.
 The menu named after the current API key shows its scopes and **Sign out**.
 
-A rejected or expired key clears the session and explains how to sign in again.
+A revoked, removed or otherwise rejected key clears the session and explains
+how to sign in again. Named bearer keys are loaded at startup and have no built-in
+expiry timer or live key-administration API; apply replacement through a controlled
+restart/redeployment. The console's in-memory session is not an SSO session or a timed token.
 Routine polling cancellations during navigation or sign-out are silent; an
 unexpected interruption or connection failure includes recovery guidance.
 Service errors preserve previously loaded inbox data with a stale-data warning.
@@ -89,6 +92,13 @@ Resolution input errors appear beside their fields and in a readable summary,
 focus the first invalid field and preserve entered evidence. Network errors after
 submitting a recovery action still require investigation and reuse of the same
 submission key; an error message does not establish that the action was rejected.
+After a lost reply, a rejected repeat still preserves the uncertain request's
+original key and frozen input; that rejection does not disprove the first action.
+A 401 clears the session, so retain the displayed submission identity before
+sign-out, reload or a credential handover. After closing successful action results,
+keyboard focus returns to the selected detail panel/inbox, since a refreshed
+record can remove the initiating control. Canceling or inspecting an uncertain
+action restores its initiating control if available, otherwise the same region.
 
 `GET /v1/me` verifies the contract version and advertised API capabilities,
 including `action_eligibility`. Incompatible API assets cannot become a usable

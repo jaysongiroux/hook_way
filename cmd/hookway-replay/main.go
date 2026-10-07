@@ -250,6 +250,10 @@ func runGC(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer st.Close()
+	if err := st.Ready(ctx); err != nil {
+		writef(stderr, "database schema compatibility check failed: %s\n", hooklogging.ErrorText(err))
+		return 1
+	}
 	res, err := gc.Once(ctx, st, metrics.New(), slog.New(slog.DiscardHandler))
 	switch {
 	case errors.Is(err, store.ErrGCLocked):
@@ -281,7 +285,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return code
 	}
 	levelVar := new(slog.LevelVar)
-	logger := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: levelVar}))
+	m := metrics.New()
+	logger := slog.New(hooklogging.StormHandler(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: levelVar}), m.LogSuppressed))
 	logger.Info("hookway-replay starting", "version", version, "commit", commit)
 	cfg, warnings, err := loadConfig(path)
 	if err != nil {
@@ -298,27 +303,21 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		logger.Warn("config warning", "field", w.Field, "message", w.Message)
 	}
 
-	m := metrics.New()
 	m.SetBuildInfo(version, commit)
 	if cfg.Metrics.RuntimeMetricsEnabled() {
 		m.EnableRuntimeCollectors()
 	}
 	m.SetCapacity(cfg.Retention.MaxRecords, cfg.Retention.MaxBytes)
+	m.SetGCInterval(cfg.Retention.GCInterval)
 
 	st, err := openStore(ctx, cfg)
 	if err != nil {
-		logger.Error("database connection failed", "error", err)
+		logger.Error("database connection failed", "error", hooklogging.ErrorText(err))
 		return 1
 	}
 	defer st.Close()
-	current, err := st.SchemaVersion(ctx)
-	if err != nil {
-		logger.Error("read schema version failed", "error", err)
-		return 1
-	}
-	if latest := store.LatestSchemaVersion(); current < latest {
-		logger.Error("database schema is behind this binary; run hookway-replay migrate",
-			"schema_version", current, "required_version", latest)
+	if err := st.Ready(ctx); err != nil {
+		logger.Error("database schema compatibility check failed", "error", err)
 		return 1
 	}
 	m.RegisterPool(func() metrics.PoolStats {
@@ -424,7 +423,7 @@ func runSampler(ctx context.Context, st *store.Store, m *metrics.Metrics, logger
 		if err != nil {
 			m.SetDBUp(false)
 			if ctx.Err() == nil {
-				logger.Warn("state sample failed", "error", err)
+				logger.Warn("state sample failed", "error", hooklogging.ErrorText(err))
 			}
 			return
 		}

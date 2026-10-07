@@ -170,7 +170,11 @@ func printValidateResult(issues []config.ValidationIssue, strict bool, path stri
 		return 1
 	}
 	for _, issue := range issues {
-		writef(stderr, "warning: %s: %s\n", issue.Field, issue.Message)
+		writef(stderr, "warning: %s: %s", issue.Field, issue.Message)
+		if issue.Suggestion != "" {
+			writef(stderr, " Suggestion: %s", issue.Suggestion)
+		}
+		writef(stderr, "\n")
 	}
 	writef(stdout, "config valid: %s\n", path)
 	return 0
@@ -368,9 +372,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	// keeps the level adjustable after construction -- e.g. by a future admin
 	// endpoint -- without rebuilding the logger/handler.
 	levelVar := new(slog.LevelVar)
-	logger := slog.New(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: levelVar}))
-	logger.Info("hookway starting", "version", version, "commit", commit)
 	appMetrics := metrics.New()
+	logger := slog.New(hooklogging.StormHandler(slog.NewJSONHandler(stdout, &slog.HandlerOptions{Level: levelVar}), appMetrics.LogSuppressed))
+	logger.Info("hookway starting", "version", version, "commit", commit)
 	appMetrics.SetBuildInfo(version, commit)
 	path, err := config.ResolvePath(*configFlag)
 	if err != nil {
@@ -387,7 +391,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	for _, issue := range flowconfig.Lint(flowCfg) {
-		logger.Warn("config lint", "field", issue.Field, "message", issue.Message)
+		logger.Warn("config lint", "field", issue.Field, "message", issue.Message, "suggestion", issue.Suggestion)
 	}
 	cfg := flowCfg.ServingConfig()
 	level, err := resolveLogLevel(cfg.Logging.Level)

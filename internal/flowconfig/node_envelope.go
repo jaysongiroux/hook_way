@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
 	"github.com/jaysongiroux/hook_way/internal/transform"
 	"github.com/jaysongiroux/hook_way/internal/webhook"
 )
@@ -45,6 +46,7 @@ type envelopeNode struct {
 	format        string
 	multipart     multipartLimits
 	xml           transform.XMLLimits
+	json          jsonbudget.Limits
 	allowlist     []string
 	denylist      []string
 	queryDenylist []string
@@ -57,6 +59,7 @@ func newEnvelopeNode(id string, opts EnvelopeOptions, allowlist, denylist []stri
 	}
 	return envelopeNode{
 		id: id, format: format, multipart: opts.Multipart.limits(),
+		json:      jsonbudget.Limits{MaxDepth: opts.JSON.MaxDepth, MaxNodes: opts.JSON.MaxNodes},
 		xml:       transform.XMLLimits{MaxBytes: opts.XML.MaxBytes, MaxDepth: opts.XML.MaxDepth, MaxNodes: opts.XML.MaxNodes},
 		allowlist: allowlist, denylist: denylist,
 	}
@@ -78,6 +81,7 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 	}
 	event, err := webhook.BuildEnvelopeWithOptions(req, webhook.EnvelopeOptions{
 		SkipBodyParsing: n.format != "json",
+		JSONLimits:      n.json,
 		Endpoint:        head.Path,
 		RawBody:         verified.Raw.Body,
 		ReceivedAt:      time.Now(),
@@ -92,8 +96,12 @@ func (n envelopeNode) Run(_ context.Context, in graph.Payload) (graph.Payload, e
 		Hops:            head.Hops,
 	})
 	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, jsonbudget.ErrLimit) {
+			status = http.StatusRequestEntityTooLarge
+		}
 		return nil, graph.NodeError{
-			NodeID: n.id, Status: http.StatusInternalServerError, Err: err,
+			NodeID: n.id, Status: status, Err: err,
 		}
 	}
 	for _, key := range n.queryDenylist {

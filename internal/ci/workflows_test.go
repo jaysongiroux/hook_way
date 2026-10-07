@@ -131,9 +131,18 @@ func TestCIRunsBothImages(t *testing.T) {
 			run += s.Run + "\n"
 		}
 	}
-	for _, want := range []string{"docker run --rm hookway:local version", "docker run --rm hookway-replay:local version"} {
+	for _, want := range []string{"make image-smoke"} {
 		if !strings.Contains(run, want) {
 			t.Errorf("reusable-ci.yml never runs %q", want)
+		}
+	}
+	makefile, err := os.ReadFile("../../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`docker run --rm "$(IMAGE)" version`, `docker run --rm "$(REPLAY_IMAGE)" version`, `smoke.console_install(sys.argv[1],sys.argv[2],sys.argv[3],platform=`} {
+		if !strings.Contains(string(makefile), want) {
+			t.Fatalf("canonical image-smoke no longer exercises%s", want)
 		}
 	}
 }

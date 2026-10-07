@@ -43,7 +43,7 @@ export function ActionDialog({
   intent: Intent;
   session: Session;
   opened: boolean;
-  onClose: (retain: boolean) => void;
+  onClose: (retain: boolean, completed: boolean) => void;
   onRefresh: () => void;
 }) {
   const [ack, setAck] = React.useState(false);
@@ -186,9 +186,11 @@ export function ActionDialog({
       // Lost responses and server errors may follow a committed transaction.
       const lost =
         mutating && (!(caught instanceof APIError) || caught.status >= 500);
-      setUncertain(lost);
+      // Rejecting a repeat does not disprove acceptance of the original request.
+      const stillUncertain = uncertain || lost;
+      setUncertain(stillUncertain);
       setError(message);
-      if (!lost) {
+      if (!stillUncertain) {
         setSubmission(undefined);
         onRefresh();
       }
@@ -224,7 +226,8 @@ export function ActionDialog({
   return (
     <Modal
       opened={opened}
-      onClose={() => onClose(uncertain)}
+      returnFocus={false}
+      onClose={() => onClose(uncertain, !!outcomes)}
       title={title}
       size="lg"
       closeOnClickOutside={!frozen}
@@ -390,7 +393,7 @@ export function ActionDialog({
         )}
         <Group justify="flex-end">
           {!busy && (
-            <Button variant="default" onClick={() => onClose(uncertain)}>
+            <Button variant="default" onClick={() => onClose(uncertain, !!outcomes)}>
               {outcomes
                 ? "Done"
                 : uncertain

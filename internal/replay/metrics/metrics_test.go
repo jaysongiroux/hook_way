@@ -51,6 +51,10 @@ func TestNewDeclaresEveryMetric(t *testing.T) {
 		"hookway_replay_leases_expired_total", "hookway_replay_oldest_queued_run_seconds",
 		"hookway_replay_run_duration_seconds", "hookway_replay_runs", "hookway_replay_runs_total",
 		"hookway_replay_workers_busy",
+		"hookway_replay_state_last_success_timestamp_seconds",
+		"hookway_replay_logs_suppressed_total",
+		"hookway_replay_gc_interval_seconds",
+		"hookway_replay_store_failures_total",
 	}
 	sort.Strings(want)
 	if got := gatheredNames(t, m); strings.Join(got, ",") != strings.Join(want, ",") {
@@ -130,6 +134,23 @@ func TestCapacityAndDBUp(t *testing.T) {
 	m.SetDBUp(false)
 	if testutil.ToFloat64(m.dbUp) != 0 {
 		t.Fatal("db_up not cleared")
+	}
+}
+
+func TestFailedStateSampleRetainsItsAgeAndValues(t *testing.T) {
+	m := New()
+	if got := testutil.ToFloat64(m.stateLastSuccess); got != 0 {
+		t.Fatalf("unsampled state timestamp = %v, want 0", got)
+	}
+	before := float64(time.Now().Unix())
+	m.SetState(State{UsageRecords: 7, UsageBytes: 1024})
+	last := testutil.ToFloat64(m.stateLastSuccess)
+	if last < before || last > float64(time.Now().Unix())+1 {
+		t.Fatalf("successful state timestamp = %v", last)
+	}
+	m.SetDBUp(false)
+	if testutil.ToFloat64(m.stateLastSuccess) != last || testutil.ToFloat64(m.usageRecords) != 7 || testutil.ToFloat64(m.usageBytes) != 1024 {
+		t.Fatal("failed sampling must retain timestamp and last-known values, not make them appear current")
 	}
 }
 

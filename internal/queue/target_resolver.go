@@ -96,6 +96,10 @@ func (r *targetResolver[T]) matchTemplate(target string) (templateEntry[T], bool
 // Provision errors are returned to every waiter and not cached, so the next
 // publish retries. An unknown target yields errTargetNotConfigured.
 func (r *targetResolver[T]) resolve(ctx context.Context, target string, provision func(ctx context.Context, base T, rendered string) (T, error)) (T, error) {
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
 	if s, ok := r.lookup(target); ok {
 		return s, nil
 	}
@@ -104,7 +108,7 @@ func (r *targetResolver[T]) resolve(ctx context.Context, target string, provisio
 		var zero T
 		return zero, errTargetNotConfigured
 	}
-	v, err, _ := r.group.Do(target, func() (any, error) {
+	result := r.group.DoChan(target, func() (any, error) {
 		// Re-check under the flight: a concurrent caller may have populated it.
 		if s, ok := r.lookup(target); ok {
 			return s, nil
@@ -126,11 +130,17 @@ func (r *targetResolver[T]) resolve(ctx context.Context, target string, provisio
 		r.store(target, s)
 		return s, nil
 	})
-	if err != nil {
+	select {
+	case <-ctx.Done():
 		var zero T
-		return zero, err
+		return zero, ctx.Err()
+	case completed := <-result:
+		if completed.Err != nil {
+			var zero T
+			return zero, completed.Err
+		}
+		return completed.Val.(T), nil
 	}
-	return v.(T), nil
 }
 
 func (r *targetResolver[T]) store(target string, s T) {

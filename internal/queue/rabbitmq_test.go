@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +22,174 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcrabbitmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
+
+func TestRabbitMQStalledHandshakeAndConnectionWaitRespectContext(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	accepted := make(chan net.Conn, 2)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- conn
+		}
+	}()
+	p := &RabbitMQPublisher{cfg: RabbitMQConfig{URL: "amqp://guest:guest@" + listener.Addr().String() + "/", PublishTimeout: 2 * time.Second}, logger: testLogger(), closed: make(chan struct{}), connectGate: make(chan struct{}, 1)}
+	defer func() { _ = p.Close() }()
+	leaderCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	leader := make(chan error, 1)
+	go func() { _, err := p.connection(leaderCtx); leader <- err }()
+	conn := <-accepted
+	defer func() { _ = conn.Close() }()
+	ctx, stop := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer stop()
+	waiter := make(chan error, 1)
+	go func() { _, err := p.connection(ctx); waiter <- err }()
+	select {
+	case err := <-waiter:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("waiter: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connection gate ignored waiter deadline")
+	}
+	select {
+	case err := <-leader:
+		if err == nil {
+			t.Fatal("stalled handshake succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AMQP handshake ignored context")
+	}
+}
+
+func TestRabbitMQStalledBrokerRPCAndUncertainConfirmReleaseDeadline(t *testing.T) {
+	ctx, container := startRabbitMQ(t)
+	brokerURL, err := container.AmqpURL(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(brokerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer func() { _ = listener.Close() }()
+	var paused atomic.Bool
+	resume := make(chan struct{}, 1)
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			upstream, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(proxyCtx, "tcp", u.Host)
+			if err != nil {
+				_ = client.Close()
+				continue
+			}
+			go func() { <-proxyCtx.Done(); _ = client.Close(); _ = upstream.Close() }()
+			go func() { _, _ = io.Copy(upstream, client); _ = upstream.Close() }()
+			go func() {
+				defer func() { _ = client.Close() }()
+				defer func() { _ = upstream.Close() }()
+				buf := make([]byte, 32<<10)
+				for {
+					n, err := upstream.Read(buf)
+					if n > 0 {
+						if paused.Load() {
+							select {
+							case <-resume:
+							case <-proxyCtx.Done():
+								return
+							}
+						}
+						if _, writeErr := client.Write(buf[:n]); writeErr != nil {
+							return
+						}
+					}
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	proxied := *u
+	proxied.Host = listener.Addr().String()
+	p, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{URL: proxied.String(), Exchange: "hookway.deadline", ExchangeType: "direct", DeclareQueues: true, Queues: []string{"bounded"}, PublisherChannels: 1, PublishTimeout: 2 * time.Second, Retry: RetryPolicy{MaxAttempts: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+	// Channel open is a synchronous RPC. Withhold the broker's response while
+	// keeping the TCP connection live: the caller must not hang on that RPC.
+	paused.Store(true)
+	short, stop := context.WithTimeout(ctx, 100*time.Millisecond)
+	err = p.Publish(short, "bounded", "bounded", Message{ID: "never-written"})
+	stop()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled channel open: %v", err)
+	}
+	paused.Store(false)
+	resume <- struct{}{}
+	if err := p.Publish(ctx, "bounded", "bounded", Message{ID: "warmup"}); err != nil {
+		t.Fatalf("recover after stalled RPC: %v", err)
+	}
+	// The warm pooled channel can write before its confirmation is withheld.
+	// An error is NOT proof that the broker did not receive the message.
+	paused.Store(true)
+	short, stop = context.WithTimeout(ctx, 100*time.Millisecond)
+	err = p.Publish(short, "bounded", "bounded", Message{ID: "uncertain"})
+	stop()
+	if err == nil {
+		t.Fatal("missing confirmation reported success")
+	}
+	paused.Store(false)
+	resume <- struct{}{}
+	direct, err := amqp.Dial(brokerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = direct.Close() }()
+	ch, err := direct.Channel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ch.Close() }()
+	ids := map[string]int{}
+	for {
+		delivery, ok, err := ch.Get("bounded", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		var msg Message
+		if err := json.Unmarshal(delivery.Body, &msg); err != nil {
+			t.Fatal(err)
+		}
+		ids[msg.ID]++
+	}
+	if ids["never-written"] != 0 || ids["warmup"] != 1 || ids["uncertain"] != 1 {
+		t.Fatalf("delivery evidence (no speculative resend): %v", ids)
+	}
+	if err := p.Publish(ctx, "bounded", "bounded", Message{ID: "recovered"}); err != nil {
+		t.Fatalf("recovery after uncertain confirmation: %v", err)
+	}
+}
 
 func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
 	ctx, container := startRabbitMQ(t)

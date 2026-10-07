@@ -67,6 +67,8 @@ id_rsa*
 docs/superpowers/
 docs/scratch/
 /docs/local-plans/
+/docs/plans/hardening/
+/examples/production-local/.local*/
 *.log
 !**/testdata/**
 .superpowers/brainstorm/

@@ -29,13 +29,18 @@ flows:
     edges: [in>body, body>auth, auth>guard, guard>env, env>out]
 `
 
-func effectFlow(t *testing.T, src string) *graph.Flow {
+func effectFlow(t *testing.T, src string, options ...RegistryOptions) *graph.Flow {
 	t.Helper()
 	cfg, issues := LoadBytes([]byte(src), "test", false)
 	if len(issues) > 0 {
 		t.Fatal(issues)
 	}
-	reg, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{FlowID: "demo"}))
+	opts := RegistryOptions{FlowID: "demo"}
+	if len(options) > 0 {
+		opts = options[0]
+		opts.FlowID = "demo"
+	}
+	reg, err := NewRegistryWithOptions(protectionTestOptions(t, opts))
 	if err != nil {
 		t.Fatal(err)
 	}

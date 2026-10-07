@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
 
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 )
@@ -56,6 +58,7 @@ type AuthInfo struct {
 }
 
 type EnvelopeOptions struct {
+	JSONLimits jsonbudget.Limits
 	// SkipBodyParsing keeps raw proxy bodies out of JSON and base64 copies.
 	SkipBodyParsing    bool
 	Endpoint           string
@@ -107,10 +110,17 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 		env.Query[key] = copied
 	}
 	if !opts.SkipBodyParsing {
-		var parsed any
-		decoder := json.NewDecoder(bytes.NewReader(opts.RawBody))
-		decoder.UseNumber()
-		if err := decoder.Decode(&parsed); err == nil && json.Valid(opts.RawBody) {
+		err := jsonbudget.Check(opts.RawBody, opts.JSONLimits)
+		if errors.Is(err, jsonbudget.ErrLimit) {
+			return Envelope{}, err
+		}
+		if err == nil {
+			var parsed any
+			decoder := json.NewDecoder(bytes.NewReader(opts.RawBody))
+			decoder.UseNumber()
+			if err := decoder.Decode(&parsed); err != nil {
+				return Envelope{}, err
+			}
 			env.Body = parsed
 		} else {
 			encoded := base64.StdEncoding.EncodeToString(opts.RawBody)

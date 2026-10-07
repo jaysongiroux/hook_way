@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 )
@@ -54,6 +55,11 @@ func LatestSchemaVersion() int64 {
 // applied. goose holds a PostgreSQL session advisory lock while it runs, so
 // replicas that migrate at once apply each migration exactly once.
 func (s *Store) Migrate(ctx context.Context) ([]int64, error) {
+	// Reject legacy, future and incomplete databases before Goose can write even
+	// its version table. The only supported initial transition is an empty store.
+	if err := s.checkSchema(ctx, true); err != nil {
+		return nil, err
+	}
 	results, err := s.migrations.Up(ctx)
 	applied := make([]int64, 0, len(results))
 	for _, r := range results {
@@ -64,7 +70,7 @@ func (s *Store) Migrate(ctx context.Context) ([]int64, error) {
 	if err != nil {
 		return applied, fmt.Errorf("store: migrate: %w", err)
 	}
-	return applied, nil
+	return applied, s.Ready(ctx)
 }
 
 // SchemaVersion reports the applied schema version, or 0 before the first
@@ -72,8 +78,16 @@ func (s *Store) Migrate(ctx context.Context) ([]int64, error) {
 // and takes the migration lock, and readiness probes and the state sampler
 // must never contend with a running migrate.
 func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
+	return schemaVersion(ctx, s.pool)
+}
+
+type schemaReader interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func schemaVersion(ctx context.Context, db schemaReader) (int64, error) {
 	var exists bool
-	if err := s.pool.QueryRow(ctx, `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+	if err := db.QueryRow(ctx, `SELECT to_regclass('goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
 		return 0, fmt.Errorf("store: schema version: %w", err)
 	}
 	if !exists {
@@ -82,7 +96,7 @@ func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 	var version int64
 	// Goose appends both up and down events. Only the newest event for each
 	// version says whether that migration is currently applied.
-	if err := s.pool.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM (
+	if err := db.QueryRow(ctx, `SELECT COALESCE(max(version_id), 0) FROM (
 		SELECT DISTINCT ON (version_id) version_id, is_applied
 		FROM goose_db_version ORDER BY version_id, id DESC
 	) current_versions WHERE is_applied`).Scan(&version); err != nil {

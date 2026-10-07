@@ -49,7 +49,7 @@ func repoRoot(t *testing.T) string {
 func command(dir string, env []string, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 -- fixed go and docker invocations
+	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 G702 -- fixed fixture executables, separate argv (no shell); image metadata is validated literal data
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
@@ -364,7 +364,7 @@ type failure struct {
 // destination that already had the event.
 func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 	s := up(t)
-	s.checkConsole(t)
+	s.checkConsole(t, operatorToken)
 
 	// Both destinations are up: the event reaches RabbitMQ and the sink.
 	if code := s.postGitHub(t, `{"action":"opened","issue":{"number":1}}`); code != http.StatusAccepted {
@@ -465,7 +465,7 @@ func TestDevStackRecordsAMissedDeliveryAndReplaysIt(t *testing.T) {
 
 // Check the deployed bundle, rather than just source configuration: the console
 // and its Go validator must survive image packaging and share the live API.
-func (s *stack) checkConsole(t *testing.T) {
+func (s *stack) checkConsole(t *testing.T, token string) {
 	t.Helper()
 	base := s.url(t, "console", 8080)
 	code, html, err := do(http.MethodGet, base+"/", nil)
@@ -506,7 +506,8 @@ func (s *stack) checkConsole(t *testing.T) {
 		KeyName string   `json:"key_name"`
 		Scopes  []string `json:"scopes"`
 	}
-	if code, raw := s.api(t, http.MethodGet, "/v1/me", nil, &identity); code != http.StatusOK || identity.KeyName != "operator" || !slices.Equal(identity.Scopes, []string{"read", "payload", "retry"}) {
+	code, raw, err := do(http.MethodGet, s.url(t, "replay", 8080)+"/v1/me", nil, "Authorization", "Bearer "+token)
+	if err != nil || code != http.StatusOK || json.Unmarshal(raw, &identity) != nil || identity.KeyName != "operator" || !slices.Equal(identity.Scopes, []string{"read", "payload", "retry"}) {
 		t.Fatalf("deployed operator identity: status=%d body=%s", code, raw)
 	}
 }

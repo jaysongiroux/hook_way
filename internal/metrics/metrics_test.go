@@ -54,6 +54,34 @@ hookway_rabbitmq_unroutable_total{destination_queue_id="billing",queue="billing-
 	}
 }
 
+func TestWebhookAccountedByteMetricsAreExposed(t *testing.T) {
+	m := New()
+	m.WebhookQueueBytes("notify", 1024, 64<<20)
+	if got := testutil.ToFloat64(m.webhookQueueBytes.WithLabelValues("notify")); got != 1024 {
+		t.Fatalf("used=%v", got)
+	}
+	if got := testutil.ToFloat64(m.webhookQueueByteCapacity.WithLabelValues("notify")); got != 64<<20 {
+		t.Fatalf("capacity=%v", got)
+	}
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, family := range families {
+		names[family.GetName()] = true
+	}
+	for _, name := range []string{"hookway_webhook_queue_accounted_bytes", "hookway_webhook_queue_accounted_capacity_bytes"} {
+		if !names[name] {
+			t.Fatalf("gauge not registered: %s", name)
+		}
+	}
+	m.WebhookQueueBytes("notify", 0, 64<<20)
+	if got := testutil.ToFloat64(m.webhookQueueBytes.WithLabelValues("notify")); got != 0 {
+		t.Fatalf("recovered used=%v", got)
+	}
+}
+
 func TestWebhookMetricsIncludeDestinationQueueID(t *testing.T) {
 	m := New()
 

@@ -135,6 +135,27 @@ are removed together and the receipt returns 404. Idempotency is not indefinite.
 A repeated previously accepted retry returns its original run ID; it never
 queues a second run even after resolution.
 
+### A submit reply disappeared
+
+First read the record and its runs/history; the action may have committed even
+though your client saw a timeout. Repeat a retry or resolution request using the
+same named actor, exact body and original `Idempotency-Key`. Another replay
+replica can return the retained original receipt. Do not substitute a new key,
+change the duplicate-risk acknowledgement, or edit the resolution note while
+trying to recover that reply. Changed input is a new decision, not a transport
+retry, and a reused key with changed input is rejected.
+
+Dismissal has no equivalent idempotency receipt. If its reply is lost, re-read
+the record before doing anything else. A conflict from a competing action is
+also a reason to refresh state, not to automatically submit another action.
+An expired worker lease leaves the original execution uncertain; neither a new
+worker nor the operator should infer that the destination received nothing.
+
+Keep the accepted run ID or resolution receipt with the incident evidence, and
+correlate it with the stable provider identity and independent destination
+receipts. Idempotency here fences retained replay actions; it is not an
+exactly-once business guarantee or a permanent deduplication archive.
+
 ## Shared validation and migration
 
 WASM advertises `replay_resolution_input` and uses the Go-owned action validator.

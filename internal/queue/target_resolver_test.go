@@ -6,9 +6,41 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type resolvedState struct{ name string }
+
+func TestTargetResolverWaiterHonorsOwnDeadline(t *testing.T) {
+	r := newTestResolver(0)
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	provision := func(ctx context.Context, _ resolvedState, target string) (resolvedState, error) {
+		close(started)
+		select {
+		case <-release:
+			return resolvedState{name: target}, nil
+		case <-ctx.Done():
+			return resolvedState{}, ctx.Err()
+		}
+	}
+	leaderCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() { _, _ = r.resolve(leaderCtx, "tenant-a-orders", provision) }()
+	<-started
+	ctx, stop := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer stop()
+	done := make(chan error, 1)
+	go func() { _, err := r.resolve(ctx, "tenant-a-orders", provision); done <- err }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("waiter error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("short-deadline waiter blocked behind shared provisioning")
+	}
+}
 
 func newTestResolver(max int) *targetResolver[resolvedState] {
 	r := newTargetResolver[resolvedState](max, nil)

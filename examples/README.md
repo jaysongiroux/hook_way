@@ -27,7 +27,7 @@ examples under this directory. File headers explain each demonstration;
 | File | Description |
 | --- | --- |
 | [connections.yaml](connections.yaml) | Reuse named AWS and PostgreSQL connections across destinations; keep credentials and connection settings in one place. |
-| [reliable-ingestion.yaml](reliable-ingestion.yaml) | Signed GitHub webhook intake with a 202 response after RabbitMQ publisher confirmation. Broker durability and downstream deduplication remain deployment responsibilities. |
+| [reliable-ingestion.yaml](reliable-ingestion.yaml) | Signed GitHub webhook intake with a 202 response after RabbitMQ publisher confirmation. Preserve stable provider identity; broker durability and atomic consumer deduplication remain deployment responsibilities. See [delivery and recovery contracts](../docs/operations/delivery-guarantees.md). |
 
 ## Destination reference configs
 
@@ -49,7 +49,7 @@ Each file showcases one destination type with all available options documented v
 | [destinations/mongodb.yaml](destinations/mongodb.yaml) | MongoDB destination: one BSON document per event into a collection named by the publish `target`; full event envelope with `_id` = event id; nested body/headers/query/auth; id dedup via duplicate-key no-op; no DDL (collections auto-create). |
 | [destinations/kafka.yaml](destinations/kafka.yaml) | Kafka destination: SASL/TLS, topic `create: true`, two publish nodes. `kafka_options.partition_key` is not a publish-node field. |
 | [destinations/temporal.yaml](destinations/temporal.yaml) | Temporal destination: one workflow execution per event; `target` is the task queue. `temporal_options` are not publish-node fields. |
-| [destinations/webhook.yaml](destinations/webhook.yaml) | Webhook destination: async outbound delivery (store-and-forward, 202=accepted) to an HTTP/HTTPS URL; envelope vs proxy payload modes; HMAC, API key, or no-auth outbound auth; retries with backoff on 429/5xx/timeout. |
+| [destinations/webhook.yaml](destinations/webhook.yaml) | Webhook destination: explicitly loss-tolerant async delivery (202 means bounded volatile-queue admission), or synchronous HTTP delivery; envelope vs proxy payload modes; outbound auth and bounded retries. Neither mode provides exactly-once business processing. |
 
 ## Auth strategy reference configs
 
@@ -149,9 +149,43 @@ make test-examples
 
 **The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically (except files named `replay.yaml`, which configure the replay service, not core). `make validate-examples` validates every top-level `*.yaml` (except `docker-compose.yaml`), globs `destinations/`, `auth/`, `routing/`, `proxy/`, `credentials/`, `adapters/`, `templates/`, `providers/`, `protection/`, and `showcase/` (skipping `invalid-*`), and names the `dev/` and `replay/` files explicitly — each directory's `core.yaml` with `hookway validate`, its `replay.yaml` with `hookway-replay validate`.
 
-So **a new subdirectory is silently skipped by `validate-examples`** until the Makefile learns about it; place new examples at the top level or in a globbed subdirectory, or add the directory to the recipe.
+The target also validates every `production-local/core*.yaml` and its replay config.
+A new subdirectory is skipped by `validate-examples` until the Makefile learns
+about it; place examples in a covered directory or add the directory to the recipe.
 
-## Dev stack (`make dev-up`)
+## Persistent production-style local stack (`production-local/`)
+
+Use [production-local/docker-compose.yaml](production-local/docker-compose.yaml)
+with `make prod-local-bootstrap` (`PROD_LOCAL_MODE=full` adds replay and its console;
+`PROD_LOCAL_PROTECTION=1` selects Redis protection). Bootstrap generates private
+credentials and copies ordinary YAML once, preserving later operator edits.
+The supported workflow uses Make and Compose directly, with no test helper.
+Ordinary shutdown preserves named volumes; explicit reset requires the selected
+project name. Browser ports bind to loopback, while internal APIs and stores stay
+on the Compose network. See [Local development](../docs/development/local-development.md#persistent-local-production-setup)
+for validation, operating commands, URLs and architecture limits.
+
+This runs the production application with local HTTP and private destinations.
+It is an operating recipe, not proof of production capacity or disaster recovery.
+
+| File | Components |
+| --- | --- |
+| [production-local/core.yaml](production-local/core.yaml) | Core and RabbitMQ with process-local rate limiting |
+| [production-local/core-shared.yaml](production-local/core-shared.yaml) | Core and RabbitMQ with shared Redis rate limiting |
+| [production-local/core-replay.yaml](production-local/core-replay.yaml) | Replay/console with process-local rate limiting |
+| [production-local/core-replay-shared.yaml](production-local/core-replay-shared.yaml) | Replay/console with shared Redis rate limiting |
+| [production-local/replay.yaml](production-local/replay.yaml) | Replay configuration with distinct scoped credentials |
+| [production-local/migration/replay.yaml](production-local/migration/replay.yaml) | Owner-only migration configuration; never serve it |
+| [production-local/database/provision.sql](production-local/database/provision.sql) | Provision owner/runtime roles and preserve current-schema data |
+| [production-local/database/runtime-grants.sql](production-local/database/runtime-grants.sql) | Explicit runtime grants applied after migrations |
+| [production-local/tls/docker-compose.yaml](production-local/tls/docker-compose.yaml) | Optional localhost TLS proxy overlay |
+| [production-local/tls/Caddyfile](production-local/tls/Caddyfile) | Manual local certificate termination for core, replay and console |
+| [production-local/monitoring/README.md](production-local/monitoring/README.md) | Optional authenticated local monitoring recipe; no cloud or live responder required |
+| [production-local/monitoring/compose.yaml](production-local/monitoring/compose.yaml) | Loopback Prometheus/Alertmanager and local fixture receiver overlay |
+| [production-local/monitoring/prometheus.yaml](production-local/monitoring/prometheus.yaml) | Private core/replay scrape jobs and shipped alert rules |
+| [production-local/monitoring/alertmanager.yaml](production-local/monitoring/alertmanager.yaml) | Local-only firing/resolved webhook route, not a real paging service |
+
+## Disposable dev stack (`make dev-up`)
 
 | File | Description |
 |------|-------------|

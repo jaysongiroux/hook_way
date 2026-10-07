@@ -92,9 +92,15 @@ type ReplayGuardOptions struct {
 	Key        string `yaml:"key,omitempty" json:"key,omitempty"`
 }
 type EnvelopeOptions struct {
+	JSON       JSONParseOptions `yaml:"json,omitempty" json:"json,omitempty"`
 	XML        XMLParseOptions  `yaml:"xml,omitempty" json:"xml,omitempty"`
 	BodyFormat string           `yaml:"body_format,omitempty" json:"body_format,omitempty" jsonschema:"enum=json,enum=xml,enum=raw,enum=multipart"`
 	Multipart  MultipartOptions `yaml:"multipart,omitempty" json:"multipart,omitempty"`
+}
+
+type JSONParseOptions struct {
+	MaxDepth int `yaml:"max_depth,omitempty" json:"max_depth,omitempty" jsonschema:"minimum=1,maximum=1024"`
+	MaxNodes int `yaml:"max_nodes,omitempty" json:"max_nodes,omitempty" jsonschema:"minimum=1,maximum=1000000"`
 }
 
 type XMLParseOptions struct {
@@ -836,6 +842,13 @@ func validateReplayGuard(o ReplayGuardOptions) error {
 	return nil
 }
 func validateEnvelope(o EnvelopeOptions) error {
+	j := o.JSON
+	if (j.MaxDepth != 0 || j.MaxNodes != 0) && o.BodyFormat != "" && o.BodyFormat != "json" {
+		return errors.New("json options require body_format: json")
+	}
+	if j.MaxDepth < 0 || j.MaxDepth > 1024 || j.MaxNodes < 0 || j.MaxNodes > 1000000 {
+		return errors.New("invalid JSON parse limits")
+	}
 	x := o.XML
 	if (x.MaxBytes != 0 || x.MaxDepth != 0 || x.MaxNodes != 0) && o.BodyFormat != "xml" {
 		return errors.New("xml options require body_format: xml")

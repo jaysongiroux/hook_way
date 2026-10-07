@@ -12,6 +12,8 @@
 .idea
 .env
 .env.*
+**/.env
+**/.env.*
 **/*.pem
 **/*.key
 **/*.crt
@@ -47,6 +49,8 @@ internal/editor/webui/*
 
 # Local assessment/private parity inputs must not enter Docker build layers.
 docs/local-plans
+docs/plans/hardening
+examples/production-local/.local*
 docs/vendor-replacement-assessment.md
 
 # Python build and verification-tool bytecode

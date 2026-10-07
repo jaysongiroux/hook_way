@@ -231,28 +231,48 @@ func roundRobin(t *testing.T, backends ...string) string {
 
 // sink is a destination that counts every envelope id it accepted.
 type sink struct {
-	failing atomic.Bool
-	mu      sync.Mutex
-	ids     map[string]int
-	srv     *httptest.Server
+	failing  atomic.Bool
+	mu       sync.Mutex
+	ids      map[string]int
+	ledger   map[string]receiptLedger
+	accepted func(context.Context)
+	srv      *httptest.Server
 }
 
 func newSink(t *testing.T) *sink {
 	t.Helper()
-	s := &sink{ids: map[string]int{}}
+	s := &sink{ids: map[string]int{}, ledger: map[string]receiptLedger{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if s.failing.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
 		var env struct {
-			ID string `json:"id"`
+			ID   string `json:"id"`
+			Body struct {
+				EventID string `json:"event_id"`
+			} `json:"body"`
 		}
 		_ = json.Unmarshal(body, &env)
 		s.mu.Lock()
+		entry := s.ledger[env.Body.EventID]
+		entry.Attempts++
+		if s.failing.Load() {
+			s.ledger[env.Body.EventID] = entry
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		entry.Receipts++
+		// The synthetic consumer atomically deduplicates its business outcome by
+		// provider identity, not by Hookway's per-inbound envelope ID.
+		if entry.ConsumerOutcomes == 0 {
+			entry.ConsumerOutcomes++
+		}
+		s.ledger[env.Body.EventID] = entry
 		s.ids[env.ID]++
+		accepted := s.accepted
 		s.mu.Unlock()
+		if accepted != nil {
+			accepted(r.Context())
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(s.srv.Close)
@@ -498,7 +518,7 @@ func TestAcceptance_OutageThenBatchRetryDeliversOnce(t *testing.T) {
 	s.audit.failing.Store(true)
 	const n = 20
 	for i := range n {
-		if code := s.post(t, []byte(fmt.Sprintf(`{"order":%d}`, i))); code != http.StatusAccepted {
+		if code := s.post(t, []byte(fmt.Sprintf(`{"order":%d,"event_id":"fanout-%d"}`, i, i))); code != http.StatusAccepted {
 			t.Fatalf("event %d answered %d", i, code)
 		}
 	}
@@ -569,6 +589,11 @@ func TestAcceptance_OutageThenBatchRetryDeliversOnce(t *testing.T) {
 	if len(resolved.Items) != n {
 		t.Fatalf("%d records resolved, want %d", len(resolved.Items), n)
 	}
+	for i := range n {
+		event := fmt.Sprintf("fanout-%d", i)
+		s.orders.assertLedger(t, event, receiptLedger{Attempts: 1, Receipts: 1, ConsumerOutcomes: 1})
+		s.audit.assertLedger(t, event, receiptLedger{Attempts: 2, Receipts: 1, ConsumerOutcomes: 1})
+	}
 }
 
 // Spec acceptance: with the replay service down, core keeps answering
@@ -578,18 +603,106 @@ func TestAcceptance_ReplayDownLeavesCoreBoundedAndReady(t *testing.T) {
 	for _, p := range s.replays {
 		p.stop()
 	}
-	s.audit.failing.Store(true)
-	// 200 × 512 KiB offers core far more than its 64 MiB capture buffer, so
-	// the bound is exercised, not just respected.
-	body := []byte(`{"pad":"` + strings.Repeat("a", 512<<10) + `"}`)
-	var slowest time.Duration
-	for i := range 200 {
-		start := time.Now()
-		if code := s.post(t, body); code != http.StatusAccepted {
-			t.Fatalf("event %d answered %d with replay down", i, code)
+	// Hold capture transport while the actual replay services are stopped. A
+	// fast reverse-proxy 502 otherwise releases each upload after retries, making
+	// serial offered volume unrelated to simultaneous buffer occupancy.
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseUploads := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseUploads() // also releases before child-process test cleanups
+	entered := make(chan struct{}, 8)
+	target, err := url.Parse(s.replayURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward := httputil.NewSingleHostReverseProxy(target)
+	forward.ErrorLog = log.New(io.Discard, "", 0)
+	transport := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case entered <- struct{}{}:
+		default:
 		}
-		slowest = max(slowest, time.Since(start))
-		if i%25 == 0 {
+		select {
+		case <-release:
+			forward.ServeHTTP(w, r)
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(transport.Close)
+	for i, old := range s.cores {
+		old.stop()
+		path := old.cmd.Args[len(old.cmd.Args)-1]
+		original, err := os.ReadFile(path) // #nosec G304 -- fixture-owned configuration
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated := strings.Replace(string(original), fmt.Sprintf("url: %q", s.replayURL), fmt.Sprintf("url: %q", transport.URL), 1)
+		if updated == string(original) {
+			t.Fatal("fixture did not retarget capture transport")
+		}
+		writeConfig(t, path, updated)
+		s.cores[i] = startProcess(t, old.name+"-capture-outage", old.cmd.Path, old.cmd.Env, old.cmd.Args[1:]...)
+		waitReady(t, "core with held capture transport", s.coreReady[i])
+	}
+	t.Cleanup(releaseUploads) // release before stopping the replacement cores
+	s.audit.failing.Store(true)
+	// Each core receives 100 failures. A queued 512 KiB body is charged at
+	// least 3*512 KiB+64 KiB, so each bounded wave offers >150 MiB against that
+	// core's 64 MiB buffer. Eight ingress workers plus the transport barrier
+	// retain simultaneous captures instead of relying on a slow serial workload.
+	const count, concurrency = 200, 8
+	pad := strings.Repeat("a", 512<<10)
+	type observation struct {
+		index    int
+		code     int
+		err      error
+		duration time.Duration
+	}
+	post := func(i int) observation {
+		body := []byte(fmt.Sprintf(`{"event_id":"replay-down-%d","pad":"%s"}`, i, pad))
+		start := time.Now()
+		core := strings.TrimSuffix(s.coreReady[i%len(s.cores)], "/readyz")
+		code, err := signedRequest(core+"/webhooks/orders", fmt.Sprintf("replay-down-%d", i), body)
+		return observation{index: i, code: code, err: err, duration: time.Since(start)}
+	}
+	var slowest time.Duration
+	// One upload from each distinct core must actually enter the fault transport
+	// before admitting the wave; readiness/buffer assertions cannot pass vacuously.
+	for i := range len(s.cores) {
+		result := post(i)
+		if result.err != nil || result.code != http.StatusAccepted {
+			t.Fatalf("event %d answered %d: %v", i, result.code, result.err)
+		}
+		slowest = max(slowest, result.duration)
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("capture never entered the held outage transport")
+		}
+		if metric(t, s.coreMetrics[i], "hookway_capture_buffer_bytes") <= 0 {
+			t.Fatalf("core %d did not retain its blocked upload", i)
+		}
+	}
+	jobs := make(chan int, count)
+	results := make(chan observation, count)
+	for range concurrency {
+		go func() {
+			for i := range jobs {
+				results <- post(i)
+			}
+		}()
+	}
+	for i := len(s.cores); i < count; i++ {
+		jobs <- i
+	}
+	close(jobs)
+	for received := len(s.cores); received < count; received++ {
+		result := <-results
+		if result.err != nil || result.code != http.StatusAccepted {
+			t.Fatalf("event %d answered %d with replay down: %v", result.index, result.code, result.err)
+		}
+		slowest = max(slowest, result.duration)
+		if received%25 == 0 {
 			for j, u := range s.coreReady {
 				if code, _, err := get(u); err != nil || code != http.StatusOK {
 					t.Fatalf("core %d readiness = %d, %v with replay down", j, code, err)
@@ -617,4 +730,10 @@ func TestAcceptance_ReplayDownLeavesCoreBoundedAndReady(t *testing.T) {
 	if full == 0 {
 		t.Fatal("the capture buffer never filled; the test did not exercise the bound")
 	}
+	for i := range 200 {
+		event := fmt.Sprintf("replay-down-%d", i)
+		s.orders.assertLedger(t, event, receiptLedger{Attempts: 1, Receipts: 1, ConsumerOutcomes: 1})
+		s.audit.assertLedger(t, event, receiptLedger{Attempts: 1})
+	}
+	t.Log("replay outage reconciliation sender_attempts=200 HTTP202=200 good_destination_receipts=200 failed_destination_receipts=0 capture_buffer_full_drops>0; capture unavailable without changing ingress contract")
 }

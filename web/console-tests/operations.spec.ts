@@ -229,6 +229,9 @@ test("operator confirmation preserves unknown history and evidence", async ({
   await page.getByRole("button", { name: "Done", exact: true }).click();
   const selected = page.getByRole("region", { name: "Selected failure" });
   await expect(selected).toContainText("INC-DEMO-42");
+  await expect(
+    selected.getByRole("button", { name: "Dismiss failure", exact: true }),
+  ).toBeDisabled();
   const record = await detail(request, 3);
   expect(record.delivery_status).toBe("resolved");
   expect(record.runs[0].status).toBe("unknown");

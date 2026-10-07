@@ -394,6 +394,24 @@
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "json": {
+          "properties": {
+            "max_depth": {
+              "type": "integer",
+              "maximum": 1024,
+              "minimum": 1,
+              "default": 128
+            },
+            "max_nodes": {
+              "type": "integer",
+              "maximum": 1000000,
+              "minimum": 1,
+              "default": 1000000
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
         "xml": {
           "properties": {
             "max_bytes": {

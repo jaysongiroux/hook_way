@@ -5,6 +5,7 @@ package replaytest
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -90,7 +92,9 @@ func BackupRestore(t testing.TB, source string) string {
 		}
 	}
 	archive := "/tmp/" + database + ".dump"
+	started := time.Now()
 	run("pg_dump", "-U", "replay", "-Fc", "-f", archive, database)
+	dumpDuration := time.Since(started)
 	reader, err := container.CopyFileFromContainer(ctx, archive)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +117,9 @@ func BackupRestore(t testing.TB, source string) string {
 	if err := container.CopyFileToContainer(ctx, local, importPath, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	restoreStarted := time.Now()
 	run("pg_restore", "-U", "replay", "--exit-on-error", "--no-owner", "-d", strings.TrimPrefix(target.Path, "/"), importPath)
+	t.Logf("quiescent backup archive_bytes=%d archive_sha256=%x dump=%s restore=%s total=%s source=%s target=%s", len(data), sha256.Sum256(data), dumpDuration, time.Since(restoreStarted), time.Since(started), database, strings.TrimPrefix(target.Path, "/"))
 	return restored
 }
 

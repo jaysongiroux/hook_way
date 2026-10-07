@@ -214,3 +214,27 @@ func TestOptionsPreflightSkipsAuthWhenKeySet(t *testing.T) {
 		t.Fatalf("preflight Access-Control-Allow-Headers = %q, must include Authorization", allow)
 	}
 }
+
+func TestEveryProtectedEditorRouteRejectsDuplicateAuthorization(t *testing.T) {
+	const key = "editor-boundary-key"
+	srv := httptest.NewServer(Handler(key))
+	t.Cleanup(srv.Close)
+	for _, route := range Routes() {
+		for _, headers := range [][]string{{"Bearer " + key, "Bearer wrong"}, {"Bearer " + key, "Bearer " + key}} {
+			req, err := http.NewRequestWithContext(t.Context(), route.Method, srv.URL+route.Path, strings.NewReader("not valid input"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header["Authorization"] = headers
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil || resp.StatusCode != http.StatusUnauthorized || strings.Contains(string(body), key) {
+				t.Fatalf("%s %s duplicate auth: %d %q, err %v", route.Method, route.Path, resp.StatusCode, body, err)
+			}
+		}
+	}
+}

@@ -8,10 +8,12 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // recordingDialer stands in for the real network. Every dial is recorded and
@@ -291,5 +293,86 @@ func TestEgressDialContextVetsResolvedAddresses(t *testing.T) {
 		if _, err := egressDialContext(withEgressGuard(ctx, true), "tcp", "no-such-host.invalid:80"); err == nil {
 			t.Fatal("an unresolvable host was dialed; resolution failure must fail closed")
 		}
+	})
+}
+
+// Controlled DNS proves classification happens on resolved addresses, including
+// IPv6/mapped IPv4, without ever contacting metadata or a public destination.
+func TestEgressDialPinsControlledDNSAddresses(t *testing.T) {
+	for _, ipText := range []string{"10.0.0.5", "169.254.169.254", "::1", "fd00::5", "fe80::5", "::ffff:169.254.169.254", "93.184.216.34", "2001:4860:4860::8888"} {
+		t.Run(ipText, func(t *testing.T) {
+			ip := net.ParseIP(ipText)
+			installEgressDNS(t, ip, strings.Contains(ipText, ":"))
+			const host = "controlled-egress.example.test"
+			if err := validateEgressURL("https://"+host+"/request", true); err != nil {
+				t.Fatalf("controlled public name failed the initial policy: %v", err)
+			}
+			var dialed []string
+			refused := errors.New("fixture refused vetted connection")
+			saved := egressDialer
+			egressDialer = &net.Dialer{Control: func(_, address string, _ syscall.RawConn) error {
+				dialed = append(dialed, address)
+				return refused
+			}}
+			t.Cleanup(func() { egressDialer = saved })
+			_, err := egressDialContext(withEgressGuard(t.Context(), true), "tcp", host+":443")
+			if ipText != "93.184.216.34" && ipText != "2001:4860:4860::8888" {
+				if err == nil || len(dialed) != 0 || !strings.Contains(err.Error(), "not an allowed egress target") {
+					t.Fatalf("private DNS answer was not refused before dial: error=%v dials=%v", err, dialed)
+				}
+			} else if !errors.Is(err, refused) || len(dialed) != 1 || dialed[0] != net.JoinHostPort(ip.String(), "443") {
+				t.Fatalf("vetted DNS IP was not pinned at dial: error=%v dials=%v", err, dialed)
+			}
+		})
+	}
+}
+
+func installEgressDNS(t *testing.T, ip net.IP, ipv6 bool) {
+	t.Helper()
+	server, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var buf [4096]byte
+		for {
+			n, peer, err := server.ReadFrom(buf[:])
+			if err != nil {
+				return
+			}
+			var question dnsmessage.Message
+			if err := question.Unpack(buf[:n]); err != nil {
+				t.Error(err)
+				continue
+			}
+			response := dnsmessage.Message{Header: dnsmessage.Header{ID: question.ID, Response: true, Authoritative: true, RecursionDesired: question.RecursionDesired, RecursionAvailable: true}, Questions: question.Questions}
+			for _, q := range question.Questions {
+				header := dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: dnsmessage.ClassINET, TTL: 60}
+				if v4 := ip.To4(); !ipv6 && q.Type == dnsmessage.TypeA {
+					response.Answers = append(response.Answers, dnsmessage.Resource{Header: header, Body: &dnsmessage.AResource{A: [4]byte(v4)}})
+				} else if ipv6 && q.Type == dnsmessage.TypeAAAA {
+					response.Answers = append(response.Answers, dnsmessage.Resource{Header: header, Body: &dnsmessage.AAAAResource{AAAA: [16]byte(ip.To16())}})
+				}
+			}
+			raw, err := response.Pack()
+			if err != nil {
+				t.Error(err)
+				continue
+			}
+			if _, err := server.WriteTo(raw, peer); err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	previous := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.LocalAddr().String())
+	}}
+	t.Cleanup(func() {
+		net.DefaultResolver = previous
+		_ = server.Close()
+		<-done
 	})
 }

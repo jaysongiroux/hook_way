@@ -1,0 +1,46 @@
+# Persistent local deployment. Credentials come from the private .env file.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+  max_inflight_requests: 32
+  read_timeout: 5s
+  write_timeout: 15s
+  publish_timeout: 10s
+  shutdown_timeout: 15s
+  shutdown_total_timeout: 60s
+metrics:
+  enabled: true
+  addr: ":9090"
+  path: /metrics
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  trusted_proxy_headers: false
+  forwarded_header_allowlist: [Content-Type, X-Request-ID, X-GitHub-Event]
+state_stores:
+  shared:
+    namespace: local-production
+    timeout: 250ms
+    startup_timeout: 30s
+    redis:
+      url: "${PROTECTION_REDIS_URL}"
+      pool_size: 5
+destinations:
+  primary:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: hookway.webhooks
+      exchange_type: direct
+      durable: true
+      publish_timeout: 5s
+      declare_queues: true
+flows:
+  github_events:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: limit, type: rate_limit, rpm: 600, burst: 100, key_by: source_ip, store: shared}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: github-webhooks, create: true}
+    edges: [in>limit, limit>body, body>auth, auth>env, env>out]

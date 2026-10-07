@@ -79,7 +79,7 @@ func (s *Server) recoverHandlerPanic(rw *recoveringResponseWriter, requestID, tr
 	}
 	s.logger.Error("panic recovered in http handler",
 		"location", "handler",
-		"panic", fmt.Sprint(rec),
+		"panic_type", fmt.Sprintf("%T", rec),
 		"stack", string(debug.Stack()),
 		"request_id", requestID, "trace_id", traceID,
 	)
@@ -96,13 +96,19 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 func (s *Server) sourceIP(r *http.Request) string {
 	peer := peerHost(r.RemoteAddr)
 	if s.trustsPeer(peer) {
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			if ip := s.rightmostUntrustedForwardedIP(forwarded); ip != "" {
+		// XFF is a list field: repeated wire fields have the same meaning as
+		// one comma-delimited value. Ignoring later fields would ignore an
+		// appended proxy hop and could select caller-controlled identity.
+		if forwarded := r.Header.Values("X-Forwarded-For"); len(forwarded) > 0 {
+			if ip := s.rightmostUntrustedForwardedIP(strings.Join(forwarded, ",")); ip != "" {
 				return ip
 			}
+			return peer
 		}
-		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
-			return realIP
+		if values := r.Header.Values("X-Real-IP"); len(values) == 1 {
+			if realIP := strings.TrimSpace(values[0]); net.ParseIP(realIP) != nil {
+				return realIP
+			}
 		}
 	}
 	return peer
@@ -160,10 +166,25 @@ func (s *Server) requestID(r *http.Request) string {
 	if header == "" {
 		header = "X-Request-ID"
 	}
-	if id := strings.TrimSpace(r.Header.Get(header)); id != "" {
-		return id
+	if values := r.Header.Values(header); len(values) == 1 {
+		id := strings.TrimSpace(values[0])
+		if validRequestID(id) {
+			return id
+		}
 	}
 	return uuid.NewString()
+}
+
+func validRequestID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for i := range len(id) {
+		if id[i] < 0x21 || id[i] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func traceIDFromRequest(r *http.Request) string {

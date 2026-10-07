@@ -4,6 +4,251 @@ Run these commands from the repository root. The container walkthrough needs
 Docker with Compose and OpenSSL. Running Go or editing the frontend on the host
 also needs the versions and setup in [Contributing](../../CONTRIBUTING.md).
 
+Choose `make dev-up` for the disposable walkthrough below. For persistent data
+and generated credentials, use the production-style recipe in the next section.
+Both run the same application and support local HTTP and private Docker service
+addresses; no cloud account or security bypass is required.
+
+## Persistent local production setup
+
+The [production-local Compose recipe](../../examples/production-local/docker-compose.yaml)
+uses real RabbitMQ storage and authenticated webhooks. Full mode adds PostgreSQL,
+replay migrations, the replay API and console. Shared Redis protection is optional.
+Docker with Compose, Make and OpenSSL are required. The recipe uses ordinary YAML
+and standard Compose commands. Source image builds download their Go/Node
+dependencies inside the shipped Dockerfiles; Node is not a host runtime requirement.
+
+```sh
+make prod-local-bootstrap
+make prod-local-validate
+make prod-local-up
+make prod-local-status
+```
+
+Bootstrap copies the selected ordinary YAML into a private setup directory once:
+
+| Config | Components |
+| --- | --- |
+| [core.yaml](../../examples/production-local/core.yaml) | Core and RabbitMQ; process-local rate limiting |
+| [core-shared.yaml](../../examples/production-local/core-shared.yaml) | Core and RabbitMQ; shared Redis rate limiting |
+| [core-replay.yaml](../../examples/production-local/core-replay.yaml) | Core, RabbitMQ, replay and console; process-local rate limiting |
+| [core-replay-shared.yaml](../../examples/production-local/core-replay-shared.yaml) | Full stack with shared Redis rate limiting |
+| [replay.yaml](../../examples/production-local/replay.yaml) | Replay settings and scoped credentials |
+| [migration/replay.yaml](../../examples/production-local/migration/replay.yaml) | Migration-only owner connection; never serve this file |
+
+Choose the components at bootstrap. For a separate full stack that can coexist
+with the core example:
+
+```sh
+HOOKWAY_HTTP_PORT=28080 REPLAY_HTTP_PORT=28081 CONSOLE_HTTP_PORT=28082 \
+  RABBITMQ_HTTP_PORT=25673 make prod-local-bootstrap \
+  PROD_LOCAL_DIRECTORY=examples/production-local/.local-full \
+  PROD_LOCAL_PROJECT=hookway-production-full PROD_LOCAL_MODE=full PROD_LOCAL_PROTECTION=1
+make prod-local-validate PROD_LOCAL_DIRECTORY=examples/production-local/.local-full
+make prod-local-up PROD_LOCAL_DIRECTORY=examples/production-local/.local-full
+```
+
+Bootstrap generates distinct random credentials in `.env` with owner-only
+permissions, and preserves existing credentials and operator edits to the copied
+`core.yaml` and `replay.yaml` on rerun. Repeat the original mode/protection options
+when rerunning bootstrap; a different selection requires a separate directory.
+The default private directory is `examples/production-local/.local`. Keep custom
+directories outside the Docker build context and out of Git. YAML retains
+environment references; do not paste `.env` contents into logs or issues.
+
+`COMPOSE_PROJECT_NAME` and `COMPOSE_PROFILES` in `.env` select the saved project
+and optional services. Make commands infer the saved project, reject an explicitly
+mismatched `PROD_LOCAL_PROJECT`, and use `PROD_LOCAL_DIRECTORY` for a custom setup.
+The setup uses the same runtime controls as production without a cloud account.
+The [optional monitoring overlay](../../examples/production-local/monitoring/README.md)
+adds private authenticated scrapes and a local fixture receiver; omit it when
+logs and health endpoints are sufficient. It is not an application dependency.
+
+| Service | Default browser/host address | Available in |
+| --- | --- | --- |
+| Core webhook | http://localhost:18080/webhooks/github | Core and full |
+| RabbitMQ management | http://localhost:15673 | Core and full |
+| Replay API | http://localhost:18081 | Full |
+| Console and builder | http://localhost:18082 and http://localhost:18082/builder | Full |
+| PostgreSQL, Redis, core control/metrics | Docker network only | Selected components |
+
+Published ports bind to loopback. Bootstrap persists the four port variables
+and derives matching browser URLs. Export `REPLAY_API_URL` and
+`REPLAY_CONSOLE_ORIGIN` before bootstrap when a proxy supplies different public
+addresses. Full mode with dynamically assigned port `0` requires explicit public
+addresses; those addresses must actually reach the services for browser use.
+Container URLs use Compose names such as `rabbitmq` and `replay`. The console
+receives the API URL, never an operator token.
+
+Read `REPLAY_OPERATOR_TOKEN` privately from `.env` to sign in, or
+`GITHUB_WEBHOOK_SECRET` to sign the webhook shown below. RabbitMQ uses username
+`hookway` and its generated password. For the signed request, use port `18080`
+and the generated secret instead of the disposable stack's defaults.
+
+The full recipe demonstrates partial failure with a synchronous HTTP notification
+sink under `skip_failed`. Acknowledgements follow the selected flow policy and
+replay capture remains best effort. See [delivery guarantees](../operations/delivery-guarantees.md)
+when choosing a production contract.
+
+```sh
+make prod-local-logs
+make prod-local-down
+make prod-local-up PROD_LOCAL_BUILD=0
+make prod-local-restart
+```
+
+`prod-local-validate` builds source images and checks core plus replay in full
+mode. Set `PROD_LOCAL_BUILD=0` to validate images already available locally or
+start with selected published images without rebuilding. Override
+`HOOKWAY_CORE_IMAGE`, `HOOKWAY_REPLAY_IMAGE` and `HOOKWAY_CONSOLE_IMAGE` to use
+matching immutable release images. Initial source builds need network access.
+Set `PROD_LOCAL_STRICT=1` to fail core validation on supported-risk warnings.
+Full mode intentionally reports the partial-delivery warning; mandatory errors
+always fail. Offline validation does not establish live dependency connectivity.
+
+`prod-local-up` validates before starting services. In full mode it waits for
+PostgreSQL, then requires provisioning, migration and runtime grants to succeed
+before starting the application services. Repeated `up` with the same supported
+release remains available. `prod-local-restart` validates before stopping the
+healthy stack; a subsequent migration failure leaves application services down
+instead of serving against an unverified schema. Restart includes downtime.
+Changing releases requires the coordinated [upgrade procedure](../operations/upgrades.md),
+not a live migration against running workers.
+
+Ordinary shutdown and restart preserve named volumes and copied configuration.
+Back them up before upgrades; persistence alone is not a backup. To intentionally
+erase only the selected project's containers and stored data:
+
+```sh
+make prod-local-reset PROD_LOCAL_CONFIRM_RESET=hookway-production
+```
+
+Reset requires the exact saved project name and retains credentials/configuration.
+Use the custom directory and its project confirmation when resetting another
+setup. It is separate from ordinary shutdown and is not an upgrade step.
+
+For a quiescent database backup and restore into a **separate** rehearsal target,
+follow [Backup and restore](../operations/recovery.md). Keep the original volumes,
+copied configuration and newer destination receipts until recovery is accepted;
+do not start replay workers on an unreconciled older snapshot.
+
+### Separate database roles and existing setups
+
+Full mode runs `db-provision`, `migrate`, and `db-grants` before starting replay.
+The PostgreSQL bootstrap administrator (`replay`, using the existing
+`POSTGRES_PASSWORD`) is used only by PostgreSQL and the provisioning job. The
+separate `replay_owner` login owns the dedicated database/schema and named replay
+objects, and applies migrations. It is not a superuser and cannot create roles
+or other databases. Replay serves as `replay_runtime`, with database `CONNECT`,
+schema `USAGE`, DML on live replay tables, version-table `SELECT`, and the required
+audit sequence permissions. It cannot create/alter schema objects or rewrite the
+migration version. See the [runtime grant contract](../operations/replay-service.md#separate-migration-and-runtime-database-roles).
+
+The maintained [provisioning SQL](../../examples/production-local/database/provision.sql)
+transfers ownership only for named current-schema objects; it never recreates
+the database or clears data. [Runtime grants](../../examples/production-local/database/runtime-grants.sql)
+are reapplied after migration. Update their explicit object list if a future
+migration adds live tables or sequences. These scripts target this dedicated
+local database; use deployment-specific role provisioning for a shared database.
+
+Migration uses its [own configuration](../../examples/production-local/migration/replay.yaml)
+and receives only owner credentials. The CLI currently validates HTTP settings
+even for `migrate`, so its unused key/control fields derive from the job's own
+secret. The migration command never serves HTTP or invokes core. Do not run
+`serve` with this file. The real capture, operator, metrics and control credentials
+remain confined to their actual runtime consumers.
+
+An older local setup may lack the new role credentials. Extend it explicitly,
+preserving the existing administrator password, copied configuration and data:
+
+```sh
+make prod-local-down
+make prod-local-credentials-upgrade
+make prod-local-validate
+make prod-local-up
+```
+
+Pass the original `PROD_LOCAL_DIRECTORY` on every command for a custom setup.
+The upgrade adds only missing owner/runtime credentials and URLs plus the
+migration config, and is idempotent. Full startup gives an actionable error when
+this step is required. It applies to the current generic-record database schema;
+older failure-shaped databases remain outside its migration compatibility scope.
+
+Compose binds replay's `REPLAY_DATABASE_URL` to `REPLAY_RUNTIME_DATABASE_URL`,
+including when `.env` retains the earlier administrator URL. If your copied
+`replay.yaml` hard-codes a database URL, point its `database.url` at the restricted
+runtime connection yourself. Native invocations must likewise supply the runtime
+URL rather than sourcing the retained legacy administrator alias. Operator edits
+are never overwritten automatically.
+
+Named volumes and `.env` contain plaintext application data and credentials.
+This recipe establishes access boundaries; it does not encrypt disks or backups.
+Use encrypted host storage and protected backups locally, and the target
+platform's encrypted volumes/database storage and backup controls in deployment.
+Authentication and private networking do not replace storage encryption.
+
+### Optional localhost TLS termination
+
+The maintained [TLS Compose overlay](../../examples/production-local/tls/docker-compose.yaml)
+and [Caddyfile](../../examples/production-local/tls/Caddyfile) terminate TLS using
+your local certificate. Caddy receives the certificate/key and no application
+credentials. Its [manual certificate configuration](https://caddyserver.com/docs/caddyfile/directives/tls)
+requires no public domain, certificate authority account or cloud service.
+
+For a separate full TLS stack, use OpenSSL supporting `req -addext`:
+
+```sh
+HOOKWAY_HTTP_PORT=38080 REPLAY_HTTP_PORT=38081 CONSOLE_HTTP_PORT=38082 \
+  RABBITMQ_HTTP_PORT=35673 REPLAY_API_URL=https://localhost:18444 \
+  REPLAY_CONSOLE_ORIGIN=https://localhost:18445 make prod-local-bootstrap \
+  PROD_LOCAL_DIRECTORY=examples/production-local/.local-tls \
+  PROD_LOCAL_PROJECT=hookway-production-tls PROD_LOCAL_MODE=full
+task_state=examples/production-local/.local-tls
+umask 077
+openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj /CN=localhost \
+  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+  -keyout "$task_state/localhost.key" -out "$task_state/localhost.crt"
+export HOOKWAY_PROXY_UID="$(id -u)"
+make prod-local-up PROD_LOCAL_DIRECTORY="$task_state" PROD_LOCAL_TLS=1
+curl --cacert "$task_state/localhost.crt" https://localhost:18443/healthz
+```
+
+Generate the key once and keep it owner-readable only; regenerate deliberately
+before certificate expiry. The proxy UID must match the key's owner so an
+unprivileged container can read it. Ports `18443`, `18444` and `18445` front core,
+replay and console respectively, all on loopback. Keep `PROD_LOCAL_TLS=1` on
+lifecycle commands so shutdown/reset include the proxy. TLS ports can be changed
+with `HOOKWAY_TLS_PORT`, `REPLAY_TLS_PORT`, and `CONSOLE_TLS_PORT`; update the exact
+browser URLs/origin to match.
+
+The local proxy has a 60-second graceful shutdown budget and a 70-second Compose
+stop grace period. Keep the container budget longer than the proxy budget when
+customizing them. Ordinary parallel Compose shutdown does not replace the
+coordinated core-then-replay stop procedure for maintenance.
+
+For browser use, explicitly trust this certificate in the browser/system trust
+store you use, then open https://localhost:18445 and sign in with the normal
+operator key. Remove that trust when the local setup is retired. Certificate
+trust is independent of API authentication; verification bypass flags are not
+needed. API calls still require their normal scopes and replay permits only the
+exact configured console origin. The original local HTTP endpoints remain valid.
+Core keeps forwarding headers untrusted by default; configure only the actual
+proxy addresses/ranges if you need the original client IP for rate limits.
+
+Standard Compose commands also work directly:
+
+```sh
+export HOOKWAY_LOCAL_DIRECTORY="$(pwd)/examples/production-local/.local"
+docker compose --env-file "$HOOKWAY_LOCAL_DIRECTORY/.env" \
+  -f examples/production-local/docker-compose.yaml ps
+```
+
+Published release images support Linux amd64. Local source builds use the Docker
+daemon's architecture, allowing Apple Silicon Linux arm64 builds. An amd64 release
+on Apple Silicon needs Docker emulation and a matching Compose platform override.
+Emulation and workstation limits affect performance; local results do not establish
+ECS capacity. See [releases](../operations/releases.md) for artifact verification.
+
 ## Start the dev stack
 
 ```sh
@@ -166,6 +411,10 @@ its real fixture API on 5184 and a disposable PostgreSQL database.
 `make compose-e2e-test COMPOSE_E2E_BUILD=dockerfile` automates the signed-event,
 failed-destination, and retry walkthrough using the Dockerfiles. It uses its own
 Compose project and random loopback ports, then removes its containers/volumes.
+It also exercises production-local bootstrap, core-only and full modes,
+authenticated delivery, persistence across container recreation, and scoped
+explicit reset. Bootstrap regression tests run without Docker in the ordinary
+Go suite; Docker acceptance tests are skipped unless explicitly enabled.
 See [Contributing](../../CONTRIBUTING.md#make-and-check-a-change) for other checks.
 
 ## Probes and cleanup

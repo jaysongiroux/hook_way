@@ -38,6 +38,11 @@ func TestAlertsArePrometheusRulesWithRequiredExprs(t *testing.T) {
 		t.Fatalf("groups = %d, want runtime and replay groups", len(rule.Groups))
 	}
 	want := map[string]string{
+		"HookwayAuthRejections":            "hookway_auth_failures_total",
+		"HookwayIngressSaturated":          "hookway_saturated_total",
+		"HookwayProtectionCleanupFailures": `hookway_protection_cleanup_total{result="error"}`,
+		"HookwayMetricsScrapeFailed":       `up{job=~"hookway-.*"}`,
+		"HookwayTelemetrySuppressed":       "hookway_logs_suppressed_total",
 		"HookwayPanics":                    "hookway_panics_total",
 		"HookwayCompensationFailures":      "hookway_compensation_failed_total",
 		"HookwaySecretRefreshFailures":     "hookway_secret_refresh_failures_total",
@@ -54,6 +59,9 @@ func TestAlertsArePrometheusRulesWithRequiredExprs(t *testing.T) {
 	for _, g := range rule.Groups {
 		for _, r := range g.Rules {
 			found[r.Alert] = r.Expr
+			if !strings.HasPrefix(r.Annotations["runbook_url"], "https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#") || r.Annotations["summary"] == "" || r.Annotations["description"] == "" {
+				t.Errorf("alert %s lacks actionable runbook annotations", r.Alert)
+			}
 			if wantDur, ok := wantFor[r.Alert]; ok && r.For != wantDur {
 				t.Errorf("alert %s for = %q, want %q", r.Alert, r.For, wantDur)
 			}
@@ -71,6 +79,9 @@ func TestAlertsArePrometheusRulesWithRequiredExprs(t *testing.T) {
 	}
 	if !strings.Contains(found["HookwayPublishErrorRatio"], ">= 20") {
 		t.Errorf("publish error ratio must require >= 20 attempts: %s", found["HookwayPublishErrorRatio"])
+	}
+	if strings.Count(found["HookwayPublishErrorRatio"], "sum by (job)") != 3 {
+		t.Error("publish ratio must preserve independent deployment jobs in numerator, denominator and attempt threshold")
 	}
 }
 
@@ -124,14 +135,16 @@ func TestReplayAlerts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"HookwayCaptureDrops":             "hookway_capture_dropped_total",
-		"HookwayReplayUsageHigh":          "hookway_replay_capacity_bytes",
-		"HookwayReplayCapacityRejections": `hookway_replay_captures_total{outcome="capacity"}`,
-		"HookwayReplayQueuedRunStale":     "hookway_replay_oldest_queued_run_seconds",
-		"HookwayReplayUnknownRecords":     `hookway_replay_records{kind="failure",delivery_status="unknown",dismissed="false"}`,
-		"HookwayReplayRunFailureRatio":    `hookway_replay_runs_total{status="failed"}`,
-		"HookwayReplayDatabaseDown":       "hookway_replay_db_up",
-		"HookwayReplayGCStalled":          "hookway_replay_gc_last_success_timestamp_seconds",
+		"HookwayCaptureDrops":                   "hookway_capture_dropped_total",
+		"HookwayReplayUsageHigh":                "hookway_replay_capacity_bytes",
+		"HookwayReplayCapacityRejections":       `hookway_replay_captures_total{outcome="capacity"}`,
+		"HookwayReplayQueuedRunStale":           "hookway_replay_oldest_queued_run_seconds",
+		"HookwayReplayUnknownRecords":           `hookway_replay_records{kind="failure",delivery_status="unknown",dismissed="false"}`,
+		"HookwayReplayRunFailureRatio":          `hookway_replay_runs_total{status="failed"}`,
+		"HookwayReplayDatabaseDown":             "hookway_replay_db_up",
+		"HookwayReplayGCStalled":                "hookway_replay_gc_last_success_timestamp_seconds",
+		"HookwayReplayStateStale":               "hookway_replay_state_last_success_timestamp_seconds",
+		"HookwayReplayPhysicalStorageExhausted": `hookway_replay_store_failures_total{reason="storage_exhausted"}`,
 	}
 	found := map[string]string{}
 	for _, g := range rule.Groups {
@@ -160,5 +173,18 @@ func TestReplayAlerts(t *testing.T) {
 	}
 	if !strings.Contains(found["HookwayReplayRunFailureRatio"], ">= 10") {
 		t.Errorf("the failure ratio must require >= 10 finished runs: %s", found["HookwayReplayRunFailureRatio"])
+	}
+	if !strings.Contains(found["HookwayReplayGCStalled"], "hookway_replay_gc_interval_seconds > 0") || !strings.Contains(found["HookwayReplayGCStalled"], "4 * max by (job)") || !strings.Contains(found["HookwayReplayGCStalled"], "+ 120") {
+		t.Error("automatic GC staleness must honor disabled and configured cadence")
+	}
+	for _, name := range []string{"HookwayReplayUsageHigh", "HookwayReplayQueuedRunStale", "HookwayReplayUnknownRecords"} {
+		if !strings.Contains(found[name], "max by (job)") {
+			t.Errorf("%s collapses independent database jobs", name)
+		}
+	}
+	for _, name := range []string{"HookwayReplayDatabaseDown", "HookwayReplayStateStale"} {
+		if strings.Contains(found[name], "max(") || strings.Contains(found[name], "max by") || strings.Contains(found[name], "min(") {
+			t.Errorf("%s must preserve the affected replica", name)
+		}
 	}
 }

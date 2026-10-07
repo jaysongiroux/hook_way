@@ -6,6 +6,9 @@ state_stores:
 # Reliable-ingestion starting point: a 202 follows RabbitMQ publisher confirm.
 # Configure broker replication/retention and downstream deduplication separately.
 # No early acknowledgement, partial-success policy or volatile async queue.
+# Preserve the provider identity in payload/allowed headers. A lost caller reply
+# may still leave a broker message; consumer transactions must deduplicate it.
+# X-GitHub-Delivery is not covered by the body HMAC: validate and namespace it.
 # See docs/operations/delivery-guarantees.md for failure windows and sender recovery.
 # Requires RABBITMQ_URL and GITHUB_WEBHOOK_SECRET.
 server:

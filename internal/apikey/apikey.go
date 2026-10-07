@@ -21,7 +21,7 @@ func Middleware(key string, next http.Handler) http.Handler {
 	expected := []byte(key)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare([]byte(token), expected) != 1 {
+		if len(r.Header.Values("Authorization")) != 1 || subtle.ConstantTimeCompare([]byte(token), expected) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

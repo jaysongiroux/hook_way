@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 	"github.com/jaysongiroux/hook_way/internal/tlsfiles"
 )
@@ -107,7 +108,9 @@ func NewUploader(o UploaderOptions) (*Uploader, error) {
 	}
 	stop, cancel := context.WithCancel(context.Background())
 	u := &Uploader{
-		client: &http.Client{Transport: transport}, url: strings.TrimRight(o.URL, "/") + recordsPath, token: o.Token,
+		client: &http.Client{Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}, url: strings.TrimRight(o.URL, "/") + recordsPath, token: o.Token,
 		metrics: o.Metrics, logger: logger, jobs: make(chan pending, maxPendingRecords),
 		stop: stop, cancel: cancel, backoff: 100 * time.Millisecond, drainWait: defaultDrainWait,
 	}
@@ -360,7 +363,7 @@ func (u *Uploader) drop(p pending, reason string, err error) {
 	}
 	attrs := []any{"reason", reason, "flow", p.flow, "node_id", p.nodeID, "event_id", p.eventID}
 	if err != nil {
-		attrs = append(attrs, "error", err.Error())
+		attrs = append(attrs, "error", logging.ErrorText(err))
 	}
 	kind := replaywire.KindFailure
 	message := "failure capture dropped a record"

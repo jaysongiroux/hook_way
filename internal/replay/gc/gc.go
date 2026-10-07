@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
 )
@@ -38,7 +39,7 @@ func Once(ctx context.Context, s Sweeper, m *metrics.Metrics, logger *slog.Logge
 		logger.Debug("gc sweep skipped: another replica holds the lock")
 	case err != nil:
 		m.GCRun(metrics.GCError, time.Since(start), res.Records, res.Bytes)
-		logger.Error("gc sweep failed", "error", err, "deleted_records", res.Records)
+		logger.Error("gc sweep failed", "error", logging.ErrorText(err), "deleted_records", res.Records)
 	default:
 		m.GCRun(metrics.GCOK, time.Since(start), res.Records, res.Bytes)
 		logger.Info("gc sweep finished", "deleted_records", res.Records, "freed_bytes", res.Bytes)

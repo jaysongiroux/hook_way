@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -67,5 +68,29 @@ func TestNonBearerSchemeRejected(t *testing.T) {
 	rec := do(t, Middleware("s3cret", okHandler()), "Basic s3cret")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("Basic scheme = %d, want 401", rec.Code)
+	}
+}
+
+func TestDuplicateAuthorizationRejectedBeforeProtectedHandler(t *testing.T) {
+	const token = "boundary-secret"
+	for _, headers := range [][]string{
+		{"Bearer " + token, "Bearer wrong"},
+		{"Bearer wrong", "Bearer " + token},
+		{"Bearer " + token, "Bearer " + token},
+		{"Bearer " + token, ""},
+		{"Bearer " + token + ", Bearer wrong"},
+	} {
+		called := false
+		h := Middleware(token, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+		req.Header["Authorization"] = headers
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || called || strings.Contains(rec.Body.String(), token) {
+			t.Fatalf("duplicate or merged Authorization reached handler or leaked credential: %d %q", rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("WWW-Authenticate") != "Bearer" {
+			t.Fatal("missing authentication challenge")
+		}
 	}
 }

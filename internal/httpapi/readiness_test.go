@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +79,50 @@ func TestReadyPublicErrorIsGeneric(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s status = %d, want liveness OK while not ready", path, rec.Code)
 		}
+	}
+}
+
+func sensitiveBackendErrors() map[string]error {
+	return map[string]error{
+		"URL": fmt.Errorf("backend failed: %w", &url.Error{Op: "Post", URL: `http://user:USERSECRET@backend.example.test/PATHSECRET?api_key=quoted"QUERYSECRET`, Err: context.DeadlineExceeded}), // #nosec G101 -- synthetic redaction markers, not credentials.
+		"DSN": fmt.Errorf("connect host=backend.example.test password='DSNSECRET with spaces' token=TOKENSECRET: %w", context.DeadlineExceeded),
+		"joined URLs": errors.Join(
+			&url.Error{Op: "Post", URL: "http://first.example.test/private/FIRSTSECRET", Err: context.DeadlineExceeded},
+			&url.Error{Op: "Post", URL: `http://user:USERSECRET@backend.example.test/PATHSECRET?api_key=quoted"QUERYSECRET`, Err: context.DeadlineExceeded}), // #nosec G101 -- synthetic redaction markers, not credentials.
+	}
+}
+
+func assertSafeBackendDiagnostic(t *testing.T, logs string) {
+	t.Helper()
+	for _, marker := range []string{"USERSECRET", "PATHSECRET", "QUERYSECRET", "DSNSECRET", "TOKENSECRET", "FIRSTSECRET", "PAYLOADSECRET"} {
+		if strings.Contains(logs, marker) {
+			t.Fatalf("backend diagnostic retained %s", marker)
+		}
+	}
+	if !strings.Contains(logs, "backend.example.test") || !strings.Contains(logs, "context deadline exceeded") {
+		t.Fatal("backend diagnostic lost its host or underlying failure class")
+	}
+}
+
+func TestReadinessFailureDiagnosticDoesNotLeakBackendCredentials(t *testing.T) {
+	for name, backendErr := range sensitiveBackendErrors() {
+		t.Run(name, func(t *testing.T) {
+			var logs bytes.Buffer
+			pub := &fakePublisher{readyErr: backendErr}
+			srv := newReadyFlowServer(t, pub, slog.New(slog.NewJSONHandler(&logs, nil)), nil)
+			srv.readiness.probeOnce(t.Context())
+			for _, path := range []string{"/ready", "/readyz"} {
+				rec := httptest.NewRecorder()
+				srv.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+				if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "backend.example.test") || !strings.Contains(rec.Body.String(), "not ready") {
+					t.Fatal("readiness sender status/public detail contract changed")
+				}
+			}
+			if srv.readiness.result.Load().err != backendErr || !errors.Is(pub.readyErr, context.DeadlineExceeded) { //nolint:errorlint // Assert exact error identity survives diagnostic redaction, not wrapped equivalence.
+				t.Fatal("readiness diagnostic changed the cached error identity/class")
+			}
+			assertSafeBackendDiagnostic(t, logs.String())
+		})
 	}
 }
 

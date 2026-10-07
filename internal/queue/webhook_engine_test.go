@@ -1,12 +1,16 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +18,131 @@ import (
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestWebhookIgnoredResponseDoesNotDrainUnboundedTail(t *testing.T) {
+	closed := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = w.Write(bytes.Repeat([]byte("x"), maxWebhookResponseDrainBytes+1))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(closed)
+	}))
+	defer srv.Close()
+	d := envelopeDelivery(srv.URL)
+	d.client.Timeout = 3 * time.Second
+	done := make(chan error, 1)
+	go func() {
+		outcome, attempts, err := d.run(context.Background(), Message{ID: "bounded-response"}, nil)
+		if outcome != "2xx" || attempts != 1 {
+			err = fmt.Errorf("outcome=%s attempts=%d error=%w", outcome, attempts, err)
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		srv.CloseClientConnections()
+		t.Fatal("ignored response tail consumed attempt budget")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		srv.CloseClientConnections()
+		t.Fatal("response body was not closed")
+	}
+}
+
+func TestWebhookByteAdmissionCountsActiveAndReleases(t *testing.T) {
+	started, release := make(chan struct{}, 2), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		started <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	msg := Message{ID: "byte-budget", Body: map[string]any{"value": strings.Repeat("x", 1024)}, RawBody: bytes.Repeat([]byte("r"), 1024), OrigHeaders: http.Header{"X-Long": {strings.Repeat("h", 1024)}}}
+	charge, ok := webhookMessageCharge(msg, 1<<20)
+	if !ok {
+		t.Fatal("fixture charge")
+	}
+	m := &webhookByteMetrics{}
+	e := newWebhookDeliveryEngine("budget", 1, 1000, 3*time.Second, m, testLogger(), charge)
+	if m.capacity.Load() != charge || m.used.Load() != 0 {
+		t.Fatal("initial accounted gauges")
+	}
+	if err := e.Enqueue(webhookJob{delivery: envelopeDelivery(srv.URL), msg: msg}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if m.used.Load() != charge {
+		t.Fatal("active bytes missing from metric")
+	}
+	if _, _, saturated := e.saturated(); !saturated {
+		t.Fatal("active bytes did not saturate readiness")
+	}
+	if err := e.Enqueue(webhookJob{delivery: envelopeDelivery(srv.URL), msg: msg}); !errors.Is(err, ErrWebhookQueueFull) {
+		t.Fatalf("second active job: %v", err)
+	}
+	close(release)
+	if err := e.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e.mu.RLock()
+	held := e.pendingBytes
+	e.mu.RUnlock()
+	if held != 0 {
+		t.Fatalf("bytes leaked after drain: %d", held)
+	}
+	if m.used.Load() != 0 {
+		t.Fatal("drain did not clear byte gauge")
+	}
+}
+
+type webhookByteMetrics struct {
+	fakeWebhookMetrics
+	used     atomic.Int64
+	capacity atomic.Int64
+}
+
+func (m *webhookByteMetrics) WebhookQueueBytes(_ string, used, capacity int64) {
+	m.used.Store(used)
+	m.capacity.Store(capacity)
+}
+
+func TestWebhookBytePreflightCountsAllFormsAndRejectsCycles(t *testing.T) {
+	base, ok := webhookMessageCharge(Message{}, 1<<20)
+	if !ok {
+		t.Fatal("empty message")
+	}
+	for name, msg := range map[string]Message{
+		"body": {Body: strings.Repeat("x", 1024)}, "headers": {Headers: http.Header{"X": {strings.Repeat("x", 1024)}}},
+		"raw": {RawBody: make([]byte, 1024)}, "object": {ObjectBytes: make([]byte, 1024)},
+		"base64": {RawBodyBase64: func() *string { s := strings.Repeat("x", 1024); return &s }()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := webhookMessageCharge(msg, base+100); ok {
+				t.Fatal("retained form did not consume budget")
+			}
+		})
+	}
+	cycle := map[string]any{}
+	cycle["self"] = cycle
+	if _, ok := webhookMessageCharge(Message{Body: cycle}, 1<<20); ok {
+		t.Fatal("cyclic body accepted")
+	}
+	var deep any = "leaf"
+	for i := 0; i < 1024; i++ {
+		deep = map[string]any{"child": deep}
+	}
+	if _, ok := webhookMessageCharge(Message{Body: deep}, 1<<20); !ok {
+		t.Fatal("supported explicit 1024-level JSON depth rejected by queue preflight")
+	}
 }
 
 func testEngine(t *testing.T, workers, queue int) *webhookDeliveryEngine {
@@ -367,6 +496,52 @@ func TestWebhookEngineDeadLetterResolverErrorRecordsFailure(t *testing.T) {
 	}
 }
 
+func TestWebhookEngineDeadLetterFailureLogsSafeDiagnostics(t *testing.T) {
+	for name, dispatchErr := range map[string]error{
+		"URL": fmt.Errorf("DLQ dispatch failed: %w", &url.Error{Op: "Post", URL: `http://user:USERSECRET@dlq.example.test/PATHSECRET?api_key=quoted"QUERYSECRET`, Err: context.DeadlineExceeded}), // #nosec G101 -- synthetic redaction markers, not credentials.
+		"DSN": fmt.Errorf("connect host=dlq.example.test password='DSNSECRET with spaces' token=TOKENSECRET: %w", context.DeadlineExceeded),
+	} {
+		t.Run(name, func(t *testing.T) {
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+			defer source.Close()
+			var logs bytes.Buffer
+			m := &fakeWebhookMetrics{}
+			e := newWebhookDeliveryEngine("notify", 1, 10, time.Second, m, slog.New(slog.NewJSONHandler(&logs, nil)))
+			originalText := dispatchErr.Error()
+			var dispatched Message
+			e.setDeadLetter(func(_ context.Context, _, _ string, msg Message) error {
+				dispatched = msg
+				return dispatchErr
+			})
+			var terminal terminalRecorder
+			e.setTerminalFailure(terminal.record)
+			body := []byte("PAYLOADSECRET")
+			if err := e.Enqueue(webhookJob{delivery: dlqDelivery(source.URL, "dlq", "dead"), msg: Message{ID: "evt", RawBody: body}, origin: Origin{Flow: "orders"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.Close(); err != nil {
+				t.Fatal(err)
+			}
+			for _, marker := range []string{"USERSECRET", "PATHSECRET", "QUERYSECRET", "DSNSECRET", "TOKENSECRET", "PAYLOADSECRET"} {
+				if strings.Contains(logs.String(), marker) {
+					t.Fatalf("DLQ diagnostic retained %s", marker)
+				}
+			}
+			if !strings.Contains(logs.String(), "dlq.example.test") || !strings.Contains(logs.String(), "context deadline exceeded") {
+				t.Fatal("DLQ diagnostic lost backend host or underlying error class")
+			}
+			got := terminal.all()
+			if len(got) != 1 || got[0].Outcome != "4xx" || got[0].Attempts != 1 || got[0].Err == nil ||
+				!bytes.Equal(got[0].Message.RawBody, body) || !bytes.Equal(dispatched.RawBody, body) || dispatchErr.Error() != originalText || !errors.Is(dispatchErr, context.DeadlineExceeded) {
+				t.Fatal("diagnostic redaction changed original delivery outcome, error or retained bytes")
+			}
+			if atomic.LoadInt32(&m.deadLetterFail) != 1 || atomic.LoadInt32(&m.deadLetter) != 0 {
+				t.Fatal("DLQ failure metric classification changed")
+			}
+		})
+	}
+}
+
 func TestWebhookEngineNoDeadLetterLogsAndDrops(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
@@ -486,5 +661,8 @@ func TestWebhookEngineWorkerRecoversPanicAndKeepsDeliveringNextJob(t *testing.T)
 	}
 	if m.lastPanicLocation != "webhook_worker" {
 		t.Fatalf("panic location = %q, want webhook_worker", m.lastPanicLocation)
+	}
+	if e.pendingBytes != 0 {
+		t.Fatalf("panic leaked accounted bytes: %d", e.pendingBytes)
 	}
 }

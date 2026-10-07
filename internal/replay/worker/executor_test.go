@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -237,6 +242,87 @@ func TestDeliverDialFailureIsUnavailable(t *testing.T) {
 	out := newTestExecutor(t, url, metrics.New()).Deliver(context.Background(), testRun(), testSnapshot)
 	if out.Status != store.RunFailed || out.Reason != ReasonExecutorUnavailable {
 		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestExecutorTransportDetailsRedactCredentialsWithoutChangingClassification(t *testing.T) {
+	for _, written := range []bool{false, true} {
+		t.Run(fmt.Sprintf("request-written=%t", written), func(t *testing.T) {
+			srv, calls := fakeCore(t, func(w http.ResponseWriter, _ *http.Request, _ coreRequest) {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err == nil {
+					_ = conn.Close()
+				}
+			})
+			if !written {
+				srv.Close()
+			}
+			endpoint := strings.Replace(srv.URL, "http://", "http://user:USERSECRET@", 1) + `/PATHSECRET?api_key=quoted"QUERYSECRET`
+			out := newTestExecutor(t, endpoint, metrics.New()).Deliver(t.Context(), testRun(), testSnapshot)
+			wantStatus, wantReason, wantCall := store.RunFailed, ReasonExecutorUnavailable, metrics.CallUnavailable
+			if written {
+				wantStatus, wantReason, wantCall = store.RunUnknown, ReasonAmbiguous, metrics.CallAmbiguous
+				if calls.Load() != 1 {
+					t.Fatal("an ambiguous written request was resent")
+				}
+			}
+			if out.Status != wantStatus || out.Reason != wantReason || out.Call != wantCall {
+				t.Fatalf("transport failure classification changed: %+v", out)
+			}
+			for _, marker := range []string{"USERSECRET", "PATHSECRET", "QUERYSECRET", controlToken} {
+				if strings.Contains(out.Detail, marker) {
+					t.Fatalf("stored transport detail retained %s", marker)
+				}
+			}
+			if !strings.Contains(out.Detail, srv.URL) || (!strings.Contains(out.Detail, "connection refused") && !strings.Contains(out.Detail, "EOF")) {
+				t.Fatal("safe diagnostic lost host or transport failure class")
+			}
+		})
+	}
+}
+
+func TestExecutorLocalTLSProxyVerifiesCAAndPreservesControlRequest(t *testing.T) {
+	core, calls := fakeCore(t, func(w http.ResponseWriter, r *http.Request, got coreRequest) {
+		if r.TLS != nil || got.auth != "Bearer "+controlToken || !bytes.Equal(got.snapshot, testSnapshot) || got.req.RunID != testRun().Run.RunID {
+			t.Error("TLS termination changed the HTTP backend's control authentication/snapshot/run")
+		}
+		writeResult(t, w, delivered(replaywire.NodeDelivered))
+	})
+	upstream, err := url.Parse(core.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(upstream))
+	defer proxy.Close()
+	ca := filepath.Join(t.TempDir(), "proxy-ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: proxy.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		tls     tlsfiles.Files
+		trusted bool
+	}{
+		{"configured CA", tlsfiles.Files{CACert: ca}, true},
+		{"untrusted certificate", tlsfiles.Files{}, false},
+		{"wrong server name", tlsfiles.Files{CACert: ca, ServerName: "wrong.local.test"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := calls.Load()
+			e, err := NewExecutor(ExecutorOptions{ControlURL: proxy.URL, Token: controlToken, TLS: tc.tls, ExecutionTimeout: 30 * time.Second, MaxRecordBytes: 1 << 20, Metrics: metrics.New()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.backoff = time.Millisecond
+			out := e.Deliver(t.Context(), testRun(), testSnapshot)
+			if tc.trusted {
+				if out.Status != store.RunSucceeded || out.Call != metrics.CallOK || calls.Load() != before+1 {
+					t.Fatalf("verified TLS proxy did not deliver once: %+v calls=%d", out, calls.Load()-before)
+				}
+			} else if out.Status != store.RunFailed || out.Reason != ReasonExecutorUnavailable || out.Call != metrics.CallUnavailable || calls.Load() != before {
+				t.Fatalf("TLS refusal crossed the control boundary or changed failure semantics: %+v calls=%d", out, calls.Load()-before)
+			}
+		})
 	}
 }
 

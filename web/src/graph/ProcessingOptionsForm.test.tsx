@@ -92,6 +92,61 @@ test("transform switching preserves unknown imports and overlapping authored fie
   ).toBeInTheDocument();
 });
 
+test("JSON parser omission shows bounded defaults without serializing them", () => {
+  const change = setup("envelope", {});
+  expect(screen.getByLabelText("Maximum JSON depth")).toHaveAttribute(
+    "placeholder",
+    "Default: 128",
+  );
+  expect(screen.getByLabelText("Maximum JSON values")).toHaveAttribute(
+    "placeholder",
+    "Default: 1000000",
+  );
+  expect(
+    screen.getByText(/separately caps the original request bytes/),
+  ).toBeInTheDocument();
+  expect(change).not.toHaveBeenCalled();
+  expect(screen.queryByText(/fields are retained/)).not.toBeInTheDocument();
+});
+
+test("imported JSON limits remain editable and reset to the runtime defaults", () => {
+  const change = setup("envelope", {
+    json: { max_depth: 512, max_nodes: 4000 },
+  });
+  expect(screen.getByLabelText("Maximum JSON depth")).toHaveValue("512");
+  expect(screen.getByLabelText("Maximum JSON values")).toHaveValue("4000");
+  expect(screen.queryByText(/fields are retained/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Maximum JSON depth"), {
+    target: { value: "1024" },
+  });
+  expect(change).toHaveBeenLastCalledWith({
+    json: { max_depth: 1024, max_nodes: 4000 },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Use default json parser limits" }),
+  );
+  expect(change).toHaveBeenLastCalledWith({});
+  expect(screen.getByLabelText("Maximum JSON depth")).toHaveAttribute(
+    "placeholder",
+    "Default: 128",
+  );
+});
+
+test("switching away from JSON removes only its known parser options", () => {
+  const change = setup("envelope", {
+    json: { max_depth: 512 },
+    custom: "review",
+  });
+  fireEvent.change(screen.getByLabelText("Body format"), {
+    target: { value: "raw" },
+  });
+  expect(change).toHaveBeenLastCalledWith({
+    body_format: "raw",
+    custom: "review",
+  });
+  expect(screen.queryByLabelText("Maximum JSON depth")).not.toBeInTheDocument();
+});
+
 test("multipart omission displays the true content default without serializing it", () => {
   const change = setup("envelope", { body_format: "multipart" });
   expect(screen.getByLabelText("Include file content")).toBeChecked();
@@ -161,7 +216,9 @@ test("dedicated batch offers environments admitted for both its profile and acco
         .querySelectorAll("option"),
     ].map((option) => option.value),
   ).toEqual(["preview", "staging"]);
-  expect(screen.queryByLabelText("Group ID field path")).not.toBeInTheDocument();
+  expect(
+    screen.queryByLabelText("Group ID field path"),
+  ).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Batch mode"), {
     target: { value: "shared" },
   });

@@ -1,0 +1,46 @@
+# Optional overlay: add to the production-local stack, then explicitly enable monitoring.
+# Neither scraper nor local receiver relaxes the application's authentication.
+services:
+  prometheus:
+    profiles: [monitoring]
+    image: prom/prometheus:v3.14.0
+    user: "${HOOKWAY_MONITOR_UID:?Export id -u}:${HOOKWAY_MONITOR_GID:?Export id -g}"
+    command: [--config.file=/etc/prometheus/prometheus.yaml, --storage.tsdb.path=/prometheus, --storage.tsdb.retention.time=24h, --storage.tsdb.retention.size=128MB]
+    ports: ["127.0.0.1:${PROMETHEUS_HTTP_PORT:-19090}:9090"]
+    volumes:
+      - ./monitoring/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ../../metrics/prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - "${HOOKWAY_LOCAL_DIRECTORY}/monitoring/core-token:/etc/prometheus/core-token:ro"
+      - "${HOOKWAY_LOCAL_DIRECTORY}/monitoring/replay-token:/etc/prometheus/replay-token:ro"
+    tmpfs: ["/prometheus:uid=${HOOKWAY_MONITOR_UID},gid=${HOOKWAY_MONITOR_GID},size=192m"]
+    read_only: true
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+  alertmanager:
+    profiles: [monitoring]
+    image: prom/alertmanager:v0.31.1
+    user: "${HOOKWAY_MONITOR_UID}:${HOOKWAY_MONITOR_GID}"
+    command: [--config.file=/etc/alertmanager/alertmanager.yaml, --storage.path=/alertmanager, --cluster.listen-address=]
+    ports: ["127.0.0.1:${ALERTMANAGER_HTTP_PORT:-19093}:9093"]
+    volumes: ["./monitoring/alertmanager.yaml:/etc/alertmanager/alertmanager.yaml:ro"]
+    tmpfs: ["/alertmanager:uid=${HOOKWAY_MONITOR_UID},gid=${HOOKWAY_MONITOR_GID},size=32m"]
+    read_only: true
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 64
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+  alert-receiver:
+    profiles: [monitoring]
+    image: hashicorp/http-echo:1.0
+    user: "65532:65532"
+    command: [-listen=:8080, -text=local-fixture-only]
+    read_only: true
+    mem_limit: 32m
+    cpus: 0.25
+    pids_limit: 32
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped

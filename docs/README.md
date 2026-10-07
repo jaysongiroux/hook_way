@@ -35,6 +35,8 @@ setup instructions, configuration details, or help with a specific task.
 
 ## Operations
 
+- [Production acceptance](operations/production-acceptance.md): evidence gates
+  separating branch hardening from later release and target-deployment acceptance.
 - [Delivery guarantees](operations/delivery-guarantees.md): acknowledgements,
   partial fan-out, duplicates, and who owns recovery.
 - [Replay service](operations/replay-service.md): service configuration, capture,
@@ -43,6 +45,13 @@ setup instructions, configuration details, or help with a specific task.
 - [Replay investigation](operations/replay-investigation.md): check downstream evidence
   before retrying an uncertain delivery.
 - [Upgrades](operations/upgrades.md): graceful shutdown, migrations, backup, and rollback.
+- [Backup and restore](operations/recovery.md): coupled state, isolated restoration,
+  destination reconciliation and legacy-data preservation.
+- [Observability and incidents](operations/observability.md): diagnostic coverage,
+  shared-state aggregation, optional monitoring, notification checks and safe
+  operator response.
+- [Resource limits](operations/resource-limits.md): enforced budgets, adjustable
+  local/production sizing, and overload behavior.
 - [Releases](operations/releases.md): published images, signing, and verification.
 
 ## Development

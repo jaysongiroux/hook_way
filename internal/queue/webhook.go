@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/egress"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
@@ -21,6 +24,8 @@ type WebhookTarget struct {
 	// base url + "/" + rendered target.
 	Template vars.Matcher
 }
+
+var webhookEgressDialer = &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 
 // WebhookPublisherOptions carries the cross-cutting dependencies a webhook
 // publisher needs to build (and, in async mode, own) its delivery engine.
@@ -45,8 +50,10 @@ type WebhookPublisher struct {
 	// urlTemplate is the destination url parsed for {variable} placeholders.
 	// When it has any, the base url is rendered per message from
 	// msg.Variables; otherwise baseURL is used verbatim.
-	urlTemplate vars.Template
-	baseURL     string
+	urlTemplate       vars.Template
+	authorityTemplate vars.Template
+	guarded           bool
+	baseURL           string
 }
 
 func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []WebhookTarget, opts WebhookPublisherOptions) (*WebhookPublisher, error) {
@@ -90,6 +97,13 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 	if err != nil {
 		return nil, fmt.Errorf("webhook %q: url template: %w", destID, err)
 	}
+	authorityTemplate, err := vars.Parse(egress.Authority(cfg.URL))
+	if err != nil {
+		return nil, fmt.Errorf("webhook %q: authority template: %w", destID, err)
+	}
+	if cfg.AllowPrivateTargets && !authorityTemplate.HasPlaceholders() {
+		return nil, fmt.Errorf("webhook %q: allow_private_targets has no effect unless the url host contains a {variable}", destID)
+	}
 	deliveries := newTargetResolver[*webhookDelivery](0, logger)
 	for _, t := range targets {
 		d := &webhookDelivery{
@@ -120,13 +134,13 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 		}
 	}
 
-	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger, urlTemplate: urlTemplate, baseURL: cfg.URL}
+	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger, urlTemplate: urlTemplate, authorityTemplate: authorityTemplate, guarded: authorityTemplate.HasPlaceholders() && !cfg.AllowPrivateTargets, baseURL: cfg.URL}
 	if !syncMode {
 		drain := cfg.DrainTimeout
 		if drain <= 0 {
 			drain = opts.DefaultDrain
 		}
-		p.engine = newWebhookDeliveryEngine(destID, opts.Workers, cfg.MaxQueue, drain, opts.Metrics, logger)
+		p.engine = newWebhookDeliveryEngine(destID, opts.Workers, cfg.MaxQueue, drain, opts.Metrics, logger, cfg.MaxQueueBytes)
 		if opts.Metrics != nil {
 			opts.Metrics.WebhookQueueCapacity(destID, p.engine.capacity())
 		}
@@ -159,9 +173,21 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 				return fmt.Errorf("webhook %q: variable %q has an unsafe value for a url", p.destID, n)
 			}
 		}
+		if err := egress.ValidateAuthorityVariables(p.authorityTemplate, msg.Variables); err != nil {
+			return fmt.Errorf("webhook %q: %w", p.destID, err)
+		}
 		base, err := p.urlTemplate.Render(msg.Variables)
 		if err != nil {
 			return fmt.Errorf("webhook %q: render url: %w", p.destID, err)
+		}
+		if p.guarded {
+			u, err := url.Parse(base)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+				return fmt.Errorf("webhook %q: rendered url is invalid", p.destID)
+			}
+			if reason := egress.BlockedHostReason(u.Hostname()); reason != "" {
+				return fmt.Errorf("webhook %q: rendered host is not an allowed egress target (%s); set allow_private_targets: true only for an intentional internal target", p.destID, reason)
+			}
 		}
 		rendered := *d
 		rendered.url = joinWebhookURL(base, d.target)
@@ -233,6 +259,19 @@ func newWebhookHTTPClient(cfg config.WebhookConfig) (*http.Client, error) {
 		timeout = 10 * time.Second
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	authorityTemplate, err := vars.Parse(egress.Authority(cfg.URL))
+	if err != nil {
+		return nil, err
+	}
+	if authorityTemplate.HasPlaceholders() && !cfg.AllowPrivateTargets {
+		// Forward proxies would dial their own address rather than our vetted
+		// receiver; each destination keeps this guarded pool separate.
+		transport.Proxy = nil
+		dialer := webhookEgressDialer
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return egress.DialContext(ctx, network, addr, net.DefaultResolver, dialer)
+		}
+	}
 	if webhookTLSSet(cfg.TLS) {
 		tlsCfg, err := buildWebhookTLSConfig(cfg.TLS)
 		if err != nil {
@@ -240,7 +279,11 @@ func newWebhookHTTPClient(cfg config.WebhookConfig) (*http.Client, error) {
 		}
 		transport.TLSClientConfig = tlsCfg
 	}
-	return &http.Client{Timeout: timeout, Transport: transport}, nil
+	// A redirect is not acceptance by the configured receiver. Following it can
+	// forward credentials/raw payloads or rewrite a signed POST into a GET.
+	return &http.Client{Timeout: timeout, Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
 }
 
 func webhookTLSSet(c config.WebhookTLSConfig) bool {

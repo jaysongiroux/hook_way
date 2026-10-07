@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/metrics"
@@ -52,6 +57,73 @@ func TestRequestIDPropagatesToResponseEnvelopeAndLogs(t *testing.T) {
 	if !strings.Contains(logs.String(), `"request_id":"req_abc"`) || !strings.Contains(logs.String(), `"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"`) {
 		t.Fatalf("logs missing ids: %s", logs.String())
 	}
+}
+
+func TestPublishFailureDiagnosticDoesNotLeakBackendCredentialsOrPayload(t *testing.T) {
+	for name, backendErr := range sensitiveBackendErrors() {
+		t.Run(name, func(t *testing.T) {
+			tracer := &backendDiagnosticTracer{}
+			previous := nodeTracer
+			nodeTracer = tracer
+			t.Cleanup(func() { nodeTracer = previous })
+			var logs bytes.Buffer
+			pub := &fakePublisher{err: backendErr}
+			srv, err := NewFlowServer(loadFlowCfg(t, testFlowYAML), pub, slog.New(slog.NewJSONHandler(&logs, nil)), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = srv.Close() })
+			body := []byte(`{"action":"PAYLOADSECRET"}`)
+			rec := httptest.NewRecorder()
+			srv.ServeHTTP(rec, githubPOST(body))
+			if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "backend.example.test") || !strings.Contains(rec.Body.String(), "service unavailable") {
+				t.Fatal("publish failure sender status/public detail contract changed")
+			}
+			if len(pub.published) != 1 || pub.published[0].err != backendErr || !errors.Is(pub.err, context.DeadlineExceeded) || !bytes.Equal(pub.published[0].msg.RawBody, body) { //nolint:errorlint // Assert exact error identity survives diagnostic redaction, not wrapped equivalence.
+				t.Fatal("diagnostic redaction changed publication/error identity or retained original bytes")
+			}
+			assertSafeBackendDiagnostic(t, logs.String())
+			var failedSpans int
+			for _, span := range tracer.spans {
+				if span.status == codes.Error {
+					failedSpans++
+					if span.exception == nil {
+						t.Fatal("failed span lost its exception diagnostic")
+					}
+					assertSafeBackendDiagnostic(t, span.statusText)
+					assertSafeBackendDiagnostic(t, span.exception.Error())
+				}
+			}
+			if failedSpans != 1 {
+				t.Fatal("publisher failure did not produce exactly one failed diagnostic span")
+			}
+		})
+	}
+}
+
+// This in-memory diagnostic recorder uses the existing no-op trace API, keeping
+// the regression independent of an exporter/service or a new SDK dependency.
+type backendDiagnosticTracer struct {
+	noop.Tracer
+	spans []*backendDiagnosticSpan
+}
+
+func (t *backendDiagnosticTracer) Start(ctx context.Context, _ string, _ ...trace.SpanStartOption) (context.Context, trace.Span) {
+	span := &backendDiagnosticSpan{}
+	t.spans = append(t.spans, span)
+	return ctx, span
+}
+
+type backendDiagnosticSpan struct {
+	noop.Span
+	exception  error
+	status     codes.Code
+	statusText string
+}
+
+func (s *backendDiagnosticSpan) RecordError(err error, _ ...trace.EventOption) { s.exception = err }
+func (s *backendDiagnosticSpan) SetStatus(code codes.Code, text string) {
+	s.status, s.statusText = code, text
 }
 
 func TestInboundTraceparentPropagatesByteIdenticalToPublishedMessage(t *testing.T) {

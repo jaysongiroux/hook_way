@@ -1,6 +1,37 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestWebhookQueueByteBudgetDecodeAndValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, field string
+		want        int64
+		invalid     bool
+	}{
+		{"omitted", "", 0, false}, {"zero", "      max_queue_bytes: 0", 0, false},
+		{"raised", "      max_queue_bytes: 134217728", 134217728, false},
+		{"negative", "      max_queue_bytes: -1", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := loadSharedYAML(t, webhookDeliveryYAML("      url: https://receiver.example/hooks\n"+tc.field))
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "max_queue_bytes") {
+					t.Fatalf("validation: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Destinations["notify"].Webhook.MaxQueueBytes; got != tc.want {
+				t.Fatalf("bytes=%d want%d", got, tc.want)
+			}
+		})
+	}
+}
 
 // webhookDeliveryYAML builds a config with a webhook destination "notify" and a
 // non-webhook DLQ destination "dlq", letting each test tweak the webhook block.

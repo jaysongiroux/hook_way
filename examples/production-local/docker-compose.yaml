@@ -1,0 +1,199 @@
+# Persistent local deployment. Bootstrap and operate with make prod-local-*.
+# No service publishes credentials or private control/metrics/database listeners.
+x-runtime: &runtime
+  restart: unless-stopped
+  stop_grace_period: 70s
+  mem_limit: ${HOOKWAY_MEMORY_LIMIT:-256m}
+  cpus: ${HOOKWAY_CPU_LIMIT:-1.0}
+  pids_limit: 128
+  security_opt: [no-new-privileges:true]
+x-replay-environment: &replay-environment
+  REPLAY_DATABASE_URL: ${REPLAY_RUNTIME_DATABASE_URL:-}
+  REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:?Run make prod-local-bootstrap first}
+  REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:?Run make prod-local-bootstrap first}
+  REPLAY_OPERATOR_TOKEN: ${REPLAY_OPERATOR_TOKEN:?Run make prod-local-bootstrap first}
+  REPLAY_METRICS_TOKEN: ${REPLAY_METRICS_TOKEN:?Run make prod-local-bootstrap first}
+  REPLAY_CONSOLE_ORIGIN: ${REPLAY_CONSOLE_ORIGIN:-http://localhost:18082}
+
+services:
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:3-management}
+    user: rabbitmq
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: hookway
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run make prod-local-bootstrap first}
+    volumes: [rabbitmq-data:/var/lib/rabbitmq]
+    ports: ["127.0.0.1:${RABBITMQ_HTTP_PORT:-15673}:15672"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: ${RABBITMQ_MEMORY_LIMIT:-512m}
+    cpus: ${RABBITMQ_CPU_LIMIT:-1.0}
+    pids_limit: 512
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  hookway:
+    <<: *runtime
+    image: ${HOOKWAY_CORE_IMAGE:-hookway-production-core:local}
+    build: {context: ../.., dockerfile: Dockerfile, target: core}
+    read_only: true
+    environment:
+      HOOKWAY_CONFIG: /etc/hookway/core.yaml
+      RABBITMQ_URL: ${RABBITMQ_URL:?Run make prod-local-bootstrap first}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:?Run make prod-local-bootstrap first}
+      HOOKWAY_API_KEY: ${HOOKWAY_API_KEY:?Run make prod-local-bootstrap first}
+      REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:?Run make prod-local-bootstrap first}
+      REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:?Run make prod-local-bootstrap first}
+      PROTECTION_REDIS_URL: ${PROTECTION_REDIS_URL:?Run make prod-local-bootstrap first}
+    volumes: ["${HOOKWAY_LOCAL_DIRECTORY:?Use make prod-local-bootstrap}/core.yaml:/etc/hookway/core.yaml:ro"]
+    ports: ["127.0.0.1:${HOOKWAY_HTTP_PORT:-18080}:8080"]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, /usr/local/bin/hookway, healthcheck, --url, "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 4s
+      start_period: 15s
+      retries: 30
+
+  notify-sink:
+    profiles: [replay]
+    image: hashicorp/http-echo:1.0
+    user: "65532:65532"
+    command: ["-listen=:8080", "-text=ok"]
+    restart: unless-stopped
+    mem_limit: 32m
+    cpus: 0.25
+    pids_limit: 32
+    read_only: true
+
+  postgres:
+    profiles: [replay]
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    user: postgres
+    environment:
+      POSTGRES_USER: replay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run make prod-local-bootstrap first}
+      POSTGRES_DB: replay
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-256m}
+    cpus: ${POSTGRES_CPU_LIMIT:-0.5}
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, pg_isready, -U, replay, -d, replay]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  db-provision:
+    profiles: [replay]
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    user: postgres
+    entrypoint: [psql]
+    command: [--host, postgres, --username, replay, --dbname, replay, --no-psqlrc, --file, /etc/hookway/provision.sql]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      REPLAY_MIGRATION_PASSWORD: ${REPLAY_MIGRATION_PASSWORD:-}
+      REPLAY_RUNTIME_PASSWORD: ${REPLAY_RUNTIME_PASSWORD:-}
+    volumes: ["./database/provision.sql:/etc/hookway/provision.sql:ro"]
+    restart: "no"
+    read_only: true
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 32
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate:
+    profiles: [replay]
+    <<: *runtime
+    image: ${HOOKWAY_REPLAY_IMAGE:-hookway-production-replay:local}
+    build: {context: ../.., dockerfile: Dockerfile, target: replay}
+    command: [migrate, --config, /etc/hookway/migrate.yaml]
+    restart: "no"
+    read_only: true
+    environment:
+      REPLAY_MIGRATION_DATABASE_URL: ${REPLAY_MIGRATION_DATABASE_URL:-}
+      REPLAY_MIGRATION_PASSWORD: ${REPLAY_MIGRATION_PASSWORD:-}
+    volumes: ["${HOOKWAY_LOCAL_DIRECTORY}/migrate.yaml:/etc/hookway/migrate.yaml:ro"]
+    depends_on:
+      db-provision: {condition: service_completed_successfully}
+
+  db-grants:
+    profiles: [replay]
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    user: postgres
+    entrypoint: [psql]
+    command: [--host, postgres, --username, replay_owner, --dbname, replay, --no-psqlrc, --file, /etc/hookway/runtime-grants.sql]
+    environment:
+      PGPASSWORD: ${REPLAY_MIGRATION_PASSWORD:-}
+    volumes: ["./database/runtime-grants.sql:/etc/hookway/runtime-grants.sql:ro"]
+    restart: "no"
+    read_only: true
+    mem_limit: 64m
+    cpus: 0.25
+    pids_limit: 32
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  replay:
+    profiles: [replay]
+    <<: *runtime
+    image: ${HOOKWAY_REPLAY_IMAGE:-hookway-production-replay:local}
+    build: {context: ../.., dockerfile: Dockerfile, target: replay}
+    command: [serve, --config, /etc/hookway/replay.yaml]
+    read_only: true
+    environment: *replay-environment
+    volumes: ["${HOOKWAY_LOCAL_DIRECTORY}/replay.yaml:/etc/hookway/replay.yaml:ro"]
+    ports: ["127.0.0.1:${REPLAY_HTTP_PORT:-18081}:8080"]
+    depends_on:
+      db-grants: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, /usr/local/bin/hookway-replay, healthcheck, --url, "http://127.0.0.1:8080/readyz"]
+      interval: 5s
+      timeout: 4s
+      start_period: 15s
+      retries: 30
+
+  console:
+    profiles: [replay]
+    <<: *runtime
+    image: ${HOOKWAY_CONSOLE_IMAGE:-hookway-production-console:local}
+    build: {context: ../.., dockerfile: web/Dockerfile}
+    environment:
+      REPLAY_API_URL: ${REPLAY_API_URL:-http://localhost:18081}
+    ports: ["127.0.0.1:${CONSOLE_HTTP_PORT:-18082}:8080"]
+    depends_on:
+      replay: {condition: service_healthy}
+
+  redis:
+    profiles: [protection]
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    user: redis
+    command: [redis-server, --appendonly, "yes", --requirepass, "${REDIS_PASSWORD:?Run make prod-local-bootstrap first}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes: [redis-data:/data]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: ${REDIS_MEMORY_LIMIT:-128m}
+    cpus: ${REDIS_CPU_LIMIT:-0.5}
+    pids_limit: 64
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  rabbitmq-data:
+  postgres-data:
+  redis-data:

@@ -20,6 +20,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/capture"
 	"github.com/jaysongiroux/hook_way/internal/deliverysnapshot"
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
 
@@ -164,7 +165,7 @@ func (s *Server) authorized(r *http.Request) bool {
 	token, ok := strings.CutPrefix(h, "Bearer ")
 	sum := sha256.Sum256([]byte(token))
 	// Compare digests: constant time, and independent of the token's length.
-	return ok && subtle.ConstantTimeCompare(sum[:], s.token[:]) == 1
+	return ok && len(r.Header.Values("Authorization")) == 1 && subtle.ConstantTimeCompare(sum[:], s.token[:]) == 1
 }
 
 func (s *Server) deliver(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +233,7 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		outcome = OutcomeError
 		s.opts.Logger.Error("replay redrive produced a result core cannot report", "run_id", req.RunID,
-			"record_id", req.RecordID, "error", err.Error())
+			"record_id", req.RecordID, "error", logging.ErrorText(err))
 		writeProblem(w, http.StatusInternalServerError, "internal", "core could not report the redrive's outcome")
 		return
 	}
@@ -261,7 +262,7 @@ func (s *Server) refuse(w http.ResponseWriter, req replaywire.DeliverRequest, er
 		writeProblem(w, http.StatusBadRequest, "malformed_snapshot", err.Error())
 		return OutcomeRejected
 	}
-	s.opts.Logger.Error("replay redrive failed inside core", "run_id", req.RunID, "record_id", req.RecordID, "error", err.Error())
+	s.opts.Logger.Error("replay redrive failed inside core", "run_id", req.RunID, "record_id", req.RecordID, "error", logging.ErrorText(err))
 	writeProblem(w, http.StatusInternalServerError, "internal", "core could not complete the redrive")
 	return OutcomeError
 }

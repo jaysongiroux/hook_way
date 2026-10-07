@@ -235,13 +235,22 @@ func TestADeadReplicasRunExpiresToUnknownOnTheOther(t *testing.T) {
 }
 
 func TestGCOnOneReplicaSkipsARunActiveOnTheOther(t *testing.T) {
-	a, b, _ := replicas(t, store.Limits{TTL: 50 * time.Millisecond, MaxRecords: 1000, MaxBytes: 1 << 30})
+	a, b, dbURL := replicas(t, generous())
 	id := ingest(t, a)
 	runID := retry(t, a, id)
 	if claimed, err := a.ClaimRuns(context.Background(), "a", 1, time.Minute); err != nil || len(claimed) != 1 {
 		t.Fatalf("claim = %v, %v", claimed, err)
 	}
-	time.Sleep(100 * time.Millisecond) // the record is past its expiry
+	// Make expiry a controlled transition after the run is active, not a race
+	// between a tiny retention TTL and PostgreSQL latency under suite load.
+	conn, err := pgx.Connect(t.Context(), dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if result, err := conn.Exec(t.Context(), `UPDATE records SET expires_at=$2 WHERE id=$1`, id, time.Now().Add(-time.Hour)); err != nil || result.RowsAffected() != 1 {
+		t.Fatalf("controlled expiry: rows=%d error=%v", result.RowsAffected(), err)
+	}
 	if res, err := b.Sweep(context.Background(), 500, time.Minute); err != nil || res.Records != 0 {
 		t.Fatalf("sweep during the run = %+v, %v; want nothing deleted", res, err)
 	}

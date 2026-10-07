@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
 	"github.com/jaysongiroux/hook_way/internal/replayresult"
@@ -95,7 +96,7 @@ func (w *Worker) Run(ctx context.Context) {
 		if free > 0 {
 			runs, err := w.o.Store.ClaimRuns(ctx, w.o.ID, free, w.o.Lease)
 			if err != nil && ctx.Err() == nil {
-				w.o.Logger.Warn("claim retry runs failed", "error", err)
+				w.o.Logger.Warn("claim retry runs failed", "error", logging.ErrorText(err))
 			}
 			for _, run := range runs {
 				slots <- struct{}{}
@@ -130,7 +131,7 @@ func (w *Worker) expireLoop(ctx context.Context) {
 			expired, err := w.o.Store.ExpireLeases(ctx, w.actor())
 			if err != nil {
 				if ctx.Err() == nil {
-					w.o.Logger.Warn("expire run leases failed", "error", err)
+					w.o.Logger.Warn("expire run leases failed", "error", logging.ErrorText(err))
 				}
 				continue
 			}
@@ -152,7 +153,7 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 		if rec := recover(); rec != nil {
 			w.o.Metrics.Panic("worker")
 			w.o.Logger.Error("panic recovered in retry worker", "run_id", run.Run.RunID,
-				"panic", fmt.Sprint(rec), "stack", string(debug.Stack()))
+				"panic_type", fmt.Sprintf("%T", rec), "stack", string(debug.Stack()))
 		}
 	}()
 	start := time.Now()
@@ -175,7 +176,7 @@ func (w *Worker) process(ctx context.Context, run store.ClaimedRun) {
 		Children: out.Children, Actor: w.actor()})
 	if err != nil {
 		w.o.Logger.Error("finalize retry run failed; its lease will expire it to unknown",
-			"run_id", run.Run.RunID, "record_id", run.Record.ID, "status", out.Status, "error", err)
+			"run_id", run.Run.RunID, "record_id", run.Record.ID, "status", out.Status, "error", logging.ErrorText(err))
 		return
 	}
 	if res.Late {

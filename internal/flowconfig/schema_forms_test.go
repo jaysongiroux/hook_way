@@ -10,6 +10,7 @@ import (
 	"github.com/invopop/jsonschema"
 
 	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
 )
 
 func TestFormAuthCatalogMatchesRegistry(t *testing.T) {
@@ -87,6 +88,8 @@ func TestFormDefaultsMatchRuntimeContracts(t *testing.T) {
 		{"rate_limit", "key_by", newRateLimit("schema-test", RateLimitOptions{RPM: 60}).(rateLimitNode).keyBy},
 		{"filter", "on_no_match", newFilterNode("schema-test", FilterOptions{}).(filterNode).onNoMatch},
 		{"envelope", "body_format", newEnvelopeNode("schema-test", EnvelopeOptions{}, nil, nil).(envelopeNode).format},
+		{"envelope", "json.max_depth", jsonbudget.DefaultMaxDepth},
+		{"envelope", "json.max_nodes", jsonbudget.DefaultMaxNodes},
 		{"envelope", "multipart.include_content", multipart.IncludeContent},
 		{"envelope", "multipart.max_parts", multipart.MaxParts},
 		{"envelope", "multipart.max_part_bytes", multipart.MaxPartBytes},

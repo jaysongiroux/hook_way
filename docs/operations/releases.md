@@ -2,7 +2,9 @@
 
 Use this guide to publish or verify a matching set of core, replay, and frontend
 images. For service setup use the [Compose examples](../../examples/README.md);
-for migrations and rollback use [Upgrades](upgrades.md).
+for migrations and rollback use [Upgrades](upgrades.md). Use
+[production acceptance](production-acceptance.md) to separate local checks from
+published-artifact and deployment sign-off.
 
 ## Supported artifacts
 
@@ -27,14 +29,19 @@ pushes to `main`. Require `Checks / All checks passed` on `main`. The workflow
 files own the current jobs, integration matrix, versions and scan thresholds;
 avoid maintaining a second job inventory in prose.
 
-[Release](../../.github/workflows/release.yml) reruns that gate for a `v*` tag,
+[Release](../../.github/workflows/release.yml) is manually dispatched from `main`
+and reruns that gate for its exact source commit,
 then publishes matching core/replay/console images, generated release notes and
 the Docker Hub description from `docs/dockerhub/README.md`. A push to `main`
-does not publish. Create a release tag from a reviewed commit on `main`:
+does not publish, and neither does a tag push. Merge reviewed changes from `v2`
+first; building/signing a release is not a prerequisite for branch hardening.
+When ready to release, create a tag at the reviewed `main` commit and dispatch:
 
 ```sh
-git tag v1.2.3
+git fetch origin
+git tag v1.2.3 origin/main
 git push origin v1.2.3
+gh workflow run release.yml --ref main -f tag=v1.2.3
 ```
 
 Prerelease tags create a GitHub prerelease and do not move Docker `latest`.
@@ -47,15 +54,25 @@ runs scheduled/on-demand advisory checks; dependency updates go through normal C
 
 ## Build, sign, and retain evidence
 
-`.github/workflows/release.yml` starts from a `v*` tag. Manual reruns must run on
-that same tag ref: `gh workflow run release.yml --ref v1.2.3 -f tag=v1.2.3`.
+`.github/workflows/release.yml` runs only by manual dispatch on `main`:
+`gh workflow run release.yml --ref main -f tag=v1.2.3`.
 It checks the event's full source commit and uses that exact Git commit as the
 remote BuildKit context; local checkout changes cannot enter the published image.
-The protected `release` environment must restrict deployment to reviewed release
-tags. Provision its Docker Hub credentials and GitHub OIDC permission on trusted,
-isolated runners; do not share persistent privileged release runners with
-untrusted pull-request jobs. Repository settings and runner isolation are operator
-requirements that repository YAML alone cannot enforce.
+The existing tag must peel to the exact dispatched `main` commit; a stale tag,
+unmerged source or invocation from another branch/tag is rejected. Keep `main`
+unchanged between choosing the tag and dispatching; no tag is created or moved
+by the workflow. The tag grammar is checked before publication; arbitrary
+version suffixes do not qualify as stable releases. This ancestry check does not
+prove human review or substitute for enforced branch/tag protection.
+The protected `release` environment should restrict deployment to `main` and
+authorized reviewers. Provision its Docker Hub credentials and GitHub OIDC
+permission on trusted, isolated runners. The existing self-hosted runner and
+dependency/browser cache setup is retained; browser OS libraries are provisioned
+separately and jobs do not request sudo. Runner labels alone do not isolate
+privileged release work from untrusted PRs. Repository access, branch/tag rules,
+runner isolation and environment review restrictions remain operator requirements
+for publication, not prerequisites to harden `v2`. See GitHub's
+[workflow security guidance](https://docs.github.com/en/actions/reference/security/secure-use).
 
 All external workflow actions use full commit SHAs. The Go/Alpine base uses an
 OCI index digest, and the trust store comes from that pinned image. Dependabot
@@ -100,7 +117,7 @@ python3 scripts/release-smoke.py --core "$CORE" --replay "$REPLAY" --console "$C
 ```
 
 Verification requires the exact certificate identity
-`https://github.com/jaysongiroux/hook_way/.github/workflows/release.yml@refs/tags/<tag>`,
+`https://github.com/jaysongiroux/hook_way/.github/workflows/release.yml@refs/heads/main`,
 issuer `https://token.actions.githubusercontent.com`, and the signed tag/source
 annotations. Broad certificate identity regular expressions are not equivalent.
 The script rejects mutable tag inputs, missing attestations, and provenance that
@@ -136,7 +153,7 @@ frontend build, image or runtime environment.
 The native acceptance suite builds and fingerprints `web/dist-console`
 independently of the Go binaries, including WASM and its matching JS runtime.
 Retain the report, checksummed logs, standalone browser results and deployment
-deployment test results. Local source/binary/asset hashes are distinct from published
+test results. Local source/binary/asset hashes are distinct from published
 immutable digests/signatures. A dirty checkout report cannot certify a later
 commit or an older release. Promote all three stable images to `latest` only
 after every scan, signature, provenance and smoke gate passes.

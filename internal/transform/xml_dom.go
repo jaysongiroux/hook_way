@@ -167,10 +167,10 @@ func ParseXMLWithLimits(data []byte, limits XMLLimits) (Document, error) {
 			if len(stack) >= limits.MaxDepth {
 				return Document{}, fmt.Errorf("%w: max_depth", ErrXMLLimit)
 			}
+			// Keep only this element's declarations. Cloning the inherited map
+			// for every sibling multiplies a small wire document into many copies
+			// of the same attacker-controlled namespace table.
 			ns := map[string]string{"xml": "http://www.w3.org/XML/1998/namespace"}
-			if len(namespaces) > 0 {
-				ns = maps.Clone(namespaces[len(namespaces)-1])
-			}
 			for _, a := range t.Attr {
 				if prefix, ok := xmlnsPrefix(a.Name); ok {
 					if prefix == "xmlns" || (prefix == "xml" && a.Value != ns["xml"]) || (prefix != "xml" && a.Value == ns["xml"]) || a.Value == xmlNamespaceURI || (prefix != "" && a.Value == "") {
@@ -184,6 +184,9 @@ func ParseXMLWithLimits(data []byte, limits XMLLimits) (Document, error) {
 					return name, nil
 				}
 				uri, ok := ns[name.Space]
+				for i := len(namespaces) - 1; !ok && i >= 0; i-- {
+					uri, ok = namespaces[i][name.Space]
+				}
 				if name.Space != "" && (!ok || uri == "") {
 					return xml.Name{}, errors.New("transform: unbound XML prefix")
 				}

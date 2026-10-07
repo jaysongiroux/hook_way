@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replay/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
@@ -117,6 +118,7 @@ func NewExecutor(o ExecutorOptions) (*Executor, error) {
 }
 
 func detail(s string) string {
+	s = logging.ErrorText(errors.New(s))
 	if len(s) > maxDetailLen {
 		return s[:maxDetailLen]
 	}
@@ -124,7 +126,7 @@ func detail(s string) string {
 }
 
 func unavailable(err error) Outcome {
-	return Outcome{Status: store.RunFailed, Reason: ReasonExecutorUnavailable, Call: metrics.CallUnavailable, Detail: detail(err.Error())}
+	return Outcome{Status: store.RunFailed, Reason: ReasonExecutorUnavailable, Call: metrics.CallUnavailable, Detail: detail(logging.ErrorText(err))}
 }
 
 func ambiguous(format string, args ...any) Outcome {
@@ -213,7 +215,7 @@ func (e *Executor) attempt(ctx context.Context, body []byte, contentType string,
 	}}
 	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodPost, e.url, bytes.NewReader(body))
 	if err != nil {
-		return rejected("build the http request: %v", err), false
+		return rejected("build the http request: %s", logging.ErrorText(err)), false
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Authorization", "Bearer "+e.token)
@@ -222,7 +224,7 @@ func (e *Executor) attempt(ctx context.Context, body []byte, contentType string,
 		if !written.Load() {
 			return unavailable(err), true
 		}
-		return ambiguous("no complete response after the request was sent: %v", err), false
+		return ambiguous("no complete response after the request was sent: %s", logging.ErrorText(err)), false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch code := resp.StatusCode; {

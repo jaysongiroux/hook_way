@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
+
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -33,6 +35,9 @@ func NewValidator(schema map[string]any, coercions []ScalarCoercion) (*Validator
 	raw, err := json.Marshal(schema)
 	if err != nil || len(raw) > 256<<10 || len(schema) == 0 {
 		return nil, errors.New("JSON schema must be nonempty and at most 256 KiB")
+	}
+	if err := jsonbudget.Check(raw, jsonbudget.Limits{MaxDepth: 64, MaxNodes: 10000}); err != nil {
+		return nil, err
 	}
 	doc, err := DecodeJSON(raw)
 	if err != nil {
@@ -148,6 +153,9 @@ func decodeJSONCopy(raw []byte) (any, error) {
 func DecodeJSON(raw []byte) (any, error) {
 	if len(raw) > 20<<20 {
 		return nil, errors.New("JSON validation body limit")
+	}
+	if err := jsonbudget.Check(raw, jsonbudget.Limits{}); err != nil {
+		return nil, err
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.UseNumber()

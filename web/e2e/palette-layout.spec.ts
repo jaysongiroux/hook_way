@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { BuilderPage } from "./builder";
+import { readFileSync } from "node:fs";
+
+const nodeCount = Object.keys(
+  JSON.parse(readFileSync(new URL("../src/graph/nodeSchema.json", import.meta.url), "utf8")),
+).length;
 
 for (const viewport of [
   { width: 1440, height: 900 },
@@ -14,15 +19,19 @@ for (const viewport of [
         localStorage.setItem("hookway.builder.paletteWidth", String(width));
       }, panelWidth);
       const builder = new BuilderPage(page);
+      expect(
+        nodeCount,
+        "the checked-in node catalog must not be empty",
+      ).toBeGreaterThan(0);
       await builder.gotoReady();
       const nodes = page.getByRole("button", { name: "Nodes", exact: true });
       if ((await nodes.getAttribute("aria-pressed")) !== "true")
         await nodes.click();
       const cards = page.locator(".hookway-palette-item");
-      await expect(cards).toHaveCount(23);
+      await expect(cards).toHaveCount(nodeCount);
       for (const tab of ["Nodes", "Templates"]) {
         await page.getByRole("tab", { name: tab, exact: true }).click();
-        await expect(cards).toHaveCount(tab === "Nodes" ? 23 : 5);
+        await expect(cards).toHaveCount(tab === "Nodes" ? nodeCount : 5);
         const measurements = await cards.evaluateAll((items) =>
           items.map((item) => {
             const button = item.querySelector("button")!;

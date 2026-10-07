@@ -1,0 +1,12 @@
+# Deliberately local-only receiver. Replace only in an owner-approved private copy.
+route:
+  receiver: local-fixture
+  group_by: [alertname, job]
+  group_wait: 5s
+  group_interval: 30s
+  repeat_interval: 4h
+receivers:
+  - name: local-fixture
+    webhook_configs:
+      - url: http://alert-receiver:8080/
+        send_resolved: true

@@ -3,10 +3,10 @@ package flowconfig
 import (
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 
+	"github.com/jaysongiroux/hook_way/internal/egress"
 	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
@@ -111,153 +111,19 @@ func urlAuthorityIsTemplated(raw string) bool {
 // domain suffix into a path, query, fragment, or userinfo component. This also
 // applies when private targets are explicitly allowed.
 func validateAuthorityVariables(tpl vars.Template, values map[string]string) error {
-	for _, name := range tpl.Names() {
-		value := values[name]
-		valid := len(value) > 0 && len(value) <= 63 && value[0] != '-' && value[len(value)-1] != '-'
-		for i := 0; valid && i < len(value); i++ {
-			c := value[i]
-			valid = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-'
-		}
-		if !valid {
-			return fmt.Errorf("URL authority variable %q must be a DNS label", name)
-		}
-	}
-	return nil
+	return egress.ValidateAuthorityVariables(tpl, values)
 }
 
 // urlAuthority returns the authority (host[:port]) of a raw, possibly
 // templated URL without parsing it, so placeholders survive intact.
 func urlAuthority(rawURL string) string {
-	rest := rawURL
-	if i := strings.Index(rawURL, "://"); i >= 0 {
-		rest = rawURL[i+3:]
-	}
-	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
-		rest = rest[:end]
-	}
-	return rest
+	return egress.Authority(rawURL)
 }
-
-// blockedNets are the destinations an internet-facing gateway must never be
-// talked into addressing on a caller's behalf: its own host, its own link and
-// private networks, and the ranges cloud providers put instance credentials
-// on. IPv4-mapped IPv6 forms collapse to the IPv4 rules via To4().
-var blockedNets = func() []*net.IPNet {
-	cidrs := []string{
-		"0.0.0.0/8",          // "this network", and 0.0.0.0 meaning localhost
-		"10.0.0.0/8",         // RFC1918 private
-		"100.64.0.0/10",      // RFC6598 CGNAT
-		"127.0.0.0/8",        // loopback
-		"169.254.0.0/16",     // link-local, incl. 169.254.169.254 metadata
-		"172.16.0.0/12",      // RFC1918 private
-		"192.0.0.0/24",       // IETF protocol assignments (incl. 192.0.0.192)
-		"192.168.0.0/16",     // RFC1918 private
-		"198.18.0.0/15",      // benchmarking
-		"224.0.0.0/4",        // multicast
-		"240.0.0.0/4",        // reserved, incl. 255.255.255.255 broadcast
-		"100.100.100.200/32", // Alibaba Cloud instance metadata
-		"::/128",             // unspecified
-		"::1/128",            // loopback
-		"fc00::/7",           // unique local
-		"fe80::/10",          // link-local
-		"ff00::/8",           // multicast
-	}
-	nets := make([]*net.IPNet, 0, len(cidrs))
-	for _, c := range cidrs {
-		_, n, err := net.ParseCIDR(c)
-		if err != nil {
-			panic("flowconfig: bad blocked CIDR " + c)
-		}
-		nets = append(nets, n)
-	}
-	return nets
-}()
-
-// internalHostSuffixes are names that only ever resolve inside a host or a
-// private zone. "metadata.google.internal" is covered by ".internal".
-var internalHostSuffixes = []string{".localhost", ".local", ".internal", ".localdomain", ".home.arpa"}
 
 // internalHostReason returns a short reason when host must not be addressed,
 // or "" when it is an acceptable egress target.
 func internalHostReason(host string) string {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if host == "" {
-		return "empty host"
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return blockedIPReason(ip)
-	}
-	if host == "localhost" {
-		return "loopback name"
-	}
-	for _, suffix := range internalHostSuffixes {
-		if strings.HasSuffix(host, suffix) {
-			return "internal-only domain " + suffix
-		}
-	}
-	if reason := ambiguousHostReason(host); reason != "" {
-		return reason
-	}
-	return ""
-}
-
-// blockedIPReason classifies a literal IP address.
-func blockedIPReason(ip net.IP) string {
-	if ip == nil {
-		return "unparseable address"
-	}
-	if v4 := ip.To4(); v4 != nil {
-		ip = v4
-	}
-	for _, n := range blockedNets {
-		if n.Contains(ip) {
-			return "address in blocked range " + n.String()
-		}
-	}
-	return ""
-}
-
-// ambiguousHostReason rejects a host that is neither a valid DNS name nor an
-// address net.ParseIP accepts, but that a resolver or libc may still read as
-// an IPv4 address: the decimal form "2130706433", the hex form "0x7f000001",
-// and short forms such as "127.1" or octal "0177.0.0.1". Classifying those
-// correctly is a well-known source of parser-differential SSRF bugs, so they
-// are refused rather than interpreted.
-func ambiguousHostReason(host string) string {
-	for i := 0; i < len(host); i++ {
-		c := host[i]
-		ok := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_'
-		if !ok {
-			return "host contains a character that is not valid in a DNS name"
-		}
-	}
-	labels := strings.Split(host, ".")
-	for _, label := range labels {
-		if label == "" {
-			return "host has an empty label"
-		}
-		if strings.HasPrefix(label, "0x") {
-			return "hex-encoded address form"
-		}
-	}
-	// A real top-level domain is never all digits, so an all-digit final
-	// label means this is a numeric address in some abbreviated encoding.
-	if allDigits(labels[len(labels)-1]) {
-		return "numeric address form"
-	}
-	return ""
-}
-
-func allDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
+	return egress.BlockedHostReason(host)
 }
 
 // isBodyPathKey reports the lookup-only {body.a.b} dotted-path spelling.

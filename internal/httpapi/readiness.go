@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/metrics"
 	"github.com/jaysongiroux/hook_way/internal/queue"
 )
@@ -161,7 +162,7 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 	}
 
 	if aggErr != nil {
-		p.logger.Error("readiness probe failed", "error", aggErr.Error())
+		p.logger.Error("readiness probe failed", "error", logging.ErrorText(aggErr))
 	}
 	p.result.Store(&readinessResult{err: aggErr, dest: dest, checkedAt: time.Now()})
 }
@@ -197,7 +198,7 @@ func (p *readinessProber) safeProbe(ctx context.Context) {
 		if rec := recover(); rec != nil {
 			p.logger.Error("panic recovered in readiness prober",
 				"location", "readiness_prober",
-				"panic", fmt.Sprint(rec),
+				"panic_type", fmt.Sprintf("%T", rec),
 				"stack", string(debug.Stack()),
 			)
 			p.metrics.Panic("readiness_prober")

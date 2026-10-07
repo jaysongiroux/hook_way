@@ -201,6 +201,10 @@ and `remove_headers` define explicit projections. Framing and hop-by-hop
 headers are always filtered. `body_methods`, `remove_body_fields`,
 `require_headers` and `require_body_fields` constrain supported requests.
 `max_response_bytes` bounds responses (default 10 MiB, maximum 64 MiB).
+The reader consumes at most the cap plus one byte; overflow returns `502`.
+Automatic decompression is disabled, so compressed replies retain their wire
+bytes. JSON response bindings have independent byte and structural limits;
+selection failure is metadata and does not replace an otherwise successful reply.
 `response_bindings` exposes only named bounded scalar values and status to
 later nodes. `respond.passthrough` relays the filtered upstream response;
 HEAD never sends a response body. See [request-contract.yaml](../../examples/proxy/request-contract.yaml).
@@ -210,6 +214,12 @@ fetches. `coercions` explicitly declare a dotted path and one scalar type;
 union IDs are left unchanged unless explicitly coerced. `strip_fields`
 removes exact dotted fields after validation. See
 [json-projection.yaml](../../examples/adapters/json-projection.yaml).
+
+JSON envelopes check depth and node count before decoding (default 128 levels
+and 1,000,000 nodes). Set `envelope.json.max_depth` up to 1024 for a legitimate
+deep document, or lower `max_nodes` for a smaller budget. Keep the wire cap on
+`read_body`; structural and byte budgets protect different allocations. See
+[combined resource limits and sizing](../operations/resource-limits.md).
 
 XML parsing preserves ordered mixed content, namespace prefixes, comments
 and processing instructions. It rejects DTD/directive input and bounds

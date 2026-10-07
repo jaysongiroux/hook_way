@@ -16,7 +16,7 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: Git ref to check out (release tag). Empty uses checkout defaults for the event.
+        description: Git ref or exact source commit to check out. Empty uses checkout defaults for the event.
         type: string
         required: false
         default: ""
@@ -26,7 +26,7 @@ permissions:
 
 env:
   GO_VERSION: "1.26.x"
-  NODE_VERSION: "20"
+  NODE_VERSION: "22"
 
 jobs:
   # ── Stage 1: lint ────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ jobs:
         run: make lint
 
       - name: Module tidiness
-        run: go mod tidy -diff
+        run: make module-check
 
       - name: Documentation links
         run: make docs-check
@@ -138,16 +138,13 @@ jobs:
         run: make web-install
 
       - name: Web dependency vulnerability gate
-        run: cd web && npm audit --audit-level=high
+        run: make web-audit
 
       - name: Release policy checks
-        run: |
-          python3 scripts/check-release-policy.py
-          bash -n scripts/verify-release.sh
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= .github/workflows/*.yml
+        run: make release-policy-check
 
       - name: Frontend hosting configuration tests
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s web/tests -p 'test_*.py'
+        run: make web-hosting-check
 
       - name: Generated UI contract drift
         run: make node-schema-check api-schema-check
@@ -335,10 +332,8 @@ jobs:
       - name: Playwright builder tests
         run: make web-e2e
 
-      - name: Operational console and real PostgreSQL browser tests
-        run: |
-          make console-e2e
-          HOOKWAY_CONSOLE_ACCEPTANCE=1 HOOKWAY_REQUIRE_INTEGRATION=1 go test ./cmd/hookway-replay -run TestServeEmbeddedConsole -count=1
+      - name: Standalone operational console and real PostgreSQL browser tests
+        run: make console-e2e
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
@@ -352,7 +347,7 @@ jobs:
     name: ${{ matrix.name }}
     needs: [go, go-race, examples, web, coverage, observability]
     runs-on: [self-hosted, Linux, X64, debian]
-    timeout-minutes: 25
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -415,18 +410,7 @@ jobs:
         run: make docker-build
 
       - name: Smoke-run the images
-        run: |
-          docker run --rm hookway:local version
-          docker run --rm hookway-replay:local version
-          python3 - <<'PYSMOKE'
-          import importlib.util, subprocess
-          spec = importlib.util.spec_from_file_location('smoke', 'scripts/release-smoke.py')
-          smoke = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(smoke)
-          version = subprocess.check_output(['git', 'describe', '--tags', '--always', '--dirty'], text=True).strip()
-          commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], text=True).strip()
-          smoke.console_install('hookway-console:local', version, commit)
-          PYSMOKE
+        run: make image-smoke
 
       - name: Vulnerability scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0

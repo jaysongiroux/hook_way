@@ -88,7 +88,6 @@ func parseMultipart(contentType string, body []byte, lim multipartLimits) (map[s
 		// rejected after reading three rather than after reading all thousand.
 		count++
 		if count > lim.MaxParts {
-			_ = part.Close()
 			return nil, http.StatusRequestEntityTooLarge, fmt.Errorf("multipart body has more than max_parts (%d) parts", lim.MaxParts)
 		}
 		name := part.FormName()
@@ -97,9 +96,14 @@ func parseMultipart(contentType string, body []byte, lim multipartLimits) (map[s
 		// LimitReader with max+1 is how read_body and http_request both detect
 		// an overrun: read one byte past the cap and compare, so the parser
 		// never holds more than cap+1 bytes of a part.
-		limited := io.LimitReader(part, lim.MaxPartBytes+1)
+		readLimit := lim.MaxPartBytes
+		if lim.MaxTotalBytes > 0 {
+			readLimit = min(readLimit, lim.MaxTotalBytes-total)
+		}
+		limited := io.LimitReader(part, readLimit+1)
 		content, readErr := io.ReadAll(limited)
-		_ = part.Close()
+		// Parts wrap the already-buffered request, not external resources. Do not
+		// Close on rejection: it drains the remaining attacker-controlled part.
 		if readErr != nil {
 			return nil, http.StatusBadRequest, fmt.Errorf("multipart part %q: %w", name, readErr)
 		}
@@ -111,6 +115,7 @@ func parseMultipart(contentType string, body []byte, lim multipartLimits) (map[s
 		if lim.MaxTotalBytes > 0 && total > lim.MaxTotalBytes {
 			return nil, http.StatusRequestEntityTooLarge, fmt.Errorf("multipart body exceeds max_total_bytes (%d)", lim.MaxTotalBytes)
 		}
+		_ = part.Close()
 		if filename == "" {
 			// A part with no filename is a form field. A repeated field name
 			// keeps the last value, matching net/http's own form semantics.

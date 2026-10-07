@@ -281,6 +281,29 @@ func TestDeliverRequiresTheControlToken(t *testing.T) {
 	}
 }
 
+func TestDeliverRejectsDuplicateAuthorization(t *testing.T) {
+	snap := testSnapshot(t)
+	r := &fakeRedriver{result: deliveredResult()}
+	s := newTestServer(r, &fakeMetrics{runs: map[string]int{}})
+	for _, headers := range [][]string{
+		{"Bearer " + testToken, "Bearer wrong"},
+		{"Bearer wrong", "Bearer " + testToken},
+		{"Bearer " + testToken, "Bearer " + testToken},
+		{"Bearer " + testToken, ""},
+		{"Bearer " + testToken + ", Bearer wrong"},
+	} {
+		req := deliverRequest(t, validRequest(snap), snap)
+		req.Header["Authorization"] = headers
+		rec := serve(s, req)
+		if rec.Code != http.StatusUnauthorized || strings.Contains(rec.Body.String(), testToken) {
+			t.Fatalf("duplicate control credentials: %d %q", rec.Code, rec.Body.String())
+		}
+	}
+	if r.count() != 0 {
+		t.Fatal("duplicate Authorization reached the redriver")
+	}
+}
+
 func TestDeliverRefusesBeforeStarting(t *testing.T) {
 	snap := testSnapshot(t)
 	good := requestJSON(t, validRequest(snap))

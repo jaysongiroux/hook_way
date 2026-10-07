@@ -127,23 +127,9 @@ func (s *Store) Close() {
 func (s *Store) PoolStat() *pgxpool.Stat { return s.pool.Stat() }
 
 // Ready reports whether the store can serve: the database answers and its
-// schema is at least this binary's version.
+// schema exactly matches this binary's supported generic-record baseline.
 func (s *Store) Ready(ctx context.Context) error {
-	version, err := s.SchemaVersion(ctx)
-	if err != nil {
-		return err
-	}
-	if latest := LatestSchemaVersion(); version < latest {
-		return fmt.Errorf("store: database schema version %d is behind %d; run hookway-replay migrate", version, latest)
-	}
-	var recordSchema bool
-	if err := s.pool.QueryRow(ctx, `SELECT to_regclass('records') IS NOT NULL`).Scan(&recordSchema); err != nil {
-		return err
-	}
-	if !recordSchema {
-		return errors.New("store: generic record schema is missing; use a fresh replay database")
-	}
-	return nil
+	return s.checkSchema(ctx, false)
 }
 
 // validID reports whether id is a canonical lowercase UUID. Store methods

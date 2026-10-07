@@ -53,7 +53,22 @@ api-schema-check:
 	GO=$(GO) python3 scripts/generate-ui-contracts.py api --check
 
 web-install:
-	cd web && npm install
+	cd web && npm ci
+
+.PHONY: module-check web-audit release-policy-check web-hosting-check image-smoke hardening-check hardening-check-gates release-check-gates
+module-check:
+	$(GO) mod tidy -diff
+
+web-audit:
+	cd web && npm audit --audit-level=high
+
+release-policy-check:
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/check-release-policy.py
+	bash -n scripts/verify-release.sh
+	$(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= .github/workflows/*.yml
+
+web-hosting-check:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s web/tests -p 'test_*.py'
 
 # The builder validates with Go/WASM, so its dev server needs the generated
 # validator assets before starting.
@@ -215,7 +230,7 @@ ifeq ($(COMPOSE_E2E_BUILD),binaries)
 compose-e2e-test: console-ui
 endif
 compose-e2e-test:
-	HOOKWAY_COMPOSE_E2E=1 HOOKWAY_COMPOSE_E2E_BUILD=$(COMPOSE_E2E_BUILD) $(GO) test ./internal/composee2e -count=1 -timeout 20m -v
+	HOOKWAY_COMPOSE_E2E=1 HOOKWAY_COMPOSE_E2E_BUILD=$(COMPOSE_E2E_BUILD) $(GO) test ./internal/composee2e -count=1 -timeout 30m -v
 
 # bench-replay measures core's request-path cost of failure capture and the
 # replay service's ingest throughput (the latter needs Docker).
@@ -312,6 +327,8 @@ validate-examples:
 		REPLAY_OPERATOR_TOKEN=operator-token-0123456789abcdefghi \
 		REPLAY_METRICS_TOKEN=metrics-token-0123456789abcdefghijk \
 		REPLAY_CONSOLE_ORIGIN=http://localhost:8082 \
+		REPLAY_MIGRATION_PASSWORD=migration-test-password-0123456789abcdef \
+		REPLAY_MIGRATION_DATABASE_URL=postgres://replay_owner@localhost:5432/replay \
 		REPLAY_DATABASE_URL=postgres://localhost:5432/replay; \
 	for f in $$(find examples -maxdepth 1 -name '*.yaml' ! -name 'docker-compose.yaml' | sort) examples/destinations/*.yaml examples/auth/*.yaml examples/routing/*.yaml examples/proxy/*.yaml examples/credentials/*.yaml examples/adapters/*.yaml examples/templates/*.yaml examples/providers/*.yaml examples/protection/*.yaml; do \
 		echo "validating $$f"; \
@@ -328,7 +345,11 @@ validate-examples:
 		$(GO) run ./cmd/hookway validate --config examples/$$d/core.yaml || exit 1; \
 		echo "validating examples/$$d/replay.yaml"; \
 		$(GO) run ./cmd/hookway-replay validate --config examples/$$d/replay.yaml || exit 1; \
-	done
+	done; \
+	echo "validating examples/production-local/replay.yaml"; \
+	$(GO) run ./cmd/hookway-replay validate --config examples/production-local/replay.yaml || exit 1; \
+	$(GO) run ./cmd/hookway-replay validate --config examples/production-local/migration/replay.yaml || exit 1; \
+	for f in examples/production-local/core*.yaml; do $(GO) run ./cmd/hookway validate --config "$$f" || exit 1; done
 
 # test-examples boots every valid example config and POSTs a signed request to
 # each flow. Destinations are faked; env-driven http_request URLs hit a loopback
@@ -352,9 +373,27 @@ vuln-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(REPLAY_IMAGE)
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --exit-code 1 --severity HIGH,CRITICAL $(CONSOLE_IMAGE)
 
-# Mirrors the required CI gate (.github/workflows/reusable-ci.yml `success`).
-# Keep these two lists in sync: a green release-check should predict a green CI.
-release-check: validate-examples test-examples test test-race integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test compose-e2e-test lint golangci-lint govulncheck coverage fmt-check deadcode conformance observability-check docker-build vuln-scan
+image-smoke: docker-build
+	docker run --rm "$(IMAGE)" version
+	docker run --rm "$(REPLAY_IMAGE)" version
+	PYTHONDONTWRITEBYTECODE=1 python3 -c 'import importlib.util,sys; spec=importlib.util.spec_from_file_location("smoke","scripts/release-smoke.py"); smoke=importlib.util.module_from_spec(spec); spec.loader.exec_module(smoke); smoke.console_install(sys.argv[1],sys.argv[2],sys.argv[3],platform=smoke.run("docker","image","inspect","--format","{{.Os}}/{{.Architecture}}",sys.argv[1]))' "$(CONSOLE_IMAGE)" "$(VERSION)" "$(COMMIT)"
+
+# Branch hardening does not build, publish or sign application images. Docker
+# is still needed by backend integration and monitoring fixtures. Packaged-image
+# acceptance stays available separately for a later release or local rehearsal.
+hardening-check: web-install
+	HOOKWAY_REQUIRE_INTEGRATION=1 $(MAKE) hardening-check-gates
+
+hardening-check-gates: module-check docs-check fmt-check diff-check lint golangci-lint govulncheck release-policy-check web-audit web-hosting-check node-schema-check api-schema-check web-build console-build web-knip validate-examples test-examples test test-race web-test coverage deadcode conformance observability-check web-e2e console-e2e integration-test aws-integration-test redis-integration-test postgres-integration-test mongodb-integration-test kafka-integration-test webhook-integration-test temporal-integration-test replay-integration-test replay-acceptance-test
+
+# Optional packaged gate, matching the complete reusable CI including images.
+# Missing Docker is a release-gate failure, never an integration-test skip.
+# The recursive gate also selects the actual Dockerfiles, while ordinary native
+# tests and source builds retain their convenient defaults.
+release-check: web-install
+	HOOKWAY_REQUIRE_INTEGRATION=1 $(MAKE) release-check-gates COMPOSE_E2E_BUILD=dockerfile
+
+release-check-gates: hardening-check-gates compose-e2e-test image-smoke vuln-scan
 
 dev-up:
 	docker compose -f examples/docker-compose.yaml up --build
@@ -363,3 +402,113 @@ dev-up:
 # volumes that a fresh `up` never reattaches, so leaving them only leaks disk.
 dev-down:
 	docker compose -f examples/docker-compose.yaml down --volumes
+
+# Persistent local production setup. Unlike dev-down, ordinary down retains data.
+# Bootstrap copies ordinary YAML once; no generator or test helper is required.
+.PHONY: prod-local-bootstrap prod-local-check prod-local-role-check prod-local-credentials-upgrade prod-local-up prod-local-validate prod-local-down prod-local-restart prod-local-status prod-local-logs prod-local-reset
+PROD_LOCAL_DIRECTORY ?= examples/production-local/.local
+PROD_LOCAL_PROJECT ?=
+PROD_LOCAL_MODE ?= core
+PROD_LOCAL_PROTECTION ?= 0
+PROD_LOCAL_BUILD ?= 1
+PROD_LOCAL_TLS ?= 0
+PROD_LOCAL_STRICT ?= 0
+PROD_LOCAL_CONFIRM_RESET ?=
+PROD_LOCAL_COMPOSE = HOOKWAY_LOCAL_DIRECTORY="$(abspath $(PROD_LOCAL_DIRECTORY))" docker compose --project-name "$$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$(PROD_LOCAL_DIRECTORY)/.env")" --env-file "$(PROD_LOCAL_DIRECTORY)/.env" -f examples/production-local/docker-compose.yaml $(if $(filter 1,$(PROD_LOCAL_TLS)),-f examples/production-local/tls/docker-compose.yaml,)
+
+prod-local-bootstrap:
+	@set -eu; state="$(PROD_LOCAL_DIRECTORY)"; mode="$(PROD_LOCAL_MODE)"; protection="$(PROD_LOCAL_PROTECTION)"; project="$(PROD_LOCAL_PROJECT)"; \
+	case "$$mode" in core|full) ;; *) echo "PROD_LOCAL_MODE must be core or full" >&2; exit 1 ;; esac; \
+	case "$$protection" in 0|1) ;; *) echo "PROD_LOCAL_PROTECTION must be 0 or 1" >&2; exit 1 ;; esac; \
+	if [ -L "$$state" ] || [ -L "$$state/.env" ] || [ -L "$$state/core.yaml" ] || [ -L "$$state/replay.yaml" ] || [ -L "$$state/migrate.yaml" ]; then echo "Refusing symlink state/configuration" >&2; exit 1; fi; \
+	if [ -f "$$state/.env" ]; then \
+		saved="$$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$$state/.env")"; project="$${project:-$$saved}"; \
+		if [ "$$saved" != "$$project" ] || [ "$$(sed -n 's/^HOOKWAY_LOCAL_MODE=//p' "$$state/.env")" != "$$mode" ] || [ "$$(sed -n 's/^HOOKWAY_LOCAL_PROTECTION=//p' "$$state/.env")" != "$$protection" ]; then echo "Existing selection differs; retain original options or choose a separate directory/project" >&2; exit 1; fi; \
+	else \
+		project="$${project:-hookway-production}"; \
+		case "$$project" in ''|*[!a-z0-9_-]*|[-_]*) echo "Invalid project name (use lowercase letters/digits, _ or -)" >&2; exit 1 ;; esac; \
+		api_port="$${REPLAY_HTTP_PORT:-18081}"; console_port="$${CONSOLE_HTTP_PORT:-18082}"; core_port="$${HOOKWAY_HTTP_PORT:-18080}"; rabbit_port="$${RABBITMQ_HTTP_PORT:-15673}"; \
+		for port in "$$api_port" "$$console_port" "$$core_port" "$$rabbit_port"; do case "$$port" in ''|*[!0-9]*) echo "Host ports must be numbers from 0 to 65535" >&2; exit 1 ;; esac; [ "$$port" -le 65535 ] || { echo "Host port exceeds 65535" >&2; exit 1; }; done; \
+		if [ "$$mode" = full ] && { { [ "$$api_port" -eq 0 ] && [ -z "$${REPLAY_API_URL:-}" ]; } || { [ "$$console_port" -eq 0 ] && [ -z "$${REPLAY_CONSOLE_ORIGIN:-}" ]; }; }; then echo "Full mode with dynamic port 0 requires explicit REPLAY_API_URL and REPLAY_CONSOLE_ORIGIN for the browser" >&2; exit 1; fi; \
+		umask 077; mkdir -p "$$state"; temporary="$$(mktemp "$$state/.env.XXXXXX")"; trap 'rm -f "$$temporary"' EXIT HUP INT TERM; \
+		for name in RABBITMQ_PASSWORD POSTGRES_PASSWORD REPLAY_MIGRATION_PASSWORD REPLAY_RUNTIME_PASSWORD REDIS_PASSWORD GITHUB_WEBHOOK_SECRET HOOKWAY_API_KEY REPLAY_CAPTURE_TOKEN REPLAY_CONTROL_TOKEN REPLAY_OPERATOR_TOKEN REPLAY_METRICS_TOKEN; do value="$$(openssl rand -hex 32)"; printf '%s=%s\n' "$$name" "$$value" >> "$$temporary"; done; \
+		rabbit="$$(sed -n 's/^RABBITMQ_PASSWORD=//p' "$$temporary")"; migration="$$(sed -n 's/^REPLAY_MIGRATION_PASSWORD=//p' "$$temporary")"; runtime="$$(sed -n 's/^REPLAY_RUNTIME_PASSWORD=//p' "$$temporary")"; redis="$$(sed -n 's/^REDIS_PASSWORD=//p' "$$temporary")"; \
+		profiles=""; [ "$$mode" != full ] || profiles=replay; [ "$$protection" != 1 ] || profiles="$${profiles:+$$profiles,}protection"; \
+		printf '%s\n' "COMPOSE_PROJECT_NAME=$$project" "COMPOSE_PROFILES=$$profiles" "HOOKWAY_LOCAL_MODE=$$mode" "HOOKWAY_LOCAL_PROTECTION=$$protection" \
+			"RABBITMQ_URL=amqp://hookway:$$rabbit@rabbitmq:5672/" "REPLAY_DATABASE_URL=postgres://replay_runtime:$$runtime@postgres:5432/replay?sslmode=disable" \
+			"REPLAY_MIGRATION_DATABASE_URL=postgres://replay_owner:$$migration@postgres:5432/replay?sslmode=disable" "REPLAY_RUNTIME_DATABASE_URL=postgres://replay_runtime:$$runtime@postgres:5432/replay?sslmode=disable" "PROTECTION_REDIS_URL=redis://:$$redis@redis:6379/0" \
+			"HOOKWAY_HTTP_PORT=$$core_port" "REPLAY_HTTP_PORT=$$api_port" "CONSOLE_HTTP_PORT=$$console_port" "RABBITMQ_HTTP_PORT=$$rabbit_port" \
+			"REPLAY_API_URL=$${REPLAY_API_URL:-http://localhost:$$api_port}" "REPLAY_CONSOLE_ORIGIN=$${REPLAY_CONSOLE_ORIGIN:-http://localhost:$$console_port}" >> "$$temporary"; \
+		ln "$$temporary" "$$state/.env"; \
+	fi; \
+	config=core; [ "$$mode" != full ] || config=core-replay; [ "$$protection" != 1 ] || config="$$config-shared"; \
+	if [ ! -e "$$state/core.yaml" ]; then cp "examples/production-local/$$config.yaml" "$$state/core.yaml"; chmod 644 "$$state/core.yaml"; fi; \
+	if [ ! -e "$$state/replay.yaml" ]; then cp examples/production-local/replay.yaml "$$state/replay.yaml"; chmod 644 "$$state/replay.yaml"; fi; \
+	if [ ! -e "$$state/migrate.yaml" ]; then cp examples/production-local/migration/replay.yaml "$$state/migrate.yaml"; chmod 644 "$$state/migrate.yaml"; fi; \
+	echo "Local production configuration ready: $$state (project $$project, $$mode). Existing files preserved."
+
+prod-local-check:
+	@set -eu; state="$(PROD_LOCAL_DIRECTORY)"; \
+	if [ -L "$$state" ] || [ -L "$$state/.env" ] || [ -L "$$state/core.yaml" ] || [ -L "$$state/replay.yaml" ] || [ -L "$$state/migrate.yaml" ]; then echo "Refusing symlink state/configuration" >&2; exit 1; fi; \
+	[ -f "$$state/.env" ] && [ -f "$$state/core.yaml" ] && [ -f "$$state/replay.yaml" ] || { echo "Run make prod-local-bootstrap first" >&2; exit 1; }; \
+	saved="$$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$$state/.env")"; \
+	case "$$saved" in ''|*[!a-z0-9_-]*|[-_]*) echo "Invalid saved COMPOSE_PROJECT_NAME" >&2; exit 1 ;; esac; \
+	[ -z "$(PROD_LOCAL_PROJECT)" ] || [ "$(PROD_LOCAL_PROJECT)" = "$$saved" ] || { echo "Project differs from bootstrapped project" >&2; exit 1; }
+	@if [ "$(PROD_LOCAL_TLS)" = 1 ]; then [ -f "$(PROD_LOCAL_DIRECTORY)/localhost.crt" ] && [ -f "$(PROD_LOCAL_DIRECTORY)/localhost.key" ] || { echo "TLS overlay requires localhost.crt and private localhost.key in the state directory; see local-development.md" >&2; exit 1; }; fi
+
+prod-local-role-check: prod-local-check
+	@if [ "$$(sed -n 's/^HOOKWAY_LOCAL_MODE=//p' "$(PROD_LOCAL_DIRECTORY)/.env")" = full ]; then \
+		for key in REPLAY_MIGRATION_PASSWORD REPLAY_RUNTIME_PASSWORD REPLAY_MIGRATION_DATABASE_URL REPLAY_RUNTIME_DATABASE_URL; do \
+			[ -n "$$(sed -n "s/^$$key=//p" "$(PROD_LOCAL_DIRECTORY)/.env")" ] || { echo "Missing $$key; run make prod-local-credentials-upgrade with this PROD_LOCAL_DIRECTORY" >&2; exit 1; }; \
+		done; \
+		[ -f "$(PROD_LOCAL_DIRECTORY)/migrate.yaml" ] || { echo "Missing migrate.yaml; run make prod-local-credentials-upgrade" >&2; exit 1; }; \
+	fi
+
+# Explicitly extend an older setup's credentials; never regenerate existing keys.
+prod-local-credentials-upgrade: prod-local-check
+	@set -eu; state="$(PROD_LOCAL_DIRECTORY)"; umask 077; temporary="$$(mktemp "$$state/.env.XXXXXX")"; trap 'rm -f "$$temporary"' EXIT HUP INT TERM; cp "$$state/.env" "$$temporary"; chmod 600 "$$temporary"; \
+	for key in REPLAY_MIGRATION_PASSWORD REPLAY_RUNTIME_PASSWORD; do \
+		if ! sed -n "s/^$$key=//p" "$$temporary" | grep -q .; then value="$$(openssl rand -hex 32)"; printf '%s=%s\n' "$$key" "$$value" >> "$$temporary"; fi; \
+	done; \
+	migration="$$(sed -n 's/^REPLAY_MIGRATION_PASSWORD=//p' "$$temporary" | tail -n 1)"; runtime="$$(sed -n 's/^REPLAY_RUNTIME_PASSWORD=//p' "$$temporary" | tail -n 1)"; \
+	if ! sed -n 's/^REPLAY_MIGRATION_DATABASE_URL=//p' "$$temporary" | grep -q .; then printf '%s\n' "REPLAY_MIGRATION_DATABASE_URL=postgres://replay_owner:$$migration@postgres:5432/replay?sslmode=disable" >> "$$temporary"; fi; \
+	if ! sed -n 's/^REPLAY_RUNTIME_DATABASE_URL=//p' "$$temporary" | grep -q .; then printf '%s\n' "REPLAY_RUNTIME_DATABASE_URL=postgres://replay_runtime:$$runtime@postgres:5432/replay?sslmode=disable" >> "$$temporary"; fi; \
+	if ! cmp -s "$$temporary" "$$state/.env"; then mv "$$temporary" "$$state/.env"; fi; \
+	if [ ! -e "$$state/migrate.yaml" ]; then cp examples/production-local/migration/replay.yaml "$$state/migrate.yaml"; chmod 644 "$$state/migrate.yaml"; fi; \
+	echo "Database credentials ready. Existing keys/configuration/data preserved. Restart the full stack to provision roles and grants."
+
+prod-local-up: prod-local-validate
+	@if [ "$$(sed -n 's/^HOOKWAY_LOCAL_MODE=//p' "$(PROD_LOCAL_DIRECTORY)/.env")" = full ]; then \
+		set -e; \
+		$(PROD_LOCAL_COMPOSE) up --detach --wait --wait-timeout 180 postgres; \
+		$(PROD_LOCAL_COMPOSE) run --rm --no-deps db-provision; \
+		$(PROD_LOCAL_COMPOSE) run --rm --no-deps $(if $(filter 0,$(PROD_LOCAL_BUILD)),--pull never,--build) migrate; \
+		$(PROD_LOCAL_COMPOSE) run --rm --no-deps db-grants; \
+	fi
+	$(PROD_LOCAL_COMPOSE) up --detach --wait --wait-timeout 180 $(if $(filter 0,$(PROD_LOCAL_BUILD)),--no-build,--build)
+
+prod-local-down: prod-local-check
+	$(PROD_LOCAL_COMPOSE) down
+
+# Validate before disturbing a healthy stack, then restart with the same gates
+# as first installation. Ordinary restart retains all named volumes.
+prod-local-restart: prod-local-role-check
+	$(MAKE) --no-print-directory prod-local-validate PROD_LOCAL_BUILD=0
+	$(MAKE) --no-print-directory prod-local-down
+	$(MAKE) --no-print-directory prod-local-up PROD_LOCAL_BUILD=0
+
+prod-local-status: prod-local-check
+	$(PROD_LOCAL_COMPOSE) ps --all
+
+prod-local-logs: prod-local-check
+	$(PROD_LOCAL_COMPOSE) logs --tail 100
+
+prod-local-validate: prod-local-role-check
+	$(PROD_LOCAL_COMPOSE) run --rm --no-deps $(if $(filter 0,$(PROD_LOCAL_BUILD)),--pull never,--build) hookway validate --config /etc/hookway/core.yaml $(if $(filter 1,$(PROD_LOCAL_STRICT)),--strict,)
+	@if [ "$$(sed -n 's/^HOOKWAY_LOCAL_MODE=//p' "$(PROD_LOCAL_DIRECTORY)/.env")" = full ]; then $(PROD_LOCAL_COMPOSE) run --rm --no-deps $(if $(filter 0,$(PROD_LOCAL_BUILD)),--pull never,--build) replay validate --config /etc/hookway/replay.yaml; fi
+
+prod-local-reset: prod-local-check
+	@project="$$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$(PROD_LOCAL_DIRECTORY)/.env")"; \
+	[ "$(PROD_LOCAL_CONFIRM_RESET)" = "$$project" ] || { echo "Reset deletes project data; set PROD_LOCAL_CONFIRM_RESET=$$project" >&2; exit 1; }; \
+	echo "Deleting containers and named volumes for $$project. Credentials/configuration retained."; \
+	$(PROD_LOCAL_COMPOSE) down --volumes

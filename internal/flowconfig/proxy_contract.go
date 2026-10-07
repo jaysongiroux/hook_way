@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/jaysongiroux/hook_way/internal/graph"
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/routing"
 	"github.com/jaysongiroux/hook_way/internal/vars"
@@ -183,8 +184,11 @@ func (n httpRequestNode) bindResponse(env *graph.Envelope) {
 		env.Upstream.SelectionError = "response_json_too_large"
 		return
 	}
-	if !json.Valid(env.Upstream.Body) {
+	if err := jsonbudget.Check(env.Upstream.Body, jsonbudget.Limits{}); err != nil {
 		env.Upstream.SelectionError = "invalid_json"
+		if errors.Is(err, jsonbudget.ErrLimit) {
+			env.Upstream.SelectionError = "response_json_structure_limit"
+		}
 		return
 	}
 	dec := json.NewDecoder(bytes.NewReader(env.Upstream.Body))

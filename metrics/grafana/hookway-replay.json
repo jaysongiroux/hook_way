@@ -52,8 +52,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (kind, delivery_status, dismissed) (hookway_replay_records{job=~\"$job\"})",
-          "legendFormat": "{{kind}} {{delivery_status}} dismissed={{dismissed}}",
+          "expr": "max by (job, kind, delivery_status, dismissed) (hookway_replay_records{job=~\"$job\"})",
+          "legendFormat": "{{job}} {{kind}} {{delivery_status}} dismissed={{dismissed}}",
           "refId": "A"
         }
       ],
@@ -95,8 +95,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(hookway_replay_usage_records{job=~\"$job\"}) / max(hookway_replay_capacity_records{job=~\"$job\"})",
-          "legendFormat": "records",
+          "expr": "max by (job) (hookway_replay_usage_records{job=~\"$job\"}) / max by (job) (hookway_replay_capacity_records{job=~\"$job\"})",
+          "legendFormat": "{{job}} records",
           "refId": "A"
         },
         {
@@ -104,8 +104,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(hookway_replay_usage_bytes{job=~\"$job\"}) / max(hookway_replay_capacity_bytes{job=~\"$job\"})",
-          "legendFormat": "bytes",
+          "expr": "max by (job) (hookway_replay_usage_bytes{job=~\"$job\"}) / max by (job) (hookway_replay_capacity_bytes{job=~\"$job\"})",
+          "legendFormat": "{{job}} bytes",
           "refId": "B"
         }
       ],
@@ -246,8 +246,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (status) (hookway_replay_runs{job=~\"$job\"})",
-          "legendFormat": "{{status}}",
+          "expr": "max by (job, status) (hookway_replay_runs{job=~\"$job\"})",
+          "legendFormat": "{{job}} {{status}}",
           "refId": "A"
         }
       ],
@@ -289,8 +289,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(hookway_replay_oldest_queued_run_seconds{job=~\"$job\"})",
-          "legendFormat": "oldest",
+          "expr": "max by (job) (hookway_replay_oldest_queued_run_seconds{job=~\"$job\"})",
+          "legendFormat": "{{job}} oldest",
           "refId": "A"
         }
       ],
@@ -593,8 +593,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "time() - max(hookway_replay_gc_last_success_timestamp_seconds{job=~\"$job\"})",
-          "legendFormat": "age",
+          "expr": "time() - hookway_replay_gc_last_success_timestamp_seconds{job=~\"$job\"}",
+          "legendFormat": "{{job}} {{instance}} since success/startup",
           "refId": "A"
         }
       ],
@@ -636,8 +636,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "min(hookway_replay_db_up{job=~\"$job\"})",
-          "legendFormat": "up (min across replicas)",
+          "expr": "hookway_replay_db_up{job=~\"$job\"}",
+          "legendFormat": "{{job}} {{instance}} up",
           "refId": "A"
         },
         {
@@ -688,8 +688,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max(hookway_replay_schema_version{job=~\"$job\"})",
-          "legendFormat": "applied",
+          "expr": "max by (job) (hookway_replay_schema_version{job=~\"$job\"})",
+          "legendFormat": "{{job}} applied",
           "refId": "A"
         }
       ],
@@ -827,6 +827,178 @@
         }
       ],
       "title": "Payload downloads",
+      "type": "timeseries",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Replica-local successful database sample freshness; 0 timestamp means no successful sample yet. Existing shared gauges are last-known values, not evidence of current DB access.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 76
+      },
+      "id": 22,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "time() - hookway_replay_state_last_success_timestamp_seconds{job=~\"$job\"}",
+          "legendFormat": "{{job}} {{instance}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "State sample age",
+      "type": "timeseries",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Replica-local configuration. Zero disables automatic GC; successful timestamp starts at startup until the first sweep. External GC requires separate job monitoring.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 76
+      },
+      "id": 23,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "hookway_replay_gc_interval_seconds{job=~\"$job\"}",
+          "legendFormat": "{{job}} {{instance}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Configured automatic GC interval",
+      "type": "timeseries",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "SQLSTATE 53100 storage_exhausted is physical DB space exhaustion, distinct from configured retention capacity. Other unexpected failures remain bounded as other.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 84
+      },
+      "id": 24,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (job, reason) (increase(hookway_replay_store_failures_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{job}} {{instance}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Store failures by cause",
+      "type": "timeseries",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Default hot-path storm limits preserve service diagnostics without unbounded logs. Debug explicitly bypasses suppression and requires a scoped operator decision.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 84
+      },
+      "id": 25,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (job) (increase(hookway_replay_logs_suppressed_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "{{job}} {{instance}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Suppressed diagnostic records",
       "type": "timeseries",
       "options": {
         "legend": {

@@ -121,15 +121,19 @@ type WebhookAuthConfig struct {
 }
 
 type WebhookConfig struct {
-	URL          string
-	Timeout      time.Duration
-	MaxQueue     int
-	DrainTimeout time.Duration
-	DeliveryMode string // "" (async) | "sync" | "async"
-	DeadLetter   WebhookDeadLetterConfig
-	Retry        RetryPolicyConfig
-	Auth         WebhookAuthConfig
-	TLS          WebhookTLSConfig
+	URL string
+	// AllowPrivateTargets permits deliberately internal request-templated hosts.
+	// Literal operator-configured hosts retain their existing trust policy.
+	AllowPrivateTargets bool
+	Timeout             time.Duration
+	MaxQueue            int
+	MaxQueueBytes       int64
+	DrainTimeout        time.Duration
+	DeliveryMode        string // "" (async) | "sync" | "async"
+	DeadLetter          WebhookDeadLetterConfig
+	Retry               RetryPolicyConfig
+	Auth                WebhookAuthConfig
+	TLS                 WebhookTLSConfig
 }
 
 // WebhookDeadLetterConfig points a failed async webhook delivery at another
@@ -383,12 +387,14 @@ type rawDestinationConfig struct {
 		} `yaml:"tls"`
 	} `yaml:"mongodb"`
 	Webhook struct {
-		URL          string `yaml:"url"`
-		Timeout      string `yaml:"timeout"`
-		MaxQueue     int    `yaml:"max_queue"`
-		DrainTimeout string `yaml:"drain_timeout"`
-		DeliveryMode string `yaml:"delivery_mode"`
-		DeadLetter   struct {
+		URL                 string `yaml:"url"`
+		AllowPrivateTargets bool   `yaml:"allow_private_targets,omitempty"`
+		Timeout             string `yaml:"timeout"`
+		MaxQueue            int    `yaml:"max_queue"`
+		MaxQueueBytes       int64  `yaml:"max_queue_bytes"`
+		DrainTimeout        string `yaml:"drain_timeout"`
+		DeliveryMode        string `yaml:"delivery_mode"`
+		DeadLetter          struct {
 			Destination string `yaml:"destination"`
 			Target      string `yaml:"target"`
 		} `yaml:"dead_letter"`
@@ -532,6 +538,9 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 		issues = append(issues, issue)
 	}
 	webhookTimeout, issue := parseDuration(fieldPrefix+".webhook.timeout", raw.Webhook.Timeout, 10*time.Second)
+	if raw.Webhook.MaxQueueBytes < 0 {
+		issues = append(issues, validationError(fieldPrefix+".webhook.max_queue_bytes", "must be non-negative", "omit or use 0 for the 64 MiB default; use a positive finite byte budget to admit larger async deliveries"))
+	}
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
@@ -659,11 +668,13 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			},
 		},
 		Webhook: WebhookConfig{
-			URL:          raw.Webhook.URL,
-			Timeout:      webhookTimeout,
-			MaxQueue:     raw.Webhook.MaxQueue,
-			DrainTimeout: webhookDrain,
-			DeliveryMode: raw.Webhook.DeliveryMode,
+			URL:                 raw.Webhook.URL,
+			AllowPrivateTargets: raw.Webhook.AllowPrivateTargets,
+			Timeout:             webhookTimeout,
+			MaxQueue:            raw.Webhook.MaxQueue,
+			MaxQueueBytes:       raw.Webhook.MaxQueueBytes,
+			DrainTimeout:        webhookDrain,
+			DeliveryMode:        raw.Webhook.DeliveryMode,
 			DeadLetter: WebhookDeadLetterConfig{
 				Destination: raw.Webhook.DeadLetter.Destination,
 				Target:      raw.Webhook.DeadLetter.Target,

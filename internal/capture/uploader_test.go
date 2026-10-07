@@ -1,12 +1,20 @@
 package capture
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +22,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/metrics"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
+	"github.com/jaysongiroux/hook_way/internal/tlsfiles"
 )
 
 type fakeMetrics struct {
@@ -180,6 +189,120 @@ func TestUploaderDoesNotRetryDefiniteRefusals(t *testing.T) {
 		if len(got()) != 1 {
 			t.Fatalf("%d: %d attempts, want 1", status, len(got()))
 		}
+	}
+}
+
+func TestUploaderRefusesRedirectsWithoutForwardingCredentialsOrArtifacts(t *testing.T) {
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		for _, sameOrigin := range []bool{false, true} {
+			t.Run(fmt.Sprintf("status=%d/same-origin=%t", status, sameOrigin), func(t *testing.T) {
+				var leaked, calls atomic.Int32
+				other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					leaked.Add(1)
+					w.WriteHeader(http.StatusCreated)
+				}))
+				defer other.Close()
+				rec := testRecord(t)
+				if len(rec.Snapshot) == 0 || len(rec.Payload) == 0 {
+					t.Fatal("redirect regression requires both snapshot and payload artifacts")
+				}
+				source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == "/redirected" {
+						leaked.Add(1)
+						w.WriteHeader(http.StatusCreated)
+						return
+					}
+					calls.Add(1)
+					body, _ := io.ReadAll(r.Body)
+					if r.Header.Get("Authorization") != "Bearer "+testToken || !bytes.Contains(body, rec.Snapshot) || !bytes.Contains(body, rec.Payload) {
+						t.Error("configured replay receiver did not receive credentials/artifacts")
+					}
+					target := other.URL
+					if sameOrigin {
+						target = "/redirected"
+					}
+					w.Header().Set("Location", target)
+					w.WriteHeader(status)
+				}))
+				defer source.Close()
+				m := newFakeMetrics()
+				u := newTestUploader(t, source.URL, m)
+				u.submit(pendingFor(rec))
+				waitUntil(t, "redirect rejection", func() bool { return m.count("dropped", DropRejected) == 1 })
+				if calls.Load() != 1 || leaked.Load() != 0 || m.count("uploaded", "orders") != 0 {
+					t.Fatal("redirect forwarded or falsely accepted the captured record")
+				}
+			})
+		}
+	}
+}
+
+func TestUploaderTransportFailureLogsSafeDiagnostic(t *testing.T) {
+	source := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	u := newTestUploader(t, source.URL+`/PATHSECRET?api_key=quoted"QUERYSECRET`, newFakeMetrics())
+	source.Close()
+	var logs bytes.Buffer
+	u.logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	u.submit(pendingFor(testRecord(t)))
+	if err := u.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"PATHSECRET", "QUERYSECRET", testToken} {
+		if strings.Contains(logs.String(), marker) {
+			t.Fatalf("capture failure log retained %s", marker)
+		}
+	}
+	if !strings.Contains(logs.String(), source.URL) || !strings.Contains(logs.String(), "connection refused") {
+		t.Fatal("capture diagnostic lost its destination or transport failure class")
+	}
+}
+
+func TestUploaderLocalTLSProxyVerifiesCAAndPreservesArtifacts(t *testing.T) {
+	backend, received := fakeReplay(t, http.StatusCreated)
+	upstream, err := url.Parse(backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(upstream))
+	defer proxy.Close()
+	ca := filepath.Join(t.TempDir(), "proxy-ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: proxy.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		tls     tlsfiles.Files
+		trusted bool
+	}{
+		{"configured CA", tlsfiles.Files{CACert: ca}, true},
+		{"untrusted certificate", tlsfiles.Files{}, false},
+		{"wrong server name", tlsfiles.Files{CACert: ca, ServerName: "wrong.local.test"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(received())
+			m := newFakeMetrics()
+			u, err := NewUploader(UploaderOptions{URL: proxy.URL, Token: testToken, TLS: tc.tls, Metrics: m, Logger: slog.New(slog.DiscardHandler)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			u.backoff = time.Millisecond
+			t.Cleanup(func() { _ = u.Close() })
+			rec := testRecord(t)
+			u.submit(pendingFor(rec))
+			if tc.trusted {
+				waitUntil(t, "verified TLS upload", func() bool { return m.count("uploaded", "orders") == 1 })
+				got := received()
+				if len(got) != before+1 || got[before].auth != "Bearer "+testToken || got[before].meta.ID != rec.Metadata.ID ||
+					!bytes.Equal(got[before].parts[replaywire.PartSnapshot], rec.Snapshot) || !bytes.Equal(got[before].parts[replaywire.PartPayload], rec.Payload) {
+					t.Fatal("TLS termination changed capture authentication or artifacts")
+				}
+			} else {
+				waitUntil(t, "certificate failure", func() bool { return m.count("dropped", DropUploadFailed) == 1 })
+				if len(received()) != before || m.count("uploaded", "orders") != 0 {
+					t.Fatal("untrusted/mismatched TLS certificate reached HTTP replay backend")
+				}
+			}
+		})
 	}
 }
 

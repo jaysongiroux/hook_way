@@ -21,6 +21,16 @@ are a separate mechanism described below.
 
 Startup parses and validates the config before connecting to its destinations or serving traffic. The file defines `flows:`. Invalid YAML, unknown fields, missing required values, invalid durations, duplicate or overlapping flow paths, and unsupported backend/auth types stop the app with field-level errors and suggestions.
 
+Use `hookway validate` to check without connecting to dependencies. Supported
+risk choices produce actionable warnings, including unlimited request admission,
+universal proxy trust, known sample credentials, and weaker acknowledgement
+policies. Ordinary validation accepts these choices; `--strict` fails on warnings
+as an optional policy gate. `--no-env` checks templates without reading secret
+references or expanding environment values. See [CLI validation](cli.md#hookway-validate)
+for the complete policy and JSON missing-environment behavior. Local HTTP,
+private destinations, explicit `no_auth`, and proxy-terminated TLS remain valid
+operator choices.
+
 Example validation output:
 
 ```txt
@@ -42,6 +52,9 @@ config validation failed
 - `server.max_body_bytes`: required positive integer used for configuration linting. Each `read_body.max_bytes` sets the enforced limit; it does not inherit this value.
 - `server.max_inflight_requests`: optional integer. Omitted or explicit `0` defaults to `256`, capping concurrently processed webhook requests; by default, once reached, further requests are shed with `503 Service Unavailable` and a `Retry-After` header before any body is buffered. Explicit `-1` disables the limit (unlimited in-flight requests). Any other negative value is rejected. Health, readiness, and metrics endpoints are never subject to this limit.
 - `server.max_pending_requests` and `server.admission_wait_timeout`: optional bounded waiting before an execution slot becomes available. Set both to positive values, for example `256` and `1s`; omitting both retains immediate overload rejection. Requires a finite `max_inflight_requests`. Waiting uses the existing HTTP handler goroutine and reads no body. Queue overflow or timeout returns `503` with `Retry-After`; cancellation or server close ends waiting without running the flow. The wait timeout must be shorter than read, write and shutdown timeouts. It uses part of the response budget, so leave room for subsequent processing and publishing. Observe `hookway_admission_waiting_requests`, `hookway_admission_wait_total{flow,result}` and `hookway_admission_wait_duration_seconds{flow,result}`; results are bounded to admitted, full, timeout, canceled and closing. This queue is volatile and sends success only after the configured flow completes.
+
+Admission rejection closes an HTTP/1 connection with an unread body so a slow sender cannot delay the `503` while the HTTP server tries to drain it for reuse. Healthy keep-alive connections are unchanged. Admission limits executions, not all accepted TCP connections; size proxy/OS connection limits independently. See [resource limits](../operations/resource-limits.md) for combined time and memory budgets.
+
 - `server.fanout_concurrency`: optional non-negative integer. Caps concurrent publishes per webhook request for flows using `delivery_failure_policy: skip_failed`. `0` (default) uses `8`.
 - `server.readiness_require_all`: optional boolean, default `false`. When false, `/ready` returns 200 with a per-flow body while at least one flow is ready. When true, `/ready` returns 503 if any flow is unready.
 
@@ -888,12 +901,33 @@ See `examples/destinations/redis_stream.yaml` for a full annotated reference wit
 
 Webhook fields live under `destinations.<id>.webhook`. Hookway delivers each inbound webhook event to a configured HTTP/HTTPS endpoint as an outbound HTTP POST.
 
+Webhook deliveries do not follow HTTP redirects, including same-origin redirects.
+Configure the receiver's canonical URL so credentials, signatures and original
+payload bytes stay at the selected endpoint. A `3xx` is a terminal delivery
+failure, not acceptance by the receiver. This applies to sync, async and proxy
+payload modes; intentional literal localhost/private HTTP endpoints remain valid.
+
+If `url` contains a `{variable}` in its authority, its receiver is partly chosen
+by request data. Such deliveries reject loopback, private, link-local, metadata,
+and other blocked addresses by default. DNS is checked at every new connection
+and the dial is pinned to a vetted IP; changing a DNS answer cannot redirect a
+new connection to a forbidden address. Guarded transports do not use environment
+forward proxies and do not share their connection pool with unguarded ones.
+For an intentional internal templated receiver, set
+`destinations.<id>.webhook.allow_private_targets: true`. This exception applies
+only to the named destination and never relaxes DNS-label substitution, safe
+path values, outbound auth, or redirect refusal. Literal operator-selected hosts,
+including environment-expanded literal hosts and URLs with only path variables,
+retain their existing local/private networking support.
+
 **Delivery mode (`delivery_mode`):** `async` (default) or `sync`.
 
 - **`async` (default):** `Publish()` enqueues the delivery job and returns immediately with `nil` (success). With the default response policy, the inbound sender receives Hookway's own `202 Accepted`: the event was accepted into memory for delivery, not confirmed by the receiver. Actual delivery outcome is observable via logs, the `hookway_webhook_*` Prometheus metrics, and (optionally) a `dead_letter` destination. This is the default so upgrades preserve existing behavior.
 - **`sync`:** `Publish()` performs delivery inline (including retries/backoff) and returns the outcome. With default failure handling, a terminal `4xx` or exhausted retries returns an error and the inbound sender sees a non-2xx response. The shared `server.publish_timeout` bounds publication, including retries. Normal publication is detached from caller cancellation: a disconnect does not cancel a delivery already in progress. Use sync when the sender should observe downstream delivery failure directly, and keep the total latency within its acknowledgement deadline. `dead_letter` does not apply to sync mode. Explicit failure response policies or `on_error` paths can still acknowledge a failed delivery; see [Delivery guarantees](../operations/delivery-guarantees.md).
 
-**Per-destination delivery engine and worker pool (async):** each webhook destination has its **own** delivery engine (goroutine pool + queue), so a slow or failing target cannot head-of-line-block deliveries to other destinations. The number of concurrent delivery workers per engine is controlled by `server.fanout_concurrency`. The engine's job queue is bounded by `max_queue` (**per-destination**, default 1000). When the queue is full, `Publish()` returns an error and the upstream inbound request receives a non-2xx response — the upstream sender is expected to retry, which creates natural backpressure. Readiness (`/readyz`) reports a webhook destination as not-ready when its queue is ≥90% full.
+**Per-destination delivery engine and worker pool (async):** each webhook destination has its **own** delivery engine (goroutine pool + queue), so a slow or failing target cannot head-of-line-block deliveries to other destinations. The number of concurrent delivery workers per engine is controlled by `server.fanout_concurrency`. Two independent limits apply: `max_queue` bounds queued jobs (**per-destination**, default 1000), and `max_queue_bytes` bounds conservative accounted bytes for **queued and active** jobs (default 64 MiB). Either limit can reject publication before async acceptance; with default response policies, the sender receives a non-2xx response and can retry. Readiness (`/readyz`) reports a webhook destination as not-ready at ≥90% of either limit. Sync/inline delivery does not use the async queue limits.
+
+The byte budget includes retained raw/object/encoded payloads, headers and parsed values with JSON/base64 headroom; it is not exact wire size or a hard heap cap. Jobs remain charged through retries, dead-letter publication and terminal callbacks. Aliases are conservatively charged again; cycles and excessive structure fail boundedly. A job too large for the remaining budget uses the existing queue-full error, without truncation or partial acceptance. Raise a finite limit deliberately for legitimate large files, and reserve additional container memory for parser, allocator, transport and capture overhead. See [resource limits and sizing](../operations/resource-limits.md).
 
 **Graceful drain on shutdown (async):** on SIGTERM / shutdown, Hookway attempts to drain in-flight and queued deliveries within `drain_timeout` (defaults to `server.shutdown_timeout`). A completed drain avoids abandoning queued work; an expired deadline, forced termination, or hard crash (kill -9, OOM, host failure) can lose acknowledged queued or in-flight deliveries. Neither `dead_letter` nor replay makes this memory queue durable: both need the live process to observe and forward a failure. Use broker-confirmed publication when accepted work must survive a core crash. See [Delivery guarantees and recovery](../operations/delivery-guarantees.md).
 
@@ -909,9 +943,11 @@ For a synchronous reverse proxy of the inbound request (upstream status, headers
 
 - `destinations.<id>.type`: set to `webhook`.
 - `destinations.<id>.webhook.url`: required. The target endpoint URL. Must be `http://` or `https://`.
+- `destinations.<id>.webhook.allow_private_targets`: optional boolean, default `false`. Permits private/loopback receivers for a request-templated authority; requires a `{variable}` in the URL authority. Omit for literal hosts, which already support intentional local/private destinations.
 - `destinations.<id>.webhook.delivery_mode`: optional. `async` (default) or `sync`. See [Delivery mode](#webhook) above.
 - `destinations.<id>.webhook.timeout`: optional per-request HTTP timeout. Default `10s`.
 - `destinations.<id>.webhook.max_queue`: optional bound on the in-memory delivery queue (async only, per-destination). Default `1000`. When the queue fills, inbound `Publish` calls fail (backpressure).
+- `destinations.<id>.webhook.max_queue_bytes`: optional positive integer, conservative queued-plus-active byte budget (async only, per-destination). Omitted or `0` uses `67108864` (64 MiB); negative values are invalid. There is no unlimited value. A single oversized job or exhausted budget fails publication before queue acceptance. Raise this alongside the container memory allowance when supporting large files.
 - `destinations.<id>.webhook.drain_timeout`: optional graceful-drain deadline on shutdown (async only). Defaults to `server.shutdown_timeout`.
 - `destinations.<id>.webhook.dead_letter`: optional (async only). Redirect terminally-failed deliveries to another destination.
   - `destination`: id of a configured **non-webhook** destination. Required with `target`.
@@ -934,6 +970,7 @@ For a synchronous reverse proxy of the inbound request (upstream status, headers
 | HTTP status / error | Behavior |
 |---------------------|----------|
 | `2xx` | Success — delivery complete |
+| `3xx` | Terminal — redirect is not followed; use the canonical receiver URL |
 | `429` | Retry with backoff |
 | `5xx` | Retry with backoff |
 | Network error / timeout | Retry with backoff |
@@ -1036,6 +1073,8 @@ assert constant_time_equal(received_hex, expected_hex)
 | `hookway_webhook_dead_letter_failures_total` | `destination_queue_id`, `queue` | Dead-letter redirects that themselves failed (or fired with no resolver). The event is then logged and dropped. |
 | `hookway_webhook_queue_depth` | `destination_queue_id` | Current async delivery queue depth (gauge). |
 | `hookway_webhook_queue_capacity` | `destination_queue_id` | Configured async delivery queue capacity (gauge; set once at startup). |
+| `hookway_webhook_queue_accounted_bytes` | `destination_queue_id` | Conservative bytes retained by queued and active async jobs, including retries and terminal callbacks (gauge; not live heap). |
+| `hookway_webhook_queue_accounted_capacity_bytes` | `destination_queue_id` | Configured async accounted-byte capacity (gauge). |
 
 > **Metric change:** `hookway_webhook_dropped_total` gained a `reason` label in this release. Dashboards/alerts that aggregated the metric without a `reason` selector continue to work; those that pinned an exact label set must add `reason`.
 
@@ -1052,6 +1091,7 @@ destinations:
       delivery_mode: "async"    # sync | async (default async)
       timeout: "10s"
       max_queue: 1000           # async only; per-destination
+      max_queue_bytes: 67108864 # async only; queued + active accounted bytes
       drain_timeout: "30s"      # async only
       dead_letter:              # async only; must reference a non-webhook destination
         destination: "dlq-rabbit"
@@ -1242,9 +1282,12 @@ guard is on, the dialer resolves the host itself, classifies **every**
 candidate address, and dials a specific vetted IP — so the address that was
 checked is the address that is connected to. Guarded and unguarded nodes use
 separate connection pools, so a guarded request cannot reuse a connection
-opened without this check. Redirects are never followed
-(`http_request` returns the redirect response as-is), so an upstream cannot
-bounce the request somewhere else either.
+opened without this check. Redirects are not followed by default (`http_request`
+returns the response as-is). An explicit `redirects.max_hops` policy follows only
+bounded redirects on the original scheme and host/port, rechecks the target and
+normalizes its path. Cross-origin changes and userinfo are refused; managed
+credential requests never follow redirects. Capture uploads and replay control
+calls also refuse redirects and require the canonical receiver URL.
 
 **`allow_private_targets`**
 
@@ -1335,6 +1378,9 @@ HMAC schemes verify the **raw** body bytes. New providers are added by registeri
 ### Envelope and publish
 
 - `envelope`: builds the JSON envelope (`body_format: json|xml|raw|multipart`). `json` decodes to an object; `xml` decodes to an element tree that `filter`, `code`, `transform` `xml_prune`, and `http_request` `body: transformed` all understand; `multipart` decodes a `multipart/form-data` upload to `{fields, files}` (see [Multipart bodies](#multipart-bodies)); `raw` leaves the body empty and publishes the bytes as `raw_body_base64`. Headers are redacted/allowlisted using `security.redacted_header_denylist` and `security.forwarded_header_allowlist`.
+
+For `body_format: json`, `envelope.json.max_depth` defaults to `128` (maximum `1024`), and `envelope.json.max_nodes` defaults to `1000000` (maximum `1000000`). Positive overrides are optional. A syntax/structure preflight checks valid JSON before allocating the parsed tree, including values supplied under duplicate object keys. Exceeding either structural budget returns `413`; malformed JSON retains the existing raw-base64 fallback. These limits do not replace `read_body.max_bytes`. A downstream `json_validate` has its own fixed depth/node limits, so raising envelope depth does not raise validation limits.
+
 - `publish`: substitutions in dynamic targets use safe names (`[a-zA-Z0-9._-]`, 1–128 characters) for destination matching. Lambda targets additionally allow function ARNs and `name:qualifier` forms (1–256 characters). `destination` (id under top-level `destinations`), `target` (queue/topic/routing key/function name, or `{var}` template), optional `create`, optional `message_attributes` (SNS/SQS MessageAttributes; at most 10), optional `payload` (`envelope` default, or `object` for s3 / redis_kv — see [Publish payload modes](#publish-payload-modes)). A successful publish may take **at most one** unlabeled success edge; that edge runs only after `Publish` returns nil, carrying the **input** envelope (not the destination response) on the **same** `server.publish_timeout` budget. Zero success edges remains a valid leaf. `respond` is rejected anywhere reachable along that continuation (including through `code`). Fan-out of sibling publishes still belongs on the node before the first publish. A failed publish does not run its success edge; `on_error` is unchanged.
 - `respond`: sync HTTP response (`status`, `headers`, `body`, or `passthrough` of an upstream `http_request`).
 - `http_request`: outbound request (`url` may use `{rest}` / vars; `forward_method`, `forward_query`, `forward_headers`, `error_on_status`, `retry`, `allow_private_targets`). `Authorization` and `Cookie` are never forwarded unless explicitly listed in `forward_headers`. A captured path variable containing a `..` segment, a `#`, a `?`, a backslash, or an ASCII control character is rejected with `400`. A `{variable}` in the `url` **host** must be followed by a literal dotted domain suffix, and a templated host is additionally checked against the private-network egress policy unless `allow_private_targets: true` — see [`http_request` outbound egress policy](#http_request-outbound-egress-policy). See also [Security](security.md) and `examples/showcase/proxy.yaml` / `examples/on_error.yaml`.
@@ -1536,6 +1582,7 @@ the rest of the flow can address:
   multipart:
     max_parts: 4            # parts allowed before the request is rejected (default 16, max 256)
     max_part_bytes: 2097152 # per-part cap (default 1 MiB)
+    max_total_bytes: 4194304 # optional aggregate decoded bytes (maximum 64 MiB)
     include_content: true   # carry the bytes as base64 (default true)
 ```
 
@@ -1564,15 +1611,16 @@ repeated field name gets a `#2`, `#3` suffix in document order
 The signature is always verified against the raw bytes before anything is
 parsed, so an unsigned upload never reaches the multipart reader.
 
-**Memory.** The whole request is buffered by `read_body`, and each carried part
-is held again, plus a base64 copy at 4/3 its size. Peak footprint per in-flight
-request is roughly the raw body plus `4/3 x` the carried content, and again per
-branch that clones the body. The bound you control is
-`max_parts x max_part_bytes` — the defaults are modest for that reason. Set
-`include_content: false` when you only route on metadata: each file then
-carries `size` and `content_omitted: true` instead of `content`, and the bytes
-are never copied. Genuinely large uploads want a streaming intake, which
-Hookway does not have.
+**Memory.** The whole request is buffered by `read_body`; parsing temporarily
+buffers each decoded part, and carried file content retains a base64 copy of
+`4 * ceil(decoded_bytes / 3)` bytes. Raw bytes, parsed metadata, transient part
+buffers and branch copies can overlap, so this expansion formula is not a peak
+heap guarantee. Use `read_body.max_bytes`, `max_parts`, `max_part_bytes` and an
+optional `max_total_bytes` together. Set `include_content: false` when you only
+route on metadata: each file then carries `size` and `content_omitted: true`
+instead of a retained base64 copy. The parser still reads a bounded temporary
+part buffer to determine its size. Genuinely large uploads want a streaming
+intake, which Hookway does not have.
 
 **Limits worth knowing before you design around it:**
 
@@ -1584,7 +1632,8 @@ Hookway does not have.
 | Claimed types | `content_type` is what the vendor's part headers said, verbatim. There is no magic-byte sniffing, so a filter matches the claim, not the content. |
 | Repeated fields | Non-file fields keep the last value; files get `#2`/`#3` keys. |
 | Transform kinds | `field_map`, `changed_fields`, and `xml_prune` all reject a multipart body at validate time — read the parts in a `code` node instead. |
-| Statuses | Over `max_parts` or `max_part_bytes` is `413`; a malformed body or a non-form-data content type is `400`. |
+| Aggregate cap | Optional `max_total_bytes` limits all decoded parts together, including files omitted from the output. Omitted means no additional aggregate cap; wire, part-count and per-part caps still apply. The reader stops at the smaller of the part cap and remaining aggregate cap plus one byte, without draining an over-limit part. |
+| Statuses | Over `max_parts`, `max_part_bytes` or `max_total_bytes` is `413`; a malformed body or a non-form-data content type is `400`. |
 
 `examples/multipart.yaml` is a complete flow.
 
@@ -1641,7 +1690,7 @@ is `queue.Message` in `internal/queue/publisher.go`.
 | `schema_version` | string | yes | Envelope contract version, currently `"1.0"`. Additive changes keep the major; a removal or a change of meaning requires a new version. Gate your parser on this. |
 | `id` | string | yes | UUIDv7 ID assigned per inbound request and retained by internal delivery retries and replay. A sender retry creates a new ID; deduplicate those with a stable sender event ID. |
 | `idempotency_key` | string | **no — omitted on ingest** | Present in the struct, but ingest never populates it, so it is omitted from every normally-published envelope. Do not build dedup on it. See [Idempotency](security.md#idempotency). |
-| `request_id` | string | when non-empty | The inbound `X-Request-ID` (or `security.request_id_header`) if the sender supplied one, else a generated UUID. Matches the `X-Request-ID` response header and the `request_id` log field. |
+| `request_id` | string | when non-empty | One nonempty non-whitespace printable ASCII inbound `X-Request-ID` (or `security.request_id_header`) of at most 128 bytes; missing, invalid or repeated values use a generated UUID. Matches the `X-Request-ID` response header and `request_id` log field. |
 | `trace_id` | string | when non-empty | 32-hex W3C trace id, taken from the inbound `traceparent` or `X-Trace-ID` when either is a valid trace id, else generated. |
 | `traceparent` | string | when non-empty | The outbound W3C `traceparent` value: the inbound header verbatim when syntactically valid, otherwise one synthesized from `trace_id`. The **webhook** destination sets it as a real header on the outbound request (envelope and proxy modes); every other destination carries it inside the JSON and does nothing else with it. |
 | `endpoint` | string | yes | The **request path** the event arrived on (e.g. `/webhooks/github`). Note this differs from the `endpoint` in Hookway's *HTTP response* body and in metric/log labels, which is the flow name. The name is kept for compatibility with pre-graph consumers. |
@@ -1678,7 +1727,7 @@ listener, including error responses, before any flow runs:
 |---|---|---|
 | `X-Content-Type-Options` | `nosniff` | always |
 | `Cache-Control` | `no-store` | always |
-| `X-Request-ID` | the request id | always — echoed from the inbound `X-Request-ID` (or `security.request_id_header`) when the sender sent one, otherwise a freshly generated UUID. It matches the envelope's `request_id` and the `request_id` log field, so it is the correlation handle to give a sender debugging a delivery. |
+| `X-Request-ID` | the request id | always — a single nonempty non-whitespace printable ASCII inbound value of at most 128 bytes is echoed; missing, invalid or repeated values use a generated UUID. This applies to `security.request_id_header` too. It matches the envelope's `request_id` and log field; give the returned value to a sender investigating a delivery. |
 | `Retry-After` | `1` | on the `503` returned when `server.max_inflight_requests` is exhausted (`{"error":"server busy"}`). Not set on other 503s. |
 | `Allow` | the flow's configured methods | on a `405`, when the request method is not in the trigger's `methods` list. A trigger with `methods: [ANY]` never 405s. |
 
@@ -1714,7 +1763,8 @@ The interrupt is checked between JavaScript statements. A pathological regex may
 Hookway emits structured `slog` JSON logs. Each log record carries a consistent set of field keys so log queries and alerts are stable across destinations.
 
 - `logging.level`: optional, one of `debug`, `info`, `warn`, `error`; default `info`. Controls the minimum severity written to stdout — e.g. set `debug` to see the startup verify/exists checks and retry-attempt lines called out below, which are otherwise suppressed at the default `info` level. `HOOKWAY_LOG_LEVEL` overrides this at process start (env > `logging.level` > info). An invalid env or config value fails startup.
-- Flow admission refusals use bounded error summaries instead of a request log for every 503. Each configured flow permits at most one summary write in flight and one summary per second; other refused handlers do not wait for that writer. `rejected_requests` counts refusals accumulated since the preceding summary. The final unsummarized interval remains visible in HTTP/admission metrics, which count every request. Publication failures and recovery records retain their existing logging behavior.
+- Flow admission refusals use bounded error summaries instead of a request log for every 503. Each configured flow permits at most one summary write in flight and one summary per second; other refused handlers do not wait for that writer. `rejected_requests` counts refusals accumulated since the preceding summary. The final unsummarized interval remains visible in HTTP/admission metrics, which count every request.
+- Native core/replay info/warn/error logging additionally samples thirty fixed hot-path message categories at ten records per second per category, with suppression summaries and unlabeled `hookway_logs_suppressed_total` / `hookway_replay_logs_suppressed_total` counters. Logger clones share the budget. Outcome counters and persisted audit are not sampled. Startup/configuration/shutdown and operator audit diagnostics bypass this budget; explicit `debug` logging bypasses sampling for bounded troubleshooting. This is not an asynchronous sink or a universal log-byte/memory bound. See [telemetry limits](../operations/observability.md#telemetry).
 - `logging.header_allowlist`: optional list of HTTP header names that may appear in structured request logs. **Empty (the default) logs no request headers** (fail-closed). Allowed names are still redacted by the built-in sensitive-header heuristics and `security.redacted_header_denylist`. Proxy forwarding uses `security.forwarded_header_allowlist` and is independent of this list.
 
 `hookway_config_load_failures_total` still increments on a failed load, but **fatal pre-listener failures are primarily visible via structured logs and a supervisor restart**. The process usually exits before Prometheus can scrape that counter.
@@ -1727,9 +1777,9 @@ Hookway emits structured `slog` JSON logs. Each log record carries a consistent 
 | `target` | publish path, startup | Queue/topic/routing-key/stream name (e.g. `stripe-events`). |
 | `event_id` | publish path | Envelope event id (`id` on the published message). |
 | `endpoint` | publish path | Flow name (e.g. `stripe_billing`); the metric label remains `endpoint` for compatibility. |
-| `request_id` | publish path | Value of the configured `request_id_header`, when present. |
+| `request_id` | publish path | Valid bounded value of the configured `request_id_header`, or generated UUID; matches the response/envelope. |
 | `trace_id` | publish path | Trace id propagated from the inbound request, when present. |
-| `error` | error/warn records | Go error string. |
+| `error` | error/warn records | Diagnostic error text with URL/credential redaction on protected backend paths; not a place for payloads or custom-code secrets. |
 | `subscribers` | `redis_pubsub` | Integer subscriber count at publish time; `0` triggers a drop warning. |
 | `attempt` | `rabbitmq` retry | Publish attempt number. `attempt=1` is the initial try (not logged); the first logged retry is `attempt=2`. |
 | `group` | `redis_stream` | Consumer group name used or created at startup. |
@@ -1741,7 +1791,7 @@ Hookway emits structured `slog` JSON logs. Each log record carries a consistent 
 
 | Level | Event |
 |-------|-------|
-| **Error** | Publish failure — logged once centrally at the request handler, not per-publisher. |
+| **Error** | Request/flow publication failures and terminal async failures; repeated hot-path diagnostics are storm-sampled in normal mode. Counters count every outcome. |
 | **Info** | Startup resource creation: "created queue", "created topic", "created bucket", "ensured table", "created consumer group". |
 | **Debug** | Startup verify/exists checks; `redis_list` and `redis_kv` per-target registration; RabbitMQ publish retry (with `attempt`); MongoDB duplicate-key skip ("skipped duplicate event"). |
 | **Warn** | `redis_pubsub` no-subscriber drop ("published to channel with no subscribers; message dropped") — also increments `hookway_redis_pubsub_dropped_no_subscriber_total`. |

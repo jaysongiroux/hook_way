@@ -25,21 +25,25 @@ func loadNamed(t *testing.T, file string) dashboard {
 func TestReplayDashboard(t *testing.T) {
 	d := loadNamed(t, "hookway-replay.json")
 	want := map[string]string{
-		"Records by kind and state":    "hookway_replay_records",
-		"Usage of retention limits":    "hookway_replay_capacity_bytes",
-		"Ingest outcomes":              "hookway_replay_captures_total",
-		"Runs queued and running":      "hookway_replay_runs",
-		"Oldest queued run":            "hookway_replay_oldest_queued_run_seconds",
-		"Runs finished":                "hookway_replay_runs_total",
-		"Executor calls":               "hookway_replay_executor_calls_total",
-		"Workers busy":                 "hookway_replay_workers_busy",
-		"Leases expired, late results": "hookway_replay_leases_expired_total",
-		"GC deletions":                 "hookway_replay_gc_deleted_records_total",
-		"Since last successful GC":     "hookway_replay_gc_last_success_timestamp_seconds",
-		"Database":                     "hookway_replay_db_up",
-		"API requests":                 "hookway_replay_http_requests_total",
-		"Auth failures":                "hookway_replay_auth_failures_total",
-		"Payload downloads":            "hookway_replay_payload_downloads_total",
+		"State sample age":                 "hookway_replay_state_last_success_timestamp_seconds",
+		"Configured automatic GC interval": "hookway_replay_gc_interval_seconds",
+		"Store failures by cause":          "hookway_replay_store_failures_total",
+		"Suppressed diagnostic records":    "hookway_replay_logs_suppressed_total",
+		"Records by kind and state":        "hookway_replay_records",
+		"Usage of retention limits":        "hookway_replay_capacity_bytes",
+		"Ingest outcomes":                  "hookway_replay_captures_total",
+		"Runs queued and running":          "hookway_replay_runs",
+		"Oldest queued run":                "hookway_replay_oldest_queued_run_seconds",
+		"Runs finished":                    "hookway_replay_runs_total",
+		"Executor calls":                   "hookway_replay_executor_calls_total",
+		"Workers busy":                     "hookway_replay_workers_busy",
+		"Leases expired, late results":     "hookway_replay_leases_expired_total",
+		"GC deletions":                     "hookway_replay_gc_deleted_records_total",
+		"Since last successful GC":         "hookway_replay_gc_last_success_timestamp_seconds",
+		"Database":                         "hookway_replay_db_up",
+		"API requests":                     "hookway_replay_http_requests_total",
+		"Auth failures":                    "hookway_replay_auth_failures_total",
+		"Payload downloads":                "hookway_replay_payload_downloads_total",
 	}
 	src, err := os.ReadFile("../../internal/replay/metrics/metrics.go")
 	if err != nil {
@@ -71,8 +75,11 @@ func TestReplayDashboard(t *testing.T) {
 				t.Errorf("panel %q sums a sampled gauge across replicas (use max): %s", p.Title, target.Expr)
 			}
 		}
-		if p.Title == "Records by kind and state" && !strings.Contains(joined, "max by (kind, delivery_status, dismissed)") {
+		if p.Title == "Records by kind and state" && !strings.Contains(joined, "max by (job, kind, delivery_status, dismissed)") {
 			t.Error("record gauge must preserve kind, delivery state and dismissal across replicas")
+		}
+		if (p.Title == "Database" || p.Title == "State sample age" || p.Title == "Since last successful GC") && (strings.Contains(joined, "max(") || strings.Contains(joined, "min(") || strings.Contains(joined, "max by") || strings.Contains(joined, "min by")) {
+			t.Errorf("panel %q hides the affected replica: %s", p.Title, joined)
 		}
 		if needle, ok := want[p.Title]; ok {
 			found[p.Title] = true
