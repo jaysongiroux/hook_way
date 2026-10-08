@@ -128,9 +128,12 @@ export function DestinationEditor({
       <Group grow align="flex-start" wrap="nowrap">
         <NameField name={name} taken={taken} onRename={onRename} />
         <Select
-          label="Type"
-          description="Backend this destination talks to."
-          data={DEST_TYPES}
+          label="Destination service"
+          description="The service that receives this destination's output."
+          data={DEST_TYPES.map((value) => ({
+            value,
+            label: destinationPresentation(value).label,
+          }))}
           value={type}
           allowDeselect={false}
           comboboxProps={{ keepMounted: false }}

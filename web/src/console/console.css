@@ -206,6 +206,9 @@
   scrollbar-color: var(--mantine-color-dark-4) var(--console-bg);
   scrollbar-width: thin;
 }
+.inbox-empty-state {
+  padding: 16px 12px;
+}
 .failure-table {
   table-layout: fixed;
 }

@@ -68,6 +68,49 @@ const initialFilters: Filters = {
   until: "",
 };
 type Query = NonNullable<paths["/v1/records"]["get"]["parameters"]["query"]>;
+const SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+type StoredSession = { credential: string; lastActivity: number };
+
+function readStoredSession(key: string): StoredSession | undefined {
+  try {
+    const stored = localStorage.getItem(key);
+    if (!stored) return;
+    const value = JSON.parse(stored) as Partial<StoredSession>;
+    if (
+      typeof value.credential !== "string" ||
+      !value.credential ||
+      typeof value.lastActivity !== "number" ||
+      !Number.isFinite(value.lastActivity)
+    ) {
+      localStorage.removeItem(key);
+      return;
+    }
+    if (Date.now() - value.lastActivity >= SESSION_IDLE_TIMEOUT_MS) {
+      localStorage.removeItem(key);
+      return;
+    }
+    return value as StoredSession;
+  } catch {
+    return;
+  }
+}
+
+function writeStoredSession(key: string, credential: string, lastActivity = Date.now()) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ credential, lastActivity }));
+  } catch {
+    // Keep the active session usable when browser storage is unavailable.
+  }
+}
+
+function clearStoredSession(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Storage may be disabled by the browser.
+  }
+}
+
 function queryOf(filters: Filters, cursor: string, inspection: boolean): Query {
   const query: Query = { limit: 50 };
   query.kind = inspection ? "inspection" : "failure";
@@ -87,6 +130,7 @@ function queryOf(filters: Filters, cursor: string, inspection: boolean): Query {
 
 export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
   const builder = useLocation().pathname === "/builder";
+  const storageKey = `hookway.replay.session:${apiUrl}`;
   React.useEffect(() => { document.title = builder ? "Hookway builder" : "Hookway replay console"; }, [builder]);
   const [wasm, setWasm] = React.useState<"loading" | "ready" | "error">(
     "loading",
@@ -97,21 +141,19 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
   const activeSession = React.useRef<Session>();
   const [loginBusy, setLoginBusy] = React.useState(false);
   const [loginError, setLoginError] = React.useState("");
+  const idleTimer = React.useRef<ReturnType<typeof setTimeout>>();
+  const restoreAttempted = React.useRef(false);
   const logout = React.useCallback(() => {
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    clearStoredSession(storageKey);
     activeSession.current?.dispose();
     activeSession.current = undefined;
     setSession(undefined);
     setIdentity(undefined);
     setCredential("");
     setLoginError("");
-  }, []);
-  React.useEffect(() => {
-    window.addEventListener("pagehide", logout);
-    return () => {
-      window.removeEventListener("pagehide", logout);
-      activeSession.current?.dispose();
-    };
-  }, [logout]);
+  }, [storageKey]);
+  React.useEffect(() => () => activeSession.current?.dispose(), []);
   const initialize = React.useCallback(async (retry = false) => {
     setWasm("loading");
     try {
@@ -125,18 +167,15 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
   React.useEffect(() => {
     void initialize();
   }, [initialize]);
-  async function login(e: React.FormEvent) {
-    e.preventDefault();
-    if (loginBusy) return;
+  async function authenticate(token: string, restore = false) {
     setLoginBusy(true);
     setLoginError("");
-    const candidate = createSession(credential.trim(), () => {
+    const candidate = createSession(token, () => {
       logout();
       setLoginError(
         "Your API key was rejected. Sign in again with a valid operator key.",
       );
     }, apiUrl);
-    setCredential("");
     activeSession.current = candidate;
     try {
       const me = result(
@@ -162,6 +201,8 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
       if (!candidate.signal.aborted) {
         setIdentity(me);
         setSession(candidate);
+        setCredential("");
+        writeStoredSession(storageKey, token);
       }
     } catch (caught) {
       const cancelled =
@@ -169,10 +210,72 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
       candidate.dispose();
       if (activeSession.current === candidate)
         activeSession.current = undefined;
-      if (!cancelled) setLoginError(requestError(caught, "Sign-in failed."));
+      if (!cancelled) {
+        clearStoredSession(storageKey);
+        if (restore) setCredential("");
+        setLoginError(requestError(caught, "Sign-in failed."));
+      }
     } finally {
       setLoginBusy(false);
     }
+  }
+  React.useEffect(() => {
+    if (restoreAttempted.current) return;
+    restoreAttempted.current = true;
+    const stored = readStoredSession(storageKey);
+    if (stored) void authenticate(stored.credential, true);
+    // Restore this API's saved session once when the console mounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+  React.useEffect(() => {
+    if (!session) return;
+    const stored = readStoredSession(storageKey);
+    if (!stored) {
+      logout();
+      return;
+    }
+    let lastWrite = 0;
+    const scheduleExpiry = (lastActivity: number) => {
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      const remaining = SESSION_IDLE_TIMEOUT_MS - (Date.now() - lastActivity);
+      if (remaining <= 0) logout();
+      else idleTimer.current = setTimeout(logout, remaining);
+    };
+    const activity = () => {
+      const now = Date.now();
+      stored.lastActivity = now;
+      scheduleExpiry(now);
+      if (now - lastWrite >= 10_000) {
+        writeStoredSession(storageKey, stored.credential, now);
+        lastWrite = now;
+      }
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey) return;
+      const latest = readStoredSession(storageKey);
+      if (!latest) logout();
+      else {
+        stored.lastActivity = latest.lastActivity;
+        scheduleExpiry(latest.lastActivity);
+      }
+    };
+    scheduleExpiry(stored.lastActivity);
+    const activityEvents = ["pointerdown", "keydown", "touchstart", "mousemove", "scroll"] as const;
+    for (const event of activityEvents)
+      window.addEventListener(event, activity, { passive: true });
+    window.addEventListener("storage", onStorage);
+    return () => {
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      for (const event of activityEvents) window.removeEventListener(event, activity);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [session, storageKey, logout]);
+  async function login(e: React.FormEvent) {
+    e.preventDefault();
+    if (loginBusy) return;
+    const token = credential.trim();
+    if (!token) return;
+    await authenticate(token);
   }
   return (
     <Box
@@ -229,7 +332,7 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
                   Scopes: {identity.scopes.join(", ")}
                 </Text>
                 <Text size="xs" c="dimmed" mt={6}>
-                  Session kept in memory. Reloading requires sign-in.
+                  Session expires after 10 minutes without activity.
                 </Text>
               </Box>
               <Menu.Divider />
@@ -331,8 +434,8 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
                   Sign in
                 </Button>
                 <Text size="xs" c="dimmed">
-                  Your token stays in browser memory. Signing out or reloading
-                  clears this session.
+                  Your token is saved in this browser for up to 10 minutes of
+                  inactivity. Sign out to clear it now.
                 </Text>
               </Stack>
             </Box>
@@ -793,11 +896,13 @@ function Inbox({
                   ))}
                 </Stack>
               ) : (
-                <EmptyState>
-                  {error
-                    ? "The inbox could not be loaded."
-                    : inspection ? "No inspections match these filters. Connect an Inspect node after Envelope, or after Sample on an observation branch." : "No failures match these filters. Try another state or clear your filters."}
-                </EmptyState>
+                <div className="inbox-empty-state">
+                  <EmptyState>
+                    {error
+                      ? "The inbox could not be loaded."
+                      : inspection ? "No inspections match these filters. Connect an Inspect node after Envelope, or after Sample on an observation branch." : "No failures match these filters. Try another state or clear your filters."}
+                  </EmptyState>
+                </div>
               )
             ) : (
               <Table highlightOnHover className="failure-table">

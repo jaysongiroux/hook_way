@@ -1,4 +1,13 @@
-import { Box, Button, Group, Stack, Text, UnstyledButton } from "@mantine/core";
+import {
+  Box,
+  Button,
+  Group,
+  Stack,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from "@mantine/core";
+import { useState } from "react";
 import { NODE_SCHEMAS, NODE_TYPES, nodeLabel } from "./nodeSchema";
 import { nodeHelp, PALETTE_GROUP_HELP } from "./help";
 import { PALETTE_ITEM_CLASS } from "./builderStyles";
@@ -156,6 +165,8 @@ export function Palette({
   onAddNode?: (type: string) => void;
   onAddTemplate?: (id: string) => void;
 }) {
+  const [search, setSearch] = useState("");
+
   if (tab === "templates") {
     return (
       <Stack gap={8}>
@@ -177,41 +188,64 @@ export function Palette({
       </Stack>
     );
   }
+  const query = search.trim().toLowerCase();
+  const groups = GROUPS.map((group) => ({
+    ...group,
+    types: group.types.filter((type) => {
+      if (!query) return true;
+      return [type, nodeLabel(type), nodeHelp(type)]
+        .some((value) => value.toLowerCase().includes(query));
+    }),
+  })).filter((group) => group.types.length > 0);
+
   return (
-    <Stack gap="lg">
-      {GROUPS.map((group) =>
-        group.types.length === 0 ? null : (
-          <Stack key={group.title} gap={8}>
-            <div>
-              <Text
-                fw={600}
-                size="xs"
-                tt="uppercase"
-                c={DARK.muted}
-                style={{ letterSpacing: "0.08em" }}
-              >
-                {group.title}
-              </Text>
-              {PALETTE_GROUP_HELP[group.title] && (
-                <Text size="xs" c={DARK.muted} lh={1.4} mt={4}>
-                  {PALETTE_GROUP_HELP[group.title]}
+    <Stack gap="md">
+      <TextInput
+        size="xs"
+        aria-label="Search nodes"
+        placeholder="Search nodes..."
+        value={search}
+        onChange={(event) => setSearch(event.currentTarget.value)}
+      />
+      {groups.length === 0 ? (
+        <Text size="sm" c={DARK.muted} role="status">
+          No nodes match “{search.trim()}”.
+        </Text>
+      ) : (
+        <Stack gap="lg">
+          {groups.map((group) => (
+            <Stack key={group.title} gap={8}>
+              <div>
+                <Text
+                  fw={600}
+                  size="xs"
+                  tt="uppercase"
+                  c={DARK.muted}
+                  style={{ letterSpacing: "0.08em" }}
+                >
+                  {group.title}
                 </Text>
-              )}
-            </div>
-            {group.types.map((type) => (
-              <PaletteItem
-                key={type}
-                label={nodeLabel(type)}
-                help={nodeHelp(type)}
-                onAdd={onAddNode ? () => onAddNode(type) : undefined}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(DND_MIME, type);
-                  e.dataTransfer.effectAllowed = "move";
-                }}
-              />
-            ))}
-          </Stack>
-        ),
+                {PALETTE_GROUP_HELP[group.title] && (
+                  <Text size="xs" c={DARK.muted} lh={1.4} mt={4}>
+                    {PALETTE_GROUP_HELP[group.title]}
+                  </Text>
+                )}
+              </div>
+              {group.types.map((type) => (
+                <PaletteItem
+                  key={type}
+                  label={nodeLabel(type)}
+                  help={nodeHelp(type)}
+                  onAdd={onAddNode ? () => onAddNode(type) : undefined}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(DND_MIME, type);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                />
+              ))}
+            </Stack>
+          ))}
+        </Stack>
       )}
     </Stack>
   );

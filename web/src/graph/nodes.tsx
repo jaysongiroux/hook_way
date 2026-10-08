@@ -2,6 +2,7 @@ import { nodeSummary } from "./nodeDescriptors";
 import { Handle, Position, type NodeProps, type NodeTypes } from "@xyflow/react";
 import { Group, Paper, Stack, Text } from "@mantine/core";
 import { destinationTypeOf, NodeGlyph } from "./nodeIcon";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import type { CSSProperties } from "react";
 import type { HookwayNode } from "./model";
 import { labelledPorts, nodeMeta, nodeHasOnError, nodeLabel } from "./nodeSchema";
@@ -82,6 +83,10 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const destinations = useGraphStore((s) => s.destinations);
   const destinationType =
     data.nodeType === "publish" ? destinationTypeOf(destinations, String(data.options.destination ?? "")) : "";
+  const cardLabel =
+    data.nodeType === "publish" && destinationType
+      ? `Send to ${destinationPresentation(destinationType).label}`
+      : nodeLabel(data.nodeType);
   return (
     <Paper withBorder radius="sm" style={{ ...CARD, ...useSelectionRing(id, color) }}>
       {input !== "None" && (
@@ -100,8 +105,8 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
             <Text fw={600} size="sm" c={DARK.text} style={ONE_LINE}>
               {data.yamlId}
             </Text>
-            <Text size="xs" c={DARK.muted} title={nodeLabel(data.nodeType)} style={ONE_LINE}>
-              {nodeLabel(data.nodeType)}
+            <Text size="xs" c={DARK.muted} title={cardLabel} style={ONE_LINE}>
+              {cardLabel}
             </Text>
           </Stack>
         </Group>

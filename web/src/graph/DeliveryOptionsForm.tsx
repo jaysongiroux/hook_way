@@ -5,6 +5,7 @@ import { clearDraftBranch } from "./formDrafts";
 import { SchemaForm } from "./SchemaForm";
 import { nodeFieldHelp } from "./help";
 import { WebhookDeliveryNotice } from "./WebhookDeliveryNotice";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 import {
   changeMode,
   Fields,
@@ -71,6 +72,11 @@ export function PublishOptionsForm(props: OptionsProps) {
         onChange={changeDestination}
         panel="destinations"
       />
+      <Text size="sm" fw={600}>
+        {type
+          ? `Sends to ${destinationPresentation(type).label}`
+          : "Choose a destination to see where this node sends its output."}
+      </Text>
       <Fields
         {...props}
         fields={type === "temporal" ? ["target"] : ["target", "create"]}
