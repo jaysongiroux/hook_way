@@ -100,18 +100,5 @@ invalid signatures, stale timestamps, duplicate events, secret rotation, and
 broker outages. Measure the full response time, including upload, TLS, proxy,
 and publication. Keep the image/configuration identity with those results.
 
-## Workload coverage decision
-
-| Workload | Hookway support | Check in your deployment |
-| --- | --- | --- |
-| Signed JSON to a broker | Provider recipes, JSON validation, native publication | Signatures, broker receipts, consumer deduplication, deadlines |
-| Tenant quotas | Verified identity quotas; shared Redis/PostgreSQL | Issuer/audience, policy scope, contention, expiry, failover |
-| Partial fan-out | Failure capture, scoped retry, investigation | Capture drops, retention, duplicate-safe destination receipts |
-| HTTP request/response proxy | Bounded HTTP calls and response passthrough | Status, headers, body, origin rules, non-idempotent retries |
-| XML, multipart, raw files | Bounded parsing and relay; S3/Redis file publication | Encoded/decoded size, concurrency, metadata, application fixtures |
-| Durable acceptance before processing | No general ingress spool or worker | Use a durable broker or ingress service when sender recovery is insufficient |
-| Streaming or synchronous business decisions | Dedicated bounded flows only | Use a separate service where the protocol needs it |
-
-See [Contributing](../../CONTRIBUTING.md#make-and-check-a-change) for native and
-browser checks. Supported signature and destination counts do not certify an
-entire provider integration or downstream business process.
+For proxy and file workflows, see [Ingress adapters](ingress-adapters.md).
+For test commands, see [Contributing](../../CONTRIBUTING.md#make-and-check-a-change).

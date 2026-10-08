@@ -28,9 +28,9 @@ can rewind retries while keeping incompatible protection or destination history.
 
 Record the required recovery point objective (RPO: acceptable lost-data interval)
 and recovery time objective (RTO: time until reconciled service can resume).
-Measure drain, dump, restore, verification, reconciliation and canary separately.
-Local timings on a small synthetic dataset are not production targets. Without
-agreed targets, report measurements and leave production acceptance open.
+Measure the full recovery with your own dataset, including shutdown, restore,
+verification and checking deliveries made after the backup. A small local restore
+will not predict those timings.
 
 ## Quiesce and preserve
 
@@ -127,9 +127,8 @@ Compare the source checkpoint to the isolated restore:
 
 Use a read-only database connection for initial inspection. Do not set a zero
 worker concurrency or use a blanket unsafe runtime mode as a recovery bypass.
-The native acceptance suite performs synthetic logical/digest comparisons and
-checks receipts outside the killed/replaced core process. Your production
-dataset, extensions, roles and managed backup mechanism need their own rehearsal.
+Test the restore with your dataset, extensions, roles and backup mechanism
+before relying on it during an outage.
 
 ## A restored queued run already delivered
 
@@ -187,12 +186,11 @@ lossless migration. If existing deployments require conversion, that is a scoped
 design/data decision before cutover. Mixed releases and schema downgrades remain
 unsupported; see [compatibility](upgrades.md#compatibility-policy).
 
-## Release acceptance boundaries
+## Test your backup
 
-Record full restore and reconciled-resume durations, snapshot timestamp/lost-data
-interval, dataset size, tool/backend versions, architecture, resources and exact
-application/config identity. A same-schema installation or same-build restore
-is not cross-release migration/rollback proof. Retain a real previous supported
-release and its database set when one exists; otherwise identify first-install
-recovery as the tested boundary. Primary failover, off-host loss, encryption/key
-recovery and ECS deployment are separate deployment-owner acceptance gates.
+Restore to a separate target and check data, artifact digests, runtime grants
+and post-backup deliveries before starting workers. Test off-host access and
+decryption keys too. A backup on the lost host cannot recover that host.
+
+Keep a known-good backup with its matching application and configuration.
+When upgrading, test the exact database transition using [Upgrades](upgrades.md).

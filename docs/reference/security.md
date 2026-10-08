@@ -85,13 +85,10 @@ Raw base64 HMAC-SHA256 over the exact raw body, with no prefix and no signed tim
 
 ### `hmac_sha1_hex` (`hmac_sha256`) — SHA-1
 
-> **This scheme uses SHA-1.** It exists for providers that still only offer a legacy SHA-1 signature — GitHub's pre-2020 `X-Hub-Signature: sha1=<hex>` is the canonical case. The implementation carries a `// #nosec G401` annotation at `internal/auth/hmac.go` precisely because a SAST scanner should, and does, flag it.
-
-Prefixed hex HMAC-SHA1 over the exact raw body, no signed timestamp. Mechanically identical to `hmac_sha256_hex` apart from the digest and the `sha1=` prefix.
-
-HMAC-SHA1 is **not** broken in the way bare SHA-1 is: the known SHA-1 attacks are collision attacks, and HMAC's security does not rest on collision resistance, so HMAC-SHA1 has no practical forgery attack today. It is nonetheless a deprecated construction with a 160-bit digest, it will fail a modern crypto review or a FIPS/PCI control questionnaire, and it is the weakest verifier Hookway ships.
-
-Treat it as a migration path, not a destination: **use `hmac_sha256_hex` whenever the provider offers both** (GitHub sends `X-Hub-Signature-256` alongside the legacy header — verify that one). If you must run `hmac_sha1_hex`, keep it on the one flow that needs it rather than making it a default, and revisit whenever the provider ships SHA-256.
+Legacy HMAC-SHA1 over the raw body, with a `sha1=` prefix and no signed
+timestamp. Use it only for a provider that requires this format. Prefer
+`hmac_sha256_hex` when the provider offers SHA-256; for GitHub, verify
+`X-Hub-Signature-256`.
 
 ### `basic` (`header_exact`)
 
@@ -336,14 +333,9 @@ the path *and* the host. Three protections keep that boundary real.
   tenant = "acme?x=1&"  →  /tenants/acme?x=1&/readonly  (suffix dropped, query injected)
   ```
 
-  The mandatory `/readonly` suffix — the thing the template existed to enforce
-  — disappears. Earlier versions of Hookway rejected only `..`, so this was a
-  real access-control bypass, and the claim that the proxy "confines callers to
-  whatever path its `url` template builds" was false as written. It is true
-  now. Rejecting at the trigger fails closed and does not depend on how any
-  particular upstream normalizes paths. The outbound path is additionally
-  normalized with `path.Clean` as defense in depth. Names that merely contain
-  dots (`..hidden`, `a..b`) are unaffected.
+  These characters can escape the intended path or drop a required suffix.
+  Rejection happens before forwarding; the outbound path is also normalized.
+  Names containing dots, such as `a..b`, remain valid.
 
 - **The upstream host cannot be chosen by the caller.** When an `http_request`
   `url` has a `{variable}` in its *authority*, the destination is influenced by
@@ -376,15 +368,20 @@ the path *and* the host. Three protections keep that boundary real.
 
 ## Code node
 
-A `code` node runs operator-authored JavaScript (goja) on the request envelope. **Flow authors are trusted operators.** They can already point destinations at arbitrary URLs and disable auth. The controls reduce common accidents — interruptible loops, recursion, accidental host I/O — but do not safely contain every script or a hostile tenant. If Hookway is ever multi-tenant or hosted, this design does not hold: an explicitly approved process/worker or engine isolation design with real resource enforcement is required. A different execution engine alone is not an isolation guarantee.
+A `code` node runs operator-authored JavaScript on the request envelope.
+Flow authors must be trusted: this is not a sandbox for hostile users or tenants.
 
-Controls C1–C7 provide execution interruption, call-stack and input/output limits, restricted host access, separate per-request VMs and panic recovery. They are not hard wall-clock or per-VM heap bounds. See [Configuration § Code node](configuration.md#code-node).
+Timeout, call-stack and input/output limits catch common mistakes, but do not
+cap VM heap. A large allocation can kill core, including acknowledged volatile
+jobs. A long native operation such as a pathological regex can outlast the
+configured timeout. Prefer `filter` for regex matching and built-in transforms
+where possible.
 
-**Memory gap.** goja has no hard memory cap. Controls C1–C7 bound call stack, host access and payload boundaries, with best-effort execution interruption. Repeated allocations can consume significant memory before interruption; a single native allocation can OOM-kill the entire core despite small input/output limits. Container limits contain process memory, not individual VMs, and termination can lose acknowledged volatile jobs. Split trusted scripting domains into separate core processes to limit blast radius; this does not make hostile authors supported.
-
-**Interrupt gap.** A single long-running native operation (a pathological regex) may not be interruptible between statements. Health can remain successful while that operation outlives its configured timeout, so a liveness restart is not a reliable execution deadline. Prefer the `filter` node over complex regexes in `code`. Run pathological checks only in disposable hard-limited containers with an independent kill deadline, never in the developer's host process. See [resource limits and containment](../operations/resource-limits.md) for sizing and the remaining process-level risk.
-
-A `code` node with no explicit `timeout` is a config warning; the 1s default still applies. Set `timeout` deliberately.
+Set an explicit timeout and process memory limit. Split scripting trust domains
+into separate core processes when needed; this still does not make hostile
+scripts safe. Run stress tests only in disposable hard-limited processes with an
+external kill deadline. See [code settings](configuration.md#code-node) and
+[resource sizing](../operations/resource-limits.md).
 
 ## Production Hardening
 
@@ -453,19 +450,6 @@ startup, so configuration edits alone do not revoke a running process's key.
 Browser sessions receiving 401 clear their credential. Use production HTTPS,
 restrict operator/API access at the network boundary and redact Authorization in
 upstream access logs. CORS is an exact-origin browser policy, not authentication.
-
-The two-process rollout regression exercises old-only, overlapping and new-only
-configurations against PostgreSQL, including per-replica restarts, key names and
-scope separation. Run it locally with Docker available:
-
-```sh
-HOOKWAY_ACCEPTANCE=1 go test ./internal/acceptance -run '^TestAcceptance_NamedKeyRotationAcrossReplayReplicas$' -count=1 -timeout 3m
-```
-
-This verifies native process behavior, not your deployment's rollout controller
-or provider-side webhook rotation. The local production example keeps API/control
-keys distinct from database credentials; migration jobs do not receive its real
-capture, operator or control tokens.
 
 Authentication hashes the bounded submitted token and compares its SHA-256 digest
 against every configured key with constant-time digest comparisons. It does not

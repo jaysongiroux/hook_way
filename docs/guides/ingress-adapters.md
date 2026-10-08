@@ -292,8 +292,6 @@ Validate request/response and broker-message fixtures with your existing test
 tools. For load measurements, count planned, skipped and completed work and
 latency failures; skipped work cannot count as successful throughput.
 
-The [provider/workload matrix](provider-compatibility.md#workload-coverage-decision)
-connects supported webhook, proxy and file workflows to their external acceptance
-requirements. Run `make replay-acceptance-test` for combined validation,
-protection, and replay checks. Configure provider-facing duplicate and error
-responses deliberately.
+For provider-specific signatures and retry behavior, see
+[Provider compatibility](provider-compatibility.md). Configure duplicate and
+error responses to match your sender's retry policy.

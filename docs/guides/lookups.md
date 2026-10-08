@@ -84,4 +84,6 @@ Credentials come from the standard AWS credential chain, including workload role
 
 A failed lookup is captured as metadata only when replay capture applies. Its provider configuration and current external data are not frozen in the replay snapshot, so it cannot be safely resumed automatically. A later delivery failure captures the already resolved envelope variables; ordinary downstream replay does not repeat a lookup that already succeeded. These cache and replay rules do not supply exactly-once delivery.
 
-Run `go test ./internal/httpapi -run 'Test(Postgres|AWS)StandaloneLookup' -count=1` to verify YAML-to-server binding, and `go test ./internal/lookup -run 'Test(Postgres|AWS)' -count=1` to verify provider query behavior, with Docker available to exercise PostgreSQL and the DynamoDB LocalStack fixture. Run the HTTP/server binding tests with `go test -short ./internal/httpapi -run TestStandaloneLookup`. Emulator results do not prove production AWS IAM, network policy, or throughput; test those against your deployment.
+Test provider permissions, routing changes and failure responses against your
+deployment. Contributor test commands are in
+[Contributing](../../CONTRIBUTING.md#make-and-check-a-change).

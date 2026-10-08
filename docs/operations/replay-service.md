@@ -12,7 +12,7 @@ when choosing how your flow acknowledges a request.
 ## What gets captured
 
 Core captures a failure only when it answered the sender with a 2xx and no
-`on_error` or `dead_letter` path handled the failure (I20): a publish that
+`on_error` or `dead_letter` path handled the failure: a publish that
 failed under `delivery_failure_policy: skip_failed`, a success continuation
 that failed after its publish, or an async webhook delivery that failed for
 good (retries exhausted or a terminal 4xx) with no dead letter, or whose dead
@@ -27,7 +27,7 @@ snapshot of the failed node's input, and the payload the node was sending. A
 snapshot or payload over `max_record_bytes`, or one that cannot be rebuilt
 exactly, makes the record metadata-only and not retryable, and so does a
 failure whose bodies alone would overflow core's 64 MiB upload buffer. Capture never
-changes a response or readiness (I15); uploads are best effort and bounded
+changes a response or readiness; uploads are best effort and bounded
 (see [Configuration § Replay](../reference/configuration.md#replay)).
 
 ## View-only observations
@@ -85,7 +85,7 @@ Block reasons: `unsupported_snapshot_version`, `hash_mismatch`,
 
 Each run is sent to core at most once, except when core
 provably never started it. A redrive never triggers capture,
-dead-lettering, or compensations (I21). There is no exactly-once promise: an
+dead-lettering, or compensations. There is no exactly-once promise: an
 `unknown` record may or may not have been delivered, so retrying it requires
 `"acknowledge_duplicate_risk": true`.
 
@@ -201,71 +201,33 @@ artifacts immediately.
 
 ## Shared record storage
 
-One `records` table holds failures and inspections. `record_artifacts` keeps large
-payload/snapshot bytes separate so list queries read metadata only; NULL means an
-absent artifact, while a non-NULL zero-byte payload remains a downloadable file.
-`retry_runs`, `record_events` and `delivery_resolutions` store execution, audit
-history and operator evidence. Their identifiers use `record_id`. Database
-constraints reject executable inspection artifacts and inspection retry or
-resolution rows. Shared retention, record caps and byte caps apply to both kinds.
+Failures and inspections share PostgreSQL storage and retention limits.
+Payload/snapshot bytes are stored separately from metadata; list responses
+do not load them.
 
-The generic-record schema is a fresh initial baseline, **schema version 1**.
-Earlier failure-shaped databases also used version 1: the Goose number alone is
-not proof of compatibility. Both `migrate` and `serve` reject legacy tables,
-future versions and missing/incompatible baseline objects with preservation and
-recovery guidance. The checks read schema metadata; they do not convert records,
-rewrite migration history or repair tables. They also work with the restricted
-runtime database role below. A shape check is not an integrity/tamper attestation.
+The current generic-record database uses migration version 1. Older
+failure-shaped databases also used version 1 and are not compatible.
+`migrate` and `serve` check the schema shape as well as its version; they do
+not convert records or repair incompatible tables. Preserve legacy data and
+use a fresh database for the current service. See
+[legacy preservation](recovery.md#legacy-replay-databases).
 
-Existing failure-shaped databases are outside this baseline's compatibility
-scope: preserve the old database, image/configuration pair and downstream receipt
-checkpoints, and use a **separate fresh database** for a deliberate cutover. Keep
-old workers stopped while collecting a quiescent backup; do not let two release
-pairs replay the same event independently. Legacy records do not become generic
-records through a route rename, version-table edit or a database restore into the
-new service. If those records must remain operational, a scoped conversion or
-legacy-service support decision is required before cutover. Do not delete old
-databases or volumes implicitly. See [Upgrades and rollback](upgrades.md) for the
-preservation, reconciliation and deployment gates.
+A failed initial migration rolls back without advancing the version. Repair the
+reported connection/permission problem and rerun the same matching migration.
+If tables exist without the applied migration, preserve and investigate them
+rather than deleting or editing migration history. Serving never migrates;
+require successful migration before starting workers.
 
-An interrupted or statement-failed initial SQL migration rolls back its baseline
-objects and does not advance version 1. Stop rollout, inspect the error, restore
-database connectivity/permissions if needed, then rerun the **same matching**
-`migrate` command. The Goose version table may exist at version 0 after failure;
-that alone is not a partial generic-record installation. If baseline tables
-exist without the matching applied migration, the preflight refuses to guess or
-delete them: preserve and investigate/restore instead. Require migration exit 0
-and service readiness before admitting traffic or operator retries. Reapplying
-an already-current migration proves idempotent startup, not cross-release upgrade
-or schema downgrade compatibility.
-
-Core, replay API, console and WASM consumers must use matching version-1 contracts;
-legacy `/v1/failures` routes are not provided.
+Use matching core, replay, console and WASM versions. The API uses
+`/v1/records`; legacy failure routes are not provided.
 
 ## Operations
 
-**Metrics.** Core: `hookway_capture_total{flow,outcome}`,
-`hookway_capture_dropped_total{reason}`, `hookway_capture_buffer_bytes`,
-`hookway_control_runs_total{flow,outcome}`, `hookway_control_inflight`.
-Inspections use `hookway_inspection_total{flow,outcome}` and
-`hookway_inspection_dropped_total{reason}`; they share the capture buffer.
-Replay: every series is prefixed `hookway_replay_` — HTTP, auth, ingest
-(`captures_total{kind,outcome}`), downloads, sampled state gauges (`records{kind,delivery_status,dismissed}`,
-`runs{status}`, `usage_*`, `capacity_*`, `oldest_queued_run_seconds`, `db_up`,
-`schema_version`), workers (`runs_total{status}`, `executor_calls_total{outcome}`,
-`workers_busy`, `leases_expired_total`, `late_results_total`,
-`children_created_total`), GC, and the database pool. Every replica samples
-the shared database, so aggregate the state gauges with `max` within one logical
-database's scrape job, never `sum`. Give independent databases distinct jobs.
-Failed samples retain previous gauge values: inspect `db_up` and
-`state_last_success_timestamp_seconds` before treating them as current evidence.
-The timestamp is zero until the first successful sample. Process counters count
-this replica's work and have different aggregation semantics.
-The record gauge keeps kind, retained delivery status and dismissal separate;
-inspections use an empty delivery status. Ingests rejected before validation use
-`kind="unknown"`. Artifact sizes and dismissal counters also carry record kind.
-Structured capture and dismissal logs carry `record_id` and `kind`, without
-logging captured body or request context.
+Monitor capture drops, storage usage, queued/unknown runs, worker outcomes and
+database health. Import the [replay dashboard](../../metrics/grafana/hookway-replay.json)
+and load the [alert rules](../../metrics/prometheus/alerts.yaml). The
+[monitoring guide](observability.md#signals-and-aggregation) explains aggregation
+across replicas and how to spot stale samples.
 
 Scrape a private metrics listener with a dedicated metrics-only key. Keep its
 credential file readable only by Prometheus; never put it in the frontend image.
@@ -376,9 +338,7 @@ GRANT USAGE, SELECT ON SEQUENCE record_events_id_seq TO replay_runtime;
 ```
 
 Provision database `CONNECT` and the login secret separately. No schema ownership,
-`CREATE`, or migration-table writes are needed. The restricted-role integration
-check exercises capture, retry claims/outcomes, operator resolution, payload audit
-and inspection, while requiring DDL/version rewrites to fail. Update these grants
+`CREATE`, or migration-table writes are needed. Update these grants
 when a migration adds new live objects. This database role is distinct from
 HTTP API key scopes; a read-only operator token does not require a separate
 read-only service database connection.

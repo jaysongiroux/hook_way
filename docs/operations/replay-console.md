@@ -64,48 +64,29 @@ platform; the browser must reach the API endpoint as well as the frontend.
 
 ## Sign in and scopes
 
-Use a **named** operator token defined in replay `keys`. The key name identifies
-its actions in audit history. Give each operator a separate credential when
-individual attribution matters. Read-only responders need `read`; recovery
-operators also need `retry`; captured bytes additionally require `payload`.
-Capture and metrics scopes are unnecessary for the console. These are scoped
-bearer credentials, not SSO or user/role administration.
+Sign in with a named token from replay `keys`. Use a separate credential per
+operator if audit history needs individual attribution.
 
-The password input is cleared after sign-in. The session token lives only in
-browser memory, never cookies, local/session storage, IndexedDB, URL parameters,
-or application logs. Navigation between the console and `/builder` retains the
-session and investigation context in memory, while builder visits pause polling.
-Reload, leaving the application or signing out clears the session and requires
-authentication again. A 401 clears the active session; 403 reports
-the missing permission without interpreting it as success. Sign-out aborts
-requests and removes displayed failures, payload previews and pending actions.
-The menu named after the current API key shows its scopes and **Sign out**.
+| Scope | Allows |
+| --- | --- |
+| `read` | Browse records and history |
+| `payload` | Preview and download captured bytes |
+| `retry` | Retry, confirm an unknown outcome or dismiss records |
 
-A revoked, removed or otherwise rejected key clears the session and explains
-how to sign in again. Named bearer keys are loaded at startup and have no built-in
-expiry timer or live key-administration API; apply replacement through a controlled
-restart/redeployment. The console's in-memory session is not an SSO session or a timed token.
-Routine polling cancellations during navigation or sign-out are silent; an
-unexpected interruption or connection failure includes recovery guidance.
-Service errors preserve previously loaded inbox data with a stale-data warning.
-Resolution input errors appear beside their fields and in a readable summary,
-focus the first invalid field and preserve entered evidence. Network errors after
-submitting a recovery action still require investigation and reuse of the same
-submission key; an error message does not establish that the action was rejected.
-After a lost reply, a rejected repeat still preserves the uncertain request's
-original key and frozen input; that rejection does not disprove the first action.
-A 401 clears the session, so retain the displayed submission identity before
-sign-out, reload or a credential handover. After closing successful action results,
-keyboard focus returns to the selected detail panel/inbox, since a refreshed
-record can remove the initiating control. Canceling or inspecting an uncertain
-action restores its initiating control if available, otherwise the same region.
+Capture and metrics scopes are not needed for the console. These are bearer
+keys, not SSO accounts. Keys load at startup; restart replay to apply revocation.
 
-`GET /v1/me` verifies the contract version and advertised API capabilities,
-including `action_eligibility`. Incompatible API assets cannot become a usable
-session. Local Go/WASM checks input structure. Missing or incompatible WASM is
-visible; an operator can explicitly select the API's **read-only input validation**
-path. It performs no recovery operation and grants no permissions. State,
-retention and scopes are always rechecked by the server for the actual action.
+The token and displayed records stay in browser memory. Reload, leaving the app
+or signing out clears the session. A 401 signs you out; a 403 reports a missing
+permission. Navigation to `/builder` retains the session but pauses polling.
+
+The console checks API compatibility before querying records. If WASM input
+validation is unavailable, you can select read-only API validation; it does not
+perform an action or grant permission. The server checks current state and scopes
+when you submit.
+
+After a lost recovery-action reply, keep the displayed submission identity
+before reload, sign-out or handover. See [uncertain responses](#uncertain-submission-responses).
 
 ## Inspect and recover
 
@@ -140,76 +121,37 @@ retention and scopes are always rechecked by the server for the actual action.
    It stops recovery but retains metadata/audit history until retention expires.
    Dismissal never establishes whether delivery happened.
 
-Desktop keeps the inbox and evidence independently scrollable, with recovery
-controls at the top of the detail panel. Mobile opens a focused detail view;
-**Back to inbox** preserves filters and restores focus to the inspected record.
+The page refreshes while visible. A failed refresh marks the displayed data as
+potentially stale. Another operator or retention expiry can change whether an
+action is allowed; refresh the record after a rejection.
 
-Dismissed failures retain their previous delivery state in the details while
-the badge and guidance show that recovery has stopped. The console requires API
-contract version 1 and the `record_api` capability; incompatible services are
-rejected before record queries, with no old-route fallback.
-
-The page refreshes current list and selected details every three seconds while
-visible, without overlapping polls. Hidden pages stop polling; returning resumes
-refresh. A failed refresh identifies potentially stale data. Action eligibility
-in list/detail responses is state-based and independent of caller scopes; API
-transactions remain authoritative if another operator acts or retention expires.
-New retries and confirmations reject expired records even before physical GC.
-Already accepted idempotent requests can still return their prior result while
-that retained record exists. Retryability at capture alone is not eligibility now.
+For unknown outcomes, use the [investigation guide](replay-investigation.md)
+before confirming or retrying. On mobile, **Back to inbox** preserves filters.
 
 ## View-only inspections
 
-**Failures** is the default record tab. **Inspections** is available when the
-connected version-1 replay API advertises `inspection_records`; matching APIs
-without that capability keep the failure workflow. Each tab retains its own filters, page and selection.
-The console always requests an explicit kind: `kind=inspection` or `kind=failure`.
-The API itself returns both kinds when kind is omitted. Available inspections use
-`dismissed=false`; Dismissed uses `dismissed=true`; All inspections omits that filter.
-Failure delivery-state tabs combine `delivery_status` with `dismissed=false`; their
-Dismissed tab filters dismissal alone, preserving the recorded delivery state. **Available**, **Dismissed** and
-**All inspections** filter inspection state, not delivery outcome.
+**Failures** shows missed deliveries; **Inspections** shows view-only observations.
+Use **Available**, **Dismissed** or **All inspections** to filter observations.
+They cannot be retried or confirmed as deliveries. An inspection's HTTP status is
+the response to the webhook sender, not a delivery result.
 
-Select an observation to see its time, flow/node, event/request/trace IDs, expiry
-and final inbound response. Both lists use `occurred_at`, labeled Observed at for
-inspections and Failed at for failures. An HTTP 503 describes the response to the webhook
-sender; it is not a fabricated failed delivery. Records are labeled **View only**.
-They have no retry, confirm-outcome, batch-retry or retry-history controls.
-**Audit history** retains capture, payload access and dismissal events.
+**Load body and context** requires `payload` scope. It shows the rendered body,
+method/path, redacted headers and variables. The preview reads up to 1 MiB of the
+inspection artifact and displays up to 64 KiB of body text. Use **Download
+inspection JSON** for the full capture; binary bodies remain base64 in that file.
+Oversized or unsupported captures may contain metadata only.
 
-**Load body and context** explicitly retrieves the payload with `payload` scope.
-It shows the current rendered body, content type/encoding, method/path, redacted
-headers and variables. Text is escaped; the body preview renders captured text
-directly, preserving JSON number precision. Binary bodies are labeled base64;
-empty bodies are explicit.
-The preview reads at most 1 MiB of the versioned JSON artifact and displays at
-most 64 KiB of body text. Larger artifacts offer **Download inspection JSON**,
-which contains the full body and context, with binary bodies still base64 encoded.
-Read-only metadata access never retrieves this context. Closing a preview discards
-it. Oversized/unsupported captures explain why only metadata is available.
+**Files** is available for inspections and failures. **Load file information**
+lists names, sizes, content types and multipart fields. **Download file** saves
+the decoded bytes without opening a viewer. With `multipart.include_content:
+false`, metadata is available but file contents are not. Invalid base64 or a size
+mismatch prevents an individual download; the stored payload can still be
+downloaded for investigation. Leaving the record discards loaded previews/files.
 
-**Files** is available for both failures and inspections with stored payloads.
-**Load file information** reads the complete payload with `payload` permission
-and shows each file's name, content type, size and multipart form field, where
-present. **Download file** saves the individual file's bytes without opening a
-viewer. Multipart files and single-file bodies are supported; when no filename
-was recorded, **Download name** identifies the suggested name. Binary inspection
-bodies are decoded from base64 for the download. Downloads are complete even
-when the payload exceeds the text-preview limit, subject to the existing capture
-and storage limits.
-
-With `multipart.include_content: false`, file information remains available but
-individual downloads explain that contents were omitted. Empty files can still
-be downloaded. Invalid base64 or a size mismatch makes the affected file
-unavailable; the complete stored payload remains downloadable for investigation.
-No file information or contents are loaded for keys without `payload` scope.
-**Close files**, leaving the record and signing out discard the loaded files.
-
-With `retry` scope, **Dismiss inspection** confirms deletion of the stored body
-and context, retaining metadata/audit history until expiry. Dismissal makes no
-claim about delivery. Inspections share failures' retention and storage caps;
-collection is best effort, independent of `capture_failures`, and cannot affect
-webhook responses when replay is unavailable.
+**Dismiss inspection** requires `retry` scope and deletes its stored body/context.
+Metadata and audit history remain until expiry. Inspections share failure
+retention/storage limits and are best effort; collection is independent of
+`capture_failures`.
 
 To run the [sampling example](../../examples/inspect.yaml) locally, start
 `make dev-up` (Docker), then in another terminal:
@@ -293,17 +235,7 @@ Code ownership and shared validation are covered in
 
 ## Local verification
 
-```sh
-make console-ui              # Go WASM and independent Vite static bundle
-make console-e2e             # real API/store + disposable Docker PostgreSQL
-make api-schema-check node-schema-check
-```
-
-Console browser tests require Docker and fail rather than silently substituting
-a mock store. A test-only Go service owns `/test/reset`; it is compiled only into
-its test executable and never into Hookway binaries. Synthetic credentials,
-records, destination URLs and receipts are used in screenshots. Tests run with
-one browser worker so resets remain isolated. This verifies the operational
-interface and database-backed API, not end-to-end destination execution or an
-actual production rollout. Run `make replay-acceptance-test` separately to check
-delivery, shared protection, and recovery against disposable backends.
+Run `make console-ui` to build the frontend and matching WASM, and
+`make console-e2e` to test against a disposable PostgreSQL-backed API.
+Docker is required. Other checks are listed in
+[Contributing](../../CONTRIBUTING.md#make-and-check-a-change).

@@ -82,6 +82,9 @@ and form routing read the descriptor without separate node-type lists.
 Starting options are fresh authoring values, distinct from effective runtime
 defaults in the Go-generated schemas.
 
+When changing a builder template, update its YAML in `examples/templates/` and
+the inserted node IDs in `web/src/graph/templates.ts`; run the template tests.
+
 ## Add an API operation
 
 Define named request/response DTOs and operation metadata beside the service
@@ -111,6 +114,27 @@ errors, preserve entered values, and focus the first invalid field. Session/requ
 errors go through the console error formatter. Suppress only expected cancellation;
 show interrupted reads and retain uncertain mutation state. Test desktop/mobile
 widths, keyboard access and actual API/WASM behavior for the affected workflow.
+
+## UI conventions
+
+Marketing, the builder and the replay console share `web/src/shared/ui`.
+Use its theme and controls rather than defining another palette:
+
+- Cool gray `#F4F5F7` canvas, white panels, `#C5CBD4` borders, steel blue
+  `#0C447C` primary actions and links, 4px corners. Error/success states and
+  graph ports use the theme's semantic colors.
+- Public Sans for interface text and Source Code Pro for code; shared headings
+  use weight 650. The standalone console uses system fallbacks when unavailable
+  and does not fetch external fonts.
+- Keep the important action visible. Avoid decorative glow, glass effects and
+  unnecessary animation. The Hookway mark links to `/`.
+- Support keyboard navigation, visible focus, labeled fields, readable errors
+  and narrow layouts. Explain consequences before recovery actions and retain
+  entered values after validation fails.
+
+Contrast checks live in `web/src/tokens.test.ts`. Product copy should explain
+shipped capabilities in the reader's terms; link to docs instead of duplicating
+field references or promising unsupported guarantees.
 
 ## Add a native adapter
 

@@ -157,7 +157,7 @@ Updates enter fail-closed maintenance and process entries in bounded batches. Wh
 
 `hookway_protection_operations_total` and `hookway_protection_operation_duration_seconds` report store, configured policy, kind, strategy, operation and bounded outcome. Outcomes include allowed, denied, capacity, policy_conflict and unavailable. `hookway_protection_store_ready` tracks store health. Cleanup passes, deleted entries and cleanup latency have separate metrics. Pool connections and cumulative connection-acquisition wait expose contention per configured store; Redis Cluster statistics aggregate its node pools. No event IDs, customer IDs, IPs, JWT subjects, secrets or DSNs appear in these labels.
 
-The conformance tests exercise the same policy semantics against memory, Redis and PostgreSQL, including expiry, ownership and policy updates. Real backend integration tests and independent-process tests are required for shared-store evidence. Local benchmark figures are workload-specific and are not a production capacity claim. Rehearse failover and state recovery against your actual deployment.
+Test failover and state recovery with the topology you will deploy.
 
 The complete authoring example is [examples/protection/shared.yaml](../../examples/protection/shared.yaml).
 For Docker or AWS ECS, run
@@ -166,7 +166,8 @@ Use the matching store configuration and database connection, and require succes
 completion before updating the service. Migration credentials can differ from
 core's runtime credentials.
 
-Local performance evidence and its limits are recorded in [Protection benchmarks](../evidence/protection-benchmarks.md).
+See [shared protection benchmarks](../evidence/performance.md#shared-protection-benchmarks-2026-10-04)
+for dated measurements.
 
 ## Runtime grants and state-loss recovery
 
@@ -182,9 +183,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE
 ```
 
 Provision the login/secret separately. Do not grant schema ownership, `CREATE`,
-or writes to the migration-version table. The integration test verifies startup,
-reservation writes, and denial of DDL/version rewrites with this restricted role.
-Run migrations as the owner; re-check required grants whenever tables change.
+or writes to the migration-version table. Run migrations as the owner and
+re-check required grants whenever tables change.
 
 Route all PostgreSQL protection operations to the writable primary. Read replicas
 cannot provide authoritative admission decisions. Configure durability, HA and
@@ -203,7 +203,6 @@ can clear the duplicate/quota history you intended to preserve.
 
 Back up protection along with replay when their recovery windows are coupled.
 Restoring an old backup rewinds quotas and reservations; reconcile downstream
-business receipts and outstanding retries before resuming. The native acceptance
-suite restores both schemas into a fresh local PostgreSQL database and verifies
-quota/reservation retention plus destination-only replay. Off-host disaster
-recovery and primary failover remain target-deployment checks.
+business receipts and outstanding retries before resuming. Follow
+[Backup and restore](../operations/recovery.md) and test failover with your
+actual storage setup.

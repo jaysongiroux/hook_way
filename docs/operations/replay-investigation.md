@@ -156,10 +156,10 @@ correlate it with the stable provider identity and independent destination
 receipts. Idempotency here fences retained replay actions; it is not an
 exactly-once business guarantee or a permanent deduplication archive.
 
-## Shared validation and migration
+## Check action input
 
-WASM advertises `replay_resolution_input` and uses the Go-owned action validator.
-A read-scoped fallback is available without executing an action:
+API clients can check a confirmation request's input with a read-scoped key
+without executing the action:
 
 ```sh
 curl -sS -X POST -H "Authorization: Bearer $REPLAY_OPERATOR_TOKEN" \
@@ -174,15 +174,5 @@ transitions are checked only by the action endpoint. Retry inputs use `action:
 retry` (or omit action); batch validation accepts up to 100 unique `record_ids`.
 There is no batch resolution.
 
-Run `hookway-replay migrate --config replay.yaml` before serving. The generic-
-record model uses one initial database migration (version 1), including operator
-resolutions, and API/WASM contract version 1. These numbers describe different
-contracts. Use a fresh database for this baseline; existing failure-shaped
-schemas are not upgraded by it. Preserve existing databases and backups rather
-than deleting volumes as an implicit setup step. Start matching core, replay API,
-console and WASM assets together. Legacy failure routes are unsupported; the
-current API uses `/v1/records`. Serving never migrates. See
-[Replay service](replay-service.md#running-it).
-
-The API returns JSON with `Cache-Control: no-store`. The investigation features
-are available through the API and the [operations console](replay-console.md). These operations provide no exactly-once delivery guarantee.
+For service setup and migrations, see [Replay service](replay-service.md#running-it).
+The same investigation actions are available in the [console](replay-console.md).

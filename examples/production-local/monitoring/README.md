@@ -34,8 +34,7 @@ Run this recipe as a non-root local operator; do not set the monitoring UID to 0
 Docker volume paths resolve against the first Compose file, not this directory.
 Inspect [Prometheus](http://localhost:19090/) targets/rules and
 [Alertmanager](http://localhost:19093/). The echo receiver acknowledges local
-webhooks but is not a retained notification ledger; the maintained acceptance
-test independently verifies full firing/resolved webhook bodies.
+alert webhooks; it is not a paging service or a retained notification history.
 
 For core-only mode copy `prometheus.yaml` into the ignored local directory,
 remove the replay scrape job and override its config mount. Do not start replay
@@ -55,8 +54,6 @@ recreation. Application volumes are unchanged. To remove only monitoring, use
 the same Compose arguments with `stop prometheus alertmanager alert-receiver`,
 then `rm -f prometheus alertmanager alert-receiver`. Do not use `down -v`.
 
-Checks: `make observability-check` validates rules/dashboards and runs the real
-Prometheus-to-Alertmanager notification regression when Docker is available;
-set `HOOKWAY_REQUIRE_INTEGRATION=1` to require it. The test accelerates windows
-and hold durations in a fixture copy. It separates actual runtime auth/admission
-faults from synthetic database/GC rule inputs and never contacts a live receiver.
+Run `make observability-check` to check the supplied monitoring assets and local
+notification tests. Docker is needed for notification tests; use
+`HOOKWAY_REQUIRE_INTEGRATION=1` to fail rather than skip if Docker is unavailable.

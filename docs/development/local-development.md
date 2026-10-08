@@ -6,8 +6,7 @@ also needs the versions and setup in [Contributing](../../CONTRIBUTING.md).
 
 Choose `make dev-up` for the disposable walkthrough below. For persistent data
 and generated credentials, use the production-style recipe in the next section.
-Both run the same application and support local HTTP and private Docker service
-addresses; no cloud account or security bypass is required.
+Both support local HTTP and private Docker addresses without a cloud account.
 
 ## Persistent local production setup
 
@@ -246,8 +245,7 @@ docker compose --env-file "$HOOKWAY_LOCAL_DIRECTORY/.env" \
 Published release images support Linux amd64. Local source builds use the Docker
 daemon's architecture, allowing Apple Silicon Linux arm64 builds. An amd64 release
 on Apple Silicon needs Docker emulation and a matching Compose platform override.
-Emulation and workstation limits affect performance; local results do not establish
-ECS capacity. See [releases](../operations/releases.md) for artifact verification.
+Emulation can be slower than native builds. See [releases](../operations/releases.md) for artifact verification.
 
 ## Start the dev stack
 
@@ -411,10 +409,6 @@ its real fixture API on 5184 and a disposable PostgreSQL database.
 `make compose-e2e-test COMPOSE_E2E_BUILD=dockerfile` automates the signed-event,
 failed-destination, and retry walkthrough using the Dockerfiles. It uses its own
 Compose project and random loopback ports, then removes its containers/volumes.
-It also exercises production-local bootstrap, core-only and full modes,
-authenticated delivery, persistence across container recreation, and scoped
-explicit reset. Bootstrap regression tests run without Docker in the ordinary
-Go suite; Docker acceptance tests are skipped unless explicitly enabled.
 See [Contributing](../../CONTRIBUTING.md#make-and-check-a-change) for other checks.
 
 ## Probes and cleanup

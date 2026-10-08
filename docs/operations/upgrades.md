@@ -143,18 +143,14 @@ preserved upgraded database first. Configuration changes can also make existing
 snapshots incompatible with a flow; a matching binary pair alone cannot repair
 those records.
 
-The initial generic-record baseline has no compatible previous published release
-identified for a cross-release rehearsal. Current initial-install migration
-failure/retry, same-build replacement and isolated restore are testable; none
-establishes an old-release/new-release upgrade. Before the next supported release,
-retain its predecessor and rehearse that exact image/config/schema transition.
-Failure-shaped predecessors require a separate preservation/cutover decision,
-not an automatic schema downgrade or an invented lossless migration.
+Legacy failure-shaped databases are not compatible with the current record model.
+Preserve their data and matching binaries; see
+[legacy databases](recovery.md#legacy-replay-databases).
 
 ## ECS deployment ordering and stop budgets
 
-The ECS deployment owner must mirror the same maintenance ordering; this is a
-procedure, not local proof of AWS networking, failover or graceful task removal.
+Use the same maintenance ordering on ECS. Account for service replacement,
+load-balancer removal and each container's stop allowance.
 
 1. Pin the matching candidate digests and prepare migration-only task definitions
    with owner credentials, configuration and database network access. Keep those
@@ -193,25 +189,14 @@ infrastructure supporting the required grace period before choosing Fargate.
 Do not silently clamp application deadlines to hide this conflict. See the
 [AWS stopTimeout contract](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_ContainerDefinition.html).
 
-## Release acceptance evidence
+## Check the upgrade before resuming traffic
 
-Automated tests cover readiness withdrawal, continued service during withdrawal,
-admitted-request draining, rejection of queued/new work, concurrent listener
-shutdown, detached redrive ordering, and the total cleanup ceiling. A process
-SIGTERM test reconciles destination receipts across same-build core replacement.
-`make replay-acceptance-test` also exercises quiescent replacement of both
-services, reruns the current migration, and verifies a retained PostgreSQL failure
-can be retried without redelivering its successful sibling. Its synthetic restore
-drill checks coupled replay/protection rows, artifact digests and independently
-recorded post-snapshot receipts in a separate database. It does not demonstrate
-a production load balancer, off-host recovery, managed failover or an
-old-release/new-release database migration. Test-only queued-run reconciliation
-is not a new operator API or restore-quarantine mode; production restores must
-remain offline until the recovery decision is made.
+Confirm the migration exited successfully, both services are ready, a signed
+canary reaches its destination, and a controlled captured failure can be retried
+without repeating successful branches. Keep the previous images, configuration
+and database backup until the new version is working.
 
-For each release pair, retain staging evidence of: sender IDs versus destination
-receipts during termination; measured readiness-removal time; no resource close
-beneath admitted work; successful quiescent backup/restore; candidate migration;
-canary plus replay delivery; rollback to the preserved image/config/database
-set; and reconciliation of any uncertain outcomes. A failed or unperformed
-migration/rollback rehearsal remains an explicit release gate.
+Test backup restoration and the exact rollback transition in staging. An
+installation smoke test does not check database compatibility, and restoring a
+snapshot can repeat work delivered after the backup. Follow
+[Backup and restore](recovery.md) before starting restored workers.

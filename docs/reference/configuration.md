@@ -280,7 +280,7 @@ replay:
 ```
 
 Core records a failure only when it acknowledged the request (final status
-2xx) and no `on_error` or `dead_letter` path handled it (I20) — in practice a
+2xx) and no `on_error` or `dead_letter` path handled it — in practice a
 publish (or a success continuation after it) that failed under
 `delivery_failure_policy: skip_failed`, or an async webhook delivery that
 failed for good — retries exhausted or a terminal 4xx — with no dead letter,
@@ -298,7 +298,7 @@ Uploads are best effort and never touch a request: four workers, at most 128
 records and 64 MiB buffered, at most three attempts within five seconds. A
 record that cannot be kept is dropped, logged at Error with its `event_id`,
 `flow`, and `node_id`, and counted. Replay being slow or down never changes a
-response or readiness (I15). Both tokens must be at least 32 characters and
+response or readiness. Both tokens must be at least 32 characters and
 must differ; `${VAR}` references are accepted by `validate` without
 expansion. `tls` sets the client TLS for uploads (`client_cert` and
 `client_key` together for mutual TLS).
@@ -316,7 +316,7 @@ block reason (`unsupported_snapshot_version`, `hash_mismatch`,
 core resumes the flow at the failed node (or re-sends a `publish_only`
 message) with inline delivery, under the deadline replay sends, and reports
 each node's outcome; downstream failures come back as child records. A
-redrive never captures, dead-letters, or runs compensations (I21). At
+redrive never captures, dead-letters, or runs compensations. At
 shutdown readiness first withdraws for `server.shutdown_delay`, then every
 listener stops accepting. The control listener answers `503 not_started` to
 requests still arriving and waits for in-flight redrives before publishers close.
@@ -696,7 +696,7 @@ MongoDB fields live under `destinations.<id>.mongodb`. Hookway inserts each webh
 
 **No DDL:** Hookway does not create collections or indexes at startup. Collections auto-create on first insert; `_id` is automatically indexed by MongoDB, so deduplication works with no setup required.
 
-**Deduplication:** inserts use `InsertOne`. A duplicate `_id` (MongoDB E11000 duplicate key error) is treated as a no-op success (first-write-wins). At-least-once retries from a provider are safe — only the first write for a given event id is persisted.
+**Deduplication:** inserts use `InsertOne`. A duplicate `_id` (MongoDB E11000 duplicate key error) is treated as a no-op success. This deduplicates internal retries of the same Hookway envelope, not fresh sender requests, which get new IDs. Use a stable sender event ID for application-level deduplication.
 
 ```yaml
 destinations:
@@ -1540,8 +1540,8 @@ See [the runnable spot-check example](../../examples/inspect.yaml) and
 ### XML bodies
 
 An `envelope` with `body_format: xml` parses the verified bytes into an element
-tree. Authentication is checked before this parse (I6), so a
-document is never parsed before it is trusted.
+tree. Parsing follows the flow's authentication decision; explicit `no_auth`
+flows still accept unsigned input.
 
 What understands that tree:
 
@@ -1608,8 +1608,8 @@ repeated field name gets a `#2`, `#3` suffix in document order
 (`files.document#2.filename`). `code` sees the same object as `input.body`, and
 `publish` sends it as the envelope's `body`.
 
-The signature is always verified against the raw bytes before anything is
-parsed, so an unsigned upload never reaches the multipart reader.
+For authenticated flows, signature verification uses the raw bytes before
+multipart parsing. Explicit `no_auth` flows accept unsigned uploads.
 
 **Memory.** The whole request is buffered by `read_body`; parsing temporarily
 buffers each decoded part, and carried file content retains a base64 copy of
@@ -1751,12 +1751,12 @@ An XML body (from `body_format: xml`) arrives as a tagged node tree — `{declar
 Options:
 
 - `script`: required JavaScript. Top-level `return` is allowed (the runtime wraps the script in a function).
-- `timeout`: optional duration, default `1s` (C1). A missing timeout is a lint warning because goja has no memory cap. See [Security § Code node](security.md#code-node).
-- `max_input_bytes`: optional, default `1048576` (C4). Raise it deliberately when a script must inspect a larger parsed body; base64 file content is larger than its decoded bytes.
-- `max_output_bytes`: optional, default `1048576` (C5). Oversize output is refused, not truncated.
-- `max_call_stack`: optional, default `1000` (C2).
+- `timeout`: optional duration, default `1s`. A missing timeout is a lint warning because goja has no memory cap. See [Security § Code node](security.md#code-node).
+- `max_input_bytes`: optional, default `1048576`. Raise it deliberately when a script must inspect a larger parsed body; base64 file content is larger than its decoded bytes.
+- `max_output_bytes`: optional, default `1048576`. Oversize output is refused, not truncated.
+- `max_call_stack`: optional, default `1000`.
 
-The interrupt is checked between JavaScript statements. A pathological regex may run until it finishes; use `filter` instead. Per-request VMs are not pooled (C6).
+The interrupt is checked between JavaScript statements. A pathological regex may run until it finishes; use `filter` instead. Each request gets a separate VM.
 
 ## Logging & observability
 

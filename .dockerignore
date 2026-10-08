@@ -49,7 +49,7 @@ internal/editor/webui/*
 
 # Local assessment/private parity inputs must not enter Docker build layers.
 docs/local-plans
-docs/plans/hardening
+docs/plans/
 examples/production-local/.local*
 docs/vendor-replacement-assessment.md
 

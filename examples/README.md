@@ -7,11 +7,12 @@ files start the local demonstrations. Runtime configs stay beside their Compose
 examples under this directory. File headers explain each demonstration;
 `showcase/invalid-*` files intentionally fail validation.
 
-## Canonical config
+## Starting configurations
 
 | File | Description |
 |------|-------------|
-| [config.yaml](config.yaml) | Minimal canonical config: one RabbitMQ destination, one `hmac_sha256_hex` GitHub flow (`/webhooks/github`). This is the default for `make validate` and `make run` (core on the host, no replay service). |
+| [config.yaml](config.yaml) | Minimal config: one RabbitMQ destination and a signed GitHub flow (`/webhooks/github`). Default for `make validate` and `make run`, without replay. |
+| [sample.yaml](sample.yaml) | Keep a configurable random fraction of events with a Sample node. Sampling drops that branch, not just inspection records. |
 | [inspect.yaml](inspect.yaml) | Sample → Inspect on an independent branch, alongside RabbitMQ Publish for every request; uses the local replay stack. See [run instructions](../docs/operations/replay-console.md#view-only-inspections). |
 | [filters.yaml](filters.yaml) | Filtering reference: a filter node after envelope with a silent drop, a branch-level filter that fans out selectively, and `on_no_match: reject` (422) using numeric, regex, and `exists` operators. See `docs/reference/configuration.md` § Filtering. |
 | [json-validation.yaml](json-validation.yaml) | Validate required fields, numeric IDs and email formats with local JSON Schema references. Optional explicit conversion; malformed input returns 400. See [Validate JSON](../docs/guides/json-validation.md). |
@@ -99,24 +100,10 @@ These are the configs the web builder round-trips. `make validate-examples` skip
 
 ## Templates (`examples/templates/`)
 
-Each file here is both a runnable config and the source of a builder palette
-template. `make validate-examples` validates them like any other example, which
-is what stops a template from rotting when a node option changes.
-
-The config UI inserts only the node ids listed in the
-`TEMPLATES` manifest (`web/src/graph/templates.ts`). Notification templates
-(`slack-notify`, `discord-notify`) insert the format-and-POST pair; the
-trigger/auth prefix and trailing `respond` exist so the file is a valid
-standalone config. Ingest templates (`stripe-ingest`, `paddle-ingest`) insert
-the verified prefix (trigger, loop/rate guards, timestamped HMAC via
-`secret_ref`, replay guard, envelope); the trailing `publish` is the wrapper.
-Drop an ingest template onto a new flow, then wire envelope to your
-destination. `xml-ingest` is the exception to the front/back split: it inserts
-the whole pipeline, because `transform` `kind: xml_prune` only validates behind
-an `envelope` with `body_format: xml`, so a back half dropped after a JSON
-ingest template would not validate. When you rename a node in one of these
-files, update the manifest; `web/src/graph/templates.test.ts` fails if the two
-disagree.
+Each file is a runnable configuration and a template in the builder palette.
+Notification templates insert the format-and-POST pair. Stripe/Paddle ingest
+templates insert the verified prefix; connect its envelope to your destination.
+The XML template inserts a complete XML pipeline.
 
 Every template file is a production-shaped config: secrets live in the
 environment (`secret_ref` with rotation overlap, webhook URLs as `${ENV}`),
@@ -145,13 +132,10 @@ make validate-examples
 make test-examples
 ```
 
-`make test-examples` is what CI's Examples job runs after `validate-examples`. It uses a fake publisher (no Docker) and a loopback HTTP server for env-driven `http_request` URLs. `invalid-*` files must fail validation.
-
-**The two targets do not have the same coverage rules.** `make test-examples` walks the `examples/` directory, so a new YAML anywhere under it is picked up automatically (except files named `replay.yaml`, which configure the replay service, not core). `make validate-examples` validates every top-level `*.yaml` (except `docker-compose.yaml`), globs `destinations/`, `auth/`, `routing/`, `proxy/`, `credentials/`, `adapters/`, `templates/`, `providers/`, `protection/`, and `showcase/` (skipping `invalid-*`), and names the `dev/` and `replay/` files explicitly — each directory's `core.yaml` with `hookway validate`, its `replay.yaml` with `hookway-replay validate`.
-
-The target also validates every `production-local/core*.yaml` and its replay config.
-A new subdirectory is skipped by `validate-examples` until the Makefile learns
-about it; place examples in a covered directory or add the directory to the recipe.
+`make test-examples` boots configs with test publishers and loopback HTTP;
+it does not contact your production destinations. `invalid-*` files are
+intentional validation failures. When adding an example directory, add it to
+`validate-examples` in the Makefile so CI checks it.
 
 ## Persistent production-style local stack (`production-local/`)
 
@@ -165,8 +149,7 @@ project name. Browser ports bind to loopback, while internal APIs and stores sta
 on the Compose network. See [Local development](../docs/development/local-development.md#persistent-local-production-setup)
 for validation, operating commands, URLs and architecture limits.
 
-This runs the production application with local HTTP and private destinations.
-It is an operating recipe, not proof of production capacity or disaster recovery.
+This runs the same application with local HTTP and private destinations.
 
 | File | Components |
 | --- | --- |

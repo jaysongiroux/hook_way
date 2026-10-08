@@ -1,158 +1,115 @@
 # Resource limits and sizing
 
-Size Hookway for the traffic and failure backlog you actually expect. The same
-configuration and production containers can run locally; there is no separate
-security mode or required workstation size. Start small, keep finite budgets,
-then raise the relevant limits for legitimate workloads.
+Start with finite limits and size them for your payloads, concurrency and failure
+backlog. The same settings work locally and in production; there is no minimum
+workstation size or special security mode.
+
+For field syntax, see [Configuration](../reference/configuration.md).
+For diagnosing overload, see [Saturation](observability.md#saturation).
 
 ## What a limit means
 
-These are separate budgets, not interchangeable memory guarantees:
+A body-size limit is not a process-memory limit. Hookway buffers accepted bodies;
+parsing, base64 encoding, branch copies and capture can hold additional copies.
+Async queue accounting is conservative, not a measurement of Go heap.
 
-- Wire bytes bound a buffered request or response, not its parsed object tree.
-- Structural depth/count bounds parser expansion; it is not a byte-to-heap ratio.
-- Async queue bytes conservatively account retained jobs, not live Go heap.
-- Replay retention counts stored artifacts, not PostgreSQL disk usage including
-  indexes, history, WAL, replication or backups.
-- A container memory limit bounds the entire process. Hitting it may kill the
-  process and lose acknowledged volatile jobs. It is containment, not graceful
-  rejection or isolation between flows.
+Likewise, replay artifact usage excludes database indexes, WAL and backups.
+Monitor actual process memory and database disk space as well as application
+limits. Container memory limits can kill the process and lose volatile work;
+they do not guarantee graceful rejection.
 
 ## Budget matrix
 
-Defaults below describe the implementation, not a throughput or latency promise.
-The [configuration reference](../reference/configuration.md) owns field syntax;
-the linked guides explain operational tradeoffs.
+These defaults help identify which limit to adjust. They are not throughput targets.
 
-| Boundary | Default and adjustment | Enforcement and failure |
+| Work | Main limits | When exceeded |
 | --- | --- | --- |
-| Inbound wire body | Required positive `read_body.max_bytes`, per flow. `server.max_body_bytes` is only a lint reference. | Admission precedes body reading; over cap returns `413`. The whole accepted body is buffered. |
-| HTTP sockets and headers | Core header read deadline 5s; Go HTTP default header bound. Read/write/idle defaults 5s/10s/60s, configurable positive durations. | Read timeout ends a slow body; write timeout bounds socket writes, **not** all graph execution. Execution admission is not a TCP connection cap; proxy/OS limits are separate. |
-| JSON envelope | Depth 128, 1,000,000 nodes; `json.max_depth` up to 1024 and `json.max_nodes` up to 1,000,000. | Valid JSON is structurally checked before tree allocation, including duplicate-key input. Over structure is `413`. Malformed JSON retains raw-base64 fallback. |
-| JSON validation | Body 20 MiB/depth 128/1,000,000 nodes; schema 256 KiB/depth 64/10,000 nodes. | Independent fixed validation limits; invalid/over-limit data is `400` or follows configured `on_error`. Raising envelope depth does not raise these. See [JSON validation](../guides/json-validation.md). |
-| XML envelope | 1 MiB/depth 256/100,000 nodes; explicit maxima 64 MiB/1024/1,000,000. | Over limit `413`, malformed or prohibited directive `400`. Namespace frames retain local declarations instead of repeatedly copying inherited maps. |
-| Multipart | 16 parts, 1 MiB per decoded part; optional decoded aggregate up to 64 MiB. | Read at most the smaller of part cap and remaining aggregate plus one byte; no draining an over-limit part. Limits `413`, malformed `400`. Omitted aggregate still has wire/count/part caps. Metadata-only skips retained base64, not the temporary part buffer. |
-| Raw/base64 and file objects | Original wire cap still applies; base64 length is `4 * ceil(n / 3)`. | Raw, encoded and decoded object representations can coexist. Destination payload limits apply independently; projecting or using object storage can be necessary. There is no streaming intake. |
-| HTTP response body | `http_request.max_response_bytes`: 10 MiB default, configurable up to 64 MiB. | Cap-plus-one read, `502` on excess and `504` on timeout. Automatic decompression disabled; compressed response wire bytes preserved. |
-| HTTP JSON response bindings | 64 KiB default selection budget, configurable up to 1 MiB; fixed depth 128/1,000,000 nodes. | Preflight before independently decoding selection data. Failure sets selection-error metadata; original status/body remain available for passthrough. |
-| Request admission | 256 executions; positive override. Explicit `-1` remains supported but removes this protection. Pending queue disabled; enable with positive count and positive wait timeout. | Full/expired/closing admission returns `503` with `Retry-After: 1`, no flow body read. HTTP/1 rejected unread bodies close the connection to avoid slow-drain delay. Health/readiness bypass admission. |
-| Publication fan-out | 8 concurrent publishes per request for `skip_failed`, adjustable `server.fanout_concurrency`. | Not a process-wide publish cap. Multiply by active requests; immutable branch copies still cost memory. Publish successors share the same detached publish budget. |
-| Batch children | 1,000 children (max 10,000); 64 in-flight per node, process ceiling 1,024; dedicated concurrency default 8; timeout 30s (positive override up to 2m). | Over child count `413`; bounded admission and cancellation; no nested batches. Shared accounting responds `200`, dedicated eligible failures `502`. Parent wire/tree, child/branch copies and publication all count. See [batches](../guides/ingress-adapters.md#batches-and-http-responses). |
-| Async webhook jobs | Per destination: 1,000 queued jobs, 8 workers by default, **64 MiB accounted queued-plus-active bytes**. Both limits adjustable; bytes omitted/0 uses default, positive finite override only. | Either count or bytes rejects before async acceptance; one job can exceed byte budget. Readiness at ≥90% of either. Hold accounting through retries, dead-letter publication and terminal callbacks; release on recovered worker panic too. Sync/inline bypass these queue caps. |
-| Async byte accounting | Fixed message/value overhead plus conservative retained strings/byte-slices and JSON/base64 headroom; includes headers, raw/object/frozen payloads. | Bounded structural traversal, aliases charged again, cycles refused. Not exact wire bytes, allocator cost or hard heap. Observe `hookway_webhook_queue_accounted_bytes` against its capacity gauge. |
-| Destination sockets/pools | RabbitMQ 8 publisher-confirm channels, configurable; PostgreSQL/MongoDB driver defaults unless explicitly capped. Shared state and lookup pools are separate. | Requests share finite operation deadlines, including pool/connect waits where supported. Sum pools across destinations, providers and replicas; no universal process-wide connection cap. |
-| Dynamic target cache | 10,000 cached targets, FIFO eviction. | Same-target provisioning shares a flight; each waiter honors its own cancellation, while the shared operation retains its initiating deadline. |
-| Lookup/cache | Provider timeout 2s (max 30s); cache 10,000 entries (max 1,000,000), positive values TTL 5m (max 24h). | Backend failure `503`, missing value without fallback `400`; errors not cached. Same-key requests share work. See [lookups](../guides/lookups.md). |
-| Protection state | Rate identity capacity 10,000; replay reservations 1,024 with 5m TTL; adjustable. Backend deadline 250ms default, explicit per-process pools. | Quota exhaustion `429`; identity-capacity/store failure `503` and readiness withdrawal. No blind retry of uncertain mutations. Hot PostgreSQL policies serialize even different identities. See [protection stores](../guides/protection-stores.md). |
-| Capture buffer | 128 records / 64 MiB estimated record bytes, 4 upload workers. | Best-effort drop metrics on pressure; does not change inbound success/readiness. Snapshot building and temporary serialization can allocate outside buffer accounting. |
-| Replay artifacts/retention | Artifact 16 MiB; retention 100,000 records/10 GiB/168h, adjustable. Database pool 10 per replica. | Oversized artifact `413`, new captures at capacity `507`; core counts drops. Storage accounting is not total database disk. Child recovery records can still add storage. See [replay configuration](replay-service.md#configuration). |
-| Replay runs/control | 4 worker slots (max 256), execution 30s, lease 60s; lease at least execution +15s. | Core execution budget subtracts 5s; worker reserves final 10s of lease for finalization. No automatic resend after a possibly written request or lost result; inspect `unknown` outcomes first. |
-| JavaScript | Timeout 1s, input/output 1 MiB, stack 1000; configurable. | Statement interruption and input/output checks do **not** cap VM heap or guarantee interruption of native work. Trusted authors only; see [Code node security](../reference/security.md#code-node). |
+| Incoming body | Set positive `read_body.max_bytes` on every flow; `server.max_body_bytes` is only a lint reference | 413 |
+| Request admission | 256 active requests by default; pending queue disabled | 503 with `Retry-After: 1`, before reading the body |
+| Parsed JSON | Depth 128 and 1,000,000 nodes; independently configurable | 413 for excessive structure; malformed JSON retains raw-base64 fallback |
+| Parsed XML | 1 MiB, depth 256 and 100,000 nodes by default | 413 for limits; 400 for malformed/prohibited input |
+| Multipart | 16 parts and 1 MiB per decoded part by default; optional aggregate cap | 413 for limits; 400 for malformed input |
+| JSON validation | Body 20 MiB; schema 256 KiB; separate depth/work limits | 400 or the configured error path; see [validation limits](../guides/json-validation.md#limits-and-api-contract) |
+| HTTP response | `http_request.max_response_bytes`: 10 MiB by default, up to 64 MiB | 502 for excess, 504 for timeout; JSON response bindings have separate selection limits |
+| Batch processing | 1,000 children by default (max 10,000); bounded child concurrency and timeout | Over-size input returns 413; see [batch responses](../guides/ingress-adapters.md#batches-and-http-responses) |
+| Async webhook queue | Per destination: 1,000 queued jobs and 64 MiB accounted queued-plus-active bytes | Publication fails before acceptance; readiness withdraws at 90% of either limit |
+| Failure/inspection capture | Shared buffer: 128 records and 64 MiB estimated bytes | Best-effort uploads can drop; the sender's response is unchanged |
+| Replay storage | Artifact 16 MiB; retention 100,000 records, 10 GiB and 168h by default | 413 for oversized ingest, 507 at capacity; see [replay settings](replay-service.md#configuration) |
+| Replay execution | 4 workers, 30s execution, 60s lease by default | A lost result/expired lease can leave delivery unknown |
+| JavaScript | 1s timeout and 1 MiB input/output by default | Checks do not cap VM heap; use trusted, bounded scripts |
+
+Wire, decoded and destination limits apply independently. Raising an ingress cap
+does not raise JSON validation, multipart, code-node or broker limits. For large
+files, publish an object reference or use raw/synchronous forwarding where appropriate.
+
+Publication fan-out defaults to eight concurrent sends **per request**, not per
+process. Connection pools also multiply across destinations, providers and
+replicas. Size the database and downstream services for that combined load.
+See [lookups](../guides/lookups.md) and [protection stores](../guides/protection-stores.md)
+for their deadlines, caches and identity limits.
 
 ## Time budgets during failures
 
-Leave room for admission waiting, body reading, authentication, lookups,
-transforms and publication inside the sender's acknowledgement deadline. The
-HTTP write deadline begins before all that work has completed. Validation of
-individual durations does not prove the sum fits; do not set publication equal
-to the entire response budget and assume the response always arrives in time.
+Leave room for admission waiting, upload, authentication, lookups, transforms and
+publication before the sender's deadline. The HTTP write timeout does not cancel
+all graph execution. Normal publication survives caller cancellation within
+`server.publish_timeout` (10s default); a disconnected caller can still have
+caused a delivery.
 
-Normal publication deliberately survives inbound cancellation, but shares the
-finite `server.publish_timeout` (10s default), including continuation nodes and
-fan-out. Keep the configured publish budget no greater than write/shutdown
-budgets. Never add a resend because a client disconnected: an effect may already
-have occurred, and uncertain duplicate reservations must remain.
+`http_request.timeout` is per attempt. Allow for retries and backoff when setting
+the overall response deadline. Async webhook delivery continues after queue
+acceptance and can outlast the inbound request; its default three attempts and
+dead-letter forwarding need their own shutdown allowance.
 
-RabbitMQ's destination publish budget defaults to 5s and includes retries,
-connection waiting, TCP/TLS/AMQP handshake, setup, channel operations, writes and
-confirmation. Canceling a stalled shared socket can also make other concurrent
-sends uncertain. Existing at-least-once backend retries remain possible within
-their budgets; cancellation does not prove a message was never sent.
-
-`http_request.timeout` is per attempt, not a total retry budget. Multiply attempts
-by timeout and add bounded backoff before choosing sender and server deadlines.
-The async webhook default is three attempts with 10s per attempt, initial 500ms
-backoff and a 30s backoff cap (including `Retry-After`); dead-letter forwarding
-can add another 10s. Ignored webhook response bodies drain at most 64 KiB before
-closing, while retaining the HTTP attempt deadline. Async retry lifetime can
-exceed an inbound publish deadline because queue acceptance has already happened.
-
-Capture shares 5s across at most three upload attempts and allows a final 6s
-drain. `server.shutdown_total_timeout` bounds the complete core termination
-sequence, including sequential destination drains. An expired async drain does
-not cancel retained workers or safely free their dependent resources; shutdown
-must exit unsuccessfully. Set platform termination grace above this total.
-See [shutdown and upgrades](upgrades.md#core-shutdown-contract).
+Set container termination grace above `server.shutdown_total_timeout` and
+replay's `max(30s, workers.lease)`, with margin. Follow the
+[shutdown procedure](upgrades.md#core-shutdown-contract). Forced termination can
+lose acknowledged async work.
 
 ## Adjustable sizing recipes
 
-These are starting points, not measured capacity claims. Apply overrides to a
-[runnable local production configuration](../development/local-development.md),
-validate it, and measure the same configuration before promotion. Private local
-destinations and production TLS remain supported; raising budgets needs no code
-fork or developer-only security bypass.
+These are trial configurations, not measured capacity guarantees. Apply them to
+the [local production recipe](../development/local-development.md#persistent-local-production-setup),
+validate, then measure memory and rejection rates.
 
 ### Ordinary small events
 
-For a constrained single replica, start with 8 active requests, no pending
-admission queue, a 1 MiB per-flow wire cap, four fan-out/async workers and a
-32 MiB accounted async queue cap with 128 queued jobs. A 256 MiB container is a
-**trial allowance**, not guaranteed sufficient for all parsed inputs. Inspect
-peak RSS/Go heap and rejects before changing throughput. Lower count and byte
-limits together if the process cannot maintain headroom. Prefer immediate
-backpressure to retaining a large failure backlog in memory.
+On a constrained single replica, try eight active requests, no waiting queue,
+a 1 MiB body cap, four fan-out/async workers, 128 queued jobs and a 32 MiB async
+byte cap. A 256 MiB container is a starting allowance; reduce concurrency if
+parsed inputs or failures leave too little headroom.
 
 ### Legitimate large files
 
-For 12 MiB files, start with two active requests and a raw flow (no unnecessary
-JSON, multipart or JS conversion). Set its `read_body.max_bytes` to `12582912`;
-for parsed XML, also raise `envelope.xml.max_bytes`. For passthrough replies set
-`http_request.max_response_bytes` above the actual wire response, for example
-16 MiB. Keep async count low (for example two queued jobs) and use a finite
-256 MiB accounted byte allowance with a trial container allowance of at least
-512 MiB. Conservative accounting may permit only one such job at a time; raw,
-base64 and object copies vary by path. Raise the byte cap only with measured
-memory headroom, or use sync/confirmed object-storage publication instead.
-
-Multipart users must budget framing and decoded content separately. A 12 MiB
-file exceeds both the default 1 MiB part cap and the default code input cap;
-changing only the ingress cap cannot make that path valid. Never use the
-base64 4/3 factor as a complete peak-memory estimate.
+For a 12 MiB raw file, set `read_body.max_bytes: 12582912` and start with two
+active requests. Parsed XML, multipart, HTTP replies and code nodes need their
+own limits raised where applicable. Avoid unnecessary parsing/base64 copies.
+If using async delivery, start with a small queue and measure retained memory;
+sync delivery or object storage may be simpler.
 
 ### Shared protection and lookup traffic
 
-Start with small explicit pools (for example two connections per shared provider
-per core), a 250ms protection deadline, conservative identity capacity and no
-extra backend retry layer. Measure same-key and many-key traffic separately;
-policy contention can dominate even with different identities. Budget the
-aggregate connection count across every replica and provider. Increase a pool
-only if dependency capacity and pool-wait measurements support it.
+Start with small explicit connection pools, then measure backend waits and
+same-key versus distinct-key traffic. PostgreSQL protection decisions serialize
+within one policy, including different identities. Increasing pools cannot
+remove that contention.
 
 ### Failure capture and replay
 
-Size capture for best-effort failure/inspection bursts; its buffer is not a
-durable acceptance guarantee. Alert on buffer, upload and replay-capacity drops.
-Begin replay with one or two workers and an explicit small database pool on a
-constrained machine. Each worker can hold roughly `2 * max_record_bytes +
-64 MiB` in snapshot/request/result data; ingest adds roughly twice the artifact
-cap. Add runtime and database headroom, and increase worker concurrency only
-after measuring. Storage expiry does not eliminate WAL/index/backup growth.
+Start with one or two replay workers and a small database pool. A worker can hold
+roughly `2 * max_record_bytes + 64 MiB`; ingest can hold roughly twice the
+artifact cap. Leave additional runtime/database headroom. Alert on capture drops
+and disk growth; successful retries do not immediately free artifacts.
 
 ## Validate containment, then capacity
 
-Declare the workload and thresholds **before** each trial: image/source hashes,
-CPU/memory/PID limits, body mix, scheduled rates and duration, dependency faults,
-allowed rejection statuses, probe deadlines, recovery and termination bounds.
-Use open-loop scheduled traffic; include skipped/late requests in the denominator
-instead of reporting only completed successes. Record HTTP statuses, latency,
-queue/capture occupancy and drops, CPU, RSS, Go heap/goroutines, dependency pool
-waits, readiness, drain results and recovery. Keep failed trials and explain any
-repair before rerunning. Old [performance measurements](../evidence/performance.md)
-do not establish a later build's capacity.
+Measure your actual payload mix and acknowledgement mode. Count planned,
+completed, rejected and late requests, and inspect latency, CPU, memory, queue
+usage, capture drops and destination receipts during load and after draining.
+Use [performance measurements](../evidence/performance.md) as examples of reporting,
+not as capacity for another build or workload.
 
-Run pathological scripts only in isolated, hard-limited subprocess/container
-fixtures with no restart and an external kill deadline, never in the agent or
-developer's host process. A native allocation can OOM-kill core; a native regex
-can require external termination after the configured JS timeout. Until a
-separate execution-isolation design is approved, avoid those constructs and
-treat one core as one trusted scripting domain.
+Run pathological-script tests only in disposable processes/containers with hard
+memory limits and an external kill deadline. JavaScript allocations can exhaust
+memory, and native work such as a regular expression can outlast the script
+timeout. Do not run such tests inside your working server.

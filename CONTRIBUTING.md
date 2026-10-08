@@ -5,9 +5,8 @@
 Use the Go version in [`go.mod`](go.mod) and the Node/npm version used by
 [CI](.github/workflows/reusable-ci.yml) for web changes. Docker is required for
 integration tests and the local stack. Python 3 supports the contract generation,
-acceptance and deployment scripts; OpenSSL generates local production credentials
-and signs webhook examples. The persistent production recipe itself uses Make,
-ordinary YAML and Docker Compose, with no Python helper requirement.
+documentation and verification scripts. OpenSSL generates local credentials
+and signs webhook examples.
 
 ```bash
 git clone --branch v2 https://github.com/jaysongiroux/hook_way.git
@@ -40,27 +39,20 @@ for delivery, shared protection, and replay against disposable backends. Run
 `make compose-e2e-test COMPOSE_E2E_BUILD=dockerfile` to exercise the packaged stack.
 These checks need Docker; inspect their output for skipped tests.
 
-Other Docker-backed suites have individual `make *-integration-test` targets. `make test-all` runs the full Go suite and needs Docker for its
-container-backed tests. Use the [extension guide](docs/development/extending-hookway.md) for code ownership,
-generated contracts, and the separation between native and WASM code. `Makefile` owns the
-complete target list; avoid maintaining copies of it in multiple guides.
+Other backends have individual `make *-integration-test` targets. `make test-all`
+runs the full Go suite, including Docker-backed tests. See the
+[extension guide](docs/development/extending-hookway.md) for module layout and
+generated contracts, and the [Makefile](Makefile) for the full target list.
 
-For documentation or marketing changes, run `make docs-check` to check file and
-heading links. Before opening a pull request, run the checks that cover your change
-and review `git diff --check`. `make hardening-check` restores locked web dependencies
-and runs native, frontend/browser, backend integration and source security checks.
-It does not build, publish or sign application images. Docker is needed for backend
-and monitoring fixtures; unavailable integrations fail this broad gate.
-`make release-check` adds packaged Compose, image smoke and image scans when those
-checks are wanted; it does not publish or sign either. Existing CI retains its
-unpublished image checks. Install the Playwright Chromium
-browser and required OS libraries first (`cd web && npx playwright install chromium`;
-on a fresh supported Linux host, use `--with-deps` when authorized to install OS packages).
-Focused checks keep their existing convenient defaults; native runtime builds
-still need no Node or cloud account. A passing local gate is not exact-commit CI,
-signature verification or a live deployment. Harden and review `v2` before merging;
-the release is kicked off manually from `main` later. See
-[production acceptance](docs/operations/production-acceptance.md) for that later stage.
+For a broad check, run `make hardening-check`. It installs locked web dependencies
+and runs Go, frontend, browser, backend and security checks; Docker is required.
+It does not build application images. `make release-check` adds packaged Compose,
+image smoke tests and scans. Neither command publishes or signs images.
+
+Install Chromium before browser tests: `cd web && npx playwright install chromium`.
+On a fresh Linux machine, add `--with-deps` to install its system libraries.
+Native builds need only Go. Releases are started manually from `main`; see
+[Releases](docs/operations/releases.md).
 
 ## Pull requests
 
@@ -70,4 +62,15 @@ you could not run. Avoid unrelated formatting or generated-file churn.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
-Documentation ownership and placement rules are in the [documentation index](docs/README.md#maintaining-documentation).
+## Documentation
+
+Write for the person using the feature: explain the task, show a runnable example,
+and describe errors they may encounter. Keep field definitions in `docs/reference`,
+walkthroughs in `docs/guides`, operating procedures in `docs/operations`, and
+contributor guidance in `docs/development`. Link to existing guidance rather than
+repeating it. Do not put implementation plans or test handoffs in user docs.
+
+Update incoming links and the [documentation index](docs/README.md) when moving
+a page. Run `make docs-check` and `git diff --check`. Keep the date, workload and
+environment with published benchmark results. Product and marketing copy should
+describe shipped behavior, not planned features or unsupported guarantees.

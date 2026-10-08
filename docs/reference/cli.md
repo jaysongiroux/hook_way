@@ -327,10 +327,9 @@ file are expanded from the environment.
 | `HOOKWAY_REPLAY_CONFIG` | The config file when `--config` is not given. |
 | `HOOKWAY_LOG_LEVEL` | Overrides `logging.level` at start: `debug`, `info`, `warn`, or `error`. |
 
-A deployment runs `validate` in CI, `migrate` once per release (a Job, an
-init container, or the one-shot `migrate` service in
-`examples/docker-compose.yaml`), and then any number of `serve` replicas on
-one database.
+Run `validate` before deployment and `migrate` once before starting the matching
+`serve` replicas. Use a one-shot container or ECS task for migration; the local
+Compose examples include a `migrate` service.
 
 ### hookway-replay serve
 
@@ -355,19 +354,18 @@ Runs, until `SIGINT` or `SIGTERM`:
   Each route needs a key with the matching scope (`capture`, `read`,
   `payload`, `retry`). `/healthz` and `/readyz` are open.
 - **Metrics** on `metrics.path`, with its own listener on `metrics.addr` when
-  set and on the API listener otherwise. Once any key has the `metrics`
-  scope, a scrape needs one; with none, the endpoint is open and `validate`
-  warns.
+  set and on the API listener otherwise. Enabling metrics requires a key with
+  the `metrics` scope; every scrape must authenticate with that scope.
 - **The workers**, `workers.concurrency` per replica, which claim queued
   retries and send each one to core's control listener (`core.control_url`).
 - **The retention sweep** every `retention.gc_interval`. One replica sweeps at
   a time.
 
-It refuses to start, with exit `1`, when the database is unreachable or its
-schema is behind this binary: run `migrate` first. Shutdown drains the API
-for up to 30s and waits for running retries to finish; give the container a
-stop grace period longer than `workers.execution_timeout`. Logs are JSON on
-stdout.
+It exits `1` when the database is unreachable or its schema is incompatible;
+run the matching migration before serving. Shutdown allows 30s for the API and
+the remaining lease for claimed retries. Set container grace above
+`max(30s, workers.lease)` with margin; see [Upgrades](../operations/upgrades.md).
+Logs are JSON on stdout.
 
 ```bash
 hookway-replay serve --config /etc/hookway-replay/replay.yaml
@@ -415,7 +413,8 @@ hookway-replay gc [--config FILE]
 
 Deletes the records past `retention.ttl` once, prints `gc deleted N records
 and freed M bytes`, and exits. `serve` already sweeps on a timer, so this is
-for cron, or for freeing space right after shortening the retention. When
+for scheduled cleanup or an extra sweep of already expired records. Shortening
+TTL affects new captures, not existing expiry timestamps. When
 another replica holds the sweep lock, it prints `gc skipped: another replica
 is sweeping` and exits `0`.
 
@@ -436,8 +435,8 @@ hookway-replay validate [--config FILE]
 Checks the config without connecting to the database or to core: unknown
 fields, durations, limits, key names and scopes, token lengths (32
 characters at least), and URLs. `${VAR}` references are expanded, and an
-unset variable fails. Warnings (metrics enabled with no `metrics`-scoped key,
-so the endpoint is open) are printed on stderr but pass. Prints `config valid: FILE` and
+unset variable fails. Enabled metrics without a `metrics`-scoped key is an error.
+Warnings are printed on stderr but pass. Prints `config valid: FILE` and
 exits `0`, or lists the issues and exits `1`.
 
 ```bash
@@ -530,8 +529,7 @@ This rebuilds the WASM (it depends on `wasm`), copies `hookway.wasm` and
 directory on **http://localhost:8091**. Ctrl-C stops it.
 
 The harness uses `python3 -m http.server`, so **`python3` must be on your
-PATH**. It is the one undeclared toolchain dependency in the Makefile, and
-the only target that needs it. A plain `file://` open will not work:
+PATH**. A plain `file://` open will not work:
 browsers refuse to instantiate WebAssembly from a `file:` origin, which is
 why the target serves over HTTP at all.
 
