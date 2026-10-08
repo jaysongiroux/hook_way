@@ -23,6 +23,7 @@ export function InspectionPreview({ value, onClose }: { value: Inspection; onClo
   const bytes = new TextEncoder().encode(value.body.content);
   const clipped = bytes.length > BODY_PREVIEW_BYTES;
   const body = new TextDecoder().decode(bytes.subarray(0, BODY_PREVIEW_BYTES), { stream: clipped });
+  const formatted = formatJSONBody(body, value.body.encoding);
   return (
     <Stack gap="lg" mt="md" role="region" aria-label="Captured inspection">
       <section>
@@ -30,9 +31,12 @@ export function InspectionPreview({ value, onClose }: { value: Inspection; onClo
           <Title order={3} size="h5">Current body</Title>
           <Button size="xs" variant="subtle" onClick={onClose}>Close preview</Button>
         </Group>
-        <Text size="xs" c="dimmed">{value.body.content_type || "Content type not recorded"} · {value.body.encoding === "base64" ? "Base64 · binary body" : "UTF-8 text"}</Text>
+        <Text size="xs" c="dimmed">
+          {value.body.content_type || "Content type not recorded"} · {value.body.encoding === "base64" ? "Base64 · binary body" : "UTF-8 text"}
+          {formatted ? " · JSON formatted for readability" : ""}
+        </Text>
         {clipped && <Text size="sm" mt="xs">Showing the first 64 KiB of body text. Download the inspection JSON for the full body.</Text>}
-        {body ? <pre className="payload-preview">{body}</pre> : <Text size="sm" mt="sm" c="dimmed">The captured body is empty.</Text>}
+        {body ? <pre className="payload-preview">{formatted || body}</pre> : <Text size="sm" mt="sm" c="dimmed">The captured body is empty.</Text>}
       </section>
       <section aria-label="Request context">
         <Title order={3} size="h5" mb="sm">Request context</Title>
@@ -49,8 +53,64 @@ export function InspectionPreview({ value, onClose }: { value: Inspection; onClo
 function ContextValues({ title, values, empty }: { title: string; values: [string, string][]; empty: string }) {
   return (
     <section aria-label={title}>
-      <Title order={3} size="h5" mb="sm">{title}</Title>
-      {values.length ? <dl className="inspection-context">{values.map(([key, value]) => <div key={key}><dt className="identifier">{key}</dt><dd>{value || "(empty)"}</dd></div>)}</dl> : <Text size="sm" c="dimmed">{empty}</Text>}
+      <Group justify="space-between" mb="xs">
+        <Title order={3} size="h5">{title}</Title>
+        <Text size="xs" c="dimmed">{values.length} {values.length === 1 ? "entry" : "entries"}</Text>
+      </Group>
+      {values.length ? <dl className="inspection-context">{values.map(([key, value]) => <div key={key}><dt className="identifier">{key}</dt><dd className="identifier">{value || "(empty)"}</dd></div>)}</dl> : <Text size="sm" c="dimmed">{empty}</Text>}
     </section>
   );
+}
+
+function formatJSONBody(body: string, encoding: string): string {
+  if (!body || encoding === "base64") return "";
+  try {
+    JSON.parse(body); // Validate without re-serializing numbers or string escapes.
+  } catch {
+    return "";
+  }
+  let formatted = "";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const newline = () => { formatted += `\n${"  ".repeat(depth)}`; };
+  for (let i = 0; i < body.length; i++) {
+    const char = body[i];
+    if (inString) {
+      formatted += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (/\s/.test(char)) continue;
+    if (char === '"') {
+      inString = true;
+      formatted += char;
+    } else if (char === "{" || char === "[") {
+      formatted += char;
+      let next = i + 1;
+      while (next < body.length && /\s/.test(body[next])) next++;
+      const empty = body[next] === (char === "{" ? "}" : "]");
+      if (empty) {
+        formatted += body[next];
+        i = next;
+      } else {
+        depth++;
+        newline();
+      }
+    } else if (char === "}" || char === "]") {
+      depth--;
+      newline();
+      formatted += char;
+    } else if (char === ",") {
+      formatted += ",";
+      newline();
+    } else if (char === ":") {
+      formatted += ": ";
+    } else {
+      formatted += char;
+    }
+  }
+  return formatted;
 }
