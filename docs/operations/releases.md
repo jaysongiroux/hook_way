@@ -22,9 +22,8 @@ For publication, configure these Actions secrets:
   read/write/delete scope and repository admin access.
 
 Restrict the `release` environment to `main` and authorized reviewers. Release
-jobs use the existing self-hosted Linux X64 runners. Keep privileged publication
-isolated from untrusted pull requests; runner labels alone do not provide that
-isolation. See [GitHub workflow security](https://docs.github.com/en/actions/reference/security/secure-use).
+jobs use GitHub-hosted `ubuntu-latest` runners. Keep privileged publication
+isolated from untrusted pull requests. See [GitHub workflow security](https://docs.github.com/en/actions/reference/security/secure-use).
 
 ## Publish a release
 

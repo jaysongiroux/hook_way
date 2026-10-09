@@ -23,7 +23,7 @@ permissions:
 jobs:
   context:
     name: Release context
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.out.outputs.tag }}
@@ -94,7 +94,7 @@ jobs:
   publish:
     name: Publish
     needs: [context, checks]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 45
     environment: release
     permissions:

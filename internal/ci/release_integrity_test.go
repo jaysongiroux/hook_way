@@ -100,8 +100,8 @@ func TestReleaseIsManualFromMain(t *testing.T) {
 		t.Fatal("release must be manually dispatched")
 	}
 	for _, name := range []string{"context", "publish"} {
-		if got := release.Jobs[name].RunsOn; strings.Join(got, ",") != "self-hosted,Linux,X64,debian" {
-			t.Fatalf("release %s must retain the existing runner setup: %v", name, got)
+		if got := release.Jobs[name].RunsOn; strings.Join(got, ",") != "ubuntu-latest" {
+			t.Fatalf("release %s must use GitHub-hosted runners: %v", name, got)
 		}
 	}
 	gate := release.Jobs["checks"]
@@ -110,8 +110,8 @@ func TestReleaseIsManualFromMain(t *testing.T) {
 	}
 	reusable := loadPolicy(t, "reusable-ci.yml")
 	for name, job := range reusable.Jobs {
-		if strings.Join(job.RunsOn, ",") != "self-hosted,Linux,X64,debian" {
-			t.Fatalf("CI job %s must retain the existing runner setup", name)
+		if strings.Join(job.RunsOn, ",") != "ubuntu-latest" {
+			t.Fatalf("CI job %s must use GitHub-hosted runners", name)
 		}
 	}
 	if release.Permissions["contents"] != "read" || release.Jobs["publish"].Environment != "release" || release.Jobs["publish"].Permissions["contents"] != "write" || release.Jobs["publish"].Permissions["id-token"] != "write" {

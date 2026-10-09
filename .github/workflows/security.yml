@@ -27,7 +27,7 @@ permissions:
 jobs:
   govulncheck:
     name: govulncheck
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -146,7 +146,7 @@ jobs:
 
   web-audit:
     name: Web dependency audit
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

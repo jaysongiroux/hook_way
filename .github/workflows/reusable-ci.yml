@@ -33,7 +33,7 @@ jobs:
 
   formatting:
     name: Formatting
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -51,7 +51,7 @@ jobs:
 
   golangci:
     name: golangci-lint
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -70,7 +70,7 @@ jobs:
 
   govulncheck:
     name: govulncheck
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -88,7 +88,7 @@ jobs:
 
   static:
     name: Static checks
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -115,7 +115,7 @@ jobs:
 
   web-lint:
     name: Web lint
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -160,7 +160,7 @@ jobs:
   go:
     name: Go
     needs: [formatting, golangci, govulncheck, static, web-lint]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -182,7 +182,7 @@ jobs:
   go-race:
     name: Go race
     needs: [formatting, golangci, govulncheck, static, web-lint]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -201,7 +201,7 @@ jobs:
   examples:
     name: Examples
     needs: [formatting, golangci, govulncheck, static, web-lint]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -223,7 +223,7 @@ jobs:
   web:
     name: Web
     needs: [formatting, golangci, govulncheck, static, web-lint]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -246,7 +246,7 @@ jobs:
   coverage:
     name: Coverage
     needs: [formatting, golangci, govulncheck, static, web-lint]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -275,7 +275,7 @@ jobs:
   observability:
     name: Observability
     needs: [formatting, golangci, govulncheck, static, web-lint]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -296,7 +296,7 @@ jobs:
   web-e2e:
     name: Web e2e
     needs: [go, go-race, examples, web, coverage, observability]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -325,9 +325,7 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
 
       - name: Install Playwright browsers
-        # OS libraries are provisioned on the self-hosted runner. --with-deps
-        # invokes sudo, which is intentionally unavailable to CI jobs.
-        run: cd web && npx playwright install chromium
+        run: cd web && npx playwright install --with-deps chromium
 
       - name: Playwright builder tests
         run: make web-e2e
@@ -346,7 +344,7 @@ jobs:
   integration:
     name: ${{ matrix.name }}
     needs: [go, go-race, examples, web, coverage, observability]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -393,7 +391,7 @@ jobs:
   image:
     name: Image
     needs: [go, go-race, examples, web, coverage, observability]
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -490,7 +488,7 @@ jobs:
       - web-e2e
       - integration
       - image
-    runs-on: [self-hosted, Linux, X64, debian]
+    runs-on: [ubuntu-latest]
     steps:
       - name: Fail if any required job did not succeed
         if: >-
