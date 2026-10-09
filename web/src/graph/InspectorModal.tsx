@@ -2,13 +2,15 @@ import { useEffect, useRef } from "react";
 import { Modal, ScrollArea } from "@mantine/core";
 import { Inspector } from "./Inspector";
 import { useGraphStore } from "./store";
+import { yamlIdOf } from "./model";
+import { nodeLabel } from "./nodeSchema";
+import { destinationTypeOf } from "./nodeIcon";
+import { destinationPresentation } from "../shared/ui/destinationIdentity";
 
 /**
  * The inspector lives in a modal rather than a side panel so its forms get the
- * full width of the screen. The title is the constant "Inspector" even though
- * the body names the selection: the accessible name is what tests and screen
- * readers key off, and swapping it on every click made the dialog hard to
- * address.
+ * full width of the screen. The title identifies the selected node using its
+ * YAML ID and the same readable type or destination service as the canvas.
  *
  * The scrolling is the modal's own ScrollArea rather than the body element so
  * the viewport can be reset when the selection changes -- clicking a node in
@@ -27,6 +29,19 @@ export function InspectorModal({
   focusPath?: string;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const node = useGraphStore((s) =>
+    s.selectedEdgeId ? undefined : s.nodes.find((n) => n.id === s.selectedId),
+  );
+  const destinations = useGraphStore((s) => s.destinations);
+  const destinationType = node?.data.nodeType === "publish"
+    ? destinationTypeOf(destinations, String(node.data.options.destination ?? ""))
+    : "";
+  const label = node
+    ? destinationType
+      ? `Send to ${destinationPresentation(destinationType).label}`
+      : nodeLabel(node.data.nodeType)
+    : "";
+  const title = node ? `Inspector · ${yamlIdOf(node)} · ${label}` : "Inspector";
   const scrollKey = useGraphStore(
     (s) =>
       `${s.activeFlow}:${s.selectedId ?? "flow"}:${s.selectedEdgeId ?? "no-edge"}`,
@@ -62,10 +77,13 @@ export function InspectorModal({
     <Modal
       opened={opened}
       onClose={onClose}
-      title="Inspector"
+      title={title}
       size="xl"
       closeButtonProps={{ "aria-label": "Close Inspector" }}
-      styles={{ body: { padding: 0 } }}
+      styles={{
+        title: { minWidth: 0, overflowWrap: "anywhere" },
+        body: { padding: 0 },
+      }}
     >
       <ScrollArea
         viewportRef={viewportRef}

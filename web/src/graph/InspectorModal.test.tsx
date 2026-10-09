@@ -24,12 +24,14 @@ test("stays out of the DOM until it is opened", () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
-test("keeps the accessible name 'Inspector' while showing the selected node", () => {
+test("identifies the selected node in the header and follows ID edits", () => {
   const n = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.setState({ nodes: [n], edges: [], selectedId: n.id });
   wrap(true);
 
-  const dialog = screen.getByRole("dialog", { name: "Inspector" });
+  const dialog = screen.getByRole("dialog", {
+    name: "Inspector · http_trigger_1 · HTTP endpoint",
+  });
   expect(dialog).toBeInTheDocument();
   expect(
     within(dialog).getByRole("button", { name: "Identity and description" }),
@@ -38,6 +40,12 @@ test("keeps the accessible name 'Inspector' while showing the selected node", ()
     within(dialog).getByRole("button", { name: "Identity and description" }),
   );
   expect(screen.getByLabelText("Node ID")).toHaveValue("http_trigger_1");
+  fireEvent.change(screen.getByLabelText("Node ID"), {
+    target: { value: "orders_in" },
+  });
+  expect(screen.getByRole("heading", {
+    name: "Inspector · orders_in · HTTP endpoint",
+  })).toBeInTheDocument();
 });
 
 test("reports a close when the close button is pressed", () => {
@@ -65,7 +73,11 @@ test("caps the scrollport so a form taller than the dialog can be reached", () =
 test("scrolls back to the top when the selection changes", () => {
   const a = createNode("http_trigger", { x: 0, y: 0 });
   const b = createNode("publish", { x: 200, y: 0 });
-  useGraphStore.setState({ nodes: [a, b], edges: [], selectedId: a.id });
+  b.data.options.destination = "events";
+  useGraphStore.setState({
+    nodes: [a, b], edges: [], selectedId: a.id,
+    destinations: { events: { type: "sns", sns: {} } },
+  });
   const { container } = wrap(true);
   const viewport = container.ownerDocument.querySelector(
     ".mantine-ScrollArea-viewport",
@@ -79,4 +91,7 @@ test("scrolls back to the top when the selection changes", () => {
   act(() => useGraphStore.getState().setSelected(b.id));
 
   expect(viewport.scrollTop).toBe(0);
+  expect(screen.getByRole("heading", {
+    name: "Inspector · publish_1 · Send to Amazon SNS",
+  })).toBeInTheDocument();
 });

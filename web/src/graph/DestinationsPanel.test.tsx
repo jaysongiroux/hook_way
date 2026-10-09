@@ -193,7 +193,7 @@ test("nested blocks stay folded so the fields that matter read first", () => {
 });
 
 function chooseType(within_: ReturnType<typeof within>, option: string) {
-  fireEvent.click(within_.getByLabelText("Type"));
+  fireEvent.click(within_.getByLabelText("Destination service"));
   fireEvent.click(screen.getByRole("option", { name: option }));
 }
 
@@ -203,7 +203,7 @@ test("switching to an unrelated backend starts its block empty", () => {
   });
   wrap();
 
-  chooseType(within(editor("hook")), "s3");
+  chooseType(within(editor("hook")), "Amazon S3");
 
   expect(useGraphStore.getState().destinations.hook).toEqual({
     type: "s3",
@@ -220,7 +220,7 @@ test("switching between redis variants keeps the connection they share", () => {
   });
   wrap();
 
-  chooseType(within(editor("cache")), "redis_list");
+  chooseType(within(editor("cache")), "Redis List");
 
   expect(useGraphStore.getState().destinations.cache).toEqual({
     type: "redis_list",
@@ -317,10 +317,7 @@ test("switching between redis variants keeps the connection reference", () => {
   });
   wrap();
 
-  fireEvent.change(within(editor("events")).getByLabelText("Type"), {
-    target: { value: "redis_list" },
-  });
-  fireEvent.click(screen.getByRole("option", { name: "redis_list" }));
+  chooseType(within(editor("events")), "Redis List");
 
   expect(useGraphStore.getState().destinations).toEqual({
     events: {
@@ -340,10 +337,7 @@ test("switching to an unrelated backend drops the connection reference", () => {
   });
   wrap();
 
-  fireEvent.change(within(editor("events")).getByLabelText("Type"), {
-    target: { value: "kafka" },
-  });
-  fireEvent.click(screen.getByRole("option", { name: "kafka" }));
+  chooseType(within(editor("events")), "Kafka");
 
   expect(useGraphStore.getState().destinations).toEqual({
     events: { type: "kafka", kafka: {} },

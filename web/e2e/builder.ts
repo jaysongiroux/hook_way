@@ -5,8 +5,8 @@ export class BuilderPage {
 
   /**
    * The inspector is a modal, so it is addressed by the dialog's accessible
-   * name rather than a testid on a docked panel. Its title stays "Inspector"
-   * whatever is selected, which is what keeps this locator stable.
+   * name rather than a testid on a docked panel. The title starts with
+   * "Inspector" and includes the selected node's identity and type.
    */
   inspector(): Locator {
     return this.page.getByRole("dialog", { name: "Inspector" });

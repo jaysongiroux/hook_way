@@ -87,7 +87,7 @@ test("the inspector stays closed until something opens it", async () => {
   renderApp();
 
   expect(
-    screen.queryByRole("dialog", { name: "Inspector" }),
+    screen.queryByRole("dialog", { name: /^Inspector(?: · |$)/ }),
   ).not.toBeInTheDocument();
 });
 
@@ -105,7 +105,7 @@ test("the header Inspector button opens the inspector modal", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Inspector" }));
 
   expect(
-    await screen.findByRole("dialog", { name: "Inspector" }),
+    await screen.findByRole("dialog", { name: /^Inspector(?: · |$)/ }),
   ).toBeInTheDocument();
 });
 
@@ -129,7 +129,7 @@ test("the keyboard-focusable palette Add action selects a new node and opens its
   fireEvent.keyDown(add, { key: "Enter", code: "Enter" });
   fireEvent.click(add);
 
-  const dialog = await screen.findByRole("dialog", { name: "Inspector" });
+  const dialog = await screen.findByRole("dialog", { name: /^Inspector(?: · |$)/ });
   expect(useGraphStore.getState().nodes).toHaveLength(1);
   expect(useGraphStore.getState().nodes[0].data.nodeType).toBe("http_trigger");
   expect(useGraphStore.getState().selectedId).toBe(
@@ -163,7 +163,7 @@ test("double clicking a node on the canvas opens the inspector on that node", as
     await new Promise((resolve) => setTimeout(resolve, 400));
   });
   expect(
-    screen.queryByRole("dialog", { name: "Inspector" }),
+    screen.queryByRole("dialog", { name: /^Inspector(?: · |$)/ }),
     "a single click should not open the inspector",
   ).toBeNull();
   expect(
@@ -173,7 +173,7 @@ test("double clicking a node on the canvas opens the inspector on that node", as
 
   fireEvent.doubleClick(container.querySelector(".react-flow__node")!);
 
-  const dialog = await screen.findByRole("dialog", { name: "Inspector" });
+  const dialog = await screen.findByRole("dialog", { name: /^Inspector(?: · |$)/ });
   expect(within(dialog).getByLabelText("Request path")).toBeInTheDocument();
   const metadata = within(dialog).getByRole("button", {
     name: "Identity and description",
@@ -212,7 +212,7 @@ test("Config offers flow settings, which opens the inspector on the whole flow",
     await screen.findByRole("menuitem", { name: "Flow settings" }),
   );
 
-  const dialog = await screen.findByRole("dialog", { name: "Inspector" });
+  const dialog = await screen.findByRole("dialog", { name: /^Inspector(?: · |$)/ });
   expect(useGraphStore.getState().selectedId).toBeNull();
   expect(within(dialog).getByLabelText("Flow name")).toBeInTheDocument();
 });

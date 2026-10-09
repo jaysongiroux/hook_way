@@ -18,7 +18,13 @@ function show(value = inspection) {
 test("wrapper decoding preserves body precision and rendering escapes active content", () => {
   const decoded = decodeInspection(JSON.stringify(inspection));
   const close = show(decoded);
-  expect(screen.getByText(inspection.body.content)).toHaveTextContent("9007199254740993");
+  expect(decoded.body.content).toBe(inspection.body.content);
+  const preview = screen.getByText(/"amount": 9007199254740993/);
+  expect(preview.textContent).toBe(`{
+  "amount": 9007199254740993,
+  "decimal": 0.1234567890123456789,
+  "html": "<script>window.executed=true</script>"
+}`);
   expect(document.querySelector("script")).toBeNull();
   expect(screen.getByText("[REDACTED]")).toBeVisible();
   expect(screen.getByText("north")).toBeVisible();
