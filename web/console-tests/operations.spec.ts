@@ -366,7 +366,7 @@ test("WASM outage supports explicit API input validation", async ({ page }) => {
   await expect(dialog.getByRole("alert").last()).toContainText("Queued retry");
 });
 
-test("reload and sign-out clear credentials and all operational state", async ({
+test("reload restores credentials and sign-out clears all operational state", async ({
   page,
 }) => {
   await signIn(page);
@@ -382,13 +382,22 @@ test("reload and sign-out clear credentials and all operational state", async ({
       session: sessionStorage.length,
       cookie: document.cookie,
     })),
-  ).toEqual({ local: 0, session: 0, cookie: "" });
+  ).toEqual({ local: 1, session: 0, cookie: "" });
   await page.reload();
-  await expect(page.getByLabel("Replay API token")).toHaveValue("");
+  await expect(
+    page.getByRole("heading", { name: "Failure inbox" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Replay API token")).toHaveCount(0);
+  await expect(page.getByLabel("Flow", { exact: true })).toHaveValue("");
   await expect(
     page.getByRole("region", { name: "Selected failure" }),
   ).toHaveCount(0);
-  await signIn(page);
+  await page
+    .getByRole("button", { name: `Inspect ${id(1)}`, exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Selected failure" }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: /^demo-(operator|reader|recovery)$/ })
     .click();
@@ -396,6 +405,38 @@ test("reload and sign-out clear credentials and all operational state", async ({
   await expect(
     page.getByRole("heading", { name: "Failure inbox" }),
   ).toHaveCount(0);
+  await expect(page.getByLabel("Replay API token")).toHaveValue("");
+  await expect(
+    page.getByRole("region", { name: "Selected failure" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(() => ({
+      local: localStorage.length,
+      session: sessionStorage.length,
+      cookie: document.cookie,
+    })),
+  ).toEqual({ local: 0, session: 0, cookie: "" });
+  await page.reload();
+  await expect(page.getByLabel("Replay API token")).toHaveValue("");
+});
+
+test("activity renews the session and ten idle minutes clears saved credentials", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await signIn(page);
+  const inbox = page.getByRole("heading", { name: "Failure inbox" });
+  await page.clock.fastForward("09:00");
+  await expect(inbox).toBeVisible();
+  await page.keyboard.press("Shift");
+  await page.clock.fastForward("09:00");
+  await expect(inbox).toBeVisible();
+  await page.clock.fastForward("01:01");
+  await expect(page.getByLabel("Replay API token")).toHaveValue("");
+  await expect(inbox).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+  await page.reload();
+  await expect(page.getByLabel("Replay API token")).toHaveValue("");
 });
 
 test("cursor pagination filters exact flow and keeps a bounded page", async ({

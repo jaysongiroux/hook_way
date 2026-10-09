@@ -16,6 +16,7 @@ import {
   serverConfig,
 } from "./examples";
 import { expectNodeOptions, expectYamlValue } from "./fields";
+import { destinationPresentation } from "../src/shared/ui/destinationIdentity";
 
 // The control is a Select, so it renders the option label, not the config
 // value. Keep these in step with the `data` list in Inspector.tsx -- they
@@ -143,8 +144,8 @@ for (const fixture of exampleFixtures()) {
       await expect(card.getByLabel("Name", { exact: true })).toHaveValue(name);
       const dest = destEntry(fixture.config, name);
       await expect(
-        card.getByRole("textbox", { name: "Type", exact: true }),
-      ).toHaveValue(dest.type);
+        card.getByLabel("Destination service", { exact: true }),
+      ).toHaveValue(destinationPresentation(dest.type).label);
       // Nested blocks (tls, retry, dead_letter, ...) are folded and mount their
       // fields only once open, so expand the ones this fixture asserts on. The
       // control's name carries a "2 set" badge after the label, hence the
@@ -193,6 +194,11 @@ for (const fixture of exampleFixtures()) {
         flowNodes(exported, flow),
         `${fixture.name}: untouched options in ${flow}`,
       ).toEqual(flowNodes(fixture.config, flow));
+    for (const name of destNames)
+      expect(
+        destEntry(exported, name),
+        `${fixture.name}: untouched destination ${name}`,
+      ).toEqual(destEntry(fixture.config, name));
     await builder.closeDialog();
   });
 }

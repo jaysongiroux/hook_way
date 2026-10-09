@@ -25,7 +25,8 @@ FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcaf
 USER root
 # Python is used only at startup for strict URL validation/JSON serialization,
 # and by the local health check. Nginx serves all HTTP requests.
-RUN apk add --no-cache python3
+# Upgrade the inherited TIFF library to include the CVE-2026-4775 fix.
+RUN apk add --no-cache python3 'tiff>=4.7.2-r0'
 COPY --from=ui /web/dist-console/ /usr/share/nginx/html/
 COPY web/runtime_config.py /opt/hookway/runtime_config.py
 USER 101:101
