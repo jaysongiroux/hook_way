@@ -1,15 +1,7 @@
-# Pin a patched Go toolchain. Trivy flags every stdlib CVE stamped into the
-# built binary regardless of reachability, so the pin must track the latest
-# patch of the minor release go.mod asks for. That minor moved to 1.26 when
-# golang.org/x/crypto v0.56.0 (the fix for GO-2026-6354/6355) raised its own
-# floor to go1.26.0; the `go` directive names 1.26.8, so anything older here
-# would silently auto-download a second toolchain at build time.
-#
-# 1.26.8 covers the stdlib advisories govulncheck reports against the 1.26
-# line, the newest of which (GO-2026-6088 through -6218, in encoding/xml,
-# crypto/tls, net/http, html/template and net/url) are fixed in 1.26.6.
-# Bump this pin, and the `go` directive, as newer patches ship.
-FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS source
+# Keep the pinned Go toolchain aligned with go.mod. Go 1.26.9 includes
+# the standard library security fixes reported by govulncheck in October 2026.
+# Update both pins when newer patches ship.
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS source
 WORKDIR /src
 # The pinned official Go image already includes the CA trust store.
 COPY go.mod go.sum* ./

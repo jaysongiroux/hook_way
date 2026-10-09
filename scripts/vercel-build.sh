@@ -4,7 +4,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-required_go="go1.26.8"
+required_go="go1.26.9"
 
 # Vercel's Node build image does not promise the Go toolchain used by go.mod.
 # Use an existing exact match, or download and verify the official archive.
@@ -13,12 +13,12 @@ if command -v go >/dev/null 2>&1 && [ "$(go version | awk '{print $3}')" = "$req
 else
   case "$(uname -s)-$(uname -m)" in
     Linux-x86_64)
-      archive="go1.26.8.linux-amd64.tar.gz"
-      checksum="d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b"
+      archive="go1.26.9.linux-amd64.tar.gz"
+      checksum="42d158b4d8f7b61ac0a830567c940a86098fb7aac52e467a5ebec03ef5cc2f8d"
       ;;
     Linux-aarch64)
-      archive="go1.26.8.linux-arm64.tar.gz"
-      checksum="211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0"
+      archive="go1.26.9.linux-arm64.tar.gz"
+      checksum="4a97373d49fcacdcf3694fea368a500b00ee3e963974f3e7514132717632f052"
       ;;
     *)
       echo "Go $required_go is required to build the browser validator" >&2
