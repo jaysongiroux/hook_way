@@ -1,6 +1,6 @@
 import { Alert, Box, Button, Group, Modal, Stack, Text } from "@mantine/core";
 import { useDisclosure, useDocumentTitle, useMediaQuery } from "@mantine/hooks";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Palette, PaletteTabs, type PaletteTab } from "./graph/Palette";
 import { Canvas } from "./graph/Canvas";
 import { InspectorModal } from "./graph/InspectorModal";
@@ -37,7 +37,7 @@ import { createNode } from "./graph/model";
 import { templateSubgraph } from "./graph/templates";
 import { DARK } from "./tokens";
 
-export default function App({ product = false }: { product?: boolean }) {
+export default function App({ product = false, headerActions }: { product?: boolean; headerActions?: ReactNode }) {
   const [validator, setValidator] = useState<"loading" | "ready" | "error">("loading");
   const initializeValidator = async (retry = false) => {
     setValidator("loading");
@@ -125,7 +125,8 @@ export default function App({ product = false }: { product?: boolean }) {
         <Box
           className="hookway-builder-root"
           style={{
-            height: product ? "calc(100dvh - 60px)" : "100dvh",
+            height: product ? "100%" : "100dvh",
+            flex: product ? 1 : undefined,
             display: "flex",
             flexDirection: "column",
             minHeight: 0,
@@ -134,6 +135,7 @@ export default function App({ product = false }: { product?: boolean }) {
         >
           <style>{BUILDER_CSS}</style>
           <BuilderHeader
+            actions={headerActions}
             paletteOpen={paletteOpen}
             onTogglePalette={() => setPaletteOpen((open) => !open)}
             onInspector={openInspector}

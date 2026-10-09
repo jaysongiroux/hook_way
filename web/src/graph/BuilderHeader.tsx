@@ -1,4 +1,5 @@
 import { Box, Button, Group, Menu, Text } from "@mantine/core";
+import type { ReactNode } from "react";
 import { TbChevronDown } from "react-icons/tb";
 import { Logo } from "../brand/Logo";
 import { HEADER_HEIGHT, HEADER_STYLE, TOOLBAR_DIVIDER } from "../brand/chrome";
@@ -6,6 +7,7 @@ import { DARK } from "../tokens";
 import { FlowSwitcher } from "./FlowSwitcher";
 
 export function BuilderHeader({
+  actions,
   paletteOpen,
   onTogglePalette,
   onInspector,
@@ -24,6 +26,7 @@ export function BuilderHeader({
   onLoadExample,
   onClear,
 }: {
+  actions?: ReactNode;
   paletteOpen: boolean;
   onTogglePalette: () => void;
   onInspector: () => void;
@@ -60,7 +63,7 @@ export function BuilderHeader({
           <Box aria-hidden visibleFrom="sm" style={TOOLBAR_DIVIDER} />
           <FlowSwitcher />
         </Group>
-        <Group gap="xs" wrap="nowrap">
+        <Group gap="xs" wrap="wrap">
           <Button.Group>
             <Button
               size="xs"
@@ -115,6 +118,10 @@ export function BuilderHeader({
           <Button size="xs" variant="subtle" color="red" onClick={onClear}>
             Clear
           </Button>
+          {actions && <>
+            <Box aria-hidden visibleFrom="sm" style={TOOLBAR_DIVIDER} />
+            {actions}
+          </>}
         </Group>
       </Group>
     </Box>

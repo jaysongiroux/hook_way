@@ -142,7 +142,6 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
   const [loginBusy, setLoginBusy] = React.useState(false);
   const [loginError, setLoginError] = React.useState("");
   const idleTimer = React.useRef<ReturnType<typeof setTimeout>>();
-  const restoreAttempted = React.useRef(false);
   const logout = React.useCallback(() => {
     if (idleTimer.current) clearTimeout(idleTimer.current);
     clearStoredSession(storageKey);
@@ -153,7 +152,6 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
     setCredential("");
     setLoginError("");
   }, [storageKey]);
-  React.useEffect(() => () => activeSession.current?.dispose(), []);
   const initialize = React.useCallback(async (retry = false) => {
     setWasm("loading");
     try {
@@ -220,11 +218,13 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
     }
   }
   React.useEffect(() => {
-    if (restoreAttempted.current) return;
-    restoreAttempted.current = true;
     const stored = readStoredSession(storageKey);
     if (stored) void authenticate(stored.credential, true);
-    // Restore this API's saved session once when the console mounts.
+    return () => {
+      activeSession.current?.dispose();
+      activeSession.current = undefined;
+    };
+    // Each mount owns its session, including StrictMode's setup/cleanup cycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
   React.useEffect(() => {
@@ -277,6 +277,34 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
     if (!token) return;
     await authenticate(token);
   }
+  const accountMenu = identity && (
+    <Menu position="bottom-end" width={270}>
+      <Menu.Target>
+        <Button
+          variant="subtle"
+          size="sm"
+          title={identity.key_name}
+          rightSection={<FiChevronDown aria-hidden="true" />}
+        >
+          <Text component="span" size="sm" className="operator-name" truncate>
+            {identity.key_name}
+          </Text>
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Current API key</Menu.Label>
+        <Box px="sm" pb="sm">
+          <Text size="sm" fw={600}>{identity.key_name}</Text>
+          <Text size="xs" c="dimmed">Scopes: {identity.scopes.join(", ")}</Text>
+          <Text size="xs" c="dimmed" mt={6}>
+            Session expires after 10 minutes without activity.
+          </Text>
+        </Box>
+        <Menu.Divider />
+        <Menu.Item onClick={logout}>Sign out</Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
   return (
     <Box
       className={`replay-app ${session || builder ? "is-authenticated" : ""}`}
@@ -291,57 +319,21 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
         } as React.CSSProperties
       }
     >
-      <header className="console-header" style={HEADER_STYLE}>
+      {!builder && <header className="console-header" style={HEADER_STYLE}>
         <Group gap="md" wrap="nowrap">
           <Logo to="/" assetBase={import.meta.env.BASE_URL} />
           <span className="header-separator" aria-hidden="true" />
           <Title order={1} size="h4">
-            {builder ? "Configuration builder" : "Replay console"}
+            Replay console
           </Title>
         </Group>
         <Group gap="xs" wrap="nowrap">
-          <Button component={Link} to={builder ? "/" : "/builder"} variant="default" size="xs">
-            {builder ? "Replay console" : "Builder"}
+          <Button component={Link} to="/builder" variant="default" size="xs">
+            Builder
           </Button>
-        {identity && (
-          <Menu position="bottom-end" width={270}>
-            <Menu.Target>
-              <Button
-                variant="subtle"
-                size="sm"
-                title={identity.key_name}
-                rightSection={<FiChevronDown aria-hidden="true" />}
-              >
-                <Text
-                  component="span"
-                  size="sm"
-                  className="operator-name"
-                  truncate
-                >
-                  {identity.key_name}
-                </Text>
-              </Button>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Label>Current API key</Menu.Label>
-              <Box px="sm" pb="sm">
-                <Text size="sm" fw={600}>
-                  {identity.key_name}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Scopes: {identity.scopes.join(", ")}
-                </Text>
-                <Text size="xs" c="dimmed" mt={6}>
-                  Session expires after 10 minutes without activity.
-                </Text>
-              </Box>
-              <Menu.Divider />
-              <Menu.Item onClick={logout}>Sign out</Menu.Item>
-            </Menu.Dropdown>
-          </Menu>
-        )}
+          {accountMenu}
         </Group>
-      </header>
+      </header>}
       <main className="console-main">
         {!builder && wasm === "loading" && (
           <div className="validation-notice">
@@ -441,7 +433,14 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
             </Box>
           </div>
         ) : null}
-        {builder && <React.Suspense fallback={<LoadingState>Loading builder…</LoadingState>}><Builder product /></React.Suspense>}
+        {builder && <React.Suspense fallback={<LoadingState>Loading builder…</LoadingState>}>
+          <Builder product headerActions={<>
+            <Button component={Link} to="/" variant="default" size="xs" leftSection={<FiChevronLeft aria-hidden="true" />}>
+              Replay console
+            </Button>
+            {accountMenu}
+          </>} />
+        </React.Suspense>}
       </main>
     </Box>
   );

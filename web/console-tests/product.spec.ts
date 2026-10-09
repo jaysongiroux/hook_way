@@ -63,7 +63,9 @@ test("route switches keep investigation state and pause API polling until return
   await expect(page.getByRole("region", { name: "Selected failure" })).toBeVisible();
   await expect.poll(() => polls).toBeGreaterThan(paused);
   await page.reload();
-  await expect(page.getByLabel("Replay API token")).toHaveValue("");
+  await expect(page.getByRole("heading", { name: "Failure inbox" })).toBeVisible();
+  await expect(page.getByLabel("Flow", { exact: true })).toHaveValue("");
+  await expect(page.getByRole("region", { name: "Selected failure" })).toHaveCount(0);
 });
 
 test("a new builder flow survives leaving before its save debounce expires", async ({ page }) => {
@@ -120,7 +122,7 @@ for (const size of [
   { width: Math.floor(1366 / 1.5), height: Math.floor(768 / 1.5), label: "zoom-150" },
   { width: 390, height: 844, label: "mobile" },
 ]) {
-  test(`evidence uses available viewport at ${size.label}`, async ({ page }, info) => {
+  test(`evidence and builder use available viewport at ${size.label}`, async ({ page }, info) => {
     // Browser zoom reduces the CSS viewport by the zoom factor; these viewports
     // exercise that same responsive geometry without changing OS display scale.
     await page.setViewportSize(size);
@@ -146,5 +148,22 @@ for (const size of [
     expect(evidence!.height).toBeGreaterThan(size.height < 600 ? 130 : 250);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`product-${size.label}.png`), fullPage: true });
+    await page.getByRole("link", { name: "Builder", exact: true }).click();
+    await expect(page.locator(".hookway-builder-root")).toBeVisible();
+    await expect(page.locator("header")).toHaveCount(1);
+    const header = page.locator("header");
+    await expect(header.getByRole("button", { name: "Config", exact: true })).toBeVisible();
+    await expect(header.getByRole("link", { name: "Replay console", exact: true })).toBeVisible();
+    await expect(header.getByRole("button", { name: "demo-operator", exact: true })).toBeVisible();
+    const nodes = header.getByRole("button", { name: "Nodes", exact: true });
+    if (await nodes.getAttribute("aria-pressed") === "true") await nodes.click();
+    const canvas = await page.locator(".react-flow").boundingBox();
+    const headerBounds = await header.boundingBox();
+    expect(canvas!.y).toBeCloseTo(headerBounds!.y + headerBounds!.height, 0);
+    expect(canvas!.y + canvas!.height).toBeCloseTo(size.height, 0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`builder-${size.label}.png`), fullPage: true });
+    await header.getByRole("button", { name: "demo-operator", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Sign out", exact: true })).toBeVisible();
   });
 }
