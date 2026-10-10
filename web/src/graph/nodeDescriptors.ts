@@ -14,6 +14,7 @@ import {
   TbFilter,
   TbGauge,
   TbGitBranch,
+ TbFlag,
   TbApi,
   TbHistoryOff,
   TbJson,
@@ -62,7 +63,13 @@ export interface NodeDescriptor {
 
 // The generated catalog makes a missing or misspelled descriptor a type error.
 export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> = {
-  http_trigger: {
+  launchdarkly: {
+ label: "LaunchDarkly flags", icon: TbFlag, editor: "schema",
+ help: "Evaluate named feature flags for a tenant or user. Route using typed results without changing the webhook body.",
+ initialOptions: (id) => ({name:id.replace(/[^A-Za-z0-9_]/g,"_"),connection:"",context:{kind:"user",key:{source:"body",path:"tenant.id"}},flags:{new_processor:{key:"use-new-processor",type:"boolean",fallback:false}}}),
+ summary: (o) => `${String(o.connection ?? "Choose connection")} · ${Object.keys((o.flags as object) ?? {}).length} flags`,
+ },
+ http_trigger: {
     label: "HTTP endpoint",
     icon: TbWebhook,
     help: "Start the flow when a request reaches the configured HTTP path.",

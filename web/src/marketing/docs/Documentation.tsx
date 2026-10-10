@@ -308,36 +308,32 @@ export default function Documentation() {
           } as React.CSSProperties
         }
       >
-        <Group justify="space-between" className="docs-toolbar">
-          <div>
-            <Text size="sm" fw={650} c={DARK.accent}>
-              DOCUMENTATION
-            </Text>
-            <Text size="xs" c={DARK.muted}>
-              Hookway v2
-            </Text>
-          </div>
-          <Group gap="sm">
-            <Button
-              className="docs-menu-toggle"
-              variant="default"
-              onClick={() => setMenu(!menu)}
-              aria-expanded={menu}
-              aria-controls="docs-navigation"
-            >
-              Documentation menu
-            </Button>
-            <Button variant="default" onClick={() => setSearch(true)}>
-              Search
-            </Button>
-          </Group>
-        </Group>
+        <Button
+          className="docs-menu-toggle"
+          size="xs"
+          aria-label="Documentation menu"
+          variant="default"
+          onClick={() => setMenu(!menu)}
+          aria-expanded={menu}
+          aria-controls="docs-navigation"
+        >
+          Browse
+        </Button>
         <div className="docs-layout">
           <nav
             id="docs-navigation"
             aria-label="Documentation"
             className={`docs-navigation ${menu ? "is-open" : ""}`}
           >
+            <Button
+              className="docs-sidebar-search"
+              size="xs"
+              variant="default"
+              fullWidth
+              onClick={() => setSearch(true)}
+            >
+              Search
+            </Button>
             <Navigation
               items={publication.sidebar}
               route={route}

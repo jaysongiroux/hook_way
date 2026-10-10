@@ -21,6 +21,7 @@ import (
 const (
 	SourceHeader = "header"
 	SourceBody   = "body"
+	SourceFlags  = "flags"
 )
 
 // Operators.
@@ -143,19 +144,24 @@ func (c Chain) Empty() bool { return !c.matchNothing && len(c.conds) == 0 }
 // under MatchAny the first satisfying condition on a true result. An empty
 // chain matches under either mode.
 func (c Chain) Match(headers http.Header, body any) (bool, int) {
+	return c.MatchWithFlags(headers, body, nil)
+}
+
+// MatchWithFlags adds typed metadata without changing legacy body/header matching.
+func (c Chain) MatchWithFlags(headers http.Header, body any, flags map[string]any) (bool, int) {
 	if c.matchNothing {
 		return false, 0
 	}
 	if c.mode == MatchAny && len(c.conds) > 0 {
 		for i, cond := range c.conds {
-			if cond.eval(headers, body) {
+			if cond.eval(headers, body, flags) {
 				return true, i
 			}
 		}
 		return false, -1
 	}
 	for i, cond := range c.conds {
-		if !cond.eval(headers, body) {
+		if !cond.eval(headers, body, flags) {
 			return false, i
 		}
 	}
@@ -176,9 +182,9 @@ func compileOne(index int, spec Spec) (condition, []Issue) {
 	cond := condition{source: spec.Source, path: spec.Path, operator: spec.Operator}
 
 	switch spec.Source {
-	case SourceHeader, SourceBody:
+	case SourceHeader, SourceBody, SourceFlags:
 	default:
-		return condition{}, []Issue{{index, "source", fmt.Sprintf("unknown filter source %q", spec.Source), "use header or body"}}
+		return condition{}, []Issue{{index, "source", fmt.Sprintf("unknown filter source %q", spec.Source), "use header, body or flags"}}
 	}
 	if strings.TrimSpace(spec.Path) == "" {
 		return condition{}, []Issue{{index, "path", "filter path is required", "set path to a header name or dotted body path such as repository.private"}}
@@ -256,8 +262,11 @@ func compileTyped(index int, spec Spec, cond condition) (condition, []Issue) {
 	return cond, nil
 }
 
-func (c condition) eval(headers http.Header, body any) bool {
+func (c condition) eval(headers http.Header, body any, flags map[string]any) bool {
 	actual, found := resolve(c.source, c.path, headers, body)
+	if c.source == SourceFlags {
+		actual, found = walkBodyPath(flags, c.path)
+	}
 
 	switch c.kind {
 	case kindExists:

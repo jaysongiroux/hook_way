@@ -129,9 +129,9 @@ func validateRequest(r replaywire.DeliverRequest) error {
 // checkSnapshot applies the snapshot block reasons, in the spec's order, and
 // decodes it.
 func checkSnapshot(req replaywire.DeliverRequest, raw []byte) (deliverysnapshot.Snapshot, error) {
-	if req.SnapshotVersion != deliverysnapshot.Version {
+	if !deliverysnapshot.SupportsVersion(req.SnapshotVersion) {
 		return deliverysnapshot.Snapshot{}, Blockf(replaywire.BlockUnsupportedSnapshotVersion,
-			"snapshot version %d; this core reads version %d", req.SnapshotVersion, deliverysnapshot.Version)
+			"snapshot version %d; this core reads versions 1 and %d", req.SnapshotVersion, deliverysnapshot.Version)
 	}
 	sum := sha256.Sum256(raw)
 	if hex.EncodeToString(sum[:]) != req.SnapshotSHA256 {
@@ -143,6 +143,8 @@ func checkSnapshot(req replaywire.DeliverRequest, raw []byte) (deliverysnapshot.
 		return snap, Blockf(replaywire.BlockUnsupportedSnapshotVersion, "%v", err)
 	case err != nil:
 		return snap, fmt.Errorf("%w: %w", ErrMalformedSnapshot, err)
+	case snap.Version != req.SnapshotVersion:
+		return snap, fmt.Errorf("%w: snapshot version does not match its metadata", ErrMalformedSnapshot)
 	case snap.Kind != deliverysnapshot.Kind(req.ReplayMode):
 		return snap, fmt.Errorf("%w: a %s snapshot for a %s request", ErrMalformedSnapshot, snap.Kind, req.ReplayMode)
 	case snap.Kind == deliverysnapshot.KindResume && snap.Envelope == nil,

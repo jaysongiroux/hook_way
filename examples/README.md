@@ -28,6 +28,7 @@ examples under this directory. File headers explain each demonstration;
 | File | Description |
 | --- | --- |
 | [connections.yaml](connections.yaml) | Reuse named AWS and PostgreSQL connections across destinations; keep credentials and connection settings in one place. |
+| [launchdarkly.yaml](launchdarkly.yaml) | Tenant targeting with boolean, string, numeric and JSON flags, explicit fallbacks and conditional responses. See [feature flags](../docs/guides/feature-flags.md). |
 | [reliable-ingestion.yaml](reliable-ingestion.yaml) | Signed GitHub webhook intake with a 202 response after RabbitMQ publisher confirmation. Preserve stable provider identity; broker durability and atomic consumer deduplication remain deployment responsibilities. See [delivery and recovery contracts](../docs/operations/delivery-guarantees.md). |
 
 ## Destination reference configs

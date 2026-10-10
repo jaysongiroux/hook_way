@@ -44,7 +44,7 @@ func (n filterNode) Run(_ context.Context, in graph.Payload) (graph.Payload, err
 	if cap, ok := env.Extra.(CapturedEvent); ok && cap.Event.OrigHeaders != nil {
 		headers = cap.Event.OrigHeaders
 	}
-	okMatch, _ := n.chain.Match(headers, env.Body)
+	okMatch, _ := n.chain.MatchWithFlags(headers, env.Body, env.Flags)
 	if okMatch {
 		return env, nil
 	}

@@ -63,7 +63,7 @@ export function SchemaForm(props: SchemaFormProps) {
     return (
       <JsonField
         label="Value"
-        value={value ?? ""}
+        value={value}
         onChange={onChange}
         scope={scope}
         path={path}
@@ -268,7 +268,7 @@ function SchemaField(
       <JsonField
         label={label}
         hint={hint}
-        value={value ?? ""}
+        value={value}
         onChange={onChange}
         scope={scope}
         path={fieldPath}

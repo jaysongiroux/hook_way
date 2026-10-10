@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/featureflags"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	"github.com/jaysongiroux/hook_way/internal/protection"
 	"github.com/jaysongiroux/hook_way/internal/routing"
@@ -450,6 +451,8 @@ type RegistryOptions struct {
 	AuthSecrets        func(AuthOptions) (SecretsFunc, error)
 	Publishers         PublisherResolver
 	Lookups            func(LookupOptions) LookupFunc
+	LaunchDarkly       func(string) featureflags.Evaluator
+	FlagObservation    func(string, string)
 	Secrets            func(SecretRefOptions) (SecretsFunc, error)
 	Logger             *slog.Logger
 	HeaderDenylist     []string
@@ -552,6 +555,13 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			}
 			return newLookupNode(id, o, fn)
 		}),
+		define("launchdarkly", graph.PortEnvelope, graph.PortEnvelope, false, validateLaunchDarkly, func(id string, o LaunchDarklyOptions) graph.Node {
+			var fn featureflags.Evaluator
+			if opts.LaunchDarkly != nil {
+				fn = opts.LaunchDarkly(o.Connection)
+			}
+			return launchDarklyNode{id: id, opts: o, evaluate: fn, observe: opts.FlagObservation}
+		}).withMetadata(nodeMetadata{noErrorEdge: true, configureSchema: configureLaunchDarklySchema}),
 		defineErr("json_validate", graph.PortEnvelope, graph.PortEnvelope, false, nil, newJSONValidateNode).withMetadata(nodeMetadata{checkBodyFormat: jsonBodyFormatIssue}),
 		defineErr("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) (graph.Node, error) {
 			return newTransformNode(id, o, opts.Logger)

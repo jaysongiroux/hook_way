@@ -692,5 +692,29 @@
       ]
     },
     "type": "object"
+  },
+  "launchdarkly": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {
+      "properties": {
+        "sdk_key_env": {
+          "type": "string"
+        },
+        "initialization_timeout": {
+          "type": "string",
+          "default": "5s"
+        },
+        "send_events": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sdk_key_env"
+      ]
+    },
+    "type": "object"
   }
 }

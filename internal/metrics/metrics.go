@@ -11,6 +11,8 @@ import (
 )
 
 type Metrics struct {
+	flagEvaluations           *prometheus.CounterVec
+	flagConnections           *prometheus.GaugeVec
 	protectionOperations      *prometheus.CounterVec
 	protectionDuration        *prometheus.HistogramVec
 	protectionPool            *prometheus.GaugeVec
@@ -85,6 +87,9 @@ type Metrics struct {
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.flagEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_flag_evaluations_total", Help: "Named flag evaluations and fallbacks."}, []string{"node", "result"})
+	m.flagConnections = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "hookway_flag_connection_status", Help: "LaunchDarkly data source state (one active state per configured connection)."}, []string{"connection", "state"})
+	m.registry.MustRegister(m.flagEvaluations, m.flagConnections)
 	m.logsSuppressed = prometheus.NewCounter(prometheus.CounterOpts{Name: "hookway_logs_suppressed_total", Help: "Repetitive runtime log records omitted by the fixed hot-path storm budget; outcome metrics are not sampled."})
 	m.registry.MustRegister(m.logsSuppressed)
 	m.initProtection()
@@ -606,4 +611,25 @@ func (m *Metrics) InspectionUploaded(flow string) {
 func (m *Metrics) InspectionDropped(flow, reason string) {
 	m.inspectionTotal.WithLabelValues(flow, "dropped").Inc()
 	m.inspectionDropped.WithLabelValues(reason).Inc()
+}
+
+func (m *Metrics) FlagEvaluation(node, result string) {
+	if result != "evaluated" {
+		result = "fallback"
+	}
+	m.flagEvaluations.WithLabelValues(node, result).Inc()
+}
+func (m *Metrics) FlagConnection(connection, state string) {
+	switch state {
+	case "INITIALIZING", "VALID", "INTERRUPTED", "OFF":
+	default:
+		state = "OFF"
+	}
+	for _, s := range []string{"INITIALIZING", "VALID", "INTERRUPTED", "OFF"} {
+		value := 0.0
+		if s == state {
+			value = 1
+		}
+		m.flagConnections.WithLabelValues(connection, s).Set(value)
+	}
 }

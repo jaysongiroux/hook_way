@@ -24,7 +24,7 @@ def generate(kind, temp):
             if flag:
                 outputs[ROOT / f"web/src/graph/{name}.json"] = raw
             else:
-                workspace = {key: parsed["properties"][key] for key in ["routing", "credentials", "lookups", "state_stores"]}
+                workspace = {key: parsed["properties"][key] for key in ["routing", "credentials", "lookups", "state_stores", "launchdarkly"]}
                 outputs[ROOT / "web/src/graph/workspaceSchema.json"] = (json.dumps(workspace, indent=2) + "\n").encode()
     else:
         run(go, "run", "./cmd/hookway-openapi", "--out", str(temp))

@@ -82,7 +82,9 @@ type Envelope struct {
 	// adapters distinguish an intentionally raw body from parsed JSON null.
 	BodyFormat string
 	Vars       map[string]string
-	Upstream   *UpstreamResponse
+	// Flags contains typed evaluation metadata, separate from the delivered body.
+	Flags    map[string]any
+	Upstream *UpstreamResponse
 	// Extra holds node-private data such as the captured webhook event.
 	// Clone requires BodyCloner (or a JSON-cloneable body type).
 	Extra any

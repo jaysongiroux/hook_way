@@ -213,6 +213,7 @@ func Schema() ([]byte, error) {
 		}}}
 		properties["credentials"] = credentials
 		properties["lookups"] = reflector.Reflect(&map[string]flowconfig.LookupProviderConfig{})
+		properties["launchdarkly"] = reflector.Reflect(&map[string]flowconfig.LaunchDarklyConnection{})
 		properties["routing"] = routingSchema
 		stores := reflector.Reflect(&map[string]protection.Config{})
 		store := stores.AdditionalProperties

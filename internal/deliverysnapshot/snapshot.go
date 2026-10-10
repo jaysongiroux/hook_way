@@ -19,8 +19,11 @@ import (
 	"time"
 )
 
-// Version is the snapshot format this package writes and reads.
-const Version = 1
+// Version is the snapshot format this package writes.
+const Version = 2
+
+// SupportsVersion reports formats that this build can decode.
+func SupportsVersion(version int) bool { return version == 1 || version == Version }
 
 // Kind says how a snapshot is redriven.
 type Kind string
@@ -98,7 +101,7 @@ func Decode(data []byte) (Snapshot, error) {
 	if err := json.Unmarshal(raw, &head); err != nil {
 		return Snapshot{}, fmt.Errorf("%w: %w", ErrMalformed, err)
 	}
-	if head.Version != Version {
+	if !SupportsVersion(head.Version) {
 		return Snapshot{}, fmt.Errorf("%w: %d (this build reads %d)", ErrUnsupportedVersion, head.Version, Version)
 	}
 	// An unknown field means a newer build forgot to bump the version;
@@ -111,6 +114,9 @@ func Decode(data []byte) (Snapshot, error) {
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Snapshot{}, fmt.Errorf("%w: trailing data after the snapshot", ErrMalformed)
+	}
+	if s.Version == 1 && s.Envelope != nil && s.Envelope.Flags != nil {
+		return Snapshot{}, fmt.Errorf("%w: v1 snapshots cannot contain flag metadata", ErrMalformed)
 	}
 	if err := s.validate(); err != nil {
 		return Snapshot{}, err
@@ -142,6 +148,7 @@ type Envelope struct {
 	Body              *Value                      `json:"body"`
 	BodyFormat        string                      `json:"body_format"`
 	Vars              map[string]string           `json:"vars"`
+	Flags             *Value                      `json:"flags,omitempty"`
 	Upstream          *Upstream                   `json:"upstream"`
 	CapturedEvent     *CapturedEvent              `json:"captured_event"`
 	Branch            string                      `json:"branch"`

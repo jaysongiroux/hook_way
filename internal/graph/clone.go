@@ -49,6 +49,13 @@ func clonePayload(p Payload) (out Payload, err error) {
 		v.V.Raw = cloneRaw(v.V.Raw)
 		v.V.Reservations = maps.Clone(v.V.Reservations)
 		v.Vars = maps.Clone(v.Vars)
+		if v.Flags != nil {
+			flags, err := cloneBody(v.Flags, 0)
+			if err != nil {
+				return nil, err
+			}
+			v.Flags = flags.(map[string]any)
+		}
 		v.MessageAttributes = maps.Clone(v.MessageAttributes)
 		b, err := cloneBody(v.Body, 0)
 		if err != nil {

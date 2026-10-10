@@ -45,7 +45,7 @@ test("ordinary comparisons use supported selectors and unquoted typed values", (
   const change = setup(condition, { single: true });
   expect(
     screen.getByLabelText("Source").querySelectorAll("option"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   expect(
     screen.getByLabelText("Operator").querySelectorAll("option"),
   ).toHaveLength(12);

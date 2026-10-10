@@ -152,7 +152,7 @@ func gz(t *testing.T, raw string) []byte {
 }
 
 func TestDecodeRejectsAnUnknownVersion(t *testing.T) {
-	_, err := Decode(gz(t, `{"version":2,"kind":"resume","envelope":{}}`))
+	_, err := Decode(gz(t, `{"version":3,"kind":"resume","envelope":{}}`))
 	if !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("Decode = %v, want ErrUnsupportedVersion", err)
 	}
@@ -217,7 +217,7 @@ func TestPackageImportsOnlyTheStandardLibrary(t *testing.T) {
 // A newer build may change the snapshot's shape; the version must be read
 // before the shape, so the error names the real cause.
 func TestDecodeReportsAFutureVersionEvenWhenItsShapeDiffers(t *testing.T) {
-	_, err := Decode(gz(t, `{"version":2,"kind":"resume","envelope":{"vars":["a"]}}`))
+	_, err := Decode(gz(t, `{"version":3,"kind":"resume","envelope":{"vars":["a"]}}`))
 	if !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("Decode = %v, want ErrUnsupportedVersion", err)
 	}
@@ -242,7 +242,22 @@ func TestDecodeRejectsUnknownFields(t *testing.T) {
 
 func TestVersionOneIncludesPublishMetadata(t *testing.T) {
 	snapshot, err := Decode(gz(t, `{"version":1,"kind":"resume","envelope":{"publish":{"destination":"broker"}}}`))
-	if err != nil || snapshot.Version != Version || snapshot.Envelope.Publish.Destination != "broker" {
+	if err != nil || snapshot.Version != 1 || snapshot.Envelope.Publish.Destination != "broker" {
 		t.Fatalf("snapshot = %+v, %v", snapshot, err)
+	}
+}
+
+func TestVersionTwoFlagsAndLegacyCaptures(t *testing.T) {
+	legacy, err := Decode(gz(t, `{"version":1,"kind":"resume","envelope":{"vars":{"route":"old"}}}`))
+	if err != nil || legacy.Version != 1 || legacy.Envelope.Flags != nil || legacy.Envelope.Vars["route"] != "old" {
+		t.Fatalf("legacy=%+v err=%v", legacy, err)
+	}
+	encoded, err := Encode(Snapshot{Kind: KindResume, Envelope: legacy.Envelope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := Decode(encoded)
+	if err != nil || current.Version != 2 {
+		t.Fatalf("current=%+v err=%v", current, err)
 	}
 }

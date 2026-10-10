@@ -50,6 +50,11 @@ func TestCatalogNodeRuntimeErrors(t *testing.T) {
 func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 	t.Helper()
 	return map[string]func(*testing.T) error{
+		"launchdarkly": func(t *testing.T) error {
+			n := mustCatalogNode(t, "launchdarkly", nodeFixtures["launchdarkly"].yaml, RegistryOptions{})
+			_, err := n.Run(context.Background(), graph.RequestHead{})
+			return err
+		},
 		"batch": func(t *testing.T) error {
 			n := mustCatalogNode(t, "batch", nodeFixtures["batch"].yaml, RegistryOptions{ValidateOnly: true})
 			_, err := n.Run(context.Background(), graph.RequestHead{})

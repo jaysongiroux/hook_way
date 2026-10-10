@@ -21,7 +21,12 @@ func SnapshotFromEnvelope(env graph.Envelope) (deliverysnapshot.Envelope, error)
 	if err != nil {
 		return deliverysnapshot.Envelope{}, fmt.Errorf("body: %w", err)
 	}
+	flags, err := valueFromAny(env.Flags, 0)
+	if err != nil {
+		return deliverysnapshot.Envelope{}, fmt.Errorf("flags: %w", err)
+	}
 	out := deliverysnapshot.Envelope{
+		Flags:   flags,
 		Publish: publishToSnapshot(env.Publish),
 		Verified: deliverysnapshot.Verified{
 			Raw:      deliverysnapshot.RawRequest{Head: headToSnapshot(env.V.Raw.Head), Body: env.V.Raw.Body},
@@ -60,7 +65,12 @@ func EnvelopeFromSnapshot(s deliverysnapshot.Envelope) (graph.Envelope, error) {
 	if err != nil {
 		return graph.Envelope{}, fmt.Errorf("body: %w", err)
 	}
+	flags, err := mapFromValue(s.Flags)
+	if err != nil {
+		return graph.Envelope{}, fmt.Errorf("flags: %w", err)
+	}
 	out := graph.Envelope{
+		Flags:   flags,
 		Publish: publishFromSnapshot(s.Publish),
 		V: graph.Verified{
 			Raw:      graph.RawRequest{Head: headFromSnapshot(s.Verified.Raw.Head), Body: s.Verified.Raw.Body},

@@ -191,6 +191,22 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 		}
 		extra.Lookups = bind
 	}
+	if issues := flowconfig.LaunchDarklyConfigurationIssues(cfg); len(issues) > 0 {
+		closeAll()
+		return nil, fmt.Errorf("invalid LaunchDarkly configuration: %s", issues[0].Message)
+	}
+	if extra.LaunchDarkly == nil {
+		bind, resources, err := bindLaunchDarkly(cfg.LaunchDarkly, m)
+		closers = append(closers, resources...)
+		if err != nil {
+			closeAll()
+			return nil, err
+		}
+		extra.LaunchDarkly = bind
+	}
+	if extra.FlagObservation == nil {
+		extra.FlagObservation = m.FlagEvaluation
+	}
 	var protectionState *protectionRuntime
 	if extra.Protection == nil {
 		var resources []io.Closer

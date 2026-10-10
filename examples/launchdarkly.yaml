@@ -1,0 +1,57 @@
+# Local demonstration: no_auth accepts unsigned requests. Use auth in production.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+launchdarkly:
+  production:
+    sdk_key_env: LAUNCHDARKLY_SDK_KEY
+    initialization_timeout: 5s
+    send_events: true
+flows:
+  tenant_rollout:
+    nodes:
+      - {id: receive, type: http_trigger, path: /webhooks/rollout, methods: [POST]}
+      - {id: read, type: read_body, max_bytes: 1048576}
+      - {id: unsigned_demo, type: no_auth}
+      - {id: parse, type: envelope, body_format: json}
+      - id: evaluate
+        type: launchdarkly
+        connection: production
+        name: rollout
+        context:
+          kind: organization
+          key: {source: body, path: tenant.id}
+          attributes:
+            plan: {source: body, path: tenant.plan}
+        flags:
+          new_processor:
+            key: use-new-processor
+            type: boolean
+            fallback: false
+          processor:
+            key: processor-name
+            type: string
+            fallback: legacy
+            variable: processor
+          limit:
+            key: rate-limit
+            type: number
+            fallback: 100
+          settings:
+            key: tenant.settings
+            type: json
+            fallback: null
+      - id: choose
+        type: if_else
+        conditions:
+          - {source: flags, path: rollout.new_processor.value, operator: eq, value: true}
+      - {id: new, type: respond, status: 200, body: 'new processor: {processor}'}
+      - {id: old, type: respond, status: 200, body: 'existing processor: {processor}'}
+    edges:
+      - receive>read
+      - read>unsigned_demo
+      - unsigned_demo>parse
+      - parse>evaluate
+      - evaluate>choose
+      - choose:true>new
+      - choose:false>old

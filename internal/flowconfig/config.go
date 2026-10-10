@@ -24,6 +24,7 @@ type Config struct {
 	Routing      routing.Config
 	Credentials  map[string]CredentialProfile
 	Lookups      map[string]LookupProviderConfig
+	LaunchDarkly map[string]LaunchDarklyConnection
 	Server       config.ServerConfig
 	Security     config.SecurityConfig
 	Metrics      config.MetricsConfig
@@ -70,7 +71,7 @@ func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []conf
 	// `flows` and `routing` are decoded separately below. Every other
 	// non-shared top-level key -- including
 	// `endpoints` -- is reported as unknown by the strict decoder.
-	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores")
+	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores", "launchdarkly")
 	issues = append(issues, sharedIssues...)
 	issues = append(issues, shared.ValidationIssues()...)
 
@@ -125,6 +126,15 @@ func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []conf
 			issues = append(issues, cfgIssue("lookups", err.Error(), ""))
 		}
 	}
+	if node, ok := root["launchdarkly"]; ok {
+		block, _ := yaml.Marshal(node)
+		dec := yaml.NewDecoder(bytes.NewReader(block))
+		dec.KnownFields(true)
+		if err := dec.Decode(&cfg.LaunchDarkly); err != nil {
+			issues = append(issues, cfgIssue("launchdarkly", "unknown or invalid LaunchDarkly configuration", ""))
+		}
+	}
+	issues = append(issues, LaunchDarklyConfigurationIssues(cfg)...)
 	issues = append(issues, LookupConfigurationIssues(cfg)...)
 	cfg.Credentials = credentials
 	cfg.Routing = routingConfig

@@ -207,7 +207,7 @@ func TestQuotedWebhookRetryDefaultsMatchPublisher(t *testing.T) {
 }
 
 func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
-	const quoted = "68"
+	const quoted = "70"
 	src := readRepoFile(t, "internal/metrics/metrics.go") + readRepoFile(t, "internal/metrics/protection.go")
 	names := uniqueMatches(t, regexp.MustCompile(`"(hookway_[a-z0-9_]+)"`), src)
 	if strconv.Itoa(len(names)) != quoted {

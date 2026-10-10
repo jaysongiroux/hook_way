@@ -946,6 +946,178 @@
       ]
     }
   },
+  "launchdarkly": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "connection": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "context": {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "default": "user"
+            },
+            "key": {
+              "oneOf": [
+                {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "source"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "path"
+                        ]
+                      }
+                    ]
+                  },
+                  "required": [
+                    "value"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "value"
+                    ]
+                  },
+                  "required": [
+                    "source",
+                    "path"
+                  ]
+                }
+              ],
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "body",
+                    "header",
+                    "vars"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "value": true
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "attributes": {
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "source"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "path"
+                          ]
+                        }
+                      ]
+                    },
+                    "required": [
+                      "value"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "required": [
+                        "value"
+                      ]
+                    },
+                    "required": [
+                      "source",
+                      "path"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "body",
+                      "header",
+                      "vars"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "key"
+          ]
+        },
+        "flags": {
+          "additionalProperties": {
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "boolean",
+                  "string",
+                  "number",
+                  "json"
+                ]
+              },
+              "fallback": true,
+              "variable": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "key",
+              "type",
+              "fallback"
+            ]
+          },
+          "type": "object",
+          "minProperties": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connection",
+        "name",
+        "context",
+        "flags"
+      ]
+    }
+  },
   "lookup": {
     "input": "Envelope",
     "output": "Envelope",

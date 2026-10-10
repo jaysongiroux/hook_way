@@ -44,7 +44,7 @@ func (n switchNode) Run(_ context.Context, in graph.Payload) (graph.Payload, err
 	}
 	headers := eventHeaders(env)
 	for i, ch := range n.chains {
-		if ok, _ := ch.Match(headers, env.Body); ok {
+		if ok, _ := ch.MatchWithFlags(headers, env.Body, env.Flags); ok {
 			env.Branch = n.ports[i]
 			return env, nil
 		}

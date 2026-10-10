@@ -12,6 +12,13 @@ test.beforeEach(({ page }) => {
 });
 test.afterEach(({ page }) => expect(browserErrors.get(page)).toEqual([]));
 
+async function openSearch(page: Page) {
+  const browse = page.getByRole('button', { name: 'Documentation menu', exact: true });
+  if (await browse.isVisible()) await browse.click();
+  await page.getByRole('navigation', { name: 'Documentation', exact: true })
+    .getByRole('button', { name: 'Search', exact: true }).click();
+}
+
 test('marketing links open docs in the same tab and deep links survive refresh', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => { (window as unknown as { marketingSession: string }).marketingSession = 'same-app'; });
@@ -44,7 +51,7 @@ test('examples preserve multi-file routes and original YAML downloads', async ({
 
 test('static search finds documentation and an example', async ({ page }) => {
   await page.goto('/docs/');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await openSearch(page);
   const input = page.getByRole('dialog').getByRole('textbox');
   await input.fill('idempotency');
   await expect(page.getByRole('dialog').getByRole('link').first()).toBeVisible();
@@ -125,8 +132,7 @@ test('a docs example still imports, validates, and exports in the production bui
 
 test('a malformed documentation fragment keeps the reader usable', async ({ page }) => {
   await page.goto('/docs/#%');
-  await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Documentation', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  await openSearch(page);
   await expect(page.getByRole('dialog', { name: 'Search documentation', exact: true })).toBeVisible();
 });

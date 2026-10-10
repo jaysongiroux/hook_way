@@ -14,6 +14,7 @@ import {
 const SOURCES = [
   { value: "body", label: "Body field" },
   { value: "header", label: "Request header" },
+ { value: "flags", label: "Feature flag" },
 ];
 const OPERATORS = [
   ["eq", "Equals"],
@@ -244,13 +245,13 @@ function ConditionFields({
         error={
           SOURCES.some((choice) => choice.value === source)
             ? undefined
-            : "Choose Body field or Request header."
+            : "Choose Body field, Request header or Feature flag."
         }
         onChange={(event) => update("source", event.currentTarget.value)}
       />
       <TextInput
-        label={`${labelPrefix}${source === "header" ? "Header name" : "Body path"}`}
-        aria-label={`${labelPrefix}${source === "header" ? "Header name" : "Body path"}`}
+        label={`${labelPrefix}${source === "header" ? "Header name" : source === "flags" ? "Flag result path" : "Body path"}`}
+        aria-label={`${labelPrefix}${source === "header" ? "Header name" : source === "flags" ? "Flag result path" : "Body path"}`}
         value={
           typeof condition.path === "string"
             ? condition.path
@@ -260,12 +261,12 @@ function ConditionFields({
         error={
           typeof condition.path === "string" && condition.path.trim()
             ? undefined
-            : "Enter a header name or a dotted body path."
+            : "Enter a header name, body path or flag result path."
         }
         description={
           source === "header"
             ? "For example X-Event-Type. Header names are case-insensitive."
-            : "For example event.type. XML paths use element names and @attribute; array indexes are not supported."
+            : source === "flags" ? "For example rollout.new_processor.value, rollout.settings.value.limit or rollout.new_processor.used_fallback. Array indexes are not supported." : "For example event.type. XML paths use element names and @attribute; array indexes are not supported."
         }
         onChange={(event) => update("path", event.currentTarget.value)}
       />

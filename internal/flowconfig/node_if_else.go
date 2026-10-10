@@ -39,7 +39,7 @@ func (n ifElseNode) Run(_ context.Context, in graph.Payload) (graph.Payload, err
 		}
 	}
 	env.Branch = ifElsePortFalse
-	if matched, _ := n.chain.Match(eventHeaders(env), env.Body); matched {
+	if matched, _ := n.chain.MatchWithFlags(eventHeaders(env), env.Body, env.Flags); matched {
 		env.Branch = ifElsePortTrue
 	}
 	return env, nil

@@ -19,6 +19,7 @@ export function BuilderHeader({
   onRouting,
   onCredentials,
   onLookups,
+ onLaunchDarkly,
   onStateStores,
   onEnv,
   onServer,
@@ -38,6 +39,7 @@ export function BuilderHeader({
   onRouting?: () => void;
   onCredentials?: () => void;
   onLookups?: () => void;
+ onLaunchDarkly?: () => void;
   onStateStores?: () => void;
   onEnv: () => void;
   onServer: () => void;
@@ -109,6 +111,7 @@ export function BuilderHeader({
               <Menu.Item onClick={onRouting}>Routing</Menu.Item>
               <Menu.Item onClick={onCredentials}>Credentials</Menu.Item>
               <Menu.Item onClick={onLookups}>Lookups</Menu.Item>
+ <Menu.Item onClick={onLaunchDarkly}>LaunchDarkly</Menu.Item>
               <Menu.Item onClick={onStateStores}>Protection stores</Menu.Item>
               <Menu.Item onClick={onEnv}>Environment</Menu.Item>
               <Menu.Item onClick={onServer}>Core server</Menu.Item>

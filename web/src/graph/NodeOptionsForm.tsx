@@ -14,6 +14,7 @@ import { SimpleOptionsForm } from "./SimpleOptionsForm";
 import { nodeDescriptor } from "./nodeDescriptors";
 import { NODE_SCHEMAS, schemaProperties } from "./nodeSchema";
 import { JSONValidationOptions } from "./JSONValidationOptions";
+import { LaunchDarklyForm } from "./LaunchDarklyForm";
 import { ProtectionOptionsForm } from "./ProtectionOptionsForm";
 
 export function NodeOptionsForm(props: OptionsProps) {
@@ -53,6 +54,7 @@ export function NodeOptionsForm(props: OptionsProps) {
 function NodeOptionsFields(props: OptionsProps) {
   const open = useContext(WorkspaceActions);
   const { nodeType } = props;
+ if (nodeType === "launchdarkly") return <LaunchDarklyForm {...props} />;
   const editor = nodeDescriptor(nodeType)?.editor ?? "schema";
   if (editor === "auth") return <AuthOptionsForm {...props} />;
   if (editor === "protection") return <ProtectionOptionsForm {...props} />;

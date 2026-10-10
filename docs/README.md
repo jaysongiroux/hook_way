@@ -21,6 +21,7 @@ Start with the [project overview](../README.md), then choose the task you need.
 - [Provider recipes](guides/provider-compatibility.md): GitHub, Stripe, Paddle and Slack.
 - [Validate JSON](guides/json-validation.md): schemas, conversions and sample checks.
 - [Lookups](guides/lookups.md): HTTP, PostgreSQL and DynamoDB routing values.
+- [Feature flags](guides/feature-flags.md): LaunchDarkly evaluation, fallbacks, typed routing and replay compatibility.
 - [Rate limits and duplicate protection](guides/protection-stores.md): stores,
   quotas, expiry and policy changes.
 

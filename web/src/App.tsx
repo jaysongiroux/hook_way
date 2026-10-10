@@ -22,6 +22,7 @@ import { VALIDATOR_RETRY_EVENT } from "./shared/wasm/validationMode";
 import { loadValidator } from "./graph/validate";
 import { starterDocument } from "./graph/starter";
 import { RoutingPanel } from "./graph/RoutingPanel";
+import { LaunchDarklyPanel } from "./graph/LaunchDarklyForm";
 import { LookupsPanel } from "./graph/LookupsPanel";
 import { StateStoresPanel } from "./graph/StateStoresPanel";
 import { CredentialsPanel } from "./graph/CredentialsPanel";
@@ -66,7 +67,8 @@ export default function App({ product = false, headerActions }: { product?: bool
     useDisclosure(false);
   const [lookupsOpen, { open: openLookups, close: closeLookups }] =
     useDisclosure(false);
-  const [connOpen, { open: openConn, close: closeConn }] = useDisclosure(false);
+  const [launchDarklyOpen, { open: openLaunchDarkly, close: closeLaunchDarkly }] = useDisclosure(false);
+ const [connOpen, { open: openConn, close: closeConn }] = useDisclosure(false);
   const [stateStoresOpen, { open: openStateStores, close: closeStateStores }] = useDisclosure(false);
   const [clearOpen, { open: openClear, close: closeClear }] =
     useDisclosure(false);
@@ -108,6 +110,7 @@ export default function App({ product = false, headerActions }: { product?: bool
     closeInspector();
     ({
       lookups: openLookups,
+ launchdarkly: openLaunchDarkly,
       state_stores: openStateStores,
       routing: openRouting,
       credentials: openCredentials,
@@ -152,6 +155,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             onRouting={openRouting}
             onCredentials={openCredentials}
             onLookups={openLookups}
+ onLaunchDarkly={openLaunchDarkly}
             onStateStores={openStateStores}
             onEnv={openEnv}
             onServer={openServer}
@@ -240,7 +244,8 @@ export default function App({ product = false, headerActions }: { product?: bool
             opened={lookupsOpen}
             onClose={() => closeWorkspace(closeLookups)}
           />
-          <StateStoresPanel opened={stateStoresOpen} onClose={() => closeWorkspace(closeStateStores)} />
+          <LaunchDarklyPanel opened={launchDarklyOpen} onClose={() => closeWorkspace(closeLaunchDarkly)} />
+ <StateStoresPanel opened={stateStoresOpen} onClose={() => closeWorkspace(closeStateStores)} />
           <CredentialsPanel
             opened={credentialsOpen}
             onClose={() => closeWorkspace(closeCredentials)}

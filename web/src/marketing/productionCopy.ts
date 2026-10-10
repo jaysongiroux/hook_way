@@ -33,7 +33,7 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "metrics",
     title: "Exports Prometheus metrics",
-    value: "68",
+    value: "70",
     valueLabel: "core Prometheus metrics exported",
     line: "Enable Prometheus metrics to track requests, failures, and delivery latency. Grafana dashboards are included.",
   },

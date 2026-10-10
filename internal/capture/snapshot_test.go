@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"errors"
+	"gopkg.in/yaml.v3"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -40,6 +41,7 @@ func richEnvelope() graph.Envelope {
 		Body:       map[string]any{"a": 1.0, "size": int64(9), "tags": []string{"x"}},
 		BodyFormat: "json",
 		Vars:       map[string]string{"route": "orders"},
+		Flags:      map[string]any{"rollout": map[string]any{"settings": map[string]any{"value": map[string]any{"limit": 2.0}, "used_fallback": true, "reason": "ERROR", "error_kind": "CLIENT_NOT_READY"}}},
 		Upstream:   &graph.UpstreamResponse{Values: map[string]string{"created_id": "sample-1"}, SelectionError: "missing_field", Status: 202, Header: http.Header{"X-Up": {"1"}}, Body: []byte("up")},
 		Extra: flowconfig.CapturedEvent{Event: webhook.Envelope{
 			SchemaVersion: "1.0", ID: "evt", IdempotencyKey: "idem-evt", RequestID: "req", TraceID: "trace", Traceparent: "00-abc-def-01",
@@ -241,4 +243,31 @@ func TestSnapshotRejectsInvalidUTF8OutsideTheBody(t *testing.T) {
 func richPublish() *deliverymeta.Publish {
 	delay := int32(10)
 	return &deliverymeta.Publish{GroupID: "standard-group", DelaySeconds: &delay, Subject: "sample", MessageStructure: "json", NodeID: "out", Destination: "broker", Target: "events.fifo", WireBody: "json_js", Body: []byte(`{"k":1}`), FIFO: &deliverymeta.FIFO{GroupID: "group", DeduplicationID: "dedup", ContentBased: true}, Retry: &deliverymeta.Retry{MaxAttempts: 3, InitialBackoff: 100, MaxBackoff: 200}}
+}
+
+func TestFlagDecisionSurvivesDownstreamResume(t *testing.T) {
+	env := graph.Envelope{Flags: map[string]any{"rollout": map[string]any{"gate": map[string]any{"value": true, "used_fallback": false, "reason": "FALLTHROUGH"}}}, Vars: map[string]string{"route": "original"}}
+	captured := roundTripEnvelope(t, env)
+	// The live decision changed after capture; resume must keep the earlier input.
+	env.Flags["rollout"].(map[string]any)["gate"].(map[string]any)["value"] = false
+	reg, err := flowconfig.NewRegistryWithOptions(flowconfig.RegistryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := reg.Lookup("if_else")
+	var opts yaml.Node
+	if err := opts.Encode(map[string]any{"conditions": []any{map[string]any{"source": "flags", "path": "rollout.gate.value", "operator": "eq", "value": true}}}); err != nil {
+		t.Fatal(err)
+	}
+	node, err := spec.New(graph.NodeConfig{ID: "branch", Type: "if_else", Options: opts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := node.Run(context.Background(), captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.(graph.Envelope).Branch != "true" || out.(graph.Envelope).Vars["route"] != "original" {
+		t.Fatal("resume changed original decision")
+	}
 }

@@ -18,6 +18,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/launchdarkly/go-sdk-common/v3 v3.6.0
+	github.com/launchdarkly/go-server-sdk/v7 v7.19.0
 	github.com/moby/moby/client v0.5.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/prometheus/client_golang v1.20.5
@@ -85,15 +87,24 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
+	github.com/gregjones/httpcache v0.0.0-20171119193500-2bcd89a1743f // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/josharian/intern v1.0.0 // indirect
 	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/launchdarkly/ccache v1.1.0 // indirect
+	github.com/launchdarkly/eventsource v1.14.0 // indirect
+	github.com/launchdarkly/go-jsonstream/v3 v3.1.2 // indirect
+	github.com/launchdarkly/go-sdk-events/v3 v3.7.0 // indirect
+	github.com/launchdarkly/go-semver v1.0.3 // indirect
+	github.com/launchdarkly/go-server-sdk-evaluation/v3 v3.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mdelapenya/tlscert v0.2.0 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
@@ -109,6 +120,7 @@ require (
 	github.com/nexus-rpc/sdk-go v0.7.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect

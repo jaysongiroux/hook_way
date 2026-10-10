@@ -116,6 +116,9 @@ func TestExampleSmoke(t *testing.T) {
 				}
 			}
 
+			if len(cfg.LaunchDarkly) > 0 {
+				t.Skip("LaunchDarkly uses SDK test data and local mock servers in dedicated runtime and example HTTP tests; offline validation passed")
+			}
 			if rel == "routing/shared.yaml" || rel == "routing/registration.yaml" {
 				t.Skip("native DynamoDB binding has dedicated integration coverage; offline validation already passed")
 			}

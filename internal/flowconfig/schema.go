@@ -153,3 +153,20 @@ func applyFormDefaults(schema *jsonschema.Schema, defaults map[string]any) {
 		}
 	}
 }
+
+func configureLaunchDarklySchema(meta *NodeSchema) {
+	context, _ := meta.Schema.Properties.Get("context")
+	key, _ := context.Properties.Get("key")
+	attributes, _ := context.Properties.Get("attributes")
+	for _, selector := range []*jsonschema.Schema{key, attributes.AdditionalProperties} {
+		selector.OneOf = []*jsonschema.Schema{
+			{Required: []string{"value"}, Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"source"}}, {Required: []string{"path"}}}}},
+			{Required: []string{"source", "path"}, Not: &jsonschema.Schema{Required: []string{"value"}}},
+		}
+	}
+	flags, _ := meta.Schema.Properties.Get("flags")
+	flags.MinProperties = uint64Pointer(1)
+	fallback, _ := flags.AdditionalProperties.Properties.Get("fallback")
+	*fallback = jsonschema.Schema{} // Includes explicitly supplied JSON null.
+}
+func uint64Pointer(v uint64) *uint64 { return &v }

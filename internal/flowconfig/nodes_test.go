@@ -31,6 +31,7 @@ var nodeFixtures = map[string]struct {
 	"sample":         {graph.PortEnvelope, graph.PortEnvelope, false, "rate: 0.2\n"},
 	"register_route": {graph.PortEnvelope, graph.PortEnvelope, false, "mode: after_create\nstore: primary\nprofile: sandbox\nenvironment_variable: route\nid_source: upstream\nid_path: created_id\nid_type: record_a\n"},
 	"route":          {graph.PortEnvelope, graph.PortEnvelope, false, "profile: sandbox\nfixed: demo\n"},
+	"launchdarkly":   {graph.PortEnvelope, graph.PortEnvelope, false, "connection: production\nname: rollout\ncontext: {key: {value: tenant}}\nflags: {new_processor: {key: use-new-processor, type: boolean, fallback: false}}\n"},
 	"lookup":         {graph.PortEnvelope, graph.PortEnvelope, false, "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n"},
 	"batch":          {graph.PortEnvelope, graph.PortTerminal, false, "mode: shared\nprofile: sandbox\nenvironment_path: environment\nevent_id_path: event_id\nchild:\n  entry: node.send\n  nodes: [{id: node.send, type: publish, destination: primary, target: sample}]\n  edges: []\n"},
 	"json_validate":  {graph.PortEnvelope, graph.PortEnvelope, false, "schema: {type: object}\n"},
