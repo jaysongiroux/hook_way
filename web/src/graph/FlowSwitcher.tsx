@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Button, Group, Menu, Modal, Stack, Text, TextInput } from "@mantine/core";
+import {
+  Button,
+  Group,
+  Menu,
+  Modal,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useGraphStore } from "./store";
 import { DARK } from "../tokens";
@@ -8,6 +16,7 @@ export function FlowSwitcher() {
   const [opened, { open, close }] = useDisclosure(false);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const otherFlows = useGraphStore((s) => s.otherFlows);
   const setActiveFlow = useGraphStore((s) => s.setActiveFlow);
@@ -69,15 +78,55 @@ export function FlowSwitcher() {
             </Menu.Item>
           ))}
           <Menu.Divider />
+          <Menu.Item
+            color="red"
+            disabled={flowNames.length < 2}
+            onClick={() => setDeleteOpen(true)}
+          >
+            Delete active flow…
+          </Menu.Item>
           <Menu.Item onClick={openCreate} aria-label="New flow">
             New flow…
           </Menu.Item>
         </Menu.Dropdown>
       </Menu>
-      <Modal opened={opened} onClose={close} title="New flow" size="sm" transitionProps={{ duration: 0 }}>
+      <Modal
+        opened={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title="Delete flow"
+        size="sm"
+      >
+        <Stack gap="sm">
+          <Text>
+            Delete {activeFlow} and its YAML file from this workspace?
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              onClick={() => {
+                useGraphStore.getState().removeFlow(activeFlow);
+                setDeleteOpen(false);
+              }}
+            >
+              Delete flow
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={opened}
+        onClose={close}
+        title="New flow"
+        size="sm"
+        transitionProps={{ duration: 0 }}
+      >
         <Stack gap="sm">
           <Text size="sm" c="dimmed">
-            A flow is one HTTP pipeline. Each needs its own http_trigger path. Destinations are shared across flows.
+            A flow is one HTTP pipeline. Each needs its own http_trigger path.
+            Destinations are shared across flows.
           </Text>
           <TextInput
             label="Name"

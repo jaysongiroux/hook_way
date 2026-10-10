@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/validate-bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Validates an in-memory YAML bundle without filesystem access or environment expansion. Up to 1024 files, 5 MiB per document and 64 MiB total YAML; JSON envelope at most 128 MiB. */
+        post: operations["validateBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/validate-replay": {
         parameters: {
             query?: never;
@@ -127,6 +144,12 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        BundleInput: {
+            entry: string;
+            files: {
+                [key: string]: string;
+            } | null;
+        };
         ContractInfo: {
             capabilities: string[];
             contract_version: number;
@@ -137,6 +160,7 @@ export interface components {
             field: string;
             message: string;
             severity: string;
+            source?: string;
             suggestion?: string;
         } & {
             [key: string]: unknown;
@@ -473,6 +497,66 @@ export interface operations {
             };
             /** @description Unsupported method (plain text; includes Allow header). */
             405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    validateBundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BundleInput"];
+            };
+        };
+        responses: {
+            /** @description Validation issues. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidateResponse"];
+                };
+            };
+            /** @description Invalid JSON bundle. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Missing editor bearer key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Unsupported method (plain text; includes Allow header). */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description Request too large. */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

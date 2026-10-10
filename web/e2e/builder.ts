@@ -48,7 +48,10 @@ export class BuilderPage {
 
   async importYaml(yaml: string): Promise<void> {
     await this.closeInspector();
-    await this.page.getByRole("button", { name: "Config" }).click();
+    await this.closeDialog();
+    await this.page
+      .getByRole("button", { name: "Config", exact: true })
+      .click();
     await this.page.getByRole("menuitem", { name: "Import YAML" }).click();
     const dialog = this.page.getByRole("dialog", { name: "Import configs" });
     await expect(dialog).toBeVisible();
@@ -59,7 +62,10 @@ export class BuilderPage {
 
   async importReplayYaml(yaml: string): Promise<void> {
     await this.closeInspector();
-    await this.page.getByRole("button", { name: "Config" }).click();
+    await this.closeDialog();
+    await this.page
+      .getByRole("button", { name: "Config", exact: true })
+      .click();
     await this.page.getByRole("menuitem", { name: "Import YAML" }).click();
     const dialog = this.page.getByRole("dialog", { name: "Import configs" });
     await expect(dialog).toBeVisible();
@@ -72,7 +78,9 @@ export class BuilderPage {
   async openConfigItem(name: string): Promise<Locator> {
     await this.closeInspector();
     await this.closeDialog();
-    await this.page.getByRole("button", { name: "Config" }).click();
+    await this.page
+      .getByRole("button", { name: "Config", exact: true })
+      .click();
     await this.page.getByRole("menuitem", { name }).click();
     const dialog = this.page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -141,7 +149,9 @@ export class BuilderPage {
     await this.openInspector();
     if (await this.inspector().getByLabel("Flow name").isVisible()) return;
     await this.closeInspector();
-    await this.page.getByRole("button", { name: "Config" }).click();
+    await this.page
+      .getByRole("button", { name: "Config", exact: true })
+      .click();
     await this.page.getByRole("menuitem", { name: "Flow settings" }).click();
     await expect(this.inspector().getByLabel("Flow name")).toBeVisible();
   }

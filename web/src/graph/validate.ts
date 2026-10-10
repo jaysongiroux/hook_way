@@ -13,7 +13,10 @@ export async function loadValidator(): Promise<void> {
 }
 
 async function fromWasm(
-  capability: "core_yaml_validate" | "replay_yaml_validate",
+  capability:
+    | "core_yaml_validate"
+    | "core_yaml_bundle_validate"
+    | "replay_yaml_validate",
   yaml: string,
 ): Promise<ValidationIssue[] | null> {
   try {
@@ -92,4 +95,21 @@ function parseIssues(raw: string): ValidationIssue[] {
   if (parsed.error)
     return [{ field: "config", message: parsed.error, severity: "error" }];
   return parsed.issues ?? [];
+}
+
+export async function validateBundle(
+  bundle: import("./bundle").YAMLBundle,
+): Promise<ValidationIssue[] | null> {
+  const issues = await fromWasm(
+    "core_yaml_bundle_validate",
+    JSON.stringify(bundle),
+  );
+  if (issues) return issues;
+  if (!editorAPIFallbackEnabled()) return null;
+  try {
+    const { data } = await editor.POST("/validate-bundle", { body: bundle });
+    return data ? (data.issues ?? []) : null;
+  } catch {
+    return null;
+  }
 }

@@ -15,6 +15,63 @@ This reference explains fields and defaults. For workflows, see
 [ingress adapters](../guides/ingress-adapters.md), [JSON validation](../guides/json-validation.md),
 [lookups](../guides/lookups.md), and [protection stores](../guides/protection-stores.md).
 
+### Optional flow files
+
+Keep all flows inline, or store every flow in its own YAML file. An entry file
+continues to hold all central settings and shared resources:
+
+```yaml
+# core.yaml
+server:
+  addr: ":8080"
+flows:
+  orders:
+    file: flows/orders.yaml
+  billing:
+    file: flows/billing.yaml
+```
+
+Each referenced file contains a flow body directly: `nodes`, `edges`, and optional
+`responses`, `delivery_failure_policy`, or `capture_failures`. The flow name comes
+from the entry file. Flow files cannot contain a `flows` wrapper, process settings,
+or further file references. Inline flows and file references cannot be mixed.
+
+References are literal `.yaml` or `.yml` paths relative to the entry file's
+directory. Absolute paths, paths escaping that directory, escaping symlinks,
+URLs, glob patterns, environment variables in paths, and multiple references to
+the same file are rejected. YAML anchors are local to each file. All files are
+assembled before graph compilation, shared-reference checks and cross-flow
+validation; missing or invalid files prevent startup.
+
+Use the same commands for either layout:
+
+```sh
+hookway validate --config core.yaml
+hookway validate --config core.yaml --json --no-env
+hookway serve --config core.yaml
+```
+
+For a complete example, see [multi-YAML configuration](../../examples/multi-yaml/README.md).
+Mount or deploy the entire configuration directory, retaining the relative paths;
+mounting only the entry YAML will leave its flow files unavailable. Unpack builder
+ZIP downloads before starting Hookway. Replay's separate configuration continues
+to be passed to `hookway-replay` independently.
+
+In the builder, **Config → Export YAML → YAML organization** selects **Single
+YAML** or **One YAML per flow**. Filename controls and per-file previews use the
+same graphs and forms; changing organization does not remove flows. Downloads
+preserve the selected layout and become a ZIP when there is more than one flow
+or more than one document. A configured replay document is included in that ZIP.
+
+**Config → Import YAML → Files / ZIP** reopens a ZIP, selected YAML files, or a
+configuration directory. Select the entry YAML when more than one candidate is
+present. Flat file selection can lose directory paths; use the attachment
+controls to map a selected file to a missing reference. Complete file imports
+replace the workspace only after syntax and layout checks succeed. Semantic
+validation issues remain editable. Comments and formatting are regenerated,
+while configuration values and assigned filenames are retained. Imports allow
+up to 1,024 files, 5 MiB per YAML document and 64 MiB total decompressed YAML.
+
 There is no configuration hot reload or SIGHUP handler. Change flows, admin tokens
 and deployment bindings by restarting with the new configuration; refreshing secret references
 are a separate mechanism described below.

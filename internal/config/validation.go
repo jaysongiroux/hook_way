@@ -26,6 +26,7 @@ var targetLiteral = regexp.MustCompile(`^[a-zA-Z0-9._-]*$`)
 var pgIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type ValidationIssue struct {
+	Source     string
 	Field      string
 	Message    string
 	Suggestion string
@@ -56,6 +57,10 @@ func (e ConfigValidationError) Error() string {
 	b.WriteString("config validation failed")
 	for _, issue := range e.Issues {
 		b.WriteString("\n- ")
+		if issue.Source != "" {
+			b.WriteString(issue.Source)
+			b.WriteString(": ")
+		}
 		b.WriteString(issue.Field)
 		b.WriteString(": ")
 		b.WriteString(issue.Message)

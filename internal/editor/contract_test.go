@@ -40,6 +40,9 @@ func TestEditorContractRoutingAndWireBehavior(t *testing.T) {
 				t.Fatalf("auth wire behavior: %d %s", rec.Code, rec.Body.String())
 			}
 			body := "flows: {}"
+			if route.OperationID == "validateBundle" {
+				body = `{"entry":"core.yaml","files":{"core.yaml":"flows: {}"}}`
+			}
 			if route.OperationID == "jsonSampleValidation" {
 				body = `{"schema":{"type":"object"},"sample":"{}"}`
 			}

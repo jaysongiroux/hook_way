@@ -1,0 +1,9 @@
+# One flow body. Its name is declared in core.yaml.
+nodes:
+  - {id: in, type: http_trigger, path: /orders, methods: [POST]}
+  - {id: rate, type: rate_limit, store: local, rpm: 1200}
+  - {id: body, type: read_body, max_bytes: 1048576}
+  - {id: auth, type: auth, scheme: exact, secret: "change-me-demo-token", signature_header: X-Auth}
+  - {id: env, type: envelope, body_format: json}
+  - {id: reply, type: respond, status: 202, body: "accepted orders"}
+edges: [in>rate, rate>body, body>auth, auth>env, env>reply]

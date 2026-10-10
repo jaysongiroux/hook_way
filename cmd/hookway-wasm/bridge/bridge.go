@@ -97,3 +97,13 @@ func JSONSampleValidate(raw string) (string, error) {
 	b, err := json.Marshal(uicontract.ValidateJSONSample(input))
 	return string(b), err
 }
+
+// ValidateBundle validates only files supplied by the browser.
+func ValidateBundle(raw string) (string, error) {
+	input, err := configapi.DecodeBundleInput([]byte(raw))
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(configapi.ValidateBundle(input))
+	return string(b), err
+}

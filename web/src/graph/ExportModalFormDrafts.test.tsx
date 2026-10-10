@@ -7,12 +7,14 @@ import { useGraphStore } from "./store";
 import { emptyDocument } from "./model";
 import {
   validateReplayYaml,
+  validateBundle,
   validateYaml,
   type ValidationIssue,
 } from "./validate";
 
 vi.mock("./validate", () => ({
   validateYaml: vi.fn(),
+  validateBundle: vi.fn(),
   validateReplayYaml: vi.fn(),
 }));
 
@@ -32,6 +34,8 @@ beforeEach(() => {
     ...emptyDocument(),
     serverConfig: { addr: ":9090" },
   });
+  vi.mocked(validateBundle).mockReset();
+  vi.mocked(validateBundle).mockResolvedValue([]);
   validateCore.mockReset();
   validateReplay.mockReset();
   validateCore.mockResolvedValue([]);
@@ -114,7 +118,7 @@ test("warnings allow export and replay document uses its own validator", async (
   expect(await screen.findByTestId("validation-warnings")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Copy" })).toBeEnabled();
   expect(
-    screen.getByRole("button", { name: "Download core.yaml" }),
+    screen.getByRole("button", { name: "Download hookway-config.zip" }),
   ).toBeEnabled();
   fireEvent.click(screen.getByRole("tab", { name: "Replay YAML" }));
   await waitFor(() =>
@@ -122,4 +126,36 @@ test("warnings allow export and replay document uses its own validator", async (
       expect.stringContaining("server:"),
     ),
   );
+});
+
+test("split validation selects the YAML file identified by an issue", async () => {
+  useGraphStore.getState().setYAMLMode("split");
+  vi.mocked(validateBundle).mockResolvedValue([
+    {
+      source: "flows/main.yaml",
+      field: "flows.main.nodes[0]",
+      message: "Invalid node",
+      severity: "error",
+    },
+  ]);
+  renderExport();
+  await screen.findByTestId("validation-errors");
+  fireEvent.click(screen.getByRole("button", { name: "Show flows/main.yaml" }));
+  expect(screen.getByTestId("export-flows/main.yaml")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Download hookway-config.zip" }),
+  ).toBeDisabled();
+});
+
+test("replay validation selects its YAML preview from the core panel", async () => {
+  useGraphStore
+    .getState()
+    .setReplayServiceConfig({ server: { addr: ":8080" } });
+  validateReplay.mockResolvedValue([
+    { field: "database.url", message: "Required", severity: "error" },
+  ]);
+  renderExport();
+  await screen.findByTestId("validation-errors");
+  fireEvent.click(screen.getByRole("button", { name: "Show replay.yaml" }));
+  expect(screen.getByTestId("export-replay.yaml")).toBeInTheDocument();
 });

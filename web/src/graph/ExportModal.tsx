@@ -1,3 +1,11 @@
+import { Select, TextInput } from "@mantine/core";
+import {
+  toBundle,
+  flowFilenames,
+  needsZip,
+  zipBundle,
+  yamlPath,
+} from "./bundle";
 import { IssueAlert } from "../shared/ui/IssueAlert";
 import { LoadingState } from "../shared/ui/States";
 import {
@@ -11,16 +19,13 @@ import {
   Tabs,
   Text,
 } from "@mantine/core";
-import { useEffect, useMemo, useState } from "react";
-import type { GraphDocument } from "./model";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useGraphStore } from "./store";
-import { toConfig, ExportError } from "./toConfig";
-import { toYaml } from "./toYaml";
-import { toReplayYaml } from "./replayYaml";
 import { useBuilderValidation } from "./BuilderValidation";
 import {
   validateReplayYaml,
   validateYaml,
+  validateBundle,
   type ValidationIssue,
 } from "./validate";
 
@@ -33,107 +38,249 @@ export function ExportModal({
   onClose: () => void;
   onIssue?: (field: string) => void;
 }) {
+  const state = useGraphStore();
   const { draftIssues } = useBuilderValidation();
-  const nodes = useGraphStore((s) => s.nodes);
-  const edges = useGraphStore((s) => s.edges);
-  const serverConfig = useGraphStore((s) => s.serverConfig);
-  const coreReplayConfig = useGraphStore((s) => s.coreReplayConfig);
-  const replayServiceConfig = useGraphStore((s) => s.replayServiceConfig);
-  const configExtra = useGraphStore((s) => s.configExtra);
-  const connections = useGraphStore((s) => s.connections);
-  const destinations = useGraphStore((s) => s.destinations);
-  const activeFlow = useGraphStore((s) => s.activeFlow);
-  const otherFlows = useGraphStore((s) => s.otherFlows);
-  const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
-  const flowExtra = useGraphStore((s) => s.flowExtra);
-  const addReplayConfiguration = useGraphStore((s) => s.addReplayConfiguration);
-
-  const coreExport = useMemo(() => {
-    const doc: GraphDocument = {
-      nodes,
-      edges,
-      serverConfig,
-      coreReplayConfig,
-      replayServiceConfig,
-      configExtra,
-      connections,
-      destinations,
-      activeFlow,
-      otherFlows,
-      deliveryFailurePolicy,
-      flowExtra,
-    };
+  const [selected, setSelected] = useState<string>("entry");
+  const [activeTab, setActiveTab] = useState<string>("core");
+  const doc = useMemo(() => state.document(), [state]);
+  const result = useMemo(() => {
     try {
-      return { yaml: toYaml(toConfig(doc).config), error: "" };
+      return { bundle: toBundle(doc), error: "" };
     } catch (error) {
-      return {
-        yaml: "",
-        error: error instanceof ExportError ? error.message : String(error),
-      };
+      return { bundle: null, error: String(error) };
     }
-  }, [
-    nodes,
-    edges,
-    serverConfig,
-    coreReplayConfig,
-    replayServiceConfig,
-    configExtra,
-    connections,
-    destinations,
-    activeFlow,
-    otherFlows,
-    deliveryFailurePolicy,
-    flowExtra,
-  ]);
-
-  const replayExport = useMemo(() => {
-    if (!replayServiceConfig) return { yaml: "", error: "" };
+  }, [doc]);
+  const flowFiles = flowFilenames(doc);
+  const flowNames = Object.keys(flowFiles).sort();
+  const selectedFlow =
+    doc.yamlMode === "split" && selected.startsWith("flow:")
+      ? selected.slice(5)
+      : null;
+  const previewPath = (value: string) => {
     try {
-      return { yaml: toReplayYaml(replayServiceConfig), error: "" };
-    } catch (error) {
-      return { yaml: "", error: String(error) };
+      return yamlPath(value);
+    } catch {
+      return value;
     }
-  }, [replayServiceConfig]);
-
+  };
+  const entry = previewPath(doc.entryFilename ?? "core.yaml");
+  const entryDirectory = entry.includes("/")
+    ? entry.slice(0, entry.lastIndexOf("/") + 1)
+    : "";
+  const filename =
+    selectedFlow && flowFiles[selectedFlow]
+      ? entryDirectory + previewPath(flowFiles[selectedFlow])
+      : entry;
+  const bundle = result.bundle;
+  const isZIP = bundle ? needsZip(doc, bundle) : false;
+  const [downloadError, setDownloadError] = useState("");
+  const validateWorkspace = useCallback(async () => {
+    if (!bundle) return null;
+    const core =
+      doc.yamlMode === "split"
+        ? await validateBundle(bundle)
+        : await validateYaml(bundle.files[bundle.entry]);
+    if (core === null) return null;
+    const issues = core.map((issue) => ({
+      ...issue,
+      source:
+        doc.yamlMode === "split"
+          ? (issue.source ?? bundle.entry)
+          : bundle.entry,
+    }));
+    if (doc.replayServiceConfig !== null) {
+      const replayName = previewPath(doc.replayFilename ?? "replay.yaml");
+      const replay = await validateReplayYaml(bundle.files[replayName]);
+      if (replay === null) return null;
+      issues.push(...replay.map((issue) => ({ ...issue, source: replayName })));
+    }
+    return issues;
+  }, [bundle, doc.yamlMode, doc.replayServiceConfig, doc.replayFilename]);
+  const downloadWorkspace = async () => {
+    if (!bundle) return;
+    setDownloadError("");
+    try {
+      const bytes = isZIP
+        ? await zipBundle(bundle)
+        : new TextEncoder().encode(bundle.files[bundle.entry]);
+      const blob = new Blob([new Uint8Array(bytes)], {
+        type: isZIP ? "application/zip" : "application/yaml",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = isZIP
+        ? "hookway-config.zip"
+        : bundle.entry.split("/").pop()!;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      setDownloadError(String(error));
+    }
+  };
+  const showSource = (source: string) => {
+    if (source === previewPath(doc.replayFilename ?? "replay.yaml")) {
+      setActiveTab("replay");
+      return;
+    }
+    setActiveTab("core");
+    if (source === entry) setSelected("entry");
+    else {
+      const name = flowNames.find(
+        (name) => entryDirectory + previewPath(flowFiles[name]) === source,
+      );
+      if (name) setSelected(`flow:${name}`);
+    }
+  };
   return (
     <Modal opened={opened} onClose={onClose} title="Export configs" size="lg">
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
-          Preview and validate each deployment document independently. The
-          builder does not connect to a running Hookway instance.
+          Choose how flows are stored. Downloads include every configured YAML
+          file, including replay.
         </Text>
-        <Tabs defaultValue="core" keepMounted={false}>
+        <Select
+          label="YAML organization"
+          value={doc.yamlMode ?? "single"}
+          allowDeselect={false}
+          data={[
+            { value: "single", label: "Single YAML" },
+            { value: "split", label: "One YAML per flow" },
+          ]}
+          onChange={(value) =>
+            state.setYAMLMode(value === "split" ? "split" : "single")
+          }
+        />
+        <TextInput
+          label="Entry YAML filename"
+          description="Paths are relative to the downloaded configuration directory."
+          value={doc.entryFilename ?? "core.yaml"}
+          onChange={(event) =>
+            state.setEntryFilename(event.currentTarget.value)
+          }
+        />
+        <Tabs
+          value={activeTab}
+          onChange={(value) => setActiveTab(value ?? "core")}
+          keepMounted={false}
+        >
           <Tabs.List>
             <Tabs.Tab value="core">Core YAML</Tabs.Tab>
             <Tabs.Tab value="replay">Replay YAML</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="core" pt="sm">
-            <DocumentExport
-              opened={opened}
-              yaml={coreExport.yaml}
-              error={coreExport.error}
-              filename="core.yaml"
-              draftIssues={draftIssues.filter(
-                (d) => !d.key.startsWith("replay/"),
+            <Stack gap="sm">
+              {doc.yamlMode === "split" && (
+                <>
+                  <ScrollArea.Autosize mah={160}>
+                    <Stack gap={4}>
+                      <Button
+                        variant={selected === "entry" ? "light" : "subtle"}
+                        justify="flex-start"
+                        aria-pressed={selected === "entry"}
+                        styles={{
+                          label: {
+                            whiteSpace: "normal",
+                            overflowWrap: "anywhere",
+                            textAlign: "left",
+                          },
+                          root: {
+                            height: "auto",
+                            minHeight: 36,
+                            paddingBlock: 8,
+                          },
+                        }}
+                        onClick={() => setSelected("entry")}
+                      >
+                        {entry}
+                      </Button>
+                      {flowNames.map((name) => (
+                        <Button
+                          key={name}
+                          variant={
+                            selected === `flow:${name}` ? "light" : "subtle"
+                          }
+                          justify="flex-start"
+                          aria-pressed={selected === `flow:${name}`}
+                          styles={{
+                            label: {
+                              whiteSpace: "normal",
+                              overflowWrap: "anywhere",
+                              textAlign: "left",
+                            },
+                            root: {
+                              height: "auto",
+                              minHeight: 36,
+                              paddingBlock: 8,
+                            },
+                          }}
+                          onClick={() => setSelected(`flow:${name}`)}
+                        >
+                          {flowFiles[name]} — {name}
+                        </Button>
+                      ))}
+                    </Stack>
+                  </ScrollArea.Autosize>
+                  {selectedFlow && flowFiles[selectedFlow] !== undefined && (
+                    <TextInput
+                      label="Flow YAML filename"
+                      description="Relative to the entry YAML directory. Renaming the flow keeps this filename."
+                      value={flowFiles[selectedFlow]}
+                      onChange={(event) =>
+                        state.setFlowFilename(
+                          selectedFlow,
+                          event.currentTarget.value,
+                        )
+                      }
+                    />
+                  )}
+                </>
               )}
-              onIssue={onIssue}
-              command="hookway validate"
-              validate={validateYaml}
-            />
-          </Tabs.Panel>
-          <Tabs.Panel value="replay" pt="sm">
-            {replayServiceConfig ? (
               <DocumentExport
                 opened={opened}
-                yaml={replayExport.yaml}
-                error={replayExport.error}
-                filename="replay.yaml"
-                draftIssues={draftIssues.filter((d) =>
-                  d.key.startsWith("replay/"),
-                )}
-                command="hookway-replay validate"
-                validate={validateReplayYaml}
+                yaml={bundle?.files[filename] ?? ""}
+                error={result.error}
+                filename={filename}
+                command={`hookway validate --config ${entry}`}
+                validate={validateWorkspace}
+                draftIssues={draftIssues}
+                onIssue={onIssue}
+                onSource={showSource}
+                onDownload={downloadWorkspace}
+                downloadFilename={isZIP ? "hookway-config.zip" : entry}
               />
+            </Stack>
+          </Tabs.Panel>
+          <Tabs.Panel value="replay" pt="sm">
+            {doc.replayServiceConfig !== null ? (
+              <Stack gap="sm">
+                <TextInput
+                  label="Replay YAML filename"
+                  value={doc.replayFilename ?? "replay.yaml"}
+                  onChange={(event) =>
+                    state.setReplayFilename(event.currentTarget.value)
+                  }
+                />
+                <DocumentExport
+                  opened={opened}
+                  yaml={
+                    bundle?.files[
+                      previewPath(doc.replayFilename ?? "replay.yaml")
+                    ] ?? ""
+                  }
+                  error={result.error}
+                  filename={doc.replayFilename ?? "replay.yaml"}
+                  command="hookway-replay validate"
+                  validate={validateWorkspace}
+                  draftIssues={draftIssues}
+                  onIssue={onIssue}
+                  onSource={showSource}
+                  onDownload={downloadWorkspace}
+                  downloadFilename="hookway-config.zip"
+                />
+              </Stack>
             ) : (
               <Stack align="flex-start" gap="sm" py="lg">
                 <Text fw={600}>No replay.yaml in this workspace</Text>
@@ -141,13 +288,18 @@ export function ExportModal({
                   Replay stays optional until you add or import its
                   configuration.
                 </Text>
-                <Button size="sm" onClick={addReplayConfiguration}>
+                <Button size="sm" onClick={state.addReplayConfiguration}>
                   Add replay configuration
                 </Button>
               </Stack>
             )}
           </Tabs.Panel>
         </Tabs>
+        {downloadError && (
+          <Alert color="red" title="Download failed">
+            {downloadError}
+          </Alert>
+        )}
       </Stack>
     </Modal>
   );
@@ -162,7 +314,13 @@ function DocumentExport({
   validate,
   draftIssues = [],
   onIssue,
+  onSource,
+  onDownload,
+  downloadFilename,
 }: {
+  onSource?: (source: string) => void;
+  onDownload: () => Promise<void>;
+  downloadFilename: string;
   draftIssues?: { key: string; error: string }[];
   onIssue?: (field: string) => void;
   opened: boolean;
@@ -172,6 +330,7 @@ function DocumentExport({
   command: string;
   validate: (yaml: string) => Promise<ValidationIssue[] | null>;
 }) {
+  const [downloading, setDownloading] = useState(false);
   const [issues, setIssues] = useState<ValidationIssue[] | null>(null);
   const [validationUnavailable, setValidationUnavailable] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">(
@@ -208,17 +367,6 @@ function DocumentExport({
   const warnings = (issues ?? []).filter(
     (issue) => issue.severity === "warning",
   );
-  const download = () => {
-    const blob = new Blob([yaml], { type: "text/yaml" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  };
   const copy = async () => {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard unavailable");
@@ -259,8 +407,8 @@ function DocumentExport({
           title="Validation unavailable"
           data-testid="validation-unavailable"
         >
-          Validation could not check this document. Retry local validation in the builder.
-          Run{" "}
+          Validation could not check this document. Retry local validation in
+          the builder. Run{" "}
           <Text span ff="monospace">
             {command}
           </Text>{" "}
@@ -316,7 +464,27 @@ function DocumentExport({
           checks.
         </Alert>
       )}
-      <ScrollArea h={400}>
+      {onSource && (
+        <Group gap="xs">
+          {[
+            ...new Set(
+              (issues ?? [])
+                .filter((issue) => issue.source && issue.source !== filename)
+                .map((issue) => issue.source!),
+            ),
+          ].map((source) => (
+            <Button
+              key={source}
+              size="xs"
+              variant="subtle"
+              onClick={() => onSource(source)}
+            >
+              Show {source}
+            </Button>
+          ))}
+        </Group>
+      )}
+      <ScrollArea h={300}>
         <Code block data-testid={`export-${filename}`}>
           {yaml}
         </Code>
@@ -350,9 +518,17 @@ function DocumentExport({
             blocking.length > 0 ||
             (!issues && !validationUnavailable)
           }
-          onClick={download}
+          loading={downloading}
+          onClick={async () => {
+            setDownloading(true);
+            try {
+              await onDownload();
+            } finally {
+              setDownloading(false);
+            }
+          }}
         >
-          Download {filename}
+          Download {downloadFilename}
         </Button>
       </Group>
     </Stack>

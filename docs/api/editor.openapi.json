@@ -1,6 +1,28 @@
 {
   "components": {
     "schemas": {
+      "BundleInput": {
+        "additionalProperties": false,
+        "properties": {
+          "entry": {
+            "type": "string"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "entry",
+          "files"
+        ],
+        "type": "object"
+      },
       "ContractInfo": {
         "additionalProperties": true,
         "properties": {
@@ -30,6 +52,9 @@
             "type": "string"
           },
           "severity": {
+            "type": "string"
+          },
+          "source": {
             "type": "string"
           },
           "suggestion": {
@@ -524,6 +549,82 @@
           }
         ],
         "x-max-body-bytes": 5242880
+      }
+    },
+    "/validate-bundle": {
+      "post": {
+        "description": "Validates an in-memory YAML bundle without filesystem access or environment expansion. Up to 1024 files, 5 MiB per document and 64 MiB total YAML; JSON envelope at most 128 MiB.",
+        "operationId": "validateBundle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BundleInput"
+              }
+            }
+          },
+          "description": "",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResponse"
+                }
+              }
+            },
+            "description": "Validation issues."
+          },
+          "400": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Invalid JSON bundle."
+          },
+          "401": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Missing editor bearer key."
+          },
+          "405": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported method (plain text; includes Allow header)."
+          },
+          "413": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Request too large."
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-max-body-bytes": 134217728
       }
     },
     "/validate-replay": {

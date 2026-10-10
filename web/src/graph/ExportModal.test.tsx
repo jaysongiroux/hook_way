@@ -34,7 +34,7 @@ test("renders exported YAML for the current graph", () => {
   expect(screen.getByText(/http_trigger/)).toBeInTheDocument();
 });
 
-test("exports replay.yaml independently when present", () => {
+test("previews replay.yaml and bundles its download when present", () => {
   useGraphStore.getState().setReplayServiceConfig({
     server: { addr: ":8080" },
     database: { url: "${REPLAY_DATABASE_URL}" },
@@ -47,7 +47,7 @@ test("exports replay.yaml independently when present", () => {
   fireEvent.click(screen.getByRole("tab", { name: "Replay YAML" }));
   expect(screen.getByText(/REPLAY_DATABASE_URL/)).toBeInTheDocument();
   expect(
-    screen.getByRole("button", { name: "Download replay.yaml" }),
+    screen.getByRole("button", { name: "Download hookway-config.zip" }),
   ).toBeInTheDocument();
 });
 

@@ -20,6 +20,7 @@ import (
 
 // Issue is one validation problem, anchored to a dotted config path.
 type Issue struct {
+	Source     string `json:"source,omitempty"`
 	Field      string `json:"field"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
@@ -72,6 +73,7 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range config.MissingEnvIssues(missing) {
 		out.Issues = append(out.Issues, Issue{
+			Source:     iss.Source,
 			Field:      iss.Field,
 			Message:    iss.Message,
 			Suggestion: iss.Suggestion,
@@ -178,6 +180,7 @@ func preserveSeverity(issues []config.ValidationIssue) ValidateResponse {
 			severity = "error"
 		}
 		out.Issues = append(out.Issues, Issue{
+			Source:     iss.Source,
 			Field:      iss.Field,
 			Message:    iss.Message,
 			Suggestion: iss.Suggestion,
@@ -204,6 +207,10 @@ func Schema() ([]byte, error) {
 	credentials := reflector.Reflect(&map[string]flowconfig.CredentialProfile{})
 	routingSchema := reflector.Reflect(&routing.Config{})
 	if properties != nil {
+		properties["flows"] = map[string]any{"type": "object", "additionalProperties": map[string]any{"oneOf": []any{
+			map[string]any{"type": "object", "required": []string{"file"}, "additionalProperties": false, "properties": map[string]any{"file": map[string]any{"type": "string", "description": "Literal relative YAML path inside the entry directory"}}},
+			map[string]any{"type": "object", "not": map[string]any{"required": []string{"file"}}, "properties": map[string]any{"nodes": map[string]any{"type": "array"}, "edges": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+		}}}
 		properties["credentials"] = credentials
 		properties["lookups"] = reflector.Reflect(&map[string]flowconfig.LookupProviderConfig{})
 		properties["routing"] = routingSchema

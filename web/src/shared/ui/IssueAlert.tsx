@@ -1,6 +1,7 @@
 import { Alert, Button, List, Text } from "@mantine/core";
 
 interface ValidationIssue {
+  source?: string;
   field: string;
   message: string;
   suggestion?: string;
@@ -29,7 +30,7 @@ export function IssueAlert({
           return (
             <List.Item key={`${issue.field}-${index}`}>
               <Text span ff="monospace">
-                {issue.field}
+                {issue.source ? `${issue.source}: ` : ""}{issue.field}
               </Text>
               : {issue.message}
               {issue.suggestion && <Text size="sm">{issue.suggestion}</Text>}

@@ -340,6 +340,7 @@ validate-examples:
 		echo "validating $$f"; \
 		$(GO) run ./cmd/hookway validate --config $$f || exit 1; \
 	done; \
+	$(GO) run ./cmd/hookway validate --config examples/multi-yaml/core.yaml || exit 1; \
 	for d in dev replay; do \
 		echo "validating examples/$$d/core.yaml"; \
 		$(GO) run ./cmd/hookway validate --config examples/$$d/core.yaml || exit 1; \

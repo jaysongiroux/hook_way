@@ -1,0 +1,15 @@
+# All process settings and shared resources live in this entry file.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+state_stores:
+  local:
+    namespace: multi-yaml-demo
+    memory: {}
+logging:
+  level: info
+flows:
+  orders:
+    file: flows/orders.yaml
+  billing:
+    file: flows/billing.yaml

@@ -2,6 +2,7 @@ const WASM_CONTRACT_VERSION = 1;
 
 export type WasmCapability =
   | "core_yaml_validate"
+  | "core_yaml_bundle_validate"
   | "core_schema"
   | "node_schemas"
   | "replay_yaml_validate"
@@ -35,6 +36,7 @@ declare global {
     Go?: new () => { importObject: WebAssembly.Imports; run(instance: WebAssembly.Instance): Promise<void> };
     hookwayWasmReady?: () => void;
     hookwayContractInfo?: () => string;
+    hookwayValidateBundle?: (json: string) => string;
     hookwayValidate?: (yaml: string) => string;
     hookwaySchema?: () => string;
     hookwayNodeSchemas?: () => string;
@@ -46,6 +48,7 @@ declare global {
 }
 
 const required: Record<WasmCapability, keyof Window> = {
+  core_yaml_bundle_validate: "hookwayValidateBundle",
   core_yaml_validate: "hookwayValidate",
   core_schema: "hookwaySchema",
   node_schemas: "hookwayNodeSchemas",

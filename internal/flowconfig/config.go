@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -37,16 +35,29 @@ type Config struct {
 
 // Load reads path and expands environment variables strictly.
 func Load(path string) (Config, []config.ValidationIssue) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return Config{}, []config.ValidationIssue{cfgIssue("config", fmt.Sprintf("read %s: %v", path, err), "")}
-	}
-	return LoadBytes(data, path, true)
+	return LoadFile(path, true)
 }
 
 // LoadBytes decodes a config document, compiles every flow, and reports every
 // structural problem it can find. Policy lint is a separate pass.
 func LoadBytes(data []byte, source string, expandEnv bool) (Config, []config.ValidationIssue) {
+	// Preserve legacy expansion-before-decoding, including compact mappings that
+	// become valid YAML only after an environment placeholder is substituted.
+	if expandEnv {
+		expanded, missing := ExpandConfigEnv(string(data), config.ExpandEnvStrict)
+		if len(missing) > 0 {
+			return Config{}, explicitErrorSeverity(config.MissingEnvIssues(missing))
+		}
+		data = []byte(expanded)
+	}
+	doc, issues := Resolve(data, source, nil)
+	if len(issues) != 0 {
+		return Config{}, issues
+	}
+	return loadInlineBytes(doc.Data, source, false)
+}
+
+func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []config.ValidationIssue) {
 	if expandEnv {
 		expanded, missing := ExpandConfigEnv(string(data), config.ExpandEnvStrict)
 		if len(missing) > 0 {

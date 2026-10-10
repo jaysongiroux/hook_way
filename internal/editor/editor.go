@@ -32,7 +32,7 @@ const maxValidateBytes = 5 << 20 // 5 MiB
 // a wrong method for a known API path, defeating net/http's automatic 405.
 func Handler(apiKey string) http.Handler {
 	api := http.NewServeMux()
-	handlers := map[string]http.HandlerFunc{"coreSchema": handleSchema, "nodeSchemas": handleNodeSchema, "validateCore": validationHandler(configapi.Validate), "replaySchema": handleReplaySchema, "validateReplay": validationHandler(replayconfigapi.Validate), "contractInfo": handleContract, "jsonSampleValidation": handleJSONSampleValidation}
+	handlers := map[string]http.HandlerFunc{"coreSchema": handleSchema, "nodeSchemas": handleNodeSchema, "validateCore": validationHandler(configapi.Validate), "validateBundle": handleValidateBundle, "replaySchema": handleReplaySchema, "validateReplay": validationHandler(replayconfigapi.Validate), "contractInfo": handleContract, "jsonSampleValidation": handleJSONSampleValidation}
 	mux := http.NewServeMux()
 	for _, route := range Routes() {
 		handler := handlers[route.OperationID]

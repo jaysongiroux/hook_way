@@ -86,6 +86,7 @@ func replayActionValidate(_ js.Value, args []js.Value) any {
 }
 
 func main() {
+	js.Global().Set("hookwayValidateBundle", js.FuncOf(validateBundle))
 	js.Global().Set("hookwayValidate", js.FuncOf(validate))
 	js.Global().Set("hookwaySchema", js.FuncOf(schema))
 	js.Global().Set("hookwayNodeSchemas", js.FuncOf(nodeSchemas))
@@ -108,6 +109,17 @@ func jsonSampleValidate(_ js.Value, args []js.Value) any {
 		return errJSON("hookwayJSONSampleValidate: expected 1 string argument (json)")
 	}
 	out, err := bridge.JSONSampleValidate(args[0].String())
+	if err != nil {
+		return errJSON(err.Error())
+	}
+	return out
+}
+
+func validateBundle(_ js.Value, args []js.Value) any {
+	if len(args) != 1 || args[0].Type() != js.TypeString {
+		return errJSON("hookwayValidateBundle: expected one JSON string")
+	}
+	out, err := bridge.ValidateBundle(args[0].String())
 	if err != nil {
 		return errJSON(err.Error())
 	}

@@ -24,9 +24,16 @@ import {
   defaultReplayServiceConfig,
 } from "./replayDefaults";
 
+import { flowFilenames } from "./bundle";
+
 let edgeSeq = 0;
 
 interface GraphState extends GraphDocument {
+  setYAMLMode: (mode: "single" | "split") => void;
+  setEntryFilename: (filename: string) => void;
+  setFlowFilename: (name: string, filename: string) => void;
+  setReplayFilename: (filename: string) => void;
+  removeFlow: (name: string) => void;
   selectedId: string | null;
   selectedEdgeId: string | null;
   onNodesChange: (changes: NodeChange[]) => void;
@@ -80,6 +87,36 @@ function snapshotOf(
 
 export const useGraphStore = create<GraphState>((set, get) => ({
   ...emptyDocument(),
+  setYAMLMode: (yamlMode) => set({ yamlMode, flowFiles: flowFilenames(get()) }),
+  setEntryFilename: (entryFilename) => set({ entryFilename }),
+  setFlowFilename: (name, filename) =>
+    set({ flowFiles: { ...flowFilenames(get()), [name]: filename } }),
+  setReplayFilename: (replayFilename) => set({ replayFilename }),
+  removeFlow: (name) => {
+    const s = get();
+    const names = [s.activeFlow, ...Object.keys(s.otherFlows)].filter(
+      (n) => n !== name,
+    );
+    if (!names.length) return;
+    if (name === s.activeFlow) s.setActiveFlow(names[0]);
+    const current = get();
+    const otherFlows = { ...current.otherFlows };
+    delete otherFlows[name];
+    const flowFiles = { ...current.flowFiles };
+    delete flowFiles[name];
+    const prefix = `node/${encodeURIComponent(name)}/`;
+    set({
+      otherFlows,
+      flowFiles,
+      formDrafts: Object.fromEntries(
+        Object.entries(current.formDrafts ?? {}).filter(
+          ([key]) =>
+            !key.startsWith(prefix) &&
+            !draftOwnedBy(key, `flow/${encodeURIComponent(name)}`),
+        ),
+      ),
+    });
+  },
   selectedId: null,
   selectedEdgeId: null,
   arrangeSeq: 0,
@@ -307,8 +344,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     const s = get();
     if (!trimmed || trimmed === s.activeFlow || s.otherFlows[trimmed])
       return false;
+    const nextFlows = { ...s.otherFlows, [s.activeFlow]: snapshotOf(s) };
+    const flowFiles = flowFilenames({
+      ...s,
+      otherFlows: nextFlows,
+      activeFlow: trimmed,
+    });
     set({
-      otherFlows: { ...s.otherFlows, [s.activeFlow]: snapshotOf(s) },
+      flowFiles,
+      otherFlows: nextFlows,
       activeFlow: trimmed,
       nodes: [],
       edges: [],
@@ -331,11 +375,20 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         draft,
       ]),
     );
-    set({ activeFlow: trimmed, formDrafts });
+    const flowFiles = {
+      ...flowFilenames(s),
+      [trimmed]: flowFilenames(s)[s.activeFlow],
+    };
+    delete flowFiles[s.activeFlow];
+    set({ activeFlow: trimmed, formDrafts, flowFiles });
   },
   document: () => {
     const s = get();
     return {
+      yamlMode: s.yamlMode,
+      entryFilename: s.entryFilename,
+      flowFiles: s.flowFiles,
+      replayFilename: s.replayFilename,
       formDrafts: s.formDrafts,
       nodes: s.nodes,
       edges: s.edges,
@@ -354,7 +407,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   clear: () =>
     set({ ...emptyDocument(), selectedId: null, selectedEdgeId: null }),
   clearCore: () => {
-    const { replayServiceConfig, formDrafts } = get();
+    const { replayServiceConfig, replayFilename, formDrafts } = get();
     const replayDrafts =
       replayServiceConfig === null
         ? {}
@@ -366,6 +419,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({
       ...emptyDocument(),
       replayServiceConfig,
+      replayFilename,
       formDrafts: replayDrafts,
       selectedId: null,
       selectedEdgeId: null,
@@ -531,13 +585,20 @@ function reconcileConfigExtraDrafts(
     result = pruneRemovedFieldDrafts(result, oldEntry, entry, scope, path);
   }
   for (const category of ["lookups", "state_stores"]) {
-    const oldEntries = asRecord(previous[category]), entries = asRecord(next[category]);
+    const oldEntries = asRecord(previous[category]),
+      entries = asRecord(next[category]);
     result = reconcileNamedDrafts(result, oldEntries, entries, category, {
-      encodeNames: true, pathPrefix: category,
+      encodeNames: true,
+      pathPrefix: category,
     });
     for (const [oldName, name] of namedEntryPairs(oldEntries, entries)) {
-      result = pruneRemovedFieldDrafts(result, asRecord(oldEntries[oldName]), asRecord(entries[name]),
-        `${category}/${encodeURIComponent(name)}`, `${category}.${name}`);
+      result = pruneRemovedFieldDrafts(
+        result,
+        asRecord(oldEntries[oldName]),
+        asRecord(entries[name]),
+        `${category}/${encodeURIComponent(name)}`,
+        `${category}.${name}`,
+      );
     }
   }
   const oldRouting = asRecord(previous.routing),

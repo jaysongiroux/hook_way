@@ -210,6 +210,9 @@ func discoverExamples(t *testing.T) (valid, invalid []string) {
 		if relErr != nil {
 			return relErr
 		}
+		if strings.HasPrefix(filepath.ToSlash(rel), "multi-yaml/flows/") {
+			return nil
+		} // Flow bodies are exercised through their entry YAML.
 		switch filepath.ToSlash(rel) {
 		case "production-local/monitoring/compose.yaml", "production-local/monitoring/prometheus.yaml", "production-local/monitoring/alertmanager.yaml":
 			return nil

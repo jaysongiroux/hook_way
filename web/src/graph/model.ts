@@ -33,6 +33,10 @@ export interface EditorDraft {
 }
 
 export interface GraphDocument {
+  yamlMode?: "single" | "split";
+  entryFilename?: string;
+  flowFiles?: Record<string, string>;
+  replayFilename?: string;
   /** Editor-only drafts; persisted locally, never serialized into YAML. */
   formDrafts?: Record<string, EditorDraft>;
   nodes: HookwayNode[];
@@ -101,6 +105,10 @@ export function createNode(
 export function emptyDocument(): GraphDocument {
   return {
     formDrafts: {},
+    yamlMode: "single",
+    entryFilename: "core.yaml",
+    flowFiles: {},
+    replayFilename: "replay.yaml",
     nodes: [],
     edges: [],
     serverConfig: { ...DEFAULT_SERVER },

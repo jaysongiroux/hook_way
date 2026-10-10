@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -119,13 +118,8 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		writef(stderr, "read config: %v\n", err)
-		return 1
-	}
 	if *jsonOut {
-		resp := configapi.ValidateWithEnv(data, !*noEnv)
+		resp := configapi.ValidateFileWithEnv(path, !*noEnv)
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(resp); err != nil {
@@ -140,14 +134,17 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	var issues []config.ValidationIssue
-	if *noEnv {
-		issues = flowconfig.ValidateBytes(data)
-	} else {
-		var cfg flowconfig.Config
-		cfg, issues = flowconfig.LoadBytes(data, path, true)
-		issues = append(issues, flowconfig.Lint(cfg)...)
+	doc, issues := flowconfig.ResolveFile(path)
+	if !*noEnv && len(issues) == 1 && issues[0].Field == "config" {
+		cfg, loaded := flowconfig.LoadFile(path, true)
+		issues = append(loaded, flowconfig.Lint(cfg)...)
 		issues = append(issues, flowconfig.StandaloneIssues(cfg)...)
+		issues = (flowconfig.ResolvedDocument{Source: path}).Attribute(issues)
+	} else if len(issues) == 0 {
+		cfg, decoded := flowconfig.LoadBytes(doc.Data, path, !*noEnv)
+		issues = append(decoded, flowconfig.Lint(cfg)...)
+		issues = append(issues, flowconfig.StandaloneIssues(cfg)...)
+		issues = doc.Attribute(issues)
 	}
 	return printValidateResult(issues, *strict, path, stdout, stderr)
 }

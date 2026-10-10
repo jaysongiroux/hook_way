@@ -9,6 +9,7 @@ const DEBOUNCE_MS = 400;
 // would overwrite edits made just before leaving the builder.
 let hydratedInMemory = false;
 const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
+  "yamlMode", "entryFilename", "flowFiles", "replayFilename",
   "formDrafts",
   "nodes",
   "edges",

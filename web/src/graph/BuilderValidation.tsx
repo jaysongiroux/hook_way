@@ -1,3 +1,4 @@
+import { toBundle } from "./bundle";
 import {
   createContext,
   useContext,
@@ -11,10 +12,8 @@ import { useShallow } from "zustand/react/shallow";
 import type { FlowSnapshot, GraphDocument } from "./model";
 import { yamlIdOf } from "./model";
 import { useGraphStore } from "./store";
-import { toConfig } from "./toConfig";
-import { toYaml } from "./toYaml";
 import { VALIDATOR_RETRY_EVENT } from "../shared/wasm/validationMode";
-import { validateYaml, type ValidationIssue } from "./validate";
+import { validateBundle, validateYaml, type ValidationIssue } from "./validate";
 
 export type BuilderValidationStatus =
   | "checking"
@@ -58,6 +57,9 @@ export function BuilderValidationProvider({
   const formDrafts = useGraphStore((state) => state.formDrafts);
   const documentParts = useGraphStore(
     useShallow((state) => ({
+      yamlMode: state.yamlMode,
+      entryFilename: state.entryFilename,
+      flowFiles: state.flowFiles,
       nodes: state.nodes,
       edges: state.edges,
       serverConfig: state.serverConfig,
@@ -74,6 +76,9 @@ export function BuilderValidationProvider({
 
   const exportResult = useMemo(() => {
     const document: GraphDocument = {
+      yamlMode: documentParts.yamlMode,
+      entryFilename: documentParts.entryFilename,
+      flowFiles: documentParts.flowFiles,
       nodes: documentParts.nodes,
       edges: documentParts.edges,
       serverConfig: documentParts.serverConfig,
@@ -88,9 +93,10 @@ export function BuilderValidationProvider({
       flowExtra: documentParts.flowExtra,
     };
     try {
-      return { yaml: toYaml(toConfig(document).config), error: "" };
+      const bundle = toBundle(document);
+      return { yaml: bundle.files[bundle.entry], bundle, error: "" };
     } catch (error) {
-      return { yaml: "", error: String(error) };
+      return { yaml: "", bundle: null, error: String(error) };
     }
   }, [documentParts]);
 
@@ -115,7 +121,7 @@ export function BuilderValidationProvider({
     if (exportResult.error) return;
 
     const timer = window.setTimeout(() => {
-      void validateYaml(exportResult.yaml)
+      void (documentParts.yamlMode === "split" && exportResult.bundle ? validateBundle(exportResult.bundle) : validateYaml(exportResult.yaml))
         .then((result) => {
           if (generation.current !== requestGeneration) return;
           if (result === null) {

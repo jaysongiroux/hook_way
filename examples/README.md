@@ -214,3 +214,10 @@ test evidence, consumer deduplication, recovery requirements and unsupported mod
 Set the referenced environment variables, choose the backend used by each node,
 and migrate PostgreSQL before serving. Both declared stores are checked at startup,
 so remove unused stores. See [Protection stores](../docs/guides/protection-stores.md).
+
+## Multi-YAML configuration
+
+[One YAML per flow](multi-yaml/README.md) keeps central settings in
+[multi-yaml/core.yaml](multi-yaml/core.yaml) and references separate
+[orders](multi-yaml/flows/orders.yaml) and [billing](multi-yaml/flows/billing.yaml)
+flow bodies. Single-file configuration remains supported.

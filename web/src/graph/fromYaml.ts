@@ -6,6 +6,9 @@ import type { GraphDocument } from "./model";
 
 export function fromYaml(text: string): GraphDocument {
   const config = parseYamlMapping(text, "Core config");
+  if (config.flows && typeof config.flows === "object" && Object.values(config.flows).some((flow) => flow && typeof flow === "object" && Object.prototype.hasOwnProperty.call(flow, "file"))) {
+    throw new Error("This entry YAML references flow files. Import the ZIP or select the entry and its flow files together.");
+  }
   return layoutAllFlows(fromConfig(config));
 }
 
