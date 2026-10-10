@@ -310,7 +310,7 @@ func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, er
 		ce.Problems = append(ce.Problems, "child entry cannot have incoming edges")
 	}
 	for _, id := range f.order {
-		if inbound[id] > 1 {
+		if inbound[id] > 1 && !f.nodes[id].spec.AllowMultipleInputs {
 			ce.Problems = append(ce.Problems, fmt.Sprintf("node %q has multiple incoming edges: reconvergence needs explicit merge or exclusive-branch semantics", id))
 		}
 	}

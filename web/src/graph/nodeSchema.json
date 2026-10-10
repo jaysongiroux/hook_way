@@ -1025,6 +1025,7 @@
     }
   },
   "publish": {
+    "allow_multiple_inputs": true,
     "batch_child_order": 6,
     "input": "Envelope",
     "output": "Envelope",

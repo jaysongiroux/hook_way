@@ -356,3 +356,58 @@ func TestBatchDedicatedSkipsOtherAndUnknownEnvironmentsBeforeAdmission(t *testin
 		t.Fatal(terminal.Response, response, published)
 	}
 }
+
+func TestBatchSharedDestinationCountsChildrenNotArrivals(t *testing.T) {
+	for _, mode := range []string{"shared", "dedicated"} {
+		for _, failure := range []int{0, 1, 2} {
+			t.Run(fmt.Sprintf("%s/failure=%d", mode, failure), func(t *testing.T) {
+				o := batchTestOptions(mode)
+				o.Child.Entry = "batch.entry"
+				for _, id := range []string{"batch.entry", "batch.left", "batch.right"} {
+					o.Child.Nodes = append(o.Child.Nodes, map[string]any{"id": id, "type": "sample", "rate": 1})
+				}
+				o.Child.Edges = []string{"batch.entry>batch.left", "batch.entry>batch.right", "batch.left>batch.send", "batch.right>batch.send"}
+				calls := 0
+				n := batchTestNode(t, o, batchPublisherFunc(func(_ context.Context, _, _ string, e graph.Envelope) error {
+					calls++
+					if e.Vars["batch_event_id"] != "one" || e.Publish.FIFO.DeduplicationID != "one" {
+						t.Fatal("changed child identity", e)
+					}
+					if calls == failure {
+						return errors.New("publish failed")
+					}
+					return nil
+				}))
+				out, err := n.Run(t.Context(), graph.Envelope{Body: []any{map[string]any{"environment": "preview", "event_id": "one"}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				term := out.(graph.Terminal)
+				var response map[string]any
+				if err := json.Unmarshal(term.Response.Body, &response); err != nil {
+					t.Fatal(err)
+				}
+				primary := float64(1)
+				dropped := float64(0)
+				status := 200
+				expectedCalls := 2
+				if failure > 0 {
+					primary = 0
+					dropped = 1
+					if mode == "dedicated" {
+						status = 502
+					}
+					if failure == 1 {
+						expectedCalls = 1
+					}
+				}
+				if calls != expectedCalls || len(term.Deliveries) != 2 || response["primary"] != primary || response["dropped"] != dropped || term.Response.Status != status {
+					t.Fatal(calls, term, response)
+				}
+				if failure == 1 && !term.Deliveries[1].Unattempted {
+					t.Fatal("lost blocked second arrival", term)
+				}
+			})
+		}
+	}
+}

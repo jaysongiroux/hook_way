@@ -15,9 +15,12 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
   const to = nodeMeta(tgt.data.nodeType, tgt.data.options);
   if (!from || !to) return false;
   if (c.targetHandle && c.targetHandle !== HANDLE_IN) return false;
-  // The compiler rejects reconvergence, duplicate edges and cycles.
+  // Only catalog types with explicit per-input semantics may reconverge.
   const existing = edges.filter((e) => !("id" in c && e.id === c.id));
-  if (existing.some((e) => e.target === c.target)) return false;
+  const sourceHandle = c.sourceHandle ?? HANDLE_OUT;
+  if (existing.some((e) => e.source === c.source && e.target === c.target &&
+    (e.sourceHandle ?? HANDLE_OUT) === sourceHandle)) return false;
+  if (!to.allow_multiple_inputs && existing.some((e) => e.target === c.target)) return false;
   const pending = [c.target];
   const seen = new Set<string>();
   while (pending.length) {
@@ -27,7 +30,6 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
     seen.add(id);
     pending.push(...existing.filter((e) => e.source === id).map((e) => e.target));
   }
-  const sourceHandle = c.sourceHandle ?? HANDLE_OUT;
   if (sourceHandle === HANDLE_ON_ERROR) {
     if (!from.on_error) return false;
     return portAccepts(to.input, from.input);

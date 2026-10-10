@@ -107,6 +107,7 @@ export function batchChildIssues(value: unknown, parentId?: string): string[] {
       "Child edges must be a list; the imported value is retained until replaced.",
     );
   const seenEdges = new Set<string>();
+  const inbound = new Map<string, number>();
   const adjacent = new Map<string, string[]>();
   edges.forEach((raw, index) => {
     const edge = readEdge(raw);
@@ -151,8 +152,19 @@ export function batchChildIssues(value: unknown, parentId?: string): string[] {
       NODE_SCHEMAS[fromType].output !== NODE_SCHEMAS[String(to.type)].input
     )
       issues.push(`Edge ${index + 1} connects incompatible node types.`);
+    inbound.set(edge.to, (inbound.get(edge.to) ?? 0) + 1);
     adjacent.set(edge.from, [...(adjacent.get(edge.from) ?? []), edge.to]);
   });
+  for (const node of records) {
+    if (
+      node &&
+      (inbound.get(String(node.id)) ?? 0) > 1 &&
+      !NODE_SCHEMAS[String(node.type)]?.allow_multiple_inputs
+    )
+      issues.push(`Child node ${String(node.id)} allows only one incoming connection.`);
+  }
+  if ((inbound.get(entry) ?? 0) > 0)
+    issues.push("The child entry cannot have incoming connections.");
   if (ids.includes(entry)) {
     const reached = new Set<string>();
     const visiting = new Set<string>();
@@ -267,9 +279,10 @@ export function BatchChildEditor({
   return (
     <Stack gap="sm" data-form-scope={scope}>
       <Text size="sm">
-        Run this child flow for each admitted event. Use exactly one publish
-        node; triggers, responses, HTTP requests, and nested batches are not
-        allowed.
+        Run this child flow for each admitted event. Multiple paths may feed the
+        same destination; each input publishes separately. Response counts stay
+        per child event. Use exactly one publish node; triggers, responses, HTTP
+        requests, and nested batches are not allowed.
       </Text>
       <Text size="xs">
         {parentId

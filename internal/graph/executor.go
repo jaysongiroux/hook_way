@@ -20,8 +20,8 @@ type NodeEvent struct {
 }
 
 // FailureEvent reports one node whose error no on_error path handled. It fires
-// once, at the node where the error originated; ancestors that merely
-// propagate the error never fire. Input is the payload the node received. It
+// once per failed invocation, at the node where the error originated. Ancestors
+// that merely propagate the error never fire. Input is the payload the node received. It
 // is not copied: nodes never mutate their input (I19), so it still holds what
 // the node was given.
 type FailureEvent struct {
@@ -38,7 +38,7 @@ type RunOptions struct {
 	// stop_on_failure stays sequential: it must not attempt a destination
 	// after an earlier one failed. <= 0 means 8.
 	FanoutConcurrency int
-	// OnNode runs once after each attempted node, including failures and panics.
+	// OnNode runs once after each attempted invocation, including failures and panics.
 	// An observer panic is isolated: instrumentation must not alter delivery.
 	OnNode func(NodeEvent)
 	// OnFailure runs for each node whose error no on_error path handled, at
@@ -78,10 +78,10 @@ func (f *Flow) Run(ctx context.Context, in Payload, opts RunOptions) (term Termi
 	}
 	ctx, effects := effectContext(ctx)
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
-	err = e.node(ctx, f.root, seed)
-	if err != nil {
-		e.recordUnattempted(nil)
-	}
+	err = e.node(ctx, f.root, seed, "")
+	// skip_failed may acknowledge a partially failed run. Record blocked paths
+	// even then; successful and deliberately suppressed paths add no outcomes.
+	e.recordUnattempted(f.root)
 	slices.Reverse(e.term.Compensations)
 	e.term.SideEffects = effects.Load()
 	return e.term, err
@@ -147,12 +147,8 @@ func (f *Flow) RunFrom(ctx context.Context, nodeID string, in Payload, opts RunO
 	bctx = context.WithValue(bctx, publishBudgetKey{}, struct{}{})
 	bctx, effects := effectContext(bctx)
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
-	err = e.node(bctx, nodeID, seed)
-	if err != nil {
-		reachable := map[string]bool{nodeID: true}
-		f.walk(nodeID, reachable)
-		e.recordUnattempted(reachable)
-	}
+	err = e.node(bctx, nodeID, seed, "")
+	e.recordUnattempted(nodeID)
 	e.term.Compensations = nil
 	e.term.SideEffects = effects.Load()
 	return e.term, err
@@ -166,14 +162,15 @@ type execution struct {
 	// destination publishes concurrently, so all per-request state is
 	// touched from multiple goroutines. stop_on_failure is sequential and
 	// pays only an uncontended lock.
-	mu                  sync.Mutex
-	term                Terminal
+	mu   sync.Mutex
+	term Terminal
+	// Keys are execution paths, not node IDs. Suppression marks a path prefix.
 	visited, suppressed map[string]bool
 }
 
-func (e *execution) markVisited(id string) {
+func (e *execution) markVisited(path string) {
 	e.mu.Lock()
-	e.visited[id] = true
+	e.visited[path] = true
 	e.mu.Unlock()
 }
 
@@ -214,40 +211,47 @@ func (e *execution) delivery(b *bound, err error, unattempted bool) Delivery {
 	return d
 }
 
-// recordUnattempted appends an Unattempted delivery for every detached node
-// that neither ran nor was suppressed. within limits the scan to those node
-// ids; nil means the whole flow.
-func (e *execution) recordUnattempted(within map[string]bool) {
-	for _, id := range e.flow.order {
-		if within != nil && !within[id] {
-			continue
+// executionPath identifies an arrival by its complete edge path. Node IDs may
+// contain punctuation, but not NUL, so the separators cannot collide with IDs.
+func executionPath(parent string, edge Edge) string {
+	return parent + "\x00" + edge.String()
+}
+
+// recordUnattempted runs after workers have joined. Traverse paths, rather than
+// deduplicating nodes: a completed arrival must not hide a blocked sibling.
+// Suppressed prefixes prune paths the request deliberately did not select.
+func (e *execution) recordUnattempted(root string) {
+	var walk func(string, string)
+	walk = func(id, path string) {
+		if e.suppressed[path] {
+			return
 		}
 		b := e.flow.nodes[id]
-		if b.spec.Detached && !e.visited[id] && !e.suppressed[id] {
+		if b.spec.Detached && !e.visited[path] {
 			e.term.Deliveries = append(e.term.Deliveries, e.delivery(b, nil, true))
 		}
+		for _, edge := range e.flow.out[id] {
+			walk(edge.To, executionPath(path, edge))
+		}
 	}
-}
-func (e *execution) suppress(id string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.suppressLocked(id)
+	walk(root, "")
 }
 
-func (e *execution) suppressBranch(id string) {
+func (e *execution) suppress(id, path string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.suppressed[id] = true
-	e.suppressLocked(id)
-}
-
-func (e *execution) suppressLocked(id string) {
 	for _, edge := range e.flow.out[id] {
-		e.suppressed[edge.To] = true
-		e.suppressLocked(edge.To)
+		e.suppressed[executionPath(path, edge)] = true
 	}
 }
-func (e *execution) node(ctx context.Context, id string, in Payload) (err error) {
+
+func (e *execution) suppressBranch(path string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.suppressed[path] = true
+}
+
+func (e *execution) node(ctx context.Context, id string, in Payload, path string) (err error) {
 	b := e.flow.nodes[id]
 	errorInput := in
 	for _, edge := range e.flow.out[id] {
@@ -267,7 +271,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 			return fmt.Errorf("node %q compensation input: %w", id, err)
 		}
 	}
-	e.markVisited(id)
+	e.markVisited(path)
 	nctx := ctx
 	cancel := func() {}
 	ownsBudget := false
@@ -374,7 +378,7 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 			observeFailure(e.opts.OnFailure, FailureEvent{NodeID: id, NodeType: b.spec.Type, Input: in, Err: err})
 			return fmt.Errorf("node %q (%s): %w", id, b.spec.Type, err)
 		}
-		if handled := e.followOnError(ctx, id, errorInput); handled == nil {
+		if handled := e.followOnError(ctx, id, errorInput, path); handled == nil {
 			return nil
 		} else if !errors.Is(handled, errNoOnError) {
 			return handled
@@ -398,19 +402,19 @@ func (e *execution) node(ctx context.Context, id string, in Payload) (err error)
 			// envelope on the detached budget, after Publish returned nil.
 			for _, edge := range e.flow.out[id] {
 				if edge.FromPort == "on_error" {
-					e.suppressBranch(edge.To)
+					e.suppressBranch(executionPath(path, edge))
 				}
 			}
 			next, cloneErr := clonePayload(in)
 			if cloneErr != nil {
 				return fmt.Errorf("node %q success continuation: %w", id, cloneErr)
 			}
-			return e.followSuccessors(nctx, id, next)
+			return e.followSuccessors(nctx, id, next, path)
 		}
-		e.suppress(id)
+		e.suppress(id, path)
 		return nil
 	}
-	return e.followSuccessors(ctx, id, out)
+	return e.followSuccessors(ctx, id, out, path)
 }
 
 // publishBudgetKey marks a context as owning (or sharing) one publish_timeout
@@ -468,7 +472,7 @@ func selectedBranch(out Payload) string {
 
 var errNoOnError = errors.New("graph: no on_error successor")
 
-func (e *execution) followOnError(ctx context.Context, id string, in Payload) error {
+func (e *execution) followOnError(ctx context.Context, id string, in Payload, path string) error {
 	var edges []Edge
 	for _, edge := range e.flow.out[id] {
 		if edge.FromPort == "on_error" {
@@ -479,7 +483,7 @@ func (e *execution) followOnError(ctx context.Context, id string, in Payload) er
 		return errNoOnError
 	}
 	for _, edge := range successEdges(e.flow.out[id]) {
-		e.suppressBranch(edge.To)
+		e.suppressBranch(executionPath(path, edge))
 	}
 	for _, edge := range edges {
 		next := in
@@ -490,17 +494,17 @@ func (e *execution) followOnError(ctx context.Context, id string, in Payload) er
 			}
 			next = cloned
 		}
-		if err := e.node(ctx, edge.To, next); err != nil {
+		if err := e.node(ctx, edge.To, next, executionPath(path, edge)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *execution) followSuccessors(ctx context.Context, id string, out Payload) error {
+func (e *execution) followSuccessors(ctx context.Context, id string, out Payload, path string) error {
 	for _, edge := range e.flow.out[id] {
 		if edge.FromPort == "on_error" {
-			e.suppressBranch(edge.To)
+			e.suppressBranch(executionPath(path, edge))
 		}
 	}
 	successors := successEdges(e.flow.out[id])
@@ -510,7 +514,7 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 			if edge.FromPort == selected || (selected == "" && edge.FromPort == "") {
 				matched = append(matched, edge)
 			} else {
-				e.suppressBranch(edge.To)
+				e.suppressBranch(executionPath(path, edge))
 			}
 		}
 		if len(matched) == 0 {
@@ -525,7 +529,7 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 		}
 	}
 	if e.flow.skipFailed && allDetached(e.flow, successors) {
-		return e.followSkipFailed(ctx, id, out, successors)
+		return e.followSkipFailed(ctx, id, out, successors, path)
 	}
 	for _, edge := range successors {
 		next := out
@@ -536,7 +540,7 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 				return fmt.Errorf("node %q fan-out: %w", id, err)
 			}
 		}
-		if err = e.node(ctx, edge.To, next); err != nil {
+		if err = e.node(ctx, edge.To, next, executionPath(path, edge)); err != nil {
 			return err
 		}
 	}
@@ -549,13 +553,12 @@ func (e *execution) followSuccessors(ctx context.Context, id string, out Payload
 // point is that no destination gates another, so serialising them would make
 // request latency the SUM of destination latencies instead of the max.
 //
-// Only reached when every successor is detached (see followSuccessors), so the
-// nodes run here are destination publishes: terminal, non-recursing, and
-// already isolated from the request context. All shared state they touch goes
-// through execution's mutex.
-func (e *execution) followSkipFailed(ctx context.Context, id string, out Payload, successors []Edge) error {
+// Only reached when every successor is detached (see followSuccessors). Each
+// worker runs a destination and its continuation on an isolated publish budget.
+// All shared execution state they touch goes through execution's mutex.
+func (e *execution) followSkipFailed(ctx context.Context, id string, out Payload, successors []Edge, path string) error {
 	if len(successors) == 1 {
-		if err := e.node(ctx, successors[0].To, out); err != nil {
+		if err := e.node(ctx, successors[0].To, out, executionPath(path, successors[0])); err != nil {
 			return err
 		}
 		return nil
@@ -582,7 +585,7 @@ func (e *execution) followSkipFailed(ctx context.Context, id string, out Payload
 			// the slice needs no lock; execution's own state is guarded by
 			// e.mu inside node.
 			for i := range jobs {
-				errs[i] = e.node(ctx, successors[i].To, payloads[i])
+				errs[i] = e.node(ctx, successors[i].To, payloads[i], executionPath(path, successors[i]))
 			}
 		})
 	}
@@ -725,17 +728,17 @@ func (f *Flow) RunChild(ctx context.Context, in Envelope, opts RunOptions) (Term
 	ctx, effects := effectContext(ctx)
 	e := &execution{flow: f, opts: opts, visited: map[string]bool{}, suppressed: map[string]bool{}}
 	if err := ctx.Err(); err != nil {
-		e.recordUnattempted(nil)
+		e.recordUnattempted(f.root)
 		return e.term, err
 	}
 	seed, err := clonePayload(in)
 	if err != nil {
 		return Terminal{}, err
 	}
-	err = e.node(ctx, f.root, seed)
-	if err != nil {
-		e.recordUnattempted(nil)
-	}
+	err = e.node(ctx, f.root, seed, "")
+	// skip_failed may acknowledge a partially failed run. Record blocked paths
+	// even then; successful and deliberately suppressed paths add no outcomes.
+	e.recordUnattempted(f.root)
 	e.term.SideEffects = effects.Load()
 	return e.term, err
 }

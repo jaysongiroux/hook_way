@@ -110,3 +110,35 @@ test("Inspect accepts envelope paths, continues inline and has no error edge", (
   const observer = pair("inspect", "publish");
   expect(isValidConnection(connect(observer.from, observer.to, "on_error"), observer.nodes, [])).toBe(false);
 });
+
+test("publish accepts multiple sources but rejects duplicate edges", () => {
+  resetIdCounters();
+  const a = createNode("transform", { x: 0, y: 0 });
+  const b = createNode("transform", { x: 0, y: 100 });
+  const dest = createNode("publish", { x: 100, y: 0 });
+  const nodes = [a, b, dest];
+  const edge = { id: "first", source: a.id, target: dest.id };
+  expect(isValidConnection(connect(b, dest), nodes, [edge])).toBe(true);
+  expect(isValidConnection(connect(a, dest), nodes, [edge])).toBe(false);
+  expect(isValidConnection({ ...edge, targetHandle: "in" }, nodes, [edge])).toBe(true);
+  // Reconnecting must still consider other edges after excluding itself.
+  expect(isValidConnection({ ...edge, source: b.id }, nodes, [edge, { id: "second", source: b.id, target: dest.id }])).toBe(false);
+});
+
+test("different conditional and error ports may share a publish input", () => {
+  const { from, to, nodes } = pair("if_else", "publish");
+  const taken = [{ id: "true", source: from.id, target: to.id, sourceHandle: "true" }];
+  expect(isValidConnection(connect(from, to, "false"), nodes, taken)).toBe(true);
+  const transform = pair("transform", "publish");
+  expect(isValidConnection(connect(transform.from, transform.to, "on_error"), transform.nodes,
+    [{ id: "ok", source: transform.from.id, target: transform.to.id }])).toBe(true);
+});
+
+test("multiple inputs remain forbidden on processing and response nodes", () => {
+  for (const type of ["transform", "respond", "inspect"]) {
+    const { from, to, nodes } = pair("envelope", type);
+    const other = createNode("envelope", { x: 0, y: 100 });
+    expect(isValidConnection(connect(other, to), [...nodes, other],
+      [{ id: "first", source: from.id, target: to.id }])).toBe(false);
+  }
+});

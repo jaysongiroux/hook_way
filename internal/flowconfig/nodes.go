@@ -371,6 +371,7 @@ type nodeDefinition struct {
 // Zero metadata uses reflected options and ordinary error edges; exceptional
 // rules opt in here without adding another switch over node names.
 type nodeMetadata struct {
+	allowMultipleInputs bool
 	allowLeaf           bool
 	noErrorEdge         bool
 	successContinuation bool
@@ -610,7 +611,7 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 		}),
 		defineErr("publish", graph.PortEnvelope, graph.PortEnvelope, true, validatePublish, func(id string, o PublishOptions) (graph.Node, error) {
 			return newPublishNode(id, o, opts.Publishers)
-		}).withMetadata(nodeMetadata{successContinuation: true, batchChildOrder: 6, formDefaults: publishFormDefaults()}),
+		}).withMetadata(nodeMetadata{allowMultipleInputs: true, successContinuation: true, batchChildOrder: 6, formDefaults: publishFormDefaults()}),
 		defineErr("respond", graph.PortEnvelope, graph.PortTerminal, false, validateRespond, newRespondNode).withMetadata(nodeMetadata{
 			configureSchema: func(meta *NodeSchema) { meta.Schema.OneOf = exclusivePropertyContract("status", "passthrough") },
 		}),
@@ -625,6 +626,7 @@ func (d nodeDefinition) spec() graph.NodeSpec {
 		Detached:            d.detached,
 		SuccessContinuation: d.successContinuation,
 		AllowLeaf:           d.allowLeaf,
+		AllowMultipleInputs: d.allowMultipleInputs,
 		New:                 d.newNode,
 	}
 	if d.stage != nil {

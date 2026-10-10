@@ -68,6 +68,8 @@ type NodeSpec struct {
 	// AllowLeaf permits an observation node to finish successfully without a successor.
 	// It is not a detached destination and never contributes delivery outcomes.
 	AllowLeaf bool
+	// AllowMultipleInputs executes once for each arriving edge, without merging inputs.
+	AllowMultipleInputs bool
 	// New builds a node from its config. Returning an error fails the load.
 	New func(NodeConfig) (Node, error)
 	// ResolvePorts specializes a configured node's phase while preserving a

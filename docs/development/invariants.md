@@ -28,6 +28,10 @@ It supplies no trusted identity for verified quotas.
 A top-level flow has exactly one trigger and no cycles. Batch child flows instead
 start with an envelope and have no trigger. Leaves must be terminal or a publish
 node with no success continuation. A publish continuation carries an envelope.
+Only publish nodes accept multiple incoming edges. Each arriving path executes
+the publish and its applicable continuation independently; payloads are not
+merged. Attempted and suppressed state is local to an execution path, so a
+skipped branch cannot hide another arrival at a shared destination.
 See [Configuration](../reference/configuration.md#flows) for node and edge syntax.
 
 `PortType.Accepts` in `internal/graph/port.go` uses strict equality. Keep that

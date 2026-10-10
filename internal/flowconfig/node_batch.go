@@ -369,14 +369,26 @@ func (n *batchNode) executeChild(ctx context.Context, parent graph.Envelope, bod
 	if err != nil {
 		result.reason = "child_failed"
 	}
+	// A successful arrival cannot erase another arrival's failure. Counts stay
+	// per child event even when its shared publish node executes several times.
+	published, unattempted, failed := false, false, false
 	for _, d := range term.Deliveries {
-		if d.Unattempted {
-			result.reason = "child_failed"
-		} else if d.Err != nil {
-			result.reason = "publish_failed"
-		} else if err == nil {
-			result.reason = "published"
+		switch {
+		case d.Unattempted:
+			unattempted = true
+		case d.Err != nil:
+			failed = true
+		default:
+			published = true
 		}
+	}
+	switch {
+	case failed:
+		result.reason = "publish_failed"
+	case err != nil || unattempted:
+		result.reason = "child_failed"
+	case published:
+		result.reason = "published"
 	}
 	return result
 }

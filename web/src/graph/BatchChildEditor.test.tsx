@@ -248,3 +248,16 @@ test("invalid nested JSON drafts follow their child across preceding removal and
     ),
   ).toBe(false);
 });
+
+test("child paths may share publish but cannot share processing nodes", () => {
+  const a = { ...process, id: "batch.left" };
+  const b = { ...process, id: "batch.right" };
+  const child = {
+    entry: process.id,
+    nodes: [process, a, b, send],
+    edges: ["batch.map>batch.left", "batch.map>batch.right", "batch.left>batch.send", "batch.right>batch.send"],
+  };
+  expect(batchChildIssues(child, "batch")).toEqual([]);
+  expect(batchChildIssues({ ...child, edges: [...child.edges, "batch.left>batch.right"] }, "batch"))
+    .toContain("Child node batch.right allows only one incoming connection.");
+});

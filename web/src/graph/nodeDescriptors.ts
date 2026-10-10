@@ -516,7 +516,7 @@ export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> 
   publish: {
     label: "Send to a destination",
     icon: TbSend,
-    help: "Send the event or supported file content to a destination configured in this workspace.",
+    help: "Send the event or supported file content to a destination configured in this workspace. Connect multiple paths to the same input; each arriving payload is sent separately and runs its own success or error continuation.",
     editor: "publish",
     initialOptions: () => ({ create: true }),
     summary: (options) => [options.destination, options.target].filter(Boolean).map(String).join(" → "),

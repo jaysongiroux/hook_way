@@ -28,6 +28,8 @@ export interface NodeSchemaMeta {
   input: string;
   output: string;
   detached: boolean;
+  /** Execute separately for each incoming payload; no merge or deduplication. */
+  allow_multiple_inputs?: boolean;
   /** An observation node may end a successful branch without delivery. */
   allow_leaf?: boolean;
   on_error: boolean;

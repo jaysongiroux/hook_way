@@ -145,3 +145,18 @@ func TestStagePortsMatchSchemaAndPreserveFallback(t *testing.T) {
 		t.Fatal("malformed stage must retain strict decoding")
 	}
 }
+
+func TestMultipleInputsCapabilityIsPublishOnly(t *testing.T) {
+	schemas := NodeSchemas()
+	reg, err := NewRegistryWithOptions(RegistryOptions{ValidateOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, schema := range schemas {
+		spec, ok := reg.Lookup(name)
+		want := name == "publish"
+		if !ok || schema.AllowMultipleInputs != want || spec.AllowMultipleInputs != want {
+			t.Fatalf("%s capability: schema=%v registry=%v", name, schema.AllowMultipleInputs, spec.AllowMultipleInputs)
+		}
+	}
+}

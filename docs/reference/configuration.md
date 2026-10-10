@@ -1391,6 +1391,49 @@ For `body_format: json`, `envelope.json.max_depth` defaults to `128` (maximum `1
 - `switch`: first matching case (or default) selects exactly one labelled successor. Each declared port needs one edge. Selection is consumed before running the selected path. A case states its rule either as a single `when:` condition or as a `conditions:` list joined by `match: all` (default) or `match: any` — one spelling per case, not both.
 - `if_else`: a two-port `switch`. Conditions are the same `conditions:` list with the same `match: all|any`, and the event leaves by the `true` port when the rule holds and the `false` port when it does not. Both ports need an edge; to ignore one side, wire it at a terminal node rather than leaving it dangling. There is no failure to catch, so `if_else` takes no `on_error` edge.
 
+#### Shared destinations
+
+A `publish` node can receive multiple incoming edges. Each active path sends its
+own payload and variables independently. Processing and response nodes still
+allow only one incoming edge; duplicate edges and cycles are invalid.
+
+For two active branches, both transformed inputs reach the same destination:
+
+```yaml
+edges:
+  - env>left
+  - env>right
+  - left>send
+  - right>send
+```
+
+Here `left` and `right` are processing nodes and `send` is a publish node.
+See [the complete shared-destination example](../../examples/shared-destination.yaml).
+To share a destination across exclusive conditional outputs, connect both labels:
+
+```yaml
+edges:
+  - choose:true>send
+  - choose:false>send
+```
+
+Here `choose` is an `if_else` node. Only its selected output runs, so one input
+reaches `send`. The same pattern works with declared `switch` outputs and with
+compatible success/error paths. Dropped or unselected paths do not publish.
+
+Each publish invocation runs its own applicable success or error continuation
+with that input. Existing delivery failure policies and timeout/concurrency rules
+still apply: an earlier failure can prevent a later arrival from being attempted.
+Delivery outcomes and eligible failure records are separate even when they share
+a node ID. Replaying a failure starts from that record's saved input and follows
+existing continuation behavior; it does not rerun sibling arrivals.
+
+Batch child flows may likewise connect several paths to their one publish node.
+Response counts remain per child event, and any failed or unattempted delivery
+makes that child fail. Existing message identities and broker deduplication
+settings still apply; multiple publish calls do not guarantee distinct broker
+messages if the destination deduplicates their configured identities.
+
 #### Builder templates
 
 The config UI's palette has a **Templates** group above the node types. A
