@@ -33,8 +33,6 @@ export function UseCases() {
               <Button
                 component="a"
                 href={USE_CASES_FOOTER.examplesHref}
-                target="_blank"
-                rel="noopener noreferrer"
                 size="md"
                 variant="default"
                 styles={{ root: { background: DARK.surface, borderColor: DARK.border, color: DARK.text } }}
@@ -48,7 +46,7 @@ export function UseCases() {
 
       <Section
         title="Runnable patterns"
-        lead="Each case links to a YAML example in the repository. If it is not in examples/, it is not claimed here."
+        lead="Each case links to a versioned YAML example you can read, copy, and download."
         background={DARK.recessed}
       >
         <Bento>
@@ -66,8 +64,6 @@ export function UseCases() {
                 </Text>
                 <Anchor
                   href={uc.exampleHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   size="sm"
                   c={DARK.accent}
                   style={{ fontFamily: "var(--mantine-font-family-monospace)" }}

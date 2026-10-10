@@ -198,7 +198,7 @@ export function Compare() {
                         </Text>
                         <Anchor
                           href={row.sources[c.id]}
-                          target="_blank"
+                          target={row.sources[c.id].startsWith("/") ? undefined : "_blank"}
                           rel="noopener noreferrer"
                           size="xs"
                           aria-label={`${c.name}: ${row.capability} documentation`}
@@ -229,7 +229,7 @@ export function Compare() {
           </Text>
           <Stack gap={4}>
             {COMPARE_SOURCES.map((s) => (
-              <Anchor key={s.href} href={s.href} target="_blank" rel="noopener noreferrer" size="sm" c={DARK.accent}>
+              <Anchor key={s.href} href={s.href} target={s.href.startsWith("/") ? undefined : "_blank"} rel="noopener noreferrer" size="sm" c={DARK.accent}>
                 {s.label}
               </Anchor>
             ))}

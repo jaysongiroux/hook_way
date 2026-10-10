@@ -34,6 +34,7 @@ docs/scratch
 web/node_modules
 web/dist
 web/.vite
+web/.generated
 web/test-results
 web/playwright-report
 bin

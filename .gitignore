@@ -131,3 +131,6 @@ __pycache__/
 *.py[cod]
 
 /web/dist-console/
+
+# Documentation publication output is generated inside the web project.
+/web/.generated/

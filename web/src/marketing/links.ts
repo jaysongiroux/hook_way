@@ -1,6 +1,6 @@
-// Every outbound link on the marketing site resolves from here, so the repo
-// path is stated once. The site deliberately links to the GitHub copies of the
-// docs instead of restating them.
+import publishedLinks from "virtual:hookway-docs";
+
+// Source links stay on GitHub; published docs use the build's filtered inventory.
 export const GITHUB_REPO = "https://github.com/jaysongiroux/hook_way";
 // The current feature set and documentation live on v2. Update when it merges.
 export const GITHUB_REF = "v2";
@@ -21,6 +21,14 @@ export function repoTree(path: string): string {
   return `${GITHUB_REPO}/tree/${GITHUB_REF}/${path}`;
 }
 
+/** Use the discovered public page, retaining GitHub for excluded source files. */
+export function docsHref(path: string): string {
+  const split = path.search(/[?#]/);
+  const source = split < 0 ? path : path.slice(0, split);
+  const suffix = split < 0 ? "" : path.slice(split);
+  return (publishedLinks[source] ?? repoBlob(source)) + suffix;
+}
+
 export interface DocLink {
   /** Repo-relative path, checked by the tests so a rename cannot rot the link. */
   path: string;
@@ -30,7 +38,7 @@ export interface DocLink {
 }
 
 function doc(path: string, title: string, description: string): DocLink {
-  return { path, title, description, href: repoBlob(path) };
+  return { path, title, description, href: docsHref(path) };
 }
 
 export const DOC_LINKS: DocLink[] = [
@@ -96,5 +104,5 @@ export const EXAMPLES = {
   title: "Example configs",
   description:
     "Ready-to-run YAML for XML, multipart, conditional routing, and every destination.",
-  href: repoTree("examples"),
+  href: docsHref("examples"),
 };

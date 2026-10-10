@@ -424,3 +424,56 @@ make dev-down
 
 This removes the dev containers and their volumes, including broker and replay
 data. The next `make dev-up` starts empty.
+
+## Marketing site and documentation
+
+The public website serves documentation at `/docs/` within the existing React
+marketing application, using its shared header, footer, and Mantine components.
+Use Node 22.12 or newer and the existing `web/` package:
+
+```sh
+make web-install
+make website-dev
+```
+
+Open `http://localhost:5173/docs/`. Set `WEBSITE_PORT` if that port is already in
+use. The single Vite server watches documentation, examples, publication rules,
+and Git tracking changes. Search works in development and production.
+
+```sh
+make wasm website-build
+make website-preview
+```
+
+The preview serves marketing pages, documentation, and the public builder at
+`http://localhost:4173`; set `WEBSITE_PORT` to change its port. `web-build`,
+`website-build`, and `npm --prefix web run build` all build the complete public
+website. `console-build` remains the operational console build. The documentation reader needs no running
+Hookway, replay service, database, or GitHub connection.
+
+Publication is configured in `web/docs-publication.yaml`. It automatically
+includes Markdown in `docs/` and `examples/`, YAML examples, and the root README.
+Only Git-tracked files under `docs/` are published: add a new document to Git
+before expecting it in navigation. Non-ignored new examples appear in local
+previews; commit and deploy them to update the public site. API JSON, Docker
+image documentation, and untracked/ignored local docs stay off the website.
+Existing links to excluded public API/Docker files retain their GitHub targets.
+Folder and file exclusions apply equally to pages, navigation, search, and raw
+downloads. Patterns are repository-relative; for example, `examples/private/**`
+excludes every descendant of that directory.
+
+Run `npm --prefix web run docs:inventory` to review eligible pages without
+writing output. Publication tooling lives in `web/scripts/docs/`, the reader in
+`web/src/marketing/docs/`, and generated content in the ignored `web/.generated/`.
+The website build emits static documentation URLs and page metadata alongside
+the existing marketing bundle in `web/dist/`. It checks internal links, heading
+fragments, search output, and byte-identical YAML downloads. Sources remain
+unchanged. Website generation requires Git metadata for the tracked-docs policy;
+source archives without that metadata are not a website build input.
+
+`SITE_URL` sets the canonical marketing origin and website sitemap URL;
+it defaults to `https://gethookway.com`. Set it in the Vercel project's build
+environment or `web/.env.local` for a different domain. Vercel uses the `web/`
+project root and its single package, building with `scripts/vercel-build.sh`.
+A source change appears publicly after a successful site deployment; local
+browser verification does not establish deployment status.

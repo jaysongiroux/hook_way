@@ -62,7 +62,7 @@ def main():
     for source in sorted((ROOT / "web/src/marketing").glob("*.*")):
         if source.suffix not in (".ts", ".tsx") or ".test." in source.name:
             continue
-        for link in re.findall(r"repo(?:Blob|Tree)\(\s*[\"']([^\"']+)[\"']\s*\)", source.read_text()):
+        for link in re.findall(r"(?:repo(?:Blob|Tree)|docsHref)\(\s*[\"']([^\"']+)[\"']\s*\)", source.read_text()):
             checked += 1
             error = problem(source, link, repo_relative=True)
             if error:

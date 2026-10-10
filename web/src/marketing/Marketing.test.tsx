@@ -4,7 +4,7 @@ import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import { theme } from "../theme";
 import { Marketing } from "./Marketing";
-import { DOC_LINKS, GITHUB_REPO, repoBlob } from "./links";
+import { DOC_LINKS, GITHUB_REPO, docsHref } from "./links";
 import { destinationPresentation } from "./destinationIdentity";
 
 function wrap() {
@@ -139,7 +139,7 @@ test("performance measurements include hardware and synthetic workload limits", 
   expect(section).toHaveTextContent(/synthetic destination/i);
   expect(
     screen.getByRole("link", { name: "Results and methodology" }),
-  ).toHaveAttribute("href", repoBlob("docs/evidence/performance.md"));
+  ).toHaveAttribute("href", docsHref("docs/evidence/performance.md"));
 });
 
 test("a real config sample is shown rather than described", () => {
@@ -165,7 +165,7 @@ test("replay operations explain recovery, scoped access and the public builder",
   expect(section).toHaveTextContent(/without signing in/i);
   expect(
     screen.getByRole("link", { name: "Deploy the replay console" }),
-  ).toHaveAttribute("href", repoBlob("docs/operations/replay-console.md"));
+  ).toHaveAttribute("href", docsHref("docs/operations/replay-console.md"));
   expect(
     screen.getByRole("img", { name: /replay console showing/i }),
   ).toHaveAttribute("loading", "lazy");
@@ -187,13 +187,13 @@ test("every destination type the builder supports is listed", () => {
   }
 });
 
-test("documentation links open the GitHub copies in a new tab safely", () => {
+test("documentation links open the published pages in the same tab", () => {
   wrap();
   for (const link of DOC_LINKS) {
     const el = screen.getByRole("link", { name: new RegExp(link.title, "i") });
     expect(el).toHaveAttribute("href", link.href);
-    expect(el).toHaveAttribute("target", "_blank");
-    expect(el).toHaveAttribute("rel", expect.stringContaining("noreferrer"));
+    expect(el).not.toHaveAttribute("target");
+    expect(el).toHaveAttribute("href", expect.stringMatching(/^\/docs\//));
   }
 });
 
@@ -216,5 +216,5 @@ test("replay section distinguishes spot checks from recovery and offers file dow
   wrap();
   expect(screen.getByText(/For spot checks, put Sample/)).toHaveTextContent(/Inspections are view only/);
   expect(screen.getByText(/For spot checks, put Sample/)).toHaveTextContent(/download captured files/);
-  expect(screen.getByRole("link", { name: "See the sampled inspection example" })).toHaveAttribute("href", repoBlob("examples/inspect.yaml"));
+  expect(screen.getByRole("link", { name: "See the sampled inspection example" })).toHaveAttribute("href", docsHref("examples/inspect.yaml"));
 });

@@ -34,6 +34,6 @@ else
 fi
 
 cd "$repo_root"
-make GO="$go_bin" wasm web-build
+make GO="$go_bin" wasm website-build
 test -s web/dist/hookway.wasm
 test -s web/dist/wasm_exec.js

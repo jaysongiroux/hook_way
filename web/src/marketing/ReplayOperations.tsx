@@ -9,7 +9,7 @@ import {
 } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { DARK } from "../tokens";
-import { repoBlob } from "./links";
+import { docsHref } from "./links";
 import { Section } from "./Section";
 import replayPreview from "./assets/replay-console.png";
 
@@ -72,7 +72,7 @@ export function ReplayOperations() {
         receives every event. Inspections are view only: see the current body and
         context, or download captured files. Uploads are best effort and share
         replay storage and retention limits. {" "}
-        <Anchor href={repoBlob("examples/inspect.yaml")} target="_blank" rel="noopener noreferrer">
+        <Anchor href={docsHref("examples/inspect.yaml")}>
           See the sampled inspection example
         </Anchor>.
       </Text>
@@ -84,9 +84,7 @@ export function ReplayOperations() {
         </Text>
         <Group gap="lg">
           <Anchor
-            href={repoBlob("docs/operations/replay-console.md")}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={docsHref("docs/operations/replay-console.md")}
           >
             Deploy the replay console
           </Anchor>

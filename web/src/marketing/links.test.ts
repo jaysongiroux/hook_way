@@ -2,7 +2,7 @@
 import { expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { DOC_LINKS, EXAMPLES, GITHUB_REF, GITHUB_REPO, repoBlob, repoTree } from "./links";
+import { DOC_LINKS, EXAMPLES, GITHUB_REF, GITHUB_REPO, repoBlob, repoTree, docsHref } from "./links";
 
 const repoRoot = resolve(__dirname, "../../..");
 
@@ -13,8 +13,7 @@ test("links point at the configured GitHub repo", () => {
   expect(repoTree("examples")).toBe("https://github.com/jaysongiroux/hook_way/tree/v2/examples");
 });
 
-// The marketing site deliberately links out instead of restating the docs, so a
-// renamed or deleted file would silently become a 404 for every visitor.
+// Every curated link must resolve to a source and a published page.
 test("every linked documentation file exists in the repo", () => {
   for (const link of DOC_LINKS) {
     expect(existsSync(resolve(repoRoot, link.path)), `${link.path} is linked but missing`).toBe(true);
@@ -30,6 +29,15 @@ test("each documentation link carries a title and a description", () => {
   for (const link of DOC_LINKS) {
     expect(link.title.length).toBeGreaterThan(0);
     expect(link.description.length).toBeGreaterThan(0);
-    expect(link.href).toContain(GITHUB_REPO);
+    expect(link.href).toMatch(/^\/docs\//);
   }
+});
+
+
+test("published links preserve anchors and excluded documents remain on GitHub", () => {
+  expect(docsHref("docs/reference/configuration.md#destinations")).toBe("/docs/reference/configuration/#destinations");
+  expect(docsHref("examples/multi-yaml/flows/orders.yaml")).toBe("/docs/examples/multi-yaml/flows/orders/");
+  expect(docsHref("docs/dockerhub/README.md")).toBe(repoBlob("docs/dockerhub/README.md"));
+  expect(docsHref("docs/api/editor.openapi.json")).toBe(repoBlob("docs/api/editor.openapi.json"));
+  expect(EXAMPLES.href).toBe("/docs/examples/");
 });

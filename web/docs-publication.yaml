@@ -1,0 +1,19 @@
+# Repo-relative patterns. Exclusions apply to pages, search, and downloads.
+roots: [docs, examples]
+files: [README.md]
+include: ["**/*.md", "**/*.yaml", "**/*.yml"]
+exclude:
+  - "docs/api/*.json"
+  - "docs/dockerhub/**"
+trackedOnlyRoots: [docs]
+respectGitignore: true
+repository: https://github.com/jaysongiroux/hook_way
+ref: v2
+labels:
+  reference: Configuration
+  guides: Guides
+  operations: Operations
+  examples: Examples
+  development: Development
+  evidence: Measurements
+sectionOrder: [reference, guides, operations, examples, development, evidence]

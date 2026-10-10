@@ -3,7 +3,7 @@ import { Bento, Tile } from "./Bento";
 import { PERFORMANCE_SUMMARY, PRODUCTION_CARDS } from "./productionCopy";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
-import { repoBlob } from "./links";
+import { docsHref } from "./links";
 
 export function Production() {
   return (
@@ -34,7 +34,7 @@ export function Production() {
       </Bento>
       <Text size="sm" c={DARK.muted} mt="xl">
         {PERFORMANCE_SUMMARY}{" "}
-        <Anchor href={repoBlob("docs/evidence/performance.md")} target="_blank" rel="noopener noreferrer">
+        <Anchor href={docsHref("docs/evidence/performance.md")}>
           Results and methodology
         </Anchor>
         .

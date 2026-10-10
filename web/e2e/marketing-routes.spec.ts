@@ -1,6 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { COMPARE_INTRO } from "../src/marketing/compareCopy";
-import { USE_CASES_INTRO } from "../src/marketing/useCasesCopy";
 
 // The rest of e2e/ only ever navigates to /builder, so the three public
 // marketing routes had no browser coverage at all: a router misconfiguration,
@@ -12,8 +10,8 @@ import { USE_CASES_INTRO } from "../src/marketing/useCasesCopy";
 // content assertions belong in the vitest specs next to the copy.
 const ROUTES: { path: string; heading: RegExp }[] = [
   { path: "/", heading: /receive, verify, and route webhooks/i },
-  { path: "/use-cases", heading: new RegExp(USE_CASES_INTRO.title, "i") },
-  { path: "/compare", heading: new RegExp(COMPARE_INTRO.title, "i") },
+  { path: "/use-cases", heading: /Patterns that stay in your infrastructure/i },
+  { path: "/compare", heading: /How Hookway compares/i },
 ];
 
 for (const { path, heading } of ROUTES) {
@@ -32,9 +30,9 @@ test("the marketing nav moves between the three public routes", async ({ page })
 
   await nav.getByRole("link", { name: /use cases/i }).click();
   await expect(page).toHaveURL(/\/use-cases$/);
-  await expect(page.getByRole("heading", { level: 1, name: new RegExp(USE_CASES_INTRO.title, "i") })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /Patterns that stay in your infrastructure/i })).toBeVisible();
 
   await nav.getByRole("link", { name: /compare/i }).click();
   await expect(page).toHaveURL(/\/compare$/);
-  await expect(page.getByRole("heading", { level: 1, name: new RegExp(COMPARE_INTRO.title, "i") })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /How Hookway compares/i })).toBeVisible();
 });

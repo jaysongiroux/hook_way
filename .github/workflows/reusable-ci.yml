@@ -150,7 +150,7 @@ jobs:
         run: make node-schema-check api-schema-check
 
       - name: Independent UI builds
-        run: make web-build console-build
+        run: make website-test website-build console-build
 
       - name: Web dead code (knip)
         run: make web-knip
@@ -329,6 +329,9 @@ jobs:
 
       - name: Playwright builder tests
         run: make web-e2e
+
+      - name: Marketing documentation browser tests
+        run: make website-e2e
 
       - name: Standalone operational console and real PostgreSQL browser tests
         run: make console-e2e

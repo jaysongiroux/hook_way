@@ -10,7 +10,7 @@ import { Compare } from "./Compare";
 import { UseCases } from "./UseCases";
 import { USE_CASES } from "./useCasesCopy";
 import { COMPARE_ROWS, COMPETITORS } from "./compareCopy";
-import { repoBlob } from "./links";
+import { docsHref } from "./links";
 
 const repoRoot = resolve(__dirname, "../../..");
 
@@ -156,7 +156,7 @@ test("compare matrix covers every competitor column and cites sources", () => {
   );
   expect(
     screen.getByRole("link", { name: "Hookway replay service" }),
-  ).toHaveAttribute("href", repoBlob("docs/operations/replay-service.md"));
+  ).toHaveAttribute("href", docsHref("docs/operations/replay-service.md"));
   expect(existsSync(resolve(repoRoot, "docs/operations/replay-service.md"))).toBe(true);
 });
 
@@ -302,5 +302,5 @@ test("sampled inspection copy points to the runnable observation branch", () => 
   expect(pattern.detail).toMatch(/Publish receives every event/);
   expect(pattern.detail).toMatch(/view only/);
   expect(pattern.detail).toMatch(/best effort/);
-  expect(screen.getByRole("link", { name: "inspect.yaml" })).toHaveAttribute("href", repoBlob("examples/inspect.yaml"));
+  expect(screen.getByRole("link", { name: "inspect.yaml" })).toHaveAttribute("href", docsHref("examples/inspect.yaml"));
 });

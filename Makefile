@@ -90,6 +90,22 @@ web-e2e: wasm
 web-build:
 	cd web && npm run build
 
+# Public website uses the existing web app; the console has its own build.
+.PHONY: website-build website-dev website-preview website-test website-e2e
+website-build: web-build
+
+website-dev: wasm
+	cd web && npm run dev -- --port $${WEBSITE_PORT:-5173} --strictPort
+
+website-preview:
+	cd web && npm run preview:website
+
+website-test:
+	cd web && npm run test:docs
+
+website-e2e: wasm website-build
+	cd web && npx playwright test --config playwright.website.config.ts
+
 console-build:
 	cd web && npm run build:console
 

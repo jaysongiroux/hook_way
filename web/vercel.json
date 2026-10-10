@@ -1,9 +1,19 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci",
   "buildCommand": "bash ../scripts/vercel-build.sh",
-  "rewrites": [
-    { "source": "/builder", "destination": "/index.html" },
-    { "source": "/use-cases", "destination": "/index.html" },
-    { "source": "/compare", "destination": "/index.html" }
+  "routes": [
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/docs(?:/.*)?",
+      "dest": "/docs/404.html",
+      "status": 404
+    },
+    {
+      "src": "/(?:builder|use-cases|compare)/?",
+      "dest": "/index.html"
+    }
   ]
 }

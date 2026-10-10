@@ -6,19 +6,18 @@ import { DARK } from "../tokens";
 
 const CARDS = [...DOC_LINKS, EXAMPLES];
 
-// Links go straight to the copies on GitHub. Nothing here restates the docs;
-// the site is a signpost so there is only ever one source of truth.
+// The website renders the versioned repo sources; no documentation is duplicated.
 export function DocsLinks() {
   return (
     <Section
       title="Documentation is versioned with the code"
-      lead="Configuration, CLI, security, operations, and examples live in the repo."
+      lead="Read configuration, CLI, security, operations, and examples here. Each page is built from the versioned repository source."
       background={DARK.recessed}
     >
       <Bento>
         {CARDS.map((c) => (
           <Tile key={c.path} span={2}>
-            <a href={c.href} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
+            <a href={c.href} style={{ textDecoration: "none" }}>
               <Stack gap={6}>
                 <Text fw={600} c={DARK.accent} size="sm">
                   {c.title}

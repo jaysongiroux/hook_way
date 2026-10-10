@@ -1,7 +1,7 @@
 // Feature comparison, checked against linked vendor documentation on 2026-10-05.
 // Compare Event Gateway separately from the outbound Outpost product.
 
-import { GITHUB_REPO, repoBlob } from "./links";
+import { GITHUB_REPO, docsHref } from "./links";
 
 export const COMPARE_CHECKED_ON = "2026-10-05";
 
@@ -80,7 +80,7 @@ export const COMPETITORS: Competitor[] = [
 export const COMPARE_ROWS: CompareRow[] = [
   {
     id: "deploy",
-    sources: { hookway: repoBlob("docs/dockerhub/README.md"), hookdeck: "https://hookdeck.com/event-gateway", convoy: "https://www.getconvoy.io/docs/home/introduction" },
+    sources: { hookway: docsHref("docs/dockerhub/README.md"), hookdeck: "https://hookdeck.com/event-gateway", convoy: "https://www.getconvoy.io/docs/home/introduction" },
     capability: "Deployment model",
     values: {
       hookway: {
@@ -96,7 +96,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "config",
-    sources: { hookway: repoBlob("docs/reference/configuration.md"), hookdeck: "https://hookdeck.com/docs/connections", convoy: "https://www.getconvoy.io/docs/home/quickstart" },
+    sources: { hookway: docsHref("docs/reference/configuration.md"), hookdeck: "https://hookdeck.com/docs/connections", convoy: "https://www.getconvoy.io/docs/home/quickstart" },
     capability: "Primary config surface",
     values: {
       hookway: {
@@ -109,7 +109,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "verify",
-    sources: { hookway: repoBlob("docs/reference/security.md#auth-schemes"), hookdeck: "https://hookdeck.com/docs/sources", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
+    sources: { hookway: docsHref("docs/reference/security.md#auth-schemes"), hookdeck: "https://hookdeck.com/docs/sources", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
     capability: "Inbound signature verification",
     values: {
       hookway: {
@@ -129,7 +129,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "bodies",
-    sources: { hookway: repoBlob("docs/reference/configuration.md#envelope-and-publish"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
+    sources: { hookway: docsHref("docs/reference/configuration.md#envelope-and-publish"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
     capability: "Body formats",
     values: {
       hookway: {
@@ -149,7 +149,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "destinations",
-    sources: { hookway: repoBlob("docs/reference/configuration.md#destinations"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
+    sources: { hookway: docsHref("docs/reference/configuration.md#destinations"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/sources" },
     capability: "Native delivery destinations",
     note: "Counts are catalog destination types, not provider brands. Hookway counts Redis modes separately; Event Gateway includes CLI and Mock API. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.",
     values: {
@@ -174,7 +174,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "object-store",
-    sources: { hookway: repoBlob("docs/reference/configuration.md#publish-payload-modes"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/retention-policy" },
+    sources: { hookway: docsHref("docs/reference/configuration.md#publish-payload-modes"), hookdeck: "https://hookdeck.com/docs/destinations", convoy: "https://www.getconvoy.io/docs/product-manual/retention-policy" },
     capability: "Multipart / decoded file → object storage",
     values: {
       hookway: {
@@ -196,7 +196,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "fanout",
-    sources: { hookway: repoBlob("docs/operations/delivery-guarantees.md#fan-out-and-acknowledged-failures"), hookdeck: "https://hookdeck.com/docs/connections", convoy: "https://www.getconvoy.io/docs/product-manual/subscriptions" },
+    sources: { hookway: docsHref("docs/operations/delivery-guarantees.md#fan-out-and-acknowledged-failures"), hookdeck: "https://hookdeck.com/docs/connections", convoy: "https://www.getconvoy.io/docs/product-manual/subscriptions" },
     capability: "Fan-out to multiple destinations",
     values: {
       hookway: {
@@ -215,7 +215,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "protection",
-    sources: { hookway: repoBlob("docs/guides/protection-stores.md"), hookdeck: "https://hookdeck.com/docs/deduplication", convoy: "https://www.getconvoy.io/docs/product-manual/rate-limits" },
+    sources: { hookway: docsHref("docs/guides/protection-stores.md"), hookdeck: "https://hookdeck.com/docs/deduplication", convoy: "https://www.getconvoy.io/docs/product-manual/rate-limits" },
     capability: "Traffic controls",
     note: "Inbound admission and downstream delivery pacing protect different parts of a system.",
     values: {
@@ -226,7 +226,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "transform",
-    sources: { hookway: repoBlob("docs/guides/ingress-adapters.md"), hookdeck: "https://hookdeck.com/docs/transformations", convoy: "https://www.getconvoy.io/docs/product-manual/functions" },
+    sources: { hookway: docsHref("docs/guides/ingress-adapters.md"), hookdeck: "https://hookdeck.com/docs/transformations", convoy: "https://www.getconvoy.io/docs/product-manual/functions" },
     capability: "Payload transform",
     values: {
       hookway: {
@@ -243,7 +243,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "replay",
-    sources: { hookway: repoBlob("docs/operations/replay-service.md"), hookdeck: "https://hookdeck.com/docs/retries", convoy: "https://www.getconvoy.io/docs/api-reference/event-deliveries/retry-event-delivery" },
+    sources: { hookway: docsHref("docs/operations/replay-service.md"), hookdeck: "https://hookdeck.com/docs/retries", convoy: "https://www.getconvoy.io/docs/api-reference/event-deliveries/retry-event-delivery" },
     capability: "Inspect and retry failed deliveries",
     values: {
       hookway: {
@@ -265,7 +265,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "payload-retention",
-    sources: { hookway: repoBlob("docs/operations/replay-service.md#what-gets-captured"), hookdeck: "https://hookdeck.com/docs/limits", convoy: "https://www.getconvoy.io/docs/guides/best-practices-for-generating-webhook-events" },
+    sources: { hookway: docsHref("docs/operations/replay-service.md#what-gets-captured"), hookdeck: "https://hookdeck.com/docs/limits", convoy: "https://www.getconvoy.io/docs/guides/best-practices-for-generating-webhook-events" },
     capability: "Payload limits",
     note: "Ingress size, retained artifact size, and searchable size are separate limits; these numbers are not durability guarantees.",
     values: {
@@ -288,7 +288,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   },
   {
     id: "ops",
-    sources: { hookway: repoBlob("docs/reference/configuration.md#metrics"), hookdeck: "https://hookdeck.com/docs/metrics", convoy: "https://www.getconvoy.io/docs/product-manual/metrics" },
+    sources: { hookway: docsHref("docs/reference/configuration.md#metrics"), hookdeck: "https://hookdeck.com/docs/metrics", convoy: "https://www.getconvoy.io/docs/product-manual/metrics" },
     capability: "Operator observability",
     values: {
       hookway: {
@@ -367,6 +367,6 @@ export const COMPARE_SOURCES = [
     href: "https://www.getconvoy.io/docs/product-manual/retention-policy",
     label: "Convoy retention policy",
   },
-  { href: repoBlob("docs/operations/replay-service.md"), label: "Hookway replay service" },
+  { href: docsHref("docs/operations/replay-service.md"), label: "Hookway replay service" },
   { href: GITHUB_REPO, label: "Hookway repository" },
 ] as const;

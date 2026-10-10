@@ -2,15 +2,13 @@ import { Anchor, Box, Container, Group } from "@mantine/core";
 import { Link, NavLink } from "react-router-dom";
 import { Logo } from "../brand/Logo";
 import { HEADER_HEIGHT, HEADER_STYLE } from "../brand/chrome";
-import { DOC_LINKS, GITHUB_REPO } from "./links";
+import { docsHref, GITHUB_REPO } from "./links";
 import {
   SITE_HEADER_INNER_CLASS,
   SITE_NAV_CLASS,
   SITE_NAV_SECONDARY_CLASS,
 } from "./marketingStyles";
 import { DARK } from "../tokens";
-
-const CONFIG_DOC = DOC_LINKS.find((d) => d.path === "docs/reference/configuration.md")!;
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }) => ({
   color: isActive ? DARK.accent : DARK.muted,
@@ -40,15 +38,9 @@ export function SiteHeader() {
             <NavLink to="/compare" style={navLinkStyle}>
               Compare
             </NavLink>
-            <Anchor
-              href={CONFIG_DOC.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              size="sm"
-              c={DARK.muted}
-            >
+            <NavLink to={docsHref("docs/README.md")} style={navLinkStyle}>
               Docs
-            </Anchor>
+            </NavLink>
             <Anchor
               className={SITE_NAV_SECONDARY_CLASS}
               href={GITHUB_REPO}
