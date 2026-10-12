@@ -11,7 +11,7 @@ func TestInfoOnlyAdvertisesImplementedCapabilities(t *testing.T) {
 		t.Fatalf("version %d", info.ContractVersion)
 	}
 	want := map[string]bool{
-		"core_yaml_validate": true, "core_schema": true, "node_schemas": true,
+		"core_yaml_validate": true, "core_yaml_bundle_validate": true, "core_schema": true, "node_schemas": true,
 		"replay_yaml_validate": true, "replay_schema": true, "replay_action_input": true,
 		"json_sample_validate": true, "replay_resolution_input": true,
 	}
