@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 func TestBundleHTTPWASMAndGoParity(t *testing.T) {
 	input := configapi.BundleInput{Entry: "core.yaml", Files: map[string]string{}}
 	for _, name := range []string{"core.yaml", "flows/orders.yaml", "flows/billing.yaml"} {
-		content, err := os.ReadFile("../../examples/multi-yaml/" + name)
+		content, err := os.ReadFile(filepath.Clean("../../examples/multi-yaml/" + name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -24,14 +25,19 @@ func TestBundleHTTPWASMAndGoParity(t *testing.T) {
 	}
 	// A missing flow produces a useful file-scoped issue through all transports.
 	delete(input.Files, "flows/billing.yaml")
-	raw, _ := json.Marshal(input)
+	raw, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	expected := configapi.ValidateBundle(input)
 	wasm, err := bridge.ValidateBundle(string(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var fromWASM configapi.ValidateResponse
-	json.Unmarshal([]byte(wasm), &fromWASM)
+	if err := json.Unmarshal([]byte(wasm), &fromWASM); err != nil {
+		t.Fatal(err)
+	}
 	rec := httptest.NewRecorder()
 	Handler("").ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), "POST", "/validate-bundle", bytes.NewReader(raw)))
 	var fromHTTP configapi.ValidateResponse

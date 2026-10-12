@@ -35,15 +35,16 @@ func YAMLPath(name string) (string, error) {
 // Attribute keeps logical fields stable while identifying their deployment file.
 func (d ResolvedDocument) Attribute(issues []config.ValidationIssue) []config.ValidationIssue {
 	for i := range issues {
-		if issues[i].Source != "" {
+		issue := &issues[i]
+		if issue.Source != "" {
 			continue
 		}
-		issues[i].Source = d.Source
+		issue.Source = d.Source
 		longest := 0
 		for name, source := range d.FlowSources {
 			prefix := "flows." + name
-			if (issues[i].Field == prefix || strings.HasPrefix(issues[i].Field, prefix+".") || strings.HasPrefix(issues[i].Field, prefix+"[")) && len(prefix) > longest {
-				issues[i].Source = source
+			if (issue.Field == prefix || strings.HasPrefix(issue.Field, prefix+".") || strings.HasPrefix(issue.Field, prefix+"[")) && len(prefix) > longest {
+				issue.Source = source
 				longest = len(prefix)
 			}
 		}
@@ -186,14 +187,14 @@ func ResolveFile(filename string) (ResolvedDocument, []config.ValidationIssue) {
 	if err != nil {
 		return ResolvedDocument{}, []config.ValidationIssue{{Field: "config", Message: err.Error(), Source: filename}}
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }() // Read-only directory handle.
 	var opened []os.FileInfo
 	return Resolve(data, filename, func(name string) ([]byte, error) {
 		file, err := root.Open(filepath.FromSlash(name))
 		if err != nil {
 			return nil, err
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }() // Read-only file; read errors are returned below.
 		info, err := file.Stat()
 		if err != nil {
 			return nil, err
@@ -219,7 +220,7 @@ func LoadFile(filename string, expandEnv bool) (Config, []config.ValidationIssue
 		// back to the byte-only loader preserves that behavior without permitting
 		// environment-derived include paths or reading any referenced file.
 		if expandEnv && len(issues) == 1 && issues[0].Field == "config" {
-			if raw, err := os.ReadFile(filename); err == nil && bytes.Contains(raw, []byte("$")) {
+			if raw, err := os.ReadFile(filepath.Clean(filename)); err == nil && bytes.Contains(raw, []byte("$")) {
 				cfg, legacyIssues := LoadBytes(raw, filename, true)
 				return cfg, (ResolvedDocument{Source: filename}).Attribute(legacyIssues)
 			}

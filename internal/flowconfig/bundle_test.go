@@ -73,25 +73,40 @@ func TestByteValidationNeverReadsFlowFiles(t *testing.T) {
 func TestFilesystemConfinementAndAliases(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.yaml")
-	os.WriteFile(outside, []byte("nodes: []"), 0600)
-	os.WriteFile(filepath.Join(dir, "core.yaml"), []byte("flows: {a: {file: a.yaml}}"), 0600)
+	if err := os.WriteFile(outside, []byte("nodes: []"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.yaml"), []byte("flows: {a: {file: a.yaml}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(dir, "a.yaml")); err != nil {
 		t.Fatal(err)
 	}
 	if _, issues := Load(filepath.Join(dir, "core.yaml")); len(issues) == 0 {
 		t.Fatal("accepted escaping symlink")
 	}
-	os.Remove(filepath.Join(dir, "a.yaml"))
-	os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("nodes: []"), 0600)
-	os.Symlink("a.yaml", filepath.Join(dir, "b.yaml"))
-	os.WriteFile(filepath.Join(dir, "core.yaml"), []byte("flows: {a: {file: a.yaml}, b: {file: b.yaml}}"), 0600)
+	if err := os.Remove(filepath.Join(dir, "a.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.yaml"), []byte("nodes: []"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("a.yaml", filepath.Join(dir, "b.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.yaml"), []byte("flows: {a: {file: a.yaml}, b: {file: b.yaml}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, issues := Load(filepath.Join(dir, "core.yaml")); len(issues) == 0 || !strings.Contains(issues[0].Message, "multiple flows") {
 		t.Fatal(issues)
 	}
 }
 
 func TestSplitCrossFlowIssuesAndFileSources(t *testing.T) {
-	body, _ := os.ReadFile("../../examples/multi-yaml/flows/orders.yaml")
+	body, err := os.ReadFile("../../examples/multi-yaml/flows/orders.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	entry := []byte("flows: {a: {file: a.yaml}, b: {file: b.yaml}}")
 	doc, issues := Resolve(entry, "core.yaml", func(string) ([]byte, error) { return body, nil })
 	if len(issues) != 0 {

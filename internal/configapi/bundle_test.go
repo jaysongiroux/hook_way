@@ -11,7 +11,7 @@ func testBundle(t *testing.T) BundleInput {
 	t.Helper()
 	bundle := BundleInput{Entry: "core.yaml", Files: map[string]string{}}
 	for _, name := range []string{"core.yaml", "flows/orders.yaml", "flows/billing.yaml"} {
-		data, err := os.ReadFile("../../examples/multi-yaml/" + name)
+		data, err := os.ReadFile(filepath.Clean("../../examples/multi-yaml/" + name))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,9 +78,13 @@ func TestCLIJSONBundleEnvironmentModes(t *testing.T) {
 	bundle := testBundle(t)
 	bundle.Files["flows/orders.yaml"] = strings.Replace(bundle.Files["flows/orders.yaml"], "change-me-demo-token", "${MISSING_BUNDLE_VALUE}", 1)
 	t.Setenv("MISSING_BUNDLE_VALUE", "")
-	os.Unsetenv("MISSING_BUNDLE_VALUE")
+	if err := os.Unsetenv("MISSING_BUNDLE_VALUE"); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "flows"), 0700)
+	if err := os.Mkdir(filepath.Join(dir, "flows"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	for name, content := range bundle.Files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0600); err != nil {
 			t.Fatal(err)

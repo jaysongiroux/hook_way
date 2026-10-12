@@ -102,7 +102,7 @@ func TestLaunchDarklyTenantRolloutExample(t *testing.T) {
 			if mode == "invalid_context" {
 				body = `{"tenant":{"id":42,"plan":"enterprise"}}`
 			}
-			req := httptest.NewRequest(http.MethodPost, "/webhooks/rollout", strings.NewReader(body))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/rollout", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			srv.ServeHTTP(response, req)

@@ -31,7 +31,11 @@ func TestSDKTypesTargetingAndUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	ctx := featureflags.Context{Key: "acme", Kind: "organization", Attributes: map[string]any{"seats": 3.0}}
 	for _, tc := range []struct {
 		key, kind string
@@ -71,7 +75,10 @@ func TestInitializationTimeoutRecoversWithSameClient(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "event: put\ndata: {\"path\":\"/\",\"data\":{\"flags\":{\"gate\":{\"key\":\"gate\",\"version\":1,\"on\":true,\"variations\":[true,false],\"fallthrough\":{\"variation\":0},\"offVariation\":1}},\"segments\":{}}}\n\n")
+		if _, err := fmt.Fprint(w, "event: put\ndata: {\"path\":\"/\",\"data\":{\"flags\":{\"gate\":{\"key\":\"gate\",\"version\":1,\"on\":true,\"variations\":[true,false],\"fallthrough\":{\"variation\":0},\"offVariation\":1}},\"segments\":{}}}\n\n"); err != nil {
+			t.Error(err)
+			return
+		}
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	}))
@@ -82,7 +89,11 @@ func TestInitializationTimeoutRecoversWithSameClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	ctx := featureflags.Context{Kind: "user", Key: "tenant"}
 	if r := client.Evaluate(ctx, "gate", "boolean", false); !r.UsedFallback || r.ErrorKind != "CLIENT_NOT_READY" {
 		t.Fatalf("before init: %+v", r)
@@ -122,10 +133,18 @@ func TestEventPrivacyAndOptOut(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					defer gz.Close()
+					defer func() {
+						if err := gz.Close(); err != nil {
+							t.Error(err)
+						}
+					}()
 					reader = gz
 				}
-				body, _ := io.ReadAll(reader)
+				body, err := io.ReadAll(reader)
+				if err != nil {
+					t.Error(err)
+					return
+				}
 				events <- string(body)
 				w.WriteHeader(202)
 			}))
@@ -140,7 +159,11 @@ func TestEventPrivacyAndOptOut(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
+			defer func() {
+				if err := client.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
 			result := client.Evaluate(featureflags.Context{Kind: "user", Key: "tenant-key", Attributes: map[string]any{"plan": "sensitive-plan"}}, "gate", "boolean", false)
 			if result.Value != true || result.UsedFallback {
 				t.Fatal("private attribute was not used in local targeting")

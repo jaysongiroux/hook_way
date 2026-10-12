@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
@@ -99,7 +100,7 @@ func ValidateBundle(input BundleInput) ValidateResponse {
 func ValidateFileWithEnv(filename string, expand bool) ValidateResponse {
 	doc, issues := flowconfig.ResolveFile(filename)
 	if expand && len(issues) == 1 && issues[0].Field == "config" {
-		if raw, err := os.ReadFile(filename); err == nil && bytes.Contains(raw, []byte("$")) {
+		if raw, err := os.ReadFile(filepath.Clean(filename)); err == nil && bytes.Contains(raw, []byte("$")) {
 			response := ValidateWithEnv(raw, true)
 			for i := range response.Issues {
 				response.Issues[i].Source = filename

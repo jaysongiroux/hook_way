@@ -11,9 +11,9 @@ export interface YAMLBundle {
   entry: string;
   files: Record<string, string>;
 }
-export const MAX_FILES = 1024;
+const MAX_FILES = 1024;
 export const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
-export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
+const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
 const own = (object: object, key: string) =>
   Object.prototype.hasOwnProperty.call(object, key);
 const record = (value: unknown): value is Record<string, unknown> =>

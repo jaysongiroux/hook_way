@@ -4,7 +4,7 @@ import { DEFAULT_FLOW, DEFAULT_SERVER, yamlIdOf } from "./model";
 import { formatEdge } from "./fromConfig";
 import { edgePort } from "./connection";
 
-export class ExportError extends Error {}
+class ExportError extends Error {}
 
 export function toConfig(doc: GraphDocument): { config: Record<string, unknown> } {
   const flows: Record<string, unknown> = {};

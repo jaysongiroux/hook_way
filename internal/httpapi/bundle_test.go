@@ -20,7 +20,11 @@ func TestServingUnpackedMultiYAML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() {
+		if err := srv.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, flow := range []string{"orders", "billing"} {
 		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/"+flow, bytes.NewBufferString(`{"id":1}`))
 		req.Header.Set("X-Auth", "change-me-demo-token")

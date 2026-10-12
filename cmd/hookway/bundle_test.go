@@ -16,7 +16,9 @@ func TestValidateBundleCLIModes(t *testing.T) {
 		}
 	}
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "core.yaml"), []byte("flows: {orders: {file: orders.yaml}}"), 0600)
+	if err := os.WriteFile(filepath.Join(dir, "core.yaml"), []byte("flows: {orders: {file: orders.yaml}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, flags := range [][]string{{}, {"--json"}, {"--no-env"}, {"--json", "--no-env"}} {
 		args := append([]string{"validate", "--config", filepath.Join(dir, "core.yaml")}, flags...)
 		if code, stdout, stderr := runCLI(args...); code == 0 || !strings.Contains(stdout+stderr, "orders.yaml") {
