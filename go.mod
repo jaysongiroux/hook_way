@@ -1,6 +1,6 @@
 module github.com/jaysongiroux/hook_way
 
-go 1.26.9
+go 1.27.2
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
