@@ -3,15 +3,15 @@
 # Reference config for a Postgres destination. Hookway inserts each webhook
 # event as one row into a single shared table. The Message envelope maps to
 # fixed columns; nested objects (headers, query, body, auth) are stored as
-# jsonb. The per-route `target` is stored in the `target` column.
+# jsonb. The publish `target` is stored in the `target` column.
 #
-# The table is created at startup with CREATE TABLE IF NOT EXISTS (no per-route
+# The table is created at startup with CREATE TABLE IF NOT EXISTS (no per-publish
 # `create` flag is used for Postgres). Inserts dedupe on the event id
 # (INSERT ... ON CONFLICT (id) DO NOTHING), so at-least-once retries are no-ops.
 #
 # LIMITATION: CREATE TABLE IF NOT EXISTS is a no-op against an existing table,
 # so if the table already exists with an incompatible schema, inserts will fail
-# at runtime. There is no column reconciliation in v1.
+# at runtime. There is no column reconciliation.
 #
 # Connection driver: jackc/pgx/v5 (pgxpool). The DSN is a libpq connection
 # string; sslmode is honored inline. Use the tls block below for a custom CA
@@ -42,16 +42,15 @@ destinations:
       #   server_name: ""              # override SNI/verification hostname
       #   insecure_skip_verify: false  # dev-only; disables cert verification; never use in production
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "warehouse"
-        # target is stored in the row's `target` column (not a table name).
-        # Use it to distinguish event sources when multiple endpoints share
-        # the same table.
-        target: "orders"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      # target is stored in the row's `target` column (not a table name).
+      # Use it to distinguish event sources when multiple flows share
+      # the same table.
+      - {id: out, type: publish, destination: warehouse, target: orders}
+    edges: [in>body, body>auth, auth>env, env>out]

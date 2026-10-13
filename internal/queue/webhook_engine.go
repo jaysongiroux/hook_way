@@ -11,15 +11,27 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/logging"
+	"github.com/jaysongiroux/hook_way/internal/retry"
 )
 
-var errWebhookQueueFull = errors.New("webhook: delivery queue full")
+// ErrWebhookQueueFull is wrapped by Publish when an async webhook
+// destination's delivery queue is full.
+var ErrWebhookQueueFull = errors.New("webhook: delivery queue full")
+
 var errWebhookEngineClosing = errors.New("webhook: engine closing")
+
+// ErrWebhookDrainTimeout means workers still own dependent publishers/capture.
+// Shutdown callers must leave those resources open and exit unsuccessfully.
+var ErrWebhookDrainTimeout = errors.New("webhook: drain timed out with deliveries pending")
+
+// Responses are ignored: drain only a small prefix for connection reuse, never
+// spend the complete attempt budget consuming an arbitrarily large body.
+const maxWebhookResponseDrainBytes = 64 << 10
 
 // webhookDelivery is the resolved per-destination delivery config (built by the publisher).
 // (WebhookMetrics interface is defined in publisher.go)
@@ -41,8 +53,10 @@ type webhookDelivery struct {
 }
 
 type webhookJob struct {
-	delivery *webhookDelivery
-	msg      Message
+	delivery       *webhookDelivery
+	msg            Message
+	origin         Origin
+	accountedBytes int64
 }
 
 // deadLetterFunc redirects a terminally-failed delivery to another destination.
@@ -54,14 +68,18 @@ type webhookDeliveryEngine struct {
 	wg           sync.WaitGroup
 	mu           sync.RWMutex
 	closed       bool
+	maxBytes     int64
+	pendingBytes int64
 	closeOnce    sync.Once
+	closeErr     error
 	drainTimeout time.Duration
 	metrics      WebhookMetrics
 	logger       *slog.Logger
-	deadLetter   deadLetterFunc // set post-build under mu via setDeadLetter
+	deadLetter   deadLetterFunc      // set post-build under mu via setDeadLetter
+	onTerminal   TerminalFailureFunc // set post-build under mu via setTerminalFailure
 }
 
-func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.Duration, m WebhookMetrics, logger *slog.Logger) *webhookDeliveryEngine {
+func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.Duration, m WebhookMetrics, logger *slog.Logger, byteBudget ...int64) *webhookDeliveryEngine {
 	if workers <= 0 {
 		workers = 8
 	}
@@ -76,7 +94,12 @@ func newWebhookDeliveryEngine(destID string, workers, queueSize int, drain time.
 	}
 	e := &webhookDeliveryEngine{
 		destID: destID, jobs: make(chan webhookJob, queueSize), drainTimeout: drain, metrics: m, logger: logger,
+		maxBytes: 64 << 20,
 	}
+	if len(byteBudget) != 0 && byteBudget[0] > 0 {
+		e.maxBytes = byteBudget[0]
+	}
+	e.reportBytes()
 	for i := 0; i < workers; i++ {
 		e.wg.Add(1)
 		go e.worker()
@@ -92,6 +115,29 @@ func (e *webhookDeliveryEngine) setDeadLetter(fn deadLetterFunc) {
 	e.mu.Unlock()
 }
 
+// setTerminalFailure wires the callback for deliveries that fail for good and
+// are not dead-lettered. It is set once during factory wiring.
+func (e *webhookDeliveryEngine) setTerminalFailure(fn TerminalFailureFunc) {
+	e.mu.Lock()
+	e.onTerminal = fn
+	e.mu.Unlock()
+}
+
+// reportTerminal hands a failed-for-good delivery to the terminal callback.
+func (e *webhookDeliveryEngine) reportTerminal(job webhookJob, outcome string, attempts int, err error) {
+	e.mu.RLock()
+	fn := e.onTerminal
+	e.mu.RUnlock()
+	if fn == nil {
+		return
+	}
+	d := job.delivery
+	fn(TerminalFailure{
+		DestinationID: e.destID, Target: d.metricTarget, RenderedTarget: d.target, Message: job.msg,
+		Outcome: outcome, Attempts: attempts, Err: err, FailedAt: time.Now().UTC(), Origin: job.origin,
+	})
+}
+
 // capacity is the fixed job-buffer capacity (used to publish the capacity gauge).
 func (e *webhookDeliveryEngine) capacity() int { return cap(e.jobs) }
 
@@ -100,7 +146,10 @@ func (e *webhookDeliveryEngine) capacity() int { return cap(e.jobs) }
 func (e *webhookDeliveryEngine) saturated() (depth, capacity int, isSaturated bool) {
 	depth = len(e.jobs)
 	capacity = cap(e.jobs)
-	return depth, capacity, depth*10 >= capacity*9
+	e.mu.RLock()
+	bytesFull := e.maxBytes > 0 && e.pendingBytes >= e.maxBytes-e.maxBytes/10
+	e.mu.RUnlock()
+	return depth, capacity, depth*10 >= capacity*9 || bytesFull
 }
 
 func (e *webhookDeliveryEngine) worker() {
@@ -116,13 +165,14 @@ func (e *webhookDeliveryEngine) worker() {
 // silently shrink the engine's worker pool for every job still queued behind
 // the panicking one.
 func (e *webhookDeliveryEngine) deliverRecovered(job webhookJob) {
+	defer func() { e.mu.Lock(); e.pendingBytes -= job.accountedBytes; e.reportBytes(); e.mu.Unlock() }()
 	defer func() {
 		if r := recover(); r != nil {
 			e.logger.Error("panic recovered in webhook delivery worker",
 				"location", "webhook_worker",
 				"destination", e.destID, "target", job.delivery.target,
 				"event_id", job.msg.ID,
-				"panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+				"panic_type", fmt.Sprintf("%T", r), "stack", string(debug.Stack()))
 			if e.metrics != nil {
 				e.metrics.Panic("webhook_worker")
 			}
@@ -131,23 +181,49 @@ func (e *webhookDeliveryEngine) deliverRecovered(job webhookJob) {
 	e.deliver(job)
 }
 
-// Enqueue is non-blocking. Returns errWebhookQueueFull when the buffer is full,
+// Enqueue is non-blocking. Returns ErrWebhookQueueFull when the buffer is full,
 // or errWebhookEngineClosing if the engine is closing. The RLock/Lock pairing
 // with Close prevents a send on a closed channel.
 func (e *webhookDeliveryEngine) Enqueue(job webhookJob) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.closed {
 		return errWebhookEngineClosing
 	}
+	if len(e.jobs) == cap(e.jobs) {
+		return ErrWebhookQueueFull
+	}
+	limit := e.maxBytes
+	if limit == 0 {
+		limit = 64 << 20
+	}
+	n, ok := webhookMessageCharge(job.msg, limit-e.pendingBytes)
+	if !ok {
+		return fmt.Errorf("%w: accounted bytes exceed max_queue_bytes (%d); raise the finite destination budget for larger deliveries", ErrWebhookQueueFull, limit)
+	}
+	job.accountedBytes = n
 	select {
 	case e.jobs <- job:
+		e.pendingBytes += n
+		e.reportBytes()
 		if e.metrics != nil {
 			e.metrics.WebhookQueueDepth(e.destID, len(e.jobs))
 		}
 		return nil
 	default:
-		return errWebhookQueueFull
+		return ErrWebhookQueueFull
+	}
+}
+
+// Optional extension keeps existing metrics implementations source-compatible.
+// Call while holding mu after startup to preserve accounting/metric ordering.
+func (e *webhookDeliveryEngine) reportBytes() {
+	if m, ok := e.metrics.(interface{ WebhookQueueBytes(string, int64, int64) }); ok {
+		capacity := e.maxBytes
+		if capacity == 0 {
+			capacity = 64 << 20
+		}
+		m.WebhookQueueBytes(e.destID, e.pendingBytes, capacity)
 	}
 }
 
@@ -165,10 +241,11 @@ func (e *webhookDeliveryEngine) Close() error {
 		select {
 		case <-done:
 		case <-time.After(e.drainTimeout):
+			e.closeErr = ErrWebhookDrainTimeout
 			e.logger.Warn("webhook engine drain timed out with deliveries still pending")
 		}
 	})
-	return nil
+	return e.closeErr
 }
 
 // deliver runs one job to completion on a worker: attempt the delivery (with
@@ -179,21 +256,22 @@ func (e *webhookDeliveryEngine) deliver(job webhookJob) {
 		e.metrics.WebhookQueueDepth(e.destID, len(e.jobs))
 	}
 	outcome, attempts, err := job.delivery.run(context.Background(), job.msg, e.metrics)
-	if err == nil {
+	if err == nil || e.dispatchDeadLetter(job, outcome, attempts) {
 		return
 	}
-	e.dispatchDeadLetter(job, outcome, attempts)
+	e.reportTerminal(job, outcome, attempts, err)
 }
 
 // dispatchDeadLetter redirects a terminally-failed delivery to the configured
-// dead-letter destination. When no dead-letter destination is configured this is
+// dead-letter destination and reports whether the dead-letter destination
+// accepted it. When no dead-letter destination is configured this is
 // a no-op (run already logged the terminal failure — log-and-drop). The
 // dead-letter destination is guaranteed non-webhook by config validation, so no
 // recursion is possible.
-func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome string, attempts int) {
+func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome string, attempts int) bool {
 	d := job.delivery
 	if d.dlqDestination == "" {
-		return // log-and-drop; run() already emitted the terminal Error log
+		return false // log-and-drop; run() already emitted the terminal Error log
 	}
 	e.mu.RLock()
 	resolver := e.deadLetter
@@ -210,7 +288,7 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 		if e.metrics != nil {
 			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
-		return
+		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -218,11 +296,11 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 		e.logger.Error("webhook dead-letter dispatch failed",
 			slog.String("destination", e.destID), slog.String("target", d.target),
 			slog.String("event_id", job.msg.ID), slog.String("dlq_destination", d.dlqDestination),
-			slog.String("dlq_target", d.dlqTarget), slog.String("error", err.Error()))
+			slog.String("dlq_target", d.dlqTarget), slog.String("error", logging.ErrorText(err)))
 		if e.metrics != nil {
 			e.metrics.WebhookDeadLetterFailure(e.destID, d.metricTarget)
 		}
-		return
+		return false
 	}
 	e.logger.Warn("webhook delivery dead-lettered",
 		slog.String("destination", e.destID), slog.String("target", d.target),
@@ -232,6 +310,20 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 	if e.metrics != nil {
 		e.metrics.WebhookDeadLetter(e.destID, d.metricTarget, outcome)
 	}
+	return true
+}
+
+// logTerminalFailure logs a terminal/exhausted delivery failure. When a
+// dead-letter destination is configured and the delivery is async, this is
+// demoted from Error to Warn: the dead letter that follows carries the
+// failure. An inline delivery (a redrive) never dead-letters — its failure
+// goes back to the caller — so it is never demoted.
+func (d *webhookDelivery) logTerminalFailure(ctx context.Context, msg string, args ...any) {
+	if d.dlqDestination != "" && !InlineDelivery(ctx) {
+		d.logger.Warn(msg, args...)
+		return
+	}
+	d.logger.Error(msg, args...)
 }
 
 // run performs the HTTP delivery for one message with retry/backoff. It honors
@@ -239,22 +331,6 @@ func (e *webhookDeliveryEngine) dispatchDeadLetter(job webhookJob, outcome strin
 // err on a 2xx; on terminal failure (terminal outcome, exhausted attempts, or a
 // cancelled ctx) it returns the final outcome, the number of attempts made, and
 // a non-nil error.
-// logTerminalFailure logs a terminal/exhausted delivery failure. When a
-// dead-letter destination is configured, this is demoted from Error to Warn:
-// dispatchDeadLetter (called next, by the engine, with the error returned
-// from run) will emit its own Warn on a successful dead-letter or Error on a
-// failed/unconfigured one. Without the demotion, a successfully dead-lettered
-// event would still trip Error-rate alerting even though the message was not
-// lost. A delivery with no DLQ configured has nowhere else to be logged, so it
-// keeps the Error level here (log-and-drop is the only record of the loss).
-func (d *webhookDelivery) logTerminalFailure(msg string, args ...any) {
-	if d.dlqDestination != "" {
-		d.logger.Warn(msg, args...)
-		return
-	}
-	d.logger.Error(msg, args...)
-}
-
 func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics) (outcome string, attempts int, err error) {
 	maxAttempts := d.retry.MaxAttempts
 	if maxAttempts <= 0 {
@@ -285,13 +361,13 @@ func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics
 					slog.String("event_id", msg.ID), slog.String("outcome", outcome))
 				return outcome, attempts, nil
 			}
-			d.logTerminalFailure("webhook delivery failed (terminal)",
+			d.logTerminalFailure(ctx, "webhook delivery failed (terminal)",
 				slog.String("destination", d.destID), slog.String("target", d.target),
 				slog.String("event_id", msg.ID), slog.String("outcome", outcome))
 			return outcome, attempts, fmt.Errorf("webhook %q target %q: delivery failed (%s)", d.destID, d.target, outcome)
 		}
 		if attempt == maxAttempts {
-			d.logTerminalFailure("webhook delivery failed (attempts exhausted)",
+			d.logTerminalFailure(ctx, "webhook delivery failed (attempts exhausted)",
 				slog.String("destination", d.destID), slog.String("target", d.target),
 				slog.String("event_id", msg.ID), slog.String("outcome", outcome), slog.Int("attempts", maxAttempts))
 			return outcome, attempts, fmt.Errorf("webhook %q target %q: delivery failed after %d attempts (%s)", d.destID, d.target, attempts, outcome)
@@ -306,10 +382,10 @@ func (d *webhookDelivery) run(ctx context.Context, msg Message, m WebhookMetrics
 				wait = d.retry.MaxBackoff
 			}
 		}
-		if serr := sleepContext(ctx, wait); serr != nil {
+		if serr := retry.Sleep(ctx, wait); serr != nil {
 			return outcome, attempts, fmt.Errorf("webhook %q target %q: delivery aborted before retry (%s): %w", d.destID, d.target, outcome, serr)
 		}
-		delay = nextBackoff(delay, d.retry.MaxBackoff)
+		delay = retry.NextBackoff(delay, d.retry.MaxBackoff)
 	}
 	return outcome, attempts, nil // unreachable: loop returns on every path
 }
@@ -327,7 +403,10 @@ func (d *webhookDelivery) attempt(ctx context.Context, msg Message) (outcome str
 	if err != nil {
 		return "timeout", true, 0 // network error / timeout -> retry
 	}
-	defer func() { _, _ = io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxWebhookResponseDrainBytes))
+		_ = resp.Body.Close()
+	}()
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return "2xx", false, 0
@@ -335,33 +414,10 @@ func (d *webhookDelivery) attempt(ctx context.Context, msg Message) (outcome str
 		if resp.StatusCode >= 500 {
 			return "5xx", true, 0
 		}
-		return "429", true, parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		return "429", true, retry.ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
 	default:
 		return "4xx", false, 0 // terminal
 	}
-}
-
-// parseRetryAfter parses a Retry-After header per RFC 9110 §10.2.3: either an
-// integer number of seconds, or an HTTP-date. Returns 0 — meaning "fall back
-// to the computed backoff" — when the header is absent, malformed, or
-// resolves to a non-positive delay.
-func parseRetryAfter(header string, now time.Time) time.Duration {
-	header = strings.TrimSpace(header)
-	if header == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(header); err == nil {
-		if secs <= 0 {
-			return 0
-		}
-		return time.Duration(secs) * time.Second
-	}
-	if when, err := http.ParseTime(header); err == nil {
-		if d := when.Sub(now); d > 0 {
-			return d
-		}
-	}
-	return 0
 }
 
 // buildWebhookRequest constructs the outbound request for the delivery mode.

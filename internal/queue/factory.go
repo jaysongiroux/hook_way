@@ -4,21 +4,25 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"sort"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	"github.com/jasongiroux/hookway/internal/awsconf"
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/vars"
+
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type RabbitMQConnector func(ctx context.Context, destinationID string, cfg RabbitMQConfig) (Publisher, error)
 type SQSConnector func(ctx context.Context, destinationID string, cfg SQSConfig) (Publisher, error)
 type SNSConnector func(ctx context.Context, destinationID string, cfg SNSConfig) (Publisher, error)
 type S3Connector func(ctx context.Context, destinationID string, cfg S3Config) (Publisher, error)
+type LambdaConnector func(ctx context.Context, destinationID string, cfg LambdaConfig) (Publisher, error)
 
 // WebhookConnector is an optional test seam: when set on FactoryOptions, Create
 // calls it instead of NewWebhookPublisher for each webhook destination.
@@ -71,6 +75,7 @@ type FactoryOptions struct {
 	SNSConnector      SNSConnector
 	RedisConnector    RedisConnector
 	S3Connector       S3Connector
+	LambdaConnector   LambdaConnector
 	PostgresConnector PostgresConnector
 	MongoConnector    MongoConnector
 	KafkaConnector    KafkaConnector
@@ -78,6 +83,7 @@ type FactoryOptions struct {
 	WebhookConnector  WebhookConnector
 	Metrics           RabbitMQMetrics
 	Logger            *slog.Logger
+	OnTerminalFailure TerminalFailureFunc // capture hook for async webhook failures no dead letter accepted
 }
 
 type Factory struct {
@@ -86,6 +92,7 @@ type Factory struct {
 	snsConnector      SNSConnector
 	redisConnector    RedisConnector
 	s3Connector       S3Connector
+	lambdaConnector   LambdaConnector
 	postgresConnector PostgresConnector
 	mongoConnector    MongoConnector
 	kafkaConnector    KafkaConnector
@@ -93,6 +100,7 @@ type Factory struct {
 	webhookConnector  WebhookConnector
 	metrics           RabbitMQMetrics
 	logger            *slog.Logger
+	onTerminalFailure TerminalFailureFunc
 }
 
 func NewFactory(opts FactoryOptions) *Factory {
@@ -109,7 +117,16 @@ func NewFactory(opts FactoryOptions) *Factory {
 			if err != nil {
 				return nil, err
 			}
-			return NewSQSPublisher(ctx, sqs.NewFromConfig(awsCfg), cfg)
+			var closeIdle func()
+			client := sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
+				o.HTTPClient, closeIdle = awsconf.OwnHTTPClient(o.HTTPClient, cfg.AdmissionBudget)
+			})
+			publisher, err := NewSQSPublisher(ctx, client, cfg)
+			if err != nil {
+				closeIdle()
+				return nil, err
+			}
+			return &ownedPublisher{Publisher: publisher, closeIdle: closeIdle}, nil
 		}
 	}
 	snsConnector := opts.SNSConnector
@@ -119,7 +136,16 @@ func NewFactory(opts FactoryOptions) *Factory {
 			if err != nil {
 				return nil, err
 			}
-			return NewSNSPublisher(ctx, sns.NewFromConfig(awsCfg), cfg)
+			var closeIdle func()
+			client := sns.NewFromConfig(awsCfg, func(o *sns.Options) {
+				o.HTTPClient, closeIdle = awsconf.OwnHTTPClient(o.HTTPClient, cfg.AdmissionBudget)
+			})
+			publisher, err := NewSNSPublisher(ctx, client, cfg)
+			if err != nil {
+				closeIdle()
+				return nil, err
+			}
+			return &ownedPublisher{Publisher: publisher, closeIdle: closeIdle}, nil
 		}
 	}
 	s3Connector := opts.S3Connector
@@ -136,6 +162,16 @@ func NewFactory(opts FactoryOptions) *Factory {
 				}
 			})
 			return NewS3Publisher(ctx, client, cfg)
+		}
+	}
+	lambdaConnector := opts.LambdaConnector
+	if lambdaConnector == nil {
+		lambdaConnector = func(ctx context.Context, destinationID string, cfg LambdaConfig) (Publisher, error) {
+			awsCfg, err := awsconf.Load(ctx, cfg.Region, cfg.Endpoint, cfg.AccessKeyID, cfg.SecretAccessKey)
+			if err != nil {
+				return nil, err
+			}
+			return NewLambdaPublisher(lambda.NewFromConfig(awsCfg), cfg), nil
 		}
 	}
 	redisConnector := opts.RedisConnector
@@ -291,6 +327,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		snsConnector:      snsConnector,
 		redisConnector:    redisConnector,
 		s3Connector:       s3Connector,
+		lambdaConnector:   lambdaConnector,
 		postgresConnector: postgresConnector,
 		mongoConnector:    mongoConnector,
 		kafkaConnector:    kafkaConnector,
@@ -298,6 +335,7 @@ func NewFactory(opts FactoryOptions) *Factory {
 		webhookConnector:  opts.WebhookConnector,
 		metrics:           opts.Metrics,
 		logger:            opts.Logger,
+		onTerminalFailure: opts.OnTerminalFailure,
 	}
 }
 
@@ -340,6 +378,7 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "sqs":
 			publisher, err := f.sqsConnector(ctx, id, SQSConfig{
+				AdmissionBudget: cfg.Server.MaxInflightRequests,
 				Region:          destination.SQS.Region,
 				Endpoint:        destination.SQS.Endpoint,
 				AccessKeyID:     destination.SQS.AccessKeyID,
@@ -355,6 +394,7 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			publishers[id] = publisher
 		case "sns":
 			publisher, err := f.snsConnector(ctx, id, SNSConfig{
+				AdmissionBudget: cfg.Server.MaxInflightRequests,
 				Region:          destination.SNS.Region,
 				Endpoint:        destination.SNS.Endpoint,
 				AccessKeyID:     destination.SNS.AccessKeyID,
@@ -381,6 +421,21 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 				DestinationID:   id,
 				Logger:          f.logger,
 				Targets:         collectS3Targets(cfg, id),
+			})
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = publisher
+		case "lambda":
+			publisher, err := f.lambdaConnector(ctx, id, LambdaConfig{
+				Region:          destination.Lambda.Region,
+				Endpoint:        destination.Lambda.Endpoint,
+				AccessKeyID:     destination.Lambda.AccessKeyID,
+				SecretAccessKey: destination.Lambda.SecretAccessKey,
+				InvocationType:  destination.Lambda.InvocationType,
+				DestinationID:   id,
+				Logger:          f.logger,
+				Targets:         collectLambdaTargets(cfg, id),
 			})
 			if err != nil {
 				return nil, err
@@ -460,6 +515,9 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 	}
 	for _, wp := range webhookPubs {
 		wp.setDeadLetterPublisher(dlqPublish)
+		if f.onTerminalFailure != nil {
+			wp.setTerminalFailure(f.onTerminalFailure)
+		}
 	}
 
 	return NewRoutingPublisher(publishers), nil
@@ -470,12 +528,8 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 // destination of some endpoint-used webhook destination. The dead-letter level
 // is one deep only — DLQ targets are never webhook destinations.
 func destinationUsed(cfg config.Config, destinationID string) bool {
-	for _, endpoint := range cfg.Endpoints {
-		for _, route := range endpoint.DestinationRoutes() {
-			if endpoint.Enabled && route.Destination == destinationID {
-				return true
-			}
-		}
+	if endpointRoutesToDestination(cfg, destinationID) {
+		return true
 	}
 	for id, dest := range cfg.Destinations {
 		if dest.Type != "webhook" || dest.Webhook.DeadLetter.Destination != destinationID {
@@ -610,9 +664,15 @@ func collectQueues(cfg config.Config, destinationID string) []string {
 	return queues
 }
 
-func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
+// collectTargets shares route filtering, first-route deduplication and sorted
+// output. A nil deadLetter mapper excludes DLQs (Temporal and webhook); other
+// backends keep direct-route settings when a DLQ shares the same target name.
+func collectTargets[T any](cfg config.Config, destinationID string,
+	fromRoute func(config.EndpointConfig, config.ExpandedRoute) T, deadLetter func(string) T,
+	name func(T) string,
+) []T {
 	seen := map[string]struct{}{}
-	var targets []SQSTarget
+	var targets []T
 	for _, endpoint := range cfg.Endpoints {
 		if !endpoint.Enabled {
 			continue
@@ -621,190 +681,100 @@ func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
 			if route.Destination != destinationID {
 				continue
 			}
-			if _, ok := seen[route.Target]; ok {
-				continue
+			if _, exists := seen[route.Target]; !exists {
+				seen[route.Target] = struct{}{}
+				targets = append(targets, fromRoute(endpoint, route))
 			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, SQSTarget{
-				Template:          routeMatcher(endpoint, route),
-				Name:              route.Target,
-				Create:            route.Create,
-				VisibilityTimeout: route.SQSOptions.VisibilityTimeout,
-				MessageRetention:  route.SQSOptions.MessageRetention,
-				FIFO:              mapFIFO(route.FIFO),
-			})
 		}
 	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, SQSTarget{Name: t})
+	if deadLetter != nil {
+		for _, target := range deadLetterTargets(cfg, destinationID) {
+			if _, exists := seen[target]; !exists {
+				seen[target] = struct{}{}
+				targets = append(targets, deadLetter(target))
+			}
 		}
 	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+	sort.Slice(targets, func(i, j int) bool { return name(targets[i]) < name(targets[j]) })
 	return targets
+}
+
+func collectSQSTargets(cfg config.Config, destinationID string) []SQSTarget {
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) SQSTarget {
+		return SQSTarget{
+			Attributes:          maps.Clone(route.BrokerAttributes),
+			QueueOwnerAccountID: route.SQSOptions.QueueOwnerAccountID,
+			Template:            routeMatcher(endpoint, route),
+			Name:                route.Target,
+			Create:              route.Create,
+			VisibilityTimeout:   route.SQSOptions.VisibilityTimeout,
+			MessageRetention:    route.SQSOptions.MessageRetention,
+			FIFO:                mapFIFO(route.FIFO),
+		}
+	}, func(name string) SQSTarget { return SQSTarget{Name: name} }, func(target SQSTarget) string { return target.Name })
 }
 
 func collectSNSTargets(cfg config.Config, destinationID string) []SNSTarget {
-	seen := map[string]struct{}{}
-	var targets []SNSTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) SNSTarget {
+		return SNSTarget{
+			ARN:        route.SNSOptions.TopicARN,
+			Attributes: maps.Clone(route.BrokerAttributes),
+			Template:   routeMatcher(endpoint, route),
+			Name:       route.Target,
+			Create:     route.Create,
+			Subject:    route.SNSOptions.Subject,
+			FIFO:       mapFIFO(route.FIFO),
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, SNSTarget{
-				Template: routeMatcher(endpoint, route),
-				Name:     route.Target,
-				Create:   route.Create,
-				Subject:  route.SNSOptions.Subject,
-				FIFO:     mapFIFO(route.FIFO),
-			})
+	}, func(name string) SNSTarget { return SNSTarget{Name: name} }, func(target SNSTarget) string { return target.Name })
+}
+
+func collectLambdaTargets(cfg config.Config, destinationID string) []LambdaTarget {
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) LambdaTarget {
+		return LambdaTarget{
+			Template: routeMatcher(endpoint, route),
+			Name:     route.Target,
 		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, SNSTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	}, func(name string) LambdaTarget { return LambdaTarget{Name: name} }, func(target LambdaTarget) string { return target.Name })
 }
 
 func collectS3Targets(cfg config.Config, destinationID string) []S3Target {
-	seen := map[string]struct{}{}
-	var targets []S3Target
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, S3Target{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, S3Target{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) S3Target {
+		return S3Target{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, func(name string) S3Target { return S3Target{Name: name} }, func(target S3Target) string { return target.Name })
 }
 
 func collectPostgresTargets(cfg config.Config, destinationID string) []PostgresTarget {
-	seen := map[string]struct{}{}
-	var targets []PostgresTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, PostgresTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, PostgresTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) PostgresTarget {
+		return PostgresTarget{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, func(name string) PostgresTarget { return PostgresTarget{Name: name} }, func(target PostgresTarget) string { return target.Name })
 }
 
 func collectMongoTargets(cfg config.Config, destinationID string) []MongoTarget {
-	seen := map[string]struct{}{}
-	var targets []MongoTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, MongoTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, MongoTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) MongoTarget {
+		return MongoTarget{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, func(name string) MongoTarget { return MongoTarget{Name: name} }, func(target MongoTarget) string { return target.Name })
 }
 
 func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget {
-	seen := map[string]struct{}{}
-	var targets []KafkaTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) KafkaTarget {
+		var partitionKey *FIFOSettings
+		if pk := route.KafkaOptions.PartitionKey; pk.Source != "" {
+			partitionKey = &FIFOSettings{
+				GroupIDSource:   pk.Source,
+				GroupIDValue:    pk.Value,
+				GroupIDPath:     pk.Path,
+				GroupIDFallback: pk.Fallback,
 			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			var partitionKey *FIFOSettings
-			if pk := route.KafkaOptions.PartitionKey; pk.Source != "" {
-				partitionKey = &FIFOSettings{
-					GroupIDSource:   pk.Source,
-					GroupIDValue:    pk.Value,
-					GroupIDPath:     pk.Path,
-					GroupIDFallback: pk.Fallback,
-				}
-			}
-			targets = append(targets, KafkaTarget{
-				Template:          routeMatcher(endpoint, route),
-				Topic:             route.Target,
-				Create:            route.Create,
-				PartitionKey:      partitionKey,
-				Partitions:        route.KafkaOptions.Partitions,
-				ReplicationFactor: route.KafkaOptions.ReplicationFactor,
-			})
 		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, KafkaTarget{Topic: t})
+		return KafkaTarget{
+			Template:          routeMatcher(endpoint, route),
+			Topic:             route.Target,
+			Create:            route.Create,
+			PartitionKey:      partitionKey,
+			Partitions:        route.KafkaOptions.Partitions,
+			ReplicationFactor: route.KafkaOptions.ReplicationFactor,
 		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Topic < targets[j].Topic })
-	return targets
+	}, func(name string) KafkaTarget { return KafkaTarget{Topic: name} }, func(target KafkaTarget) string { return target.Topic })
 }
 
 // collectTemporalTargets builds one TemporalTarget per unique task queue routed
@@ -813,77 +783,39 @@ func collectKafkaTargets(cfg config.Config, destinationID string) []KafkaTarget 
 // not merged: validation forbids a temporal destination as a webhook DLQ
 // because a dead-letter route has no workflow_type.
 func collectTemporalTargets(cfg config.Config, destinationID string) []TemporalTarget {
-	seen := map[string]struct{}{}
-	var targets []TemporalTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) TemporalTarget {
+		opts := route.TemporalOptions
+		return TemporalTarget{
+			Template:     routeMatcher(endpoint, route),
+			TaskQueue:    route.Target,
+			WorkflowType: opts.WorkflowType,
+			Input:        opts.Input,
+			WorkflowID: WorkflowIDSettings{
+				Source: opts.WorkflowID.Source,
+				Value:  opts.WorkflowID.Value,
+				Path:   opts.WorkflowID.Path,
+				Prefix: opts.WorkflowID.Prefix,
+			},
+			IDReusePolicy:    opts.IDReusePolicy,
+			ExecutionTimeout: opts.ExecutionTimeout,
+			RunTimeout:       opts.RunTimeout,
+			TaskTimeout:      opts.TaskTimeout,
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			opts := route.TemporalOptions
-			targets = append(targets, TemporalTarget{
-				Template:     routeMatcher(endpoint, route),
-				TaskQueue:    route.Target,
-				WorkflowType: opts.WorkflowType,
-				Input:        opts.Input,
-				WorkflowID: WorkflowIDSettings{
-					Source: opts.WorkflowID.Source,
-					Value:  opts.WorkflowID.Value,
-					Path:   opts.WorkflowID.Path,
-					Prefix: opts.WorkflowID.Prefix,
-				},
-				IDReusePolicy:    opts.IDReusePolicy,
-				ExecutionTimeout: opts.ExecutionTimeout,
-				RunTimeout:       opts.RunTimeout,
-				TaskTimeout:      opts.TaskTimeout,
-			})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].TaskQueue < targets[j].TaskQueue })
-	return targets
+	}, nil, func(target TemporalTarget) string { return target.TaskQueue })
 }
 
 func collectRedisTargets(cfg config.Config, destinationID string) []RedisTarget {
-	seen := map[string]struct{}{}
-	var targets []RedisTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) RedisTarget {
+		return RedisTarget{
+			Template:      routeMatcher(endpoint, route),
+			Name:          route.Target,
+			MaxLen:        route.RedisOptions.MaxLen,
+			ConsumerGroup: route.RedisOptions.ConsumerGroup,
+			TTL:           route.RedisOptions.TTL,
+			KeyTemplate:   route.RedisOptions.KeyTemplate,
+			Create:        route.Create,
 		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, RedisTarget{
-				Template:      routeMatcher(endpoint, route),
-				Name:          route.Target,
-				MaxLen:        route.RedisOptions.MaxLen,
-				ConsumerGroup: route.RedisOptions.ConsumerGroup,
-				TTL:           route.RedisOptions.TTL,
-				KeyTemplate:   route.RedisOptions.KeyTemplate,
-				Create:        route.Create,
-			})
-		}
-	}
-	for _, t := range deadLetterTargets(cfg, destinationID) {
-		if _, ok := seen[t]; !ok {
-			seen[t] = struct{}{}
-			targets = append(targets, RedisTarget{Name: t})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	}, func(name string) RedisTarget { return RedisTarget{Name: name} }, func(target RedisTarget) string { return target.Name })
 }
 
 func mapFIFO(c *config.FIFOConfig) *FIFOSettings {
@@ -901,25 +833,9 @@ func mapFIFO(c *config.FIFOConfig) *FIFOSettings {
 }
 
 func collectWebhookTargets(cfg config.Config, destinationID string) []WebhookTarget {
-	seen := map[string]struct{}{}
-	var targets []WebhookTarget
-	for _, endpoint := range cfg.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		for _, route := range endpoint.DestinationRoutes() {
-			if route.Destination != destinationID {
-				continue
-			}
-			if _, ok := seen[route.Target]; ok {
-				continue
-			}
-			seen[route.Target] = struct{}{}
-			targets = append(targets, WebhookTarget{Name: route.Target, Template: routeMatcher(endpoint, route)})
-		}
-	}
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
-	return targets
+	return collectTargets(cfg, destinationID, func(endpoint config.EndpointConfig, route config.ExpandedRoute) WebhookTarget {
+		return WebhookTarget{Name: route.Target, Template: routeMatcher(endpoint, route)}
+	}, nil, func(target WebhookTarget) string { return target.Name })
 }
 
 func mergeQueueOptions(defaults, override config.RabbitMQQueueOptions) QueueOptions {

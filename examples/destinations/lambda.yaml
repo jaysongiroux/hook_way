@@ -1,0 +1,63 @@
+# examples/destinations/lambda.yaml
+#
+# Reference config for an AWS Lambda destination. Hookway invokes a Lambda
+# function with the JSON Message envelope as the event payload.
+#
+# INVOCATION TYPE (invocation_type: Event | RequestResponse; default Event)
+#   Event (default): Publish succeeds when AWS accepts the invoke. Function
+#     crashes are retried by AWS asynchronously; Hookway does not see them.
+#     Payload limit: 256 KiB.
+#   RequestResponse: Publish waits for the function to finish. A FunctionError
+#     fails the publish (like webhook delivery_mode: sync). Adds function
+#     runtime latency to the inbound request — raise server.publish_timeout
+#     (and the coupled write_timeout / shutdown_timeout) above the 10s default
+#     when functions may run longer. Payload limit: 6 MiB.
+#
+# TARGET: the publish node's target is the function name passed to Invoke —
+# name, name:alias / name:version / name with the LATEST qualifier, or a
+# function ARN. One lambda destination (region + credentials) can invoke many
+# functions. create: true is rejected — Hookway does not create functions.
+#
+# Credentials: omit access_key_id / secret_access_key to use the default
+# AWS credential chain (IAM role, environment, ~/.aws). Set endpoint to
+# http://localhost:4566 to use LocalStack during development.
+#
+# IAM: lambda:InvokeFunction on each target; lambda:GetFunction for /ready
+# probes of static targets.
+#
+# on_existing_conflict is NOT valid for lambda destinations.
+#
+# For RequestResponse, set invocation_type below (or use a second destination
+# with that type) when the inbound sender should see function failures.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+  # RequestResponse may need a larger budget than the 10s default:
+  # publish_timeout: "30s"
+  # write_timeout: "30s"
+  # shutdown_timeout: "30s"
+
+destinations:
+  workers:
+    type: lambda
+    lambda:
+      region: "us-east-1"
+      # Uncomment to override the Lambda endpoint, e.g. for LocalStack:
+      # endpoint: "http://localhost:4566"
+      # Omit both of the following to use the default AWS credential chain:
+      # access_key_id: "AKIA..."
+      # secret_access_key: "..."
+      # Event (default) | RequestResponse
+      invocation_type: Event
+
+flows:
+  orders:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Signature, timestamp_tolerance: "5m"}
+      - {id: env, type: envelope, body_format: json}
+      # Target is the function name (or name:alias / ARN).
+      - {id: out, type: publish, destination: workers, target: orders-worker}
+    edges: [in>body, body>auth, auth>env, env>out]

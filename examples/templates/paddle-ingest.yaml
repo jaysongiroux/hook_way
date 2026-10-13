@@ -1,0 +1,84 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+# TEMPLATE: accept a Paddle Billing webhook and build the event envelope.
+#
+# This file has two jobs. It is a complete, runnable config so that
+# `make validate-examples` proves the template still compiles against the
+# current node schema. It is also the source of a builder palette template:
+# the config UI extracts `in` through `env` (see the TEMPLATES manifest in
+# web/src/graph/templates.ts) and drops them onto the canvas. The `out`
+# publish exists so the file is a valid standalone config; it is not part of
+# the inserted template. Drop onto a new flow, then wire envelope to your
+# destination.
+#
+# Requires PADDLE_WEBHOOK_SECRET (the notification-destination secret from
+# Paddle), WEBHOOK_URL and WEBHOOK_SECRET for the wrapper publish, and
+# HOOKWAY_API_KEY to keep /metrics off an open port.
+#
+# Do not enable security.trusted_proxy_headers unless security.trusted_proxies
+# lists your load-balancer CIDRs — an empty list trusts any peer's
+# X-Forwarded-For and lets callers spoof rate-limit keys. Pin Paddle's
+# published notification IPs with an ip_allowlist node after hops if you want
+# a network-layer check in addition to HMAC; do not copy stale ranges into git.
+#
+# Paddle signs `ts=<unix>;h1=<hex>` on Paddle-Signature over "<ts>:<body>".
+# Hookway's hmac_sha256_ts_colon scheme is that layout. timestamp_tolerance
+# should stay around 5m; Paddle retries, so replay_guard drops duplicates.
+# secret_ref refreshes the env secret and overlaps old/new during rotation.
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "10s"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  forwarded_header_allowlist:
+    - Content-Type
+
+destinations:
+  events:
+    type: webhook
+    webhook:
+      url: "${WEBHOOK_URL}"
+      delivery_mode: sync
+      timeout: "10s"
+      retry:
+        max_attempts: 5
+        initial_backoff: "500ms"
+        max_backoff: "30s"
+      auth:
+        type: hmac
+        secret: "${WEBHOOK_SECRET}"
+
+flows:
+  paddle_billing:
+    nodes:
+      - {id: in, type: http_trigger, description: "Paddle posts notification deliveries here.", path: /webhooks/paddle, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound Paddle retries per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: "Verifies Paddle-Signature (timestamped HMAC-SHA256)."
+        scheme: hmac_sha256_ts_colon
+        secret_ref: {provider: env, name: PADDLE_WEBHOOK_SECRET, refresh: 15m, overlap: 5m}
+        signature_header: Paddle-Signature
+        timestamp_tolerance: "5m"
+      - {id: replay, type: replay_guard, store: local, description: "Drops a delivery Paddle already succeeded within the TTL.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Decodes the JSON event (`event_type`, `data`, …).", body_format: json}
+      - {id: out, type: publish, description: "Wrapper publish so this file is a complete config. Not part of the inserted template.", destination: events, target: paddle-events}
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>out]

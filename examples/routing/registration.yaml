@@ -1,0 +1,64 @@
+# Private creation + routing registration, and a registration-only notification.
+# Run behind a private listener/network and deployment authentication. This
+# sample binds loopback and requires an independent private ingress token.
+# Registration retries never repeat creation. On failure, retain the returned
+# ID and recover through an authenticated registration-only flow or external
+# datastore tooling, without repeating creation.
+server: {addr: "127.0.0.1:8080", max_body_bytes: 20971520, max_inflight_requests: 16}
+routing:
+  stores: {primary: {table: synthetic-routing, region: us-east-1, timeout: 2s}}
+  profiles: {sandbox: {account_id: "000000000000", credential_mode: sandbox}}
+  environments:
+    preview: {aliases: [staging], profiles: [sandbox], accounts: ["000000000000"], destination_prefix: preview}
+flows:
+  private_creation:
+    nodes:
+      - {id: in, type: http_trigger, path: /private/create, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 20971520}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_PRIVATE_TOKEN}, signature_header: X-Private-Token}
+      - {id: env, type: envelope, body_format: json}
+      - {id: route, type: route, profile: sandbox, candidates: [{source: body, path: env_name}]}
+      - id: intent
+        type: switch
+        cases:
+          - {port: a, when: {source: header, path: X-Intent, operator: eq, value: record_a}}
+          - {port: b, when: {source: header, path: X-Intent, operator: eq, value: record_b}}
+        default: invalid
+      - {id: invalid, type: respond, status: 400, body: unsupported intent}
+      - id: create_a
+        type: http_request
+        url: https://api.example.org/resources/a
+        method: POST
+        require_headers: [X-Intent, X-Sample-Key, X-Sample-Version, Cookie]
+        require_body_fields: [payload]
+        header_mode: forward
+        forward_headers: [X-Sample-Key, X-Sample-Version, Cookie, Content-Type]
+        remove_headers: [X-Private-Token]
+        response_bindings: {fields: {created_id: data.id}, max_json_bytes: 65536}
+      - id: create_b
+        type: http_request
+        url: https://api.example.org/resources/b
+        method: POST
+        require_headers: [X-Intent, X-Sample-Key, X-Sample-Version, Cookie]
+        require_body_fields: [payload]
+        header_mode: forward
+        forward_headers: [X-Sample-Key, X-Sample-Version, Cookie, Content-Type]
+        remove_headers: [X-Private-Token]
+        response_bindings: {fields: {created_id: data.id}, max_json_bytes: 65536}
+      - {id: register_a, type: register_route, mode: after_create, store: primary, profile: sandbox, environment_variable: route, id_source: upstream, id_path: created_id, id_type: record_a, max_attempts: 3, timeout: 3s, backoff: 50ms}
+      - {id: register_b, type: register_route, mode: after_create, store: primary, profile: sandbox, environment_variable: route, id_source: upstream, id_path: created_id, id_type: record_b, max_attempts: 3, timeout: 3s, backoff: 50ms}
+      - {id: reply_a, type: respond, passthrough: true}
+      - {id: reply_b, type: respond, passthrough: true}
+    edges: [in>body, body>auth, auth>env, env>route, route>intent, intent:a>create_a, intent:b>create_b, intent:invalid>invalid, create_a>register_a, create_b>register_b, register_a>reply_a, register_b>reply_b]
+  private_notification:
+    nodes:
+      - {id: in, type: http_trigger, path: /private/register, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 65536}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_PRIVATE_TOKEN}, signature_header: X-Private-Token}
+      - {id: env, type: envelope, body_format: json}
+      - {id: intent, type: filter, on_no_match: reject, conditions: [{source: header, path: X-Intent, operator: eq, value: record_c}]}
+      - {id: route, type: route, profile: sandbox, candidates: [{source: body, path: env_name}]}
+      - {id: register, type: register_route, mode: direct, store: primary, profile: sandbox, environment_variable: route, id_source: body, id_path: id, id_type: record_c, require_headers: [X-Intent], pattern: '[A-Za-z0-9_-]{1,128}', max_attempts: 3, timeout: 3s}
+      - {id: invalid, type: respond, status: 400, body: unsupported intent}
+      - {id: reply, type: respond, status: 200, body: 'registered {registration_id}'}
+    edges: [in>body, body>auth, auth>env, env>intent, intent>route, intent:on_error>invalid, route>register, register>reply]

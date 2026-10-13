@@ -1,0 +1,31 @@
+# Each active path publishes its own payload to the shared destination.
+# Replace no_auth with an authentication node for untrusted senders.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  notifications:
+    type: webhook
+    webhook:
+      url: https://example.com/events
+      delivery_mode: sync
+
+flows:
+  shared_destination:
+    nodes:
+      - {id: in, type: http_trigger, path: /hooks/shared, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope}
+      - {id: left, type: transform, kind: strip_fields, fields: [internal_notes]}
+      - {id: right, type: transform, kind: strip_fields, fields: [customer_email]}
+      - {id: send, type: publish, destination: notifications, target: events}
+    edges:
+      - in>body
+      - body>auth
+      - auth>env
+      - env>left
+      - env>right
+      - left>send
+      - right>send

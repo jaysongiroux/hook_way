@@ -12,13 +12,13 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
-var envMatcher = mustMatcher("{env}-events", map[string]string{"env": "^qa-gm[0-9]+$"})
+var envMatcher = mustMatcher("{env}-events", map[string]string{"env": "^tenant-[a-z0-9]+$"})
 
 func dynamicMsg() Message {
-	return Message{ID: "evt-1", Endpoint: "ep", ReceivedAt: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC), Body: map[string]any{"a": 1}, Variables: map[string]string{"env": "qa-gm3"}}
+	return Message{ID: "evt-1", Endpoint: "ep", ReceivedAt: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC), Body: map[string]any{"a": 1}, Variables: map[string]string{"env": "tenant-a"}}
 }
 
 func TestS3PublisherDynamicTarget(t *testing.T) {
@@ -28,10 +28,10 @@ func TestS3PublisherDynamicTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "archive", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "archive", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
-	if len(fake.puts) != 1 || !strings.HasPrefix(aws.ToString(fake.puts[0].Key), "qa-gm3-events/") {
+	if len(fake.puts) != 1 || !strings.HasPrefix(aws.ToString(fake.puts[0].Key), "tenant-a-events/") {
 		t.Fatalf("expected key under rendered folder, got %#v", fake.puts)
 	}
 	if err := pub.Publish(context.Background(), "archive", "prod-events", dynamicMsg()); err == nil {
@@ -48,11 +48,11 @@ func TestPostgresPublisherDynamicTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "wh", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "wh", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
 	ins, ok := fake.findExec("INSERT INTO")
-	if !ok || ins.args[7] != "qa-gm3-events" {
+	if !ok || ins.args[7] != "tenant-a-events" {
 		t.Fatalf("target column should be the rendered target: %#v", ins.args)
 	}
 	if err := pub.Publish(context.Background(), "wh", "nope", dynamicMsg()); err == nil {
@@ -66,10 +66,10 @@ func TestMongoPublisherDynamicTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "archive", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "archive", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
-	if len(fake.inserts) != 1 || fake.inserts[0].collection != "qa-gm3-events" {
+	if len(fake.inserts) != 1 || fake.inserts[0].collection != "tenant-a-events" {
 		t.Fatalf("collection should be rendered target: %#v", fake.inserts)
 	}
 }
@@ -80,10 +80,10 @@ func TestRedisListPublisherDynamicTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "lists", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "lists", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
-	if len(fake.lpushTrimCalls) != 1 || fake.lpushTrimCalls[0].key != "hw:qa-gm3-events" || fake.lpushTrimCalls[0].approxMaxLen != 5 {
+	if len(fake.lpushTrimCalls) != 1 || fake.lpushTrimCalls[0].key != "hw:tenant-a-events" || fake.lpushTrimCalls[0].approxMaxLen != 5 {
 		t.Fatalf("list key/maxlen from template: %#v", fake.lpushTrimCalls)
 	}
 }
@@ -94,10 +94,10 @@ func TestRedisPubSubPublisherDynamicTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "ps", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "ps", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
-	if len(fake.publishCalls) != 1 || fake.publishCalls[0].channel != "hw:qa-gm3-events" {
+	if len(fake.publishCalls) != 1 || fake.publishCalls[0].channel != "hw:tenant-a-events" {
 		t.Fatalf("channel from template: %#v", fake.publishCalls)
 	}
 }
@@ -108,10 +108,10 @@ func TestRedisKVPublisherDynamicTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "kv", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "kv", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
-	if len(fake.setCalls) != 1 || fake.setCalls[0].key != "hw:qa-gm3-events:evt-1" || fake.setCalls[0].ttl != time.Minute {
+	if len(fake.setCalls) != 1 || fake.setCalls[0].key != "hw:tenant-a-events:evt-1" || fake.setCalls[0].ttl != time.Minute {
 		t.Fatalf("kv key/ttl from template: %#v", fake.setCalls)
 	}
 }
@@ -119,10 +119,10 @@ func TestRedisKVPublisherDynamicTarget(t *testing.T) {
 func TestTemporalPublisherDynamicTarget(t *testing.T) {
 	fake := &fakeTemporalOps{}
 	pub, _ := newTestTemporalPublisher(fake, TemporalTarget{TaskQueue: "{env}-events", WorkflowType: "W", Input: "body", Template: envMatcher})
-	if err := pub.Publish(context.Background(), "orchestrator", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "orchestrator", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic publish: %v", err)
 	}
-	if len(fake.starts) != 1 || fake.starts[0].opts.TaskQueue != "qa-gm3-events" || fake.starts[0].opts.WorkflowType != "W" {
+	if len(fake.starts) != 1 || fake.starts[0].opts.TaskQueue != "tenant-a-events" || fake.starts[0].opts.WorkflowType != "W" {
 		t.Fatalf("task queue rendered, settings from template: %#v", fake.starts)
 	}
 	if _, ok := fake.starts[0].input.(map[string]any); !ok {
@@ -151,7 +151,7 @@ func TestWebhookPublisherDynamicTargetAndTemplatedURL(t *testing.T) {
 		t.Fatalf("static target publish: %v", err)
 	}
 	// Dynamic target with the same templated URL.
-	if err := pub.Publish(context.Background(), "hub", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "hub", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatalf("dynamic target publish: %v", err)
 	}
 	// Missing variable: cannot render the URL; terminal error, no request.
@@ -171,7 +171,7 @@ func TestWebhookPublisherDynamicTargetAndTemplatedURL(t *testing.T) {
 		t.Fatal("unsafe url variable must fail the publish")
 	}
 	_ = pub.Close()
-	if atomic.LoadInt32(&hits) != 2 || paths[0] != "/qa-gm3/hub/event" || paths[1] != "/qa-gm3/hub/qa-gm3-events" {
+	if atomic.LoadInt32(&hits) != 2 || paths[0] != "/tenant-a/hub/event" || paths[1] != "/tenant-a/hub/tenant-a-events" {
 		t.Fatalf("unexpected deliveries: hits=%d paths=%v", hits, paths)
 	}
 }
@@ -185,7 +185,7 @@ func TestWebhookMetricsLabelDynamicTargetsByTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pub.Publish(context.Background(), "hub", "qa-gm3-events", dynamicMsg()); err != nil {
+	if err := pub.Publish(context.Background(), "hub", "tenant-a-events", dynamicMsg()); err != nil {
 		t.Fatal(err)
 	}
 	if rec.lastDeliveryTarget != "{env}-events" {

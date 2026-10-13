@@ -2,10 +2,10 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type sqsAPI interface {
@@ -26,11 +27,13 @@ type sqsAPI interface {
 }
 
 type SQSTarget struct {
-	Name              string
-	Create            bool
-	VisibilityTimeout time.Duration
-	MessageRetention  time.Duration
-	FIFO              *FIFOSettings
+	QueueOwnerAccountID string
+	Attributes          map[string]string
+	Name                string
+	Create              bool
+	VisibilityTimeout   time.Duration
+	MessageRetention    time.Duration
+	FIFO                *FIFOSettings
 	// Template is set for dynamic routes (Name contains {variable}
 	// placeholders). Rendered queue names the matcher accepts are resolved
 	// (and created when Create is set) on first sight with these settings.
@@ -38,6 +41,9 @@ type SQSTarget struct {
 }
 
 type SQSConfig struct {
+	// AdmissionBudget tunes the native connector's idle pool; injected APIs
+	// remain caller-owned. This is derived serving metadata, not authored YAML.
+	AdmissionBudget int
 	Region          string
 	Endpoint        string
 	AccessKeyID     string
@@ -100,6 +106,9 @@ func NewSQSPublisher(ctx context.Context, client sqsAPI, cfg SQSConfig) (*SQSPub
 // queue, returning its publish state. Used at startup for static targets and
 // on first sight for rendered dynamic targets.
 func (p *SQSPublisher) provisionQueue(ctx context.Context, target SQSTarget) (sqsTargetState, error) {
+	if err := config.ValidateBrokerAttributes("sqs", strings.HasSuffix(target.Name, ".fifo"), target.Attributes); err != nil {
+		return sqsTargetState{}, err
+	}
 	url, existed, err := p.resolveQueueURL(ctx, target)
 	if err != nil {
 		return sqsTargetState{}, fmt.Errorf("sqs target %q: %w", target.Name, err)
@@ -123,13 +132,17 @@ func (p *SQSPublisher) provisionDynamic(ctx context.Context, base sqsTargetState
 // resolveQueueURL returns the queue URL and whether it already existed. When the
 // queue is absent and Create is false it errors (fail-fast on misconfiguration).
 func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (url string, existed bool, err error) {
-	out, err := p.client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(target.Name)})
+	input := &sqs.GetQueueUrlInput{QueueName: aws.String(target.Name)}
+	if target.QueueOwnerAccountID != "" {
+		input.QueueOwnerAWSAccountId = aws.String(target.QueueOwnerAccountID)
+	}
+	out, err := p.client.GetQueueUrl(ctx, input)
 	if err == nil {
 		p.logger.Debug("queue exists", slog.String("destination", p.destID), slog.String("target", target.Name))
 		return aws.ToString(out.QueueUrl), true, nil
 	}
 	var notFound *sqstypes.QueueDoesNotExist
-	if !errors.As(err, &notFound) || !target.Create {
+	if !errors.As(err, &notFound) || !target.Create || target.QueueOwnerAccountID != "" {
 		return "", false, err
 	}
 	created, err := p.client.CreateQueue(ctx, &sqs.CreateQueueInput{
@@ -147,13 +160,8 @@ func (p *SQSPublisher) resolveQueueURL(ctx context.Context, target SQSTarget) (u
 // configured ones and applies the destination's conflict policy.
 func (p *SQSPublisher) reconcileQueue(ctx context.Context, target SQSTarget, url string) error {
 	out, err := p.client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
-		QueueUrl: aws.String(url),
-		AttributeNames: []sqstypes.QueueAttributeName{
-			sqstypes.QueueAttributeNameVisibilityTimeout,
-			sqstypes.QueueAttributeNameMessageRetentionPeriod,
-			sqstypes.QueueAttributeNameFifoQueue,
-			sqstypes.QueueAttributeNameContentBasedDeduplication,
-		},
+		QueueUrl:       aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
 	})
 	if err != nil {
 		return fmt.Errorf("sqs target %q: GetQueueAttributes: %w", target.Name, err)
@@ -177,7 +185,10 @@ func (p *SQSPublisher) reconcileQueue(ctx context.Context, target SQSTarget, url
 }
 
 func sqsCreateAttributes(target SQSTarget) map[string]string {
-	attrs := map[string]string{}
+	attrs := maps.Clone(target.Attributes)
+	if attrs == nil {
+		attrs = map[string]string{}
+	}
 	if target.VisibilityTimeout > 0 {
 		attrs["VisibilityTimeout"] = strconv.Itoa(int(target.VisibilityTimeout.Seconds()))
 	}
@@ -201,27 +212,50 @@ func (p *SQSPublisher) Publish(ctx context.Context, destinationID, target string
 		}
 		return err
 	}
-	body, err := json.Marshal(msg)
+	body, err := BrokerBody(msg)
+	if err != nil {
+		return err
+	}
+	attrs, err := sqsMessageAttributes(msg.MessageAttributes)
 	if err != nil {
 		return err
 	}
 	in := &sqs.SendMessageInput{
-		QueueUrl:    aws.String(state.url),
-		MessageBody: aws.String(string(body)),
+		QueueUrl:          aws.String(state.url),
+		MessageBody:       aws.String(string(body)),
+		MessageAttributes: attrs,
 	}
-	if state.fifo != nil {
-		groupID, dedupID, _ := resolveFIFO(msg, *state.fifo)
-		in.MessageGroupId = aws.String(groupID)
-		if dedupID != "" {
-			in.MessageDeduplicationId = aws.String(dedupID)
+	if msg.Publish != nil && msg.Publish.DelaySeconds != nil {
+		if strings.HasSuffix(target, ".fifo") || *msg.Publish.DelaySeconds < 0 || *msg.Publish.DelaySeconds > 900 {
+			return fmt.Errorf("invalid per-message delay for SQS target")
 		}
-		// When dedupID is empty, resolveFIFO is signaling content-based
-		// deduplication. For queues we created we set ContentBasedDeduplication
-		// at creation time; for pre-existing queues (Create=false) we assume the
-		// operator has already enabled it on the queue.
+		in.DelaySeconds = *msg.Publish.DelaySeconds
 	}
-	_, err = p.client.SendMessage(ctx, in)
-	return err
+	if err := validateSQSBody(body); err != nil {
+		return err
+	}
+	if err := validateBrokerSize(body, msg.MessageAttributes, 1048576); err != nil {
+		return err
+	}
+	groupID, dedupID, err := brokerFIFO(msg, target, state.fifo)
+	if err != nil {
+		return err
+	}
+	if groupID != "" {
+		in.MessageGroupId = aws.String(groupID)
+	}
+	if dedupID != "" {
+		in.MessageDeduplicationId = aws.String(dedupID)
+	}
+
+	return brokerRetry(ctx, msg, func(explicit bool) error {
+		var options []func(*sqs.Options)
+		if explicit {
+			options = append(options, func(o *sqs.Options) { o.Retryer = aws.NopRetryer{} })
+		}
+		_, err := p.client.SendMessage(ctx, in, options...)
+		return err
+	})
 }
 
 // Ready confirms all resolved queues are reachable. With no targets it is a no-op.
@@ -239,3 +273,9 @@ func (p *SQSPublisher) Ready(ctx context.Context) error {
 }
 
 func (p *SQSPublisher) Close() error { return nil }
+
+func init() {
+	for key, mutable := range config.BrokerMutableAttributes("sqs") {
+		sqsMutableAttrs[key] = mutable
+	}
+}

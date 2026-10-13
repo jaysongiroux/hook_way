@@ -3,17 +3,18 @@ package queue
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
-	"os"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/egress"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type WebhookTarget struct {
@@ -23,6 +24,8 @@ type WebhookTarget struct {
 	// base url + "/" + rendered target.
 	Template vars.Matcher
 }
+
+var webhookEgressDialer = &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 
 // WebhookPublisherOptions carries the cross-cutting dependencies a webhook
 // publisher needs to build (and, in async mode, own) its delivery engine.
@@ -47,8 +50,10 @@ type WebhookPublisher struct {
 	// urlTemplate is the destination url parsed for {variable} placeholders.
 	// When it has any, the base url is rendered per message from
 	// msg.Variables; otherwise baseURL is used verbatim.
-	urlTemplate vars.Template
-	baseURL     string
+	urlTemplate       vars.Template
+	authorityTemplate vars.Template
+	guarded           bool
+	baseURL           string
 }
 
 func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []WebhookTarget, opts WebhookPublisherOptions) (*WebhookPublisher, error) {
@@ -92,6 +97,13 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 	if err != nil {
 		return nil, fmt.Errorf("webhook %q: url template: %w", destID, err)
 	}
+	authorityTemplate, err := vars.Parse(egress.Authority(cfg.URL))
+	if err != nil {
+		return nil, fmt.Errorf("webhook %q: authority template: %w", destID, err)
+	}
+	if cfg.AllowPrivateTargets && !authorityTemplate.HasPlaceholders() {
+		return nil, fmt.Errorf("webhook %q: allow_private_targets has no effect unless the url host contains a {variable}", destID)
+	}
 	deliveries := newTargetResolver[*webhookDelivery](0, logger)
 	for _, t := range targets {
 		d := &webhookDelivery{
@@ -122,13 +134,13 @@ func NewWebhookPublisher(cfg config.WebhookConfig, destID string, targets []Webh
 		}
 	}
 
-	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger, urlTemplate: urlTemplate, baseURL: cfg.URL}
+	p := &WebhookPublisher{syncMode: syncMode, destID: destID, delivery: deliveries, metrics: opts.Metrics, logger: logger, urlTemplate: urlTemplate, authorityTemplate: authorityTemplate, guarded: authorityTemplate.HasPlaceholders() && !cfg.AllowPrivateTargets, baseURL: cfg.URL}
 	if !syncMode {
 		drain := cfg.DrainTimeout
 		if drain <= 0 {
 			drain = opts.DefaultDrain
 		}
-		p.engine = newWebhookDeliveryEngine(destID, opts.Workers, cfg.MaxQueue, drain, opts.Metrics, logger)
+		p.engine = newWebhookDeliveryEngine(destID, opts.Workers, cfg.MaxQueue, drain, opts.Metrics, logger, cfg.MaxQueueBytes)
 		if opts.Metrics != nil {
 			opts.Metrics.WebhookQueueCapacity(destID, p.engine.capacity())
 		}
@@ -148,7 +160,7 @@ func (p *WebhookPublisher) provisionDelivery(_ context.Context, base *webhookDel
 func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, target string, msg Message) error {
 	d, err := p.delivery.resolve(ctx, target, p.provisionDelivery)
 	if err != nil {
-		return fmt.Errorf("webhook %q: target %q is not configured", p.destID, target)
+		return targetNotConfiguredError{kind: "webhook", destID: p.destID, target: target}
 	}
 	if p.urlTemplate.HasPlaceholders() {
 		// Templated destination url: render the base from the event's routing
@@ -161,24 +173,40 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 				return fmt.Errorf("webhook %q: variable %q has an unsafe value for a url", p.destID, n)
 			}
 		}
+		if err := egress.ValidateAuthorityVariables(p.authorityTemplate, msg.Variables); err != nil {
+			return fmt.Errorf("webhook %q: %w", p.destID, err)
+		}
 		base, err := p.urlTemplate.Render(msg.Variables)
 		if err != nil {
 			return fmt.Errorf("webhook %q: render url: %w", p.destID, err)
+		}
+		if p.guarded {
+			u, err := url.Parse(base)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+				return fmt.Errorf("webhook %q: rendered url is invalid", p.destID)
+			}
+			if reason := egress.BlockedHostReason(u.Hostname()); reason != "" {
+				return fmt.Errorf("webhook %q: rendered host is not an allowed egress target (%s); set allow_private_targets: true only for an intentional internal target", p.destID, reason)
+			}
 		}
 		rendered := *d
 		rendered.url = joinWebhookURL(base, d.target)
 		d = &rendered
 	}
-	if p.syncMode {
-		_, _, err := d.run(ctx, msg, p.metrics)
+	if p.syncMode || InlineDelivery(ctx) {
+		// The caller waits for the real outcome. An inline delivery (a
+		// redrive) never dead-letters, even on an async destination with
+		// dead_letter configured: the caller owns the failure.
+		outcome, attempts, err := d.run(ctx, msg, p.metrics)
 		if err != nil {
-			return fmt.Errorf("webhook %q: %w", p.destID, err)
+			return fmt.Errorf("webhook %q: %w", p.destID, &DeliveryError{Outcome: outcome, Attempts: attempts, Err: err})
 		}
 		return nil
 	}
-	if err := p.engine.Enqueue(webhookJob{delivery: d, msg: msg}); err != nil {
+	origin, _ := OriginFrom(ctx)
+	if err := p.engine.Enqueue(webhookJob{delivery: d, msg: msg, origin: origin}); err != nil {
 		reason := "engine_closing"
-		if errors.Is(err, errWebhookQueueFull) {
+		if errors.Is(err, ErrWebhookQueueFull) {
 			reason = "queue_full"
 		}
 		if p.metrics != nil {
@@ -194,6 +222,14 @@ func (p *WebhookPublisher) Publish(ctx context.Context, destinationQueueID, targ
 func (p *WebhookPublisher) setDeadLetterPublisher(fn deadLetterFunc) {
 	if p.engine != nil {
 		p.engine.setDeadLetter(fn)
+	}
+}
+
+// setTerminalFailure wires the terminal-failure callback onto the owned
+// engine. No-op in sync mode: a sync failure returns to the caller.
+func (p *WebhookPublisher) setTerminalFailure(fn TerminalFailureFunc) {
+	if p.engine != nil {
+		p.engine.setTerminalFailure(fn)
 	}
 }
 
@@ -223,6 +259,19 @@ func newWebhookHTTPClient(cfg config.WebhookConfig) (*http.Client, error) {
 		timeout = 10 * time.Second
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	authorityTemplate, err := vars.Parse(egress.Authority(cfg.URL))
+	if err != nil {
+		return nil, err
+	}
+	if authorityTemplate.HasPlaceholders() && !cfg.AllowPrivateTargets {
+		// Forward proxies would dial their own address rather than our vetted
+		// receiver; each destination keeps this guarded pool separate.
+		transport.Proxy = nil
+		dialer := webhookEgressDialer
+		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return egress.DialContext(ctx, network, addr, net.DefaultResolver, dialer)
+		}
+	}
 	if webhookTLSSet(cfg.TLS) {
 		tlsCfg, err := buildWebhookTLSConfig(cfg.TLS)
 		if err != nil {
@@ -230,44 +279,21 @@ func newWebhookHTTPClient(cfg config.WebhookConfig) (*http.Client, error) {
 		}
 		transport.TLSClientConfig = tlsCfg
 	}
-	return &http.Client{Timeout: timeout, Transport: transport}, nil
+	// A redirect is not acceptance by the configured receiver. Following it can
+	// forward credentials/raw payloads or rewrite a signed POST into a GET.
+	return &http.Client{Timeout: timeout, Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
 }
 
 func webhookTLSSet(c config.WebhookTLSConfig) bool {
 	return c.CACert != "" || c.ClientCert != "" || c.ClientKey != "" || c.ServerName != "" || c.InsecureSkipVerify
 }
 
-// buildWebhookTLSConfig mirrors buildTLSConfig (rabbitmq) / buildPostgresTLSConfig.
+// buildWebhookTLSConfig delegates certificate loading to tlsfiles.Files.Build.
 func buildWebhookTLSConfig(c config.WebhookTLSConfig) (*tls.Config, error) {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.ServerName != "" {
-		cfg.ServerName = c.ServerName
-	}
-	if c.InsecureSkipVerify {
-		cfg.InsecureSkipVerify = true //nolint:gosec // intentional, user-opted in
-	}
-	if c.CACert != "" {
-		pem, err := os.ReadFile(c.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("read webhook tls ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("webhook tls ca_cert %q contained no valid certificates", c.CACert)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.ClientCert != "" || c.ClientKey != "" {
-		if c.ClientCert == "" || c.ClientKey == "" {
-			return nil, errors.New("webhook tls client_cert and client_key must both be set for mutual TLS")
-		}
-		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load webhook tls client cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	return cfg, nil
+	m := tlsMaterial{CACert: c.CACert, ClientCert: c.ClientCert, ClientKey: c.ClientKey, ServerName: c.ServerName, InsecureSkipVerify: c.InsecureSkipVerify}
+	return newTLSConfig("webhook", m)
 }
 
 // joinWebhookURL appends target as a path segment to base (single slash join).

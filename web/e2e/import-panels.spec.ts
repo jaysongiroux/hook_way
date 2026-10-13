@@ -1,0 +1,216 @@
+import { test, expect } from "@playwright/test";
+import { parse } from "yaml";
+import { BuilderPage } from "./builder";
+import {
+  connectionNames,
+  connEntry,
+  destinationNames,
+  destEntry,
+  exampleFixtures,
+  flowNames,
+  flowNodes,
+  flowPolicy,
+  humanLabel,
+  isRecord,
+  SERVER_LABELS,
+  serverConfig,
+} from "./examples";
+import { expectNodeOptions, expectYamlValue } from "./fields";
+import { destinationPresentation } from "../src/shared/ui/destinationIdentity";
+
+// The control is a Select, so it renders the option label, not the config
+// value. Keep these in step with the `data` list in Inspector.tsx -- they
+// drifted apart once already, and the mismatch failed every fixture at once.
+const POLICY_LABELS: Record<string, string> = {
+  "": "Use default (stop on first failure)",
+  stop_on_failure: "Stop on first failure",
+  skip_failed: "Continue after failures",
+};
+
+for (const fixture of exampleFixtures()) {
+  test(`imported ${fixture.name} appears in builder panels`, async ({
+    page,
+  }) => {
+    const builder = new BuilderPage(page);
+    await builder.gotoReady();
+    await builder.importYaml(fixture.yaml);
+
+    const names = flowNames(fixture.config);
+    expect(
+      names.length,
+      `${fixture.name} should declare flows`,
+    ).toBeGreaterThan(0);
+    await expect(page.getByRole("button", { name: "Active flow" })).toHaveText(
+      names[0],
+    );
+    await builder.expectFlows(names);
+
+    for (const flow of names) {
+      await builder.selectFlow(flow);
+      await expect(builder.inspector().getByLabel("Flow name")).toHaveValue(
+        flow,
+      );
+
+      const policy = flowPolicy(fixture.config, flow);
+      const policyControl = builder
+        .inspector()
+        .getByLabel("Delivery failure policy");
+      await expect(policyControl).toHaveValue(
+        POLICY_LABELS[policy] ?? POLICY_LABELS[""],
+      );
+
+      const nodes = flowNodes(fixture.config, flow);
+      expect(nodes.map((n) => n.id)).not.toHaveLength(0);
+      for (const node of nodes) {
+        // exact: true is required -- accessible-name matching is substring by
+        // default, so "Select body" also matches a sibling "Select body2"
+        // node and trips Playwright's strict mode.
+        await expect(
+          builder
+            .inspector()
+            .getByRole("button", { name: `Select ${node.id}`, exact: true }),
+        ).toBeVisible();
+      }
+
+      for (const node of nodes) {
+        await builder.selectNode(node.id);
+        await expect(
+          builder.inspector().getByLabel("Node ID", { exact: true }),
+        ).toHaveValue(node.id);
+        await expect(
+          builder
+            .inspector()
+            .getByRole("textbox", { name: "Description", exact: true }),
+        ).toHaveValue(node.description);
+        // Friendly display names retain the exact YAML type for developers.
+        await expect(builder.inspector()).toContainText(`YAML type: ${node.type}`);
+        await expectNodeOptions(
+          builder.inspector(),
+          node.type,
+          node.options,
+          isRecord(fixture.config.destinations)
+            ? fixture.config.destinations
+            : {},
+        );
+        await builder.backToFlow();
+      }
+    }
+
+    const connNames = connectionNames(fixture.config);
+    if (connNames.length > 0) {
+      const connDialog = await builder.openConfigItem("Connections");
+      await expect(
+        connDialog.getByRole("heading", { name: "Connections" }),
+      ).toBeVisible();
+      for (const name of connNames) {
+        await connDialog
+          .getByRole("button", { name: `Select ${name}`, exact: true })
+          .click();
+        const card = connDialog.getByTestId(`connection-${name}`);
+        await expect(card).toBeVisible();
+        await expect(card.getByLabel("Name", { exact: true })).toHaveValue(
+          name,
+        );
+        const conn = connEntry(fixture.config, name);
+        await expect(
+          card.getByRole("textbox", { name: "Type", exact: true }),
+        ).toHaveValue(conn.type);
+        for (const [key, value] of Object.entries(conn.fields)) {
+          if (!isRecord(value)) continue;
+          await card
+            .getByRole("button", { name: new RegExp(`^${humanLabel(key)}`) })
+            .click();
+        }
+        for (const [key, value] of Object.entries(conn.fields)) {
+          await expectYamlValue(card, key, value);
+        }
+      }
+      await builder.closeDialog();
+    }
+
+    const destNames = destinationNames(fixture.config);
+    const destDialog = await builder.openConfigItem("Destinations");
+    await expect(
+      destDialog.getByRole("heading", { name: "Destinations" }),
+    ).toBeVisible();
+    // The panel is master-detail: the rail lists every destination, the pane
+    // holds one. Each has to be selected before its fields exist in the DOM.
+    for (const name of destNames) {
+      await destDialog
+        .getByRole("button", { name: `Select ${name}`, exact: true })
+        .click();
+      const card = destDialog.getByTestId(`destination-${name}`);
+      await expect(card).toBeVisible();
+      await expect(card.getByLabel("Name", { exact: true })).toHaveValue(name);
+      const dest = destEntry(fixture.config, name);
+      await expect(
+        card.getByLabel("Destination service", { exact: true }),
+      ).toHaveValue(destinationPresentation(dest.type).label);
+      // Nested blocks (tls, retry, dead_letter, ...) are folded and mount their
+      // fields only once open, so expand the ones this fixture asserts on. The
+      // control's name carries a "2 set" badge after the label, hence the
+      // prefix match rather than an exact one.
+      for (const [key, value] of Object.entries(dest.block)) {
+        if (!isRecord(value)) continue;
+        await card
+          .getByRole("button", { name: new RegExp(`^${humanLabel(key)}`) })
+          .click();
+      }
+      for (const [key, value] of Object.entries(dest.block)) {
+        await expectYamlValue(card, key, value);
+      }
+    }
+    await builder.closeDialog();
+
+    const serverDialog = await builder.openConfigItem("Core server");
+    const server = serverConfig(fixture.config);
+    for (const [key, value] of Object.entries(server)) {
+      const label = SERVER_LABELS[key];
+      if (!label || value === undefined) continue;
+      await expectLabeled(serverDialog, label, String(value));
+    }
+    await builder.closeDialog();
+
+    const envDialog = await builder.openConfigItem("Environment");
+    if (fixture.envVars.length === 0) {
+      await expect(
+        envDialog.getByText("No environment variables referenced."),
+      ).toBeVisible();
+    } else {
+      for (const name of fixture.envVars) {
+        await expect(envDialog.getByText(name, { exact: true })).toBeVisible();
+      }
+    }
+    await builder.closeDialog();
+
+    // Opening a form must never normalize or prune authored node options,
+    // including fields hidden by a mode. Assert every node, not just the UI sample.
+    const exportDialog = await builder.openConfigItem("Export YAML");
+    const exported = parse(
+      await exportDialog.getByTestId("export-core.yaml").innerText(),
+    ) as Record<string, unknown>;
+    for (const flow of names)
+      expect(
+        flowNodes(exported, flow),
+        `${fixture.name}: untouched options in ${flow}`,
+      ).toEqual(flowNodes(fixture.config, flow));
+    for (const name of destNames)
+      expect(
+        destEntry(exported, name),
+        `${fixture.name}: untouched destination ${name}`,
+      ).toEqual(destEntry(fixture.config, name));
+    await builder.closeDialog();
+  });
+}
+
+async function expectLabeled(
+  root: import("@playwright/test").Locator,
+  label: string,
+  expected: string,
+) {
+  const control = root.getByLabel(label, { exact: true });
+  await expect.soft(control).toBeVisible();
+  const value = await control.inputValue().catch(() => "");
+  const text = (await control.innerText().catch(() => "")).trim();
+  expect.soft(value || text, `server field "${label}"`).toBe(expected);
+}

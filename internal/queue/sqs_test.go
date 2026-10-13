@@ -20,6 +20,7 @@ type fakeSQS struct {
 	urls     map[string]string
 	attrs    map[string]map[string]string // url -> attributes
 	setCalls []*sqs.SetQueueAttributesInput
+	lookups  []*sqs.GetQueueUrlInput
 	// attrErrors is kept for Ready probe tests
 	attrErrors map[string]error // url -> error returned by GetQueueAttributes
 }
@@ -34,6 +35,7 @@ func newFakeSQS() *fakeSQS {
 }
 
 func (f *fakeSQS) GetQueueUrl(ctx context.Context, in *sqs.GetQueueUrlInput, _ ...func(*sqs.Options)) (*sqs.GetQueueUrlOutput, error) {
+	f.lookups = append(f.lookups, in)
 	url, ok := f.urls[aws.ToString(in.QueueName)]
 	if !ok {
 		return nil, &sqstypes.QueueDoesNotExist{}
@@ -110,6 +112,30 @@ func TestSQSPublisherCreatesQueueAndSends(t *testing.T) {
 	}
 	if fake.sent[0].MessageGroupId != nil {
 		t.Fatalf("standard queue must not set group id")
+	}
+}
+
+func TestSQSPublisherAttachesMessageAttributes(t *testing.T) {
+	fake := newFakeSQS()
+	pub, err := NewSQSPublisher(context.Background(), fake, SQSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SQSTarget{{Name: "billing-jobs", Create: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(context.Background(), "jobs", "billing-jobs", Message{
+		ID: "evt_1",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["status"]`},
+		},
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := fake.sent[0].MessageAttributes["fields_changed"]
+	if aws.ToString(got.DataType) != "String.Array" || aws.ToString(got.StringValue) != `["status"]` {
+		t.Fatalf("MessageAttributes = %+v", fake.sent[0].MessageAttributes)
 	}
 }
 

@@ -1,0 +1,501 @@
+# Called by CI (PRs / main) and Release. Does not publish anything.
+#
+# The gate runs in three stages, each waiting for every job of the one before:
+#
+#   1. Lint     formatting, golangci-lint, govulncheck, static checks, web lint
+#   2. Test     Go unit + conformance, race, examples, web unit, coverage,
+#               observability
+#   3. Deploy   Playwright, every integration suite (including the Compose
+#               end-to-end run), image build + Trivy
+#
+# A failed job skips every later stage, so a lint error costs minutes, not a
+# full integration run. Jobs inside a stage run in parallel.
+name: Reusable CI
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref or exact source commit to check out. Empty uses checkout defaults for the event.
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.9"
+  NODE_VERSION: "22"
+
+jobs:
+  # ── Stage 1: lint ────────────────────────────────────────────────────────
+
+  formatting:
+    name: Formatting
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: gofmt and whitespace
+        run: make fmt-check diff-check
+
+  golangci:
+    name: golangci-lint
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.13.2
+
+  govulncheck:
+    name: govulncheck
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Vulnerability check
+        run: make govulncheck
+
+  static:
+    name: Static checks
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Vet
+        run: make lint
+
+      - name: Module tidiness
+        run: make module-check
+
+      - name: Documentation links
+        run: make docs-check
+
+      - name: Dead code
+        run: make deadcode
+
+  web-lint:
+    name: Web lint
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Web dependency vulnerability gate
+        run: make web-audit
+
+      - name: Release policy checks
+        run: make release-policy-check
+
+      - name: Frontend hosting configuration tests
+        run: make web-hosting-check
+
+      - name: Generated UI contract drift
+        run: make node-schema-check api-schema-check
+
+      - name: Independent UI builds
+        run: make website-test website-build console-build
+
+      - name: Web dead code (knip)
+        run: make web-knip
+
+  # ── Stage 2: test ────────────────────────────────────────────────────────
+
+  go:
+    name: Go
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Unit tests
+        run: make unit
+
+      - name: Invariant conformance
+        run: make conformance
+
+  go-race:
+    name: Go race
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Race tests
+        run: make race
+
+  examples:
+    name: Examples
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Validate example configs
+        run: make validate-examples
+
+      - name: Serve and POST every example flow
+        run: make test-examples
+
+  web:
+    name: Web
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Web unit tests
+        run: make web-test
+
+  coverage:
+    name: Coverage
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Coverage floor
+        run: make coverage
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+          if-no-files-found: error
+
+  observability:
+    name: Observability
+    needs: [formatting, golangci, govulncheck, static, web-lint]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Monitoring assets and workflow tests
+        run: make observability-check
+
+  # ── Stage 3: deploy (browsers, containers, images) ───────────────────────
+
+  web-e2e:
+    name: Web e2e
+    needs: [go, go-race, examples, web, coverage, observability]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web deps
+        run: make web-install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: cd web && npx playwright install --with-deps chromium
+
+      - name: Playwright builder tests
+        run: make web-e2e
+
+      - name: Marketing documentation browser tests
+        run: make website-e2e
+
+      - name: Standalone operational console and real PostgreSQL browser tests
+        run: make console-e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 14
+
+  integration:
+    name: ${{ matrix.name }}
+    needs: [go, go-race, examples, web, coverage, observability]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: RabbitMQ
+            target: integration-test
+          - name: AWS
+            target: aws-integration-test
+          - name: Redis
+            target: redis-integration-test
+          - name: Postgres
+            target: postgres-integration-test
+          - name: MongoDB
+            target: mongodb-integration-test
+          - name: Kafka
+            target: kafka-integration-test
+          - name: Webhook
+            target: webhook-integration-test
+          - name: Temporal
+            target: temporal-integration-test
+          - name: Replay
+            target: replay-integration-test
+          - name: Replay acceptance
+            target: replay-acceptance-test
+          - name: Compose end-to-end
+            target: compose-e2e-test COMPOSE_E2E_BUILD=dockerfile
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: ${{ matrix.name }} integration tests
+        env:
+          HOOKWAY_REQUIRE_INTEGRATION: "1"
+        run: make ${{ matrix.target }}
+
+  image:
+    name: Image
+    needs: [go, go-race, examples, web, coverage, observability]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Docker build
+        run: make docker-build
+
+      - name: Smoke-run the images
+        run: make image-smoke
+
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: hookway:local
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          limit-severities-for-sarif: true
+
+      - name: Upload vulnerability scan artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          if-no-files-found: error
+
+      - name: Vulnerability scan (replay)
+        # Scan the replay image even when core's scan found something.
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: hookway-replay:local
+          format: sarif
+          output: trivy-replay-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          limit-severities-for-sarif: true
+
+      - name: Upload replay vulnerability scan artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-replay-results
+          path: trivy-replay-results.sarif
+          if-no-files-found: error
+      - name: Vulnerability scan (console)
+        # Scan the console image even when core's scan found something.
+        if: success() || failure()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: hookway-console:local
+          format: sarif
+          output: trivy-console-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          limit-severities-for-sarif: true
+
+      - name: Upload console vulnerability scan artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-console-results
+          path: trivy-console-results.sarif
+          if-no-files-found: error
+
+  # Single required check for branch protection. Adding jobs above does not
+  # require updating the protected-branch settings if this name stays stable.
+  # A skipped job means an earlier stage failed, so it counts as a failure.
+  success:
+    name: All checks passed
+    if: ${{ !cancelled() }}
+    needs:
+      - formatting
+      - golangci
+      - govulncheck
+      - static
+      - web-lint
+      - go
+      - go-race
+      - examples
+      - web
+      - coverage
+      - observability
+      - web-e2e
+      - integration
+      - image
+    runs-on: [ubuntu-latest]
+    steps:
+      - name: Fail if any required job did not succeed
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
+        run: exit 1

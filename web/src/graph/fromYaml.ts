@@ -1,16 +1,24 @@
-import { parse } from "yaml";
-import type { Edge } from "@xyflow/react";
-import type { HookwayNode } from "./model";
+import { parse, parseDocument } from "yaml";
+import { assertSchemaImportPrecision } from "./schemaImportPrecision";
 import { fromConfig } from "./fromConfig";
-import { layout } from "./layout";
+import { layoutAllFlows } from "./layout";
+import type { GraphDocument } from "./model";
 
-export function fromYaml(text: string): {
-  nodes: HookwayNode[];
-  edges: Edge[];
-  serverConfig: Record<string, unknown>;
-  configExtra: Record<string, unknown>;
-} {
-  const config = (parse(text) ?? {}) as Record<string, unknown>;
-  const { nodes, edges, serverConfig, configExtra } = fromConfig(config);
-  return { nodes: layout(nodes, edges), edges, serverConfig, configExtra };
+export function fromYaml(text: string): GraphDocument {
+  const config = parseYamlMapping(text, "Core config");
+  if (config.flows && typeof config.flows === "object" && Object.values(config.flows).some((flow) => flow && typeof flow === "object" && Object.prototype.hasOwnProperty.call(flow, "file"))) {
+    throw new Error("This entry YAML references flow files. Import the ZIP or select the entry and its flow files together.");
+  }
+  return layoutAllFlows(fromConfig(config));
+}
+
+export function parseYamlMapping(text: string, label: string): Record<string, unknown> {
+  const document = parseDocument(text, { intAsBigInt: true });
+  if (document.errors.length) throw document.errors[0];
+  assertSchemaImportPrecision(document);
+  const parsed = parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a YAML mapping.`);
+  }
+  return parsed as Record<string, unknown>;
 }

@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
+
 	segkafka "github.com/segmentio/kafka-go"
 	tckafka "github.com/testcontainers/testcontainers-go/modules/kafka"
 )
@@ -16,11 +18,10 @@ import (
 // It self-skips when Docker is unavailable, mirroring startRedis/startLocalStack.
 func startKafka(t *testing.T) []string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := tckafka.Run(ctx, "confluentinc/confluent-local:7.5.0")
-	if err != nil {
-		t.Skipf("kafka container unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "kafka")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	brokers, err := container.Brokers(ctx)
 	if err != nil {

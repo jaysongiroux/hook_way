@@ -1,0 +1,98 @@
+# GitHub, Stripe snapshot events, Paddle Billing, and Slack Events API ingress.
+# ACK follows a RabbitMQ publisher confirm; consumer deduplication is required.
+# Secrets use mounted files so rotation can refresh without restarting Hookway.
+# Required variables: RABBITMQ_URL and {GITHUB,STRIPE,PADDLE,SLACK}_SECRET_FILE.
+# See docs/guides/provider-compatibility.md for contracts, recovery, and tested limits.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  publish_timeout: 2s
+  write_timeout: 5s
+security:
+  forwarded_header_allowlist: [Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Slack-Retry-Num, X-Slack-Retry-Reason]
+destinations:
+  events:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: hookway.providers
+      exchange_type: direct
+      durable: true
+      declare_queues: true
+      publish_timeout: 2s
+flows:
+  github:
+    responses:
+      published: {status: 200, body: accepted}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_hex
+        signature_header: X-Hub-Signature-256
+        secret_ref: {provider: file, name: "${GITHUB_SECRET_FILE}", refresh: 1m, overlap: 10m}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: github-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
+  stripe:
+    responses:
+      published: {status: 200, body: accepted}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/stripe, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_ts_dot
+        signature_header: Stripe-Signature
+        timestamp_tolerance: 5m
+        secret_ref: {provider: file, name: "${STRIPE_SECRET_FILE}", refresh: 1m, overlap: 10m}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: stripe-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
+  paddle:
+    responses:
+      # Paddle explicitly requires 200, not Hookway's default 202.
+      published: {status: 200, body: accepted}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/paddle, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_ts_colon
+        signature_header: Paddle-Signature
+        timestamp_tolerance: 5s
+        secret_ref: {provider: file, name: "${PADDLE_SECRET_FILE}", refresh: 1m, overlap: 10m}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: paddle-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
+  slack:
+    responses:
+      published: {status: 200, body: accepted}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/slack, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_slack_v0
+        signature_header: X-Slack-Signature
+        timestamp_header: X-Slack-Request-Timestamp
+        timestamp_unit: seconds
+        timestamp_tolerance: 5m
+        secret_ref: {provider: file, name: "${SLACK_SECRET_FILE}", refresh: 1m, overlap: 10m}
+      - {id: env, type: envelope, body_format: json}
+      - id: kind
+        type: switch
+        cases:
+          - {port: challenge, when: {source: body, path: type, operator: eq, value: url_verification}}
+        default: event
+      - id: challenge_value
+        type: code
+        timeout: 50ms
+        script: |
+          if (typeof input.body.challenge !== 'string' || input.body.challenge.length > 4096) throw new Error('invalid challenge');
+          return {body: input.body, vars: {challenge: input.body.challenge}};
+      - {id: challenge, type: respond, status: 200, body: "{challenge}", headers: {Content-Type: text/plain}}
+      - {id: out, type: publish, destination: events, target: slack-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>kind, kind:challenge>challenge_value, challenge_value>challenge, kind:event>out]

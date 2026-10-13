@@ -1,0 +1,103 @@
+# Multipart split with object payload: one upload fans out so the file is
+# stored as raw bytes in S3 and the form fields land in RabbitMQ.
+#
+# Requires UPLOAD_SOURCE_SECRET, ARCHIVE_BUCKET, and RABBITMQ_URL.
+#
+# How it works:
+#   1. envelope body_format: multipart parses the request into {fields, files}.
+#   2. Fan-out from `env` clones the envelope onto two branches.
+#   3. The S3 branch reshapes body to the single file object and publishes
+#      with payload: object — S3 PutObject writes decoded bytes with the
+#      vendor Content-Type and a filename suffix on the key.
+#   4. The info branch publishes fields + file metadata (no bytes) as the
+#      normal JSON envelope to RabbitMQ.
+#
+# Object payload body contract: {content: "<base64>", filename?, content_type?}.
+# Supported destinations: s3, redis_kv. Default payload (envelope) still writes
+# the JSON Message for every destination type.
+# The 4 MiB code-node limits account for base64 expansion of the 2 MiB file cap.
+server:
+  addr: ":8080"
+  max_body_bytes: 3145728
+
+destinations:
+  archive:
+    type: s3
+    s3:
+      region: "us-east-1"
+      bucket: "${ARCHIVE_BUCKET}"
+      create: true
+  events:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.uploads"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+
+flows:
+  upload_split:
+    nodes:
+      - {id: in, type: http_trigger, description: "Vendor posts multipart/form-data (fields + file).", path: /webhooks/upload-split, methods: [POST]}
+      - {id: body, type: read_body, description: "Buffers the whole request so HMAC can cover file bytes.", max_bytes: 3145728}
+      - {id: auth, type: auth, description: "Verifies HMAC over the raw multipart bytes before parsing.", scheme: hmac_sha256_hex, secret: "${UPLOAD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
+      - id: env
+        type: envelope
+        description: "Parses parts into {fields, files}. include_content keeps file bytes for the S3 branch."
+        body_format: multipart
+        multipart:
+          max_parts: 2
+          max_part_bytes: 2097152
+          include_content: true
+      - id: for_s3
+        type: code
+        description: "S3 object payload needs the file object itself as body (content + metadata)."
+        timeout: 50ms
+        max_input_bytes: 4194304
+        max_output_bytes: 4194304
+        script: |
+          const files = (input.body && input.body.files) || {};
+          const doc = files.document;
+          if (!doc) {
+            throw new Error('missing files.document');
+          }
+          return {body: doc, vars: input.vars || {}};
+      - id: for_info
+        type: code
+        description: "Info branch body: form fields + file metadata, no base64 payload."
+        timeout: 50ms
+        max_input_bytes: 4194304
+        script: |
+          const files = (input.body && input.body.files) || {};
+          const meta = {};
+          for (const [name, file] of Object.entries(files)) {
+            meta[name] = {
+              filename: file.filename || '',
+              content_type: file.content_type || '',
+              size: file.size || 0
+            };
+          }
+          return {
+            body: {
+              fields: (input.body && input.body.fields) || {},
+              files: meta
+            },
+            vars: input.vars || {}
+          };
+      - id: out_s3
+        type: publish
+        description: "Stores decoded file bytes under uploads/…/<id>-<filename> in S3."
+        destination: archive
+        target: uploads
+        payload: object
+      - {id: out_info, type: publish, description: "Publishes fields + file metadata to the events queue.", destination: events, target: uploads-meta, create: true}
+    edges:
+      - in>body
+      - body>auth
+      - auth>env
+      - env>for_s3
+      - env>for_info
+      - for_s3>out_s3
+      - for_info>out_info

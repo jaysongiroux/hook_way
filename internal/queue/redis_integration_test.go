@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
+
 	"github.com/redis/go-redis/v9"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 )
@@ -17,11 +19,10 @@ import (
 // self-skips when Docker is unavailable or the container fails to start.
 func startRedis(t *testing.T, image string) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := tcredis.Run(ctx, image)
-	if err != nil {
-		t.Skipf("redis container unavailable (%s): %v", image, err)
-	}
+	testenv.RequireContainer(t, err, "redis")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	url, err := container.ConnectionString(ctx)
 	if err != nil {
@@ -76,8 +77,7 @@ func TestRedisStreamPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisStreamPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Ready(ctx); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
@@ -94,8 +94,7 @@ func TestRedisStreamPublishRoundTrip(t *testing.T) {
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// Assert XLEN == 1.
 	length, err := raw.XLen(ctx, streamKey).Result()
 	if err != nil {
@@ -183,15 +182,13 @@ func TestRedisStreamKeyPrefixRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisStreamPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Publish(ctx, "pfx-dest", targetName, Message{ID: "pfx_evt_1"}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// The stream must live at "myapp:evt", not "evt".
 	prefixedKey := keyPrefix + ":" + targetName
 	if n, err := raw.XLen(ctx, prefixedKey).Result(); err != nil || n != 1 {
@@ -234,8 +231,7 @@ func TestRedisStreamMaxLenBounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisStreamPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	for i := range publish {
 		if err := pub.Publish(ctx, "maxlen-dest", targetName, Message{ID: fmt.Sprintf("m%d", i)}); err != nil {
 			t.Fatalf("Publish[%d]: %v", i, err)
@@ -243,8 +239,7 @@ func TestRedisStreamMaxLenBounds(t *testing.T) {
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	length, err := raw.XLen(ctx, targetName).Result()
 	if err != nil {
 		t.Fatalf("XLEN %q: %v", targetName, err)
@@ -275,8 +270,7 @@ func TestRedisXGroupCreateMkStreamBUSYGROUP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newRedisClient: %v", err)
 	}
-	defer ops.Close()
-
+	defer func() { _ = ops.Close() }()
 	const (
 		stream = "busygroup-test-stream"
 		group  = "busygroup-test-group"
@@ -321,8 +315,7 @@ func TestRedisStreamValkeyParity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisStreamPublisher (valkey): %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Ready(ctx); err != nil {
 		t.Fatalf("Ready (valkey): %v", err)
 	}
@@ -339,8 +332,7 @@ func TestRedisStreamValkeyParity(t *testing.T) {
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// Assert XLEN == 1.
 	if n, err := raw.XLen(ctx, targetName).Result(); err != nil || n != 1 {
 		t.Errorf("valkey XLEN: got %d, err=%v; want 1, nil", n, err)
@@ -416,8 +408,7 @@ func TestRedisListPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisListPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Ready(ctx); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
@@ -434,8 +425,7 @@ func TestRedisListPublishRoundTrip(t *testing.T) {
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// Assert LLEN == 1.
 	length, err := raw.LLen(ctx, listKey).Result()
 	if err != nil {
@@ -495,15 +485,13 @@ func TestRedisListKeyPrefixRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisListPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Publish(ctx, "pfx-list-dest", targetName, Message{ID: "pfx_list_1"}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// The list must live at "myapp:evt", not "evt".
 	prefixedKey := keyPrefix + ":" + targetName
 	if n, err := raw.LLen(ctx, prefixedKey).Result(); err != nil || n != 1 {
@@ -545,11 +533,9 @@ func TestRedisPubSubPublishRoundTrip(t *testing.T) {
 	// Redis Pub/Sub is fire-and-forget: a message published before the subscriber
 	// is connected is silently dropped.
 	subClient := rawRedisClient(t, redisURL)
-	defer subClient.Close()
-
+	defer func() { _ = subClient.Close() }()
 	sub := subClient.Subscribe(ctx, channel)
-	defer sub.Close()
-
+	defer func() { _ = sub.Close() }()
 	// sub.Receive(ctx) blocks until Redis sends the Subscription confirmation
 	// (a *redis.Subscription message). This guarantees the subscription is fully
 	// registered in Redis before we publish — no race, no sleep needed.
@@ -573,8 +559,7 @@ func TestRedisPubSubPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisPubSubPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Ready(ctx); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
@@ -644,14 +629,12 @@ func TestRedisPubSubKeyPrefixRoundTrip(t *testing.T) {
 	)
 
 	subClient := rawRedisClient(t, redisURL)
-	defer subClient.Close()
-
+	defer func() { _ = subClient.Close() }()
 	// Subscribe to the PREFIXED channel only. One Subscription confirmation is
 	// returned by sub.Receive(ctx), guaranteeing the subscription is active
 	// in Redis before we publish.
 	sub := subClient.Subscribe(ctx, prefixedChan)
-	defer sub.Close()
-
+	defer func() { _ = sub.Close() }()
 	if _, err := sub.Receive(ctx); err != nil {
 		t.Fatalf("subscribe confirmation: %v", err)
 	}
@@ -669,8 +652,7 @@ func TestRedisPubSubKeyPrefixRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisPubSubPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Publish(ctx, "pfx-pubsub-dest", targetName, Message{ID: "pfx_pubsub_1"}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -725,8 +707,7 @@ func TestRedisListMaxLenBounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisListPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	for i := range publish {
 		if err := pub.Publish(ctx, "list-maxlen-dest", targetName, Message{ID: fmt.Sprintf("m%d", i)}); err != nil {
 			t.Fatalf("Publish[%d]: %v", i, err)
@@ -734,8 +715,7 @@ func TestRedisListMaxLenBounds(t *testing.T) {
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	length, err := raw.LLen(ctx, targetName).Result()
 	if err != nil {
 		t.Fatalf("LLEN %q: %v", targetName, err)
@@ -783,8 +763,7 @@ func TestRedisKVPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisKVPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	if err := pub.Ready(ctx); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
@@ -801,8 +780,7 @@ func TestRedisKVPublishRoundTrip(t *testing.T) {
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// The key must exist at the rendered path: hw:ep_kv_payments:evt_kv_001
 	renderedKey := "hw:ep_kv_payments:evt_kv_001"
 
@@ -874,16 +852,14 @@ func TestRedisKVKeyPrefixRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisKVPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	msg := Message{ID: "pfx_kv_1", Endpoint: "ep_pfx"}
 	if err := pub.Publish(ctx, "pfx-kv-dest", targetName, msg); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	// The key must exist at the prefixed path.
 	prefixedKey := "myapp:ep_pfx:pfx_kv_1"
 	if val, err := raw.Get(ctx, prefixedKey).Result(); err != nil || val == "" {
@@ -920,16 +896,14 @@ func TestRedisKVTTLBounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRedisKVPublisher: %v", err)
 	}
-	defer pub.Close()
-
+	defer func() { _ = pub.Close() }()
 	msg := Message{ID: "ttl-evt-1"}
 	if err := pub.Publish(ctx, "ttl-kv-dest", "ttl-target", msg); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
 	raw := rawRedisClient(t, redisURL)
-	defer raw.Close()
-
+	defer func() { _ = raw.Close() }()
 	pttl, err := raw.PTTL(ctx, "ttl-test:ttl-evt-1").Result()
 	if err != nil {
 		t.Fatalf("PTTL: %v", err)

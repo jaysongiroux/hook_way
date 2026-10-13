@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 func TestRabbitMQReliabilityMetricsAreExposed(t *testing.T) {
@@ -54,6 +54,34 @@ hookway_rabbitmq_unroutable_total{destination_queue_id="billing",queue="billing-
 	}
 }
 
+func TestWebhookAccountedByteMetricsAreExposed(t *testing.T) {
+	m := New()
+	m.WebhookQueueBytes("notify", 1024, 64<<20)
+	if got := testutil.ToFloat64(m.webhookQueueBytes.WithLabelValues("notify")); got != 1024 {
+		t.Fatalf("used=%v", got)
+	}
+	if got := testutil.ToFloat64(m.webhookQueueByteCapacity.WithLabelValues("notify")); got != 64<<20 {
+		t.Fatalf("capacity=%v", got)
+	}
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, family := range families {
+		names[family.GetName()] = true
+	}
+	for _, name := range []string{"hookway_webhook_queue_accounted_bytes", "hookway_webhook_queue_accounted_capacity_bytes"} {
+		if !names[name] {
+			t.Fatalf("gauge not registered: %s", name)
+		}
+	}
+	m.WebhookQueueBytes("notify", 0, 64<<20)
+	if got := testutil.ToFloat64(m.webhookQueueBytes.WithLabelValues("notify")); got != 0 {
+		t.Fatalf("recovered used=%v", got)
+	}
+}
+
 func TestWebhookMetricsIncludeDestinationQueueID(t *testing.T) {
 	m := New()
 
@@ -67,7 +95,7 @@ func TestWebhookMetricsIncludeDestinationQueueID(t *testing.T) {
 # HELP hookway_http_requests_total HTTP requests handled by Hookway.
 # TYPE hookway_http_requests_total counter
 hookway_http_requests_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events",status="202"} 1
-# HELP hookway_publish_total RabbitMQ publish attempts.
+# HELP hookway_publish_total Publish attempts to a configured destination.
 # TYPE hookway_publish_total counter
 hookway_publish_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events",status="success"} 1
 # HELP hookway_rate_limited_total Rate limited webhook requests.
@@ -159,7 +187,7 @@ func TestMessagesEndpointsAndDestinationsMetricsAreExposed(t *testing.T) {
 
 	m.MessagePublished("paddle_billing", "billing", "billing-events")
 	m.Forbidden("paddle_billing", "billing", "billing-events")
-	m.ReplayRejected("paddle_billing", "billing", "billing-events")
+	m.DuplicateRejected("paddle_billing", "billing", "billing-events")
 	m.RequestDuration("paddle_billing", "billing", "billing-events", 202, 25*time.Millisecond)
 
 	m.RegisterConfig(config.Config{
@@ -188,16 +216,16 @@ hookway_endpoint_info{destination_queue_id="billing",endpoint="paddle_billing",p
 # HELP hookway_forbidden_total Webhook requests rejected by the endpoint IP allowlist.
 # TYPE hookway_forbidden_total counter
 hookway_forbidden_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
-# HELP hookway_messages_published_total Webhook messages successfully published to RabbitMQ.
+# HELP hookway_messages_published_total Webhook messages successfully published to a destination.
 # TYPE hookway_messages_published_total counter
 hookway_messages_published_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
-# HELP hookway_replay_rejected_total Webhook requests rejected as signature replays.
-# TYPE hookway_replay_rejected_total counter
-hookway_replay_rejected_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
+# HELP hookway_duplicate_rejected_total Webhook requests rejected by a replay_guard node as duplicates.
+# TYPE hookway_duplicate_rejected_total counter
+hookway_duplicate_rejected_total{destination_queue_id="billing",endpoint="paddle_billing",queue="billing-events"} 1
 `),
 		"hookway_messages_published_total",
 		"hookway_forbidden_total",
-		"hookway_replay_rejected_total",
+		"hookway_duplicate_rejected_total",
 		"hookway_endpoint_info",
 		"hookway_destination_info",
 	)
@@ -303,31 +331,6 @@ hookway_build_info{commit="abc1234",version="1.2.3"} 1
 	}
 }
 
-func TestReplayCaptureMetricsAreExposed(t *testing.T) {
-	m := New()
-
-	m.ReplayCaptured("paddle_billing")
-	m.ReplayCaptured("paddle_billing")
-	m.ReplayCaptureFailure("insert")
-	m.ReplayCaptureFailure("update")
-	m.ReplayCaptureFailure("update")
-
-	err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(`
-# HELP hookway_replay_captured_total Webhook events captured into the replay store.
-# TYPE hookway_replay_captured_total counter
-hookway_replay_captured_total{endpoint="paddle_billing"} 2
-# HELP hookway_replay_capture_failures_total Replay store capture/outcome-update failures (including recovered panics), by operation.
-# TYPE hookway_replay_capture_failures_total counter
-hookway_replay_capture_failures_total{op="insert"} 1
-hookway_replay_capture_failures_total{op="update"} 2
-`),
-		"hookway_replay_captured_total", "hookway_replay_capture_failures_total",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestMetricsImplementsRabbitMQMetricsHook(t *testing.T) {
 	var _ interface {
 		RabbitMQReconnect()
@@ -338,4 +341,82 @@ func TestMetricsImplementsRabbitMQMetricsHook(t *testing.T) {
 		ConfigLoadFailure(string)
 	} = New()
 	var _ = prometheus.Gauge(nil)
+}
+
+func TestCaptureMetrics(t *testing.T) {
+	m := New()
+	m.CaptureUploaded("orders")
+	m.CaptureDropped("orders", "buffer_full")
+	m.CaptureDropped("orders", "capacity")
+	m.SetCaptureBufferBytes(4096)
+	const want = `
+# HELP hookway_capture_buffer_bytes Bytes of captured failures and inspections waiting for upload, including in-flight uploads.
+# TYPE hookway_capture_buffer_bytes gauge
+hookway_capture_buffer_bytes 4096
+# HELP hookway_capture_dropped_total Captured failures dropped before reaching the replay service, by reason.
+# TYPE hookway_capture_dropped_total counter
+hookway_capture_dropped_total{reason="buffer_full"} 1
+hookway_capture_dropped_total{reason="capacity"} 1
+hookway_capture_dropped_total{reason="rejected"} 0
+hookway_capture_dropped_total{reason="shutdown"} 0
+hookway_capture_dropped_total{reason="upload_failed"} 0
+# HELP hookway_capture_total Captured failures by flow and outcome (uploaded or dropped).
+# TYPE hookway_capture_total counter
+hookway_capture_total{flow="orders",outcome="dropped"} 2
+hookway_capture_total{flow="orders",outcome="uploaded"} 1
+`
+	if err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(want),
+		"hookway_capture_total", "hookway_capture_dropped_total", "hookway_capture_buffer_bytes"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestControlMetrics(t *testing.T) {
+	m := New()
+	m.ControlRun("orders", "succeeded")
+	m.ControlRun("unknown", "rejected")
+	m.SetControlInflight(3)
+	const want = `
+# HELP hookway_control_inflight Redrives the control listener is running now.
+# TYPE hookway_control_inflight gauge
+hookway_control_inflight 3
+# HELP hookway_control_runs_total Deliver requests the control listener answered, by flow and outcome.
+# TYPE hookway_control_runs_total counter
+hookway_control_runs_total{flow="orders",outcome="succeeded"} 1
+hookway_control_runs_total{flow="unknown",outcome="rejected"} 1
+`
+	if err := testutil.GatherAndCompare(m.Registry(), strings.NewReader(want), "hookway_control_runs_total", "hookway_control_inflight"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every drop reason is exported at 0 from the start: an alert on increase()
+// cannot see the first drops of a series that appears already non-zero.
+func TestCaptureDropReasonsStartAtZero(t *testing.T) {
+	m := New()
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, f := range families {
+		if f.GetName() != "hookway_capture_dropped_total" {
+			continue
+		}
+		for _, s := range f.GetMetric() {
+			for _, l := range s.GetLabel() {
+				if l.GetName() == "reason" && s.GetCounter().GetValue() == 0 {
+					seen[l.GetValue()] = true
+				}
+			}
+		}
+	}
+	for _, reason := range CaptureDropReasons {
+		if !seen[reason] {
+			t.Errorf("hookway_capture_dropped_total{reason=%q} is not exported at 0", reason)
+		}
+	}
+	if len(CaptureDropReasons) != 5 {
+		t.Fatalf("CaptureDropReasons = %v", CaptureDropReasons)
+	}
 }

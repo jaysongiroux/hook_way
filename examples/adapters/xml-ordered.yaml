@@ -1,0 +1,37 @@
+# Explicit ordered XML adapter plus one uncached native token exchange and relay.
+# All element names, namespaces and resource paths are synthetic. This exercises
+# mechanism behavior; executed private golden fixtures are still a parity gate.
+server: {addr: ":8080", max_body_bytes: 20971520, max_inflight_requests: 16}
+credentials:
+  sample:
+    kind: token_exchange
+    token_url: https://login.example.net/token
+    allowed_origins: [https://api.example.net]
+    request_format: json
+    secret_parameters:
+      username: {provider: env, name: SAMPLE_USERNAME}
+      password: {provider: env, name: SAMPLE_PASSWORD}
+    token_path: token_field
+    timeout: 5s
+flows:
+  sample:
+    nodes:
+      - {id: in, type: http_trigger, path: /proxy/xml, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 20971520}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_INGRESS_TOKEN}, signature_header: X-Api-Key}
+      - {id: env, type: envelope, body_format: xml, xml: {max_bytes: 12000000, max_depth: 256, max_nodes: 100000}}
+      - id: prune
+        type: transform
+        kind: xml_ordered_prune
+        xml_adapter:
+          link: {local: LINK, namespace: "urn:sample"}
+          entity: {local: ENTITY, namespace: "urn:sample"}
+          extension_item: {local: ITEM, namespace: "urn:sample:extension"}
+          item_name: {local: NAME, namespace: "urn:sample:extension"}
+          item_value: {local: VALUE, namespace: "urn:sample:extension"}
+          sequence_attribute: SequenceIndex
+          placeholder_texts: [PlaceholderA, PlaceholderB]
+          optional_items: [OptionalFieldA, OptionalFieldB]
+      - {id: up, type: http_request, url: "https://api.example.net/xml", method: POST, body: transformed, credential: {profile: sample}, header_mode: replace, headers: {Content-Type: application/xml, Accept: application/xml}, remove_headers: [X-Api-Key], max_response_bytes: 20971520, timeout: 10s}
+      - {id: reply, type: respond, passthrough: true}
+    edges: [in>body, body>auth, auth>env, env>prune, prune>up, up>reply]

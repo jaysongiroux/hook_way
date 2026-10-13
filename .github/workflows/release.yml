@@ -1,108 +1,130 @@
-name: release
+# Manually cut a release from main, using an existing tag at that source commit.
+# Re-runs CI, then publishes the
+# Docker Hub images: core, `<image>-replay` and standalone `<image>-console`
+# (semver + latest for non-prereleases), syncs the Hub description, and opens
+# a GitHub Release. Branch and tag pushes do not publish.
+name: Release
 
 on:
-  push:
-    branches: ["main"]
-    tags: ["v*"]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag at the dispatched main commit (e.g. v1.2.3)
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
-env:
-  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
-  DOCKERHUB_IMAGE_NAME: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
-
 jobs:
-  release-check:
-    runs-on: ubuntu-latest
+  context:
+    name: Release context
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.out.outputs.tag }}
+      prerelease: ${{ steps.out.outputs.prerelease }}
+      sha: ${{ steps.source.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - id: out
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG_INPUT: ${{ inputs.tag }}
+        run: |
+          if [ "$EVENT" != "workflow_dispatch" ] || [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release must be manually dispatched from main" >&2
+            exit 1
+          fi
+          tag="$TAG_INPUT"
+          tag="${tag#refs/tags/}"
+          if [[ ${#tag} -gt 128 || ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Tag must look like v1.2.3 or v1.2.3-rc.1 (got: $tag)" >&2
+            exit 1
+          fi
+          if [[ "$tag" == *-* ]]; then
+            IFS='.' read -r -a identifiers <<< "${tag#*-}"
+            for identifier in "${identifiers[@]}"; do
+              if [[ "$identifier" =~ ^0[0-9]+$ ]]; then
+                echo "Numeric prerelease identifiers must not have leading zeroes" >&2
+                exit 1
+              fi
+            done
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$tag" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          go-version: "1.25.x"
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: source
+        env:
+          RELEASE_TAG: ${{ steps.out.outputs.tag }}
+        run: |
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Expected full event SHA" >&2; exit 1; }
+          sha="$(git rev-parse HEAD)"
+          event_sha="$(git rev-parse "$GITHUB_SHA^{commit}")"
+          tag_sha="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          if [ "$GITHUB_SHA" != "$event_sha" ] || [ "$sha" != "$event_sha" ] || [ "$sha" != "$tag_sha" ]; then
+            echo "Release tag must identify the dispatched main commit" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "$sha" refs/remotes/origin/main || {
+            echo "Release source must be a commit on origin/main; review and merge before tagging" >&2
+            exit 1
+          }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Checks
+    needs: context
+    uses: ./.github/workflows/reusable-ci.yml
+    with:
+      ref: ${{ needs.context.outputs.sha }}
+
+  publish:
+    name: Publish
+    needs: [context, checks]
+    runs-on: [ubuntu-latest]
+    timeout-minutes: 45
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+      DOCKERHUB_IMAGE_NAME: ${{ secrets.DOCKERHUB_IMAGE_NAME }}
+      TAG: ${{ needs.context.outputs.tag }}
+      PRERELEASE: ${{ needs.context.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26.9"
           cache: true
 
-      - name: Validate example configs
-        run: make validate-examples
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - name: Unit tests
-        run: make test
-
-      - name: Race tests
-        run: make test-race
-
-      - name: RabbitMQ integration tests
-        run: make integration-test
-
-      - name: AWS integration tests (LocalStack)
-        run: make aws-integration-test
-
-      - name: Redis integration tests (testcontainers)
-        run: make redis-integration-test
-
-      - name: Postgres integration tests (testcontainers)
-        run: make postgres-integration-test
-
-      - name: MongoDB integration tests (testcontainers)
-        run: make mongodb-integration-test
-
-      - name: Kafka integration tests (testcontainers)
-        run: make kafka-integration-test
-
-      - name: Webhook integration tests (testcontainers)
-        run: make webhook-integration-test
-
-      - name: Temporal integration tests (testcontainers)
-        run: make temporal-integration-test
-
-      - name: Replaystore integration tests (testcontainers)
-        run: make replaystore-integration-test
-
-      - name: Vet
-        run: make lint
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
         with:
-          node-version: "20"
-
-      - name: Install web deps
-        run: make web-install
-
-      - name: Web unit tests
-        run: make web-test
-
-      - name: Build UI (WASM + SPA)
-        run: make ui
-
-      - name: Docker build
-        run: make docker-build
-
-      - name: Vulnerability scan
-        id: trivy
-        uses: aquasecurity/trivy-action@0.35.0
-        with:
-          image-ref: hookway:local
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          limit-severities-for-sarif: true
-
-      - name: Upload vulnerability scan artifact
-        uses: actions/upload-artifact@v4
-        if: ${{ always() && steps.trivy.outcome != 'skipped' }}
-        with:
-          name: trivy-results
-          path: trivy-results.sarif
-          if-no-files-found: error
+          cosign-release: v3.1.3
 
       - name: Check Docker Hub publishing config
-        if: github.event_name != 'pull_request'
         run: |
           test -n "$DOCKERHUB_USERNAME" || (echo "Missing GitHub Actions secret DOCKERHUB_USERNAME" && exit 1)
           test -n "$DOCKERHUB_NAMESPACE" || (echo "Missing GitHub Actions secret DOCKERHUB_NAMESPACE" && exit 1)
@@ -112,50 +134,171 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker metadata
-        if: github.event_name != 'pull_request'
         id: docker-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{raw}}
+            type=semver,pattern={{raw}},value=${{ env.TAG }}
 
       - name: Resolve build version/commit
-        if: github.event_name != 'pull_request'
         id: build-info
-        # Mirrors the Makefile's VERSION/COMMIT so the pushed image's
-        # hookway_build_info and `hookway version` match a local `make
-        # docker-build` for the same commit.
+        # Release artifacts embed the tag and full commit for exact verification.
         run: |
-          echo "version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
-          echo "commit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Push Docker image
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
+        id: core
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          context: .
+          context: https://github.com/${{ github.repository }}.git#${{ needs.context.outputs.sha }}
+          target: core
           push: true
+          platforms: linux/amd64
+          sbom: true
+          provenance: mode=max
           tags: ${{ steps.docker-meta.outputs.tags }}
           labels: ${{ steps.docker-meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.build-info.outputs.version }}
             COMMIT=${{ steps.build-info.outputs.commit }}
 
+      - name: Docker metadata (replay)
+        id: docker-meta-replay
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}-replay
+          tags: |
+            type=semver,pattern={{raw}},value=${{ env.TAG }}
+
+      - name: Push replay Docker image
+        id: replay
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: https://github.com/${{ github.repository }}.git#${{ needs.context.outputs.sha }}
+          target: replay
+          push: true
+          platforms: linux/amd64
+          sbom: true
+          provenance: mode=max
+          tags: ${{ steps.docker-meta-replay.outputs.tags }}
+          labels: ${{ steps.docker-meta-replay.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build-info.outputs.version }}
+            COMMIT=${{ steps.build-info.outputs.commit }}
+
+      - name: Docker metadata (console)
+        id: docker-meta-console
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}-console
+          tags: |
+            type=semver,pattern={{raw}},value=${{ env.TAG }}
+
+      - name: Push console Docker image
+        id: console
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: https://github.com/${{ github.repository }}.git#${{ needs.context.outputs.sha }}
+          file: web/Dockerfile
+          push: true
+          platforms: linux/amd64
+          sbom: true
+          provenance: mode=max
+          tags: ${{ steps.docker-meta-console.outputs.tags }}
+          labels: ${{ steps.docker-meta-console.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build-info.outputs.version }}
+            COMMIT=${{ steps.build-info.outputs.commit }}
+
+      - name: Scan published core digest
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}@${{ steps.core.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Scan published replay digest
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}-replay@${{ steps.replay.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Scan published console digest
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: docker.io/${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}-console@${{ steps.console.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      - name: Sign, verify, and smoke-test the published immutable artifacts
+        env:
+          CORE_DIGEST: ${{ steps.core.outputs.digest }}
+          REPLAY_DIGEST: ${{ steps.replay.outputs.digest }}
+          CONSOLE_DIGEST: ${{ steps.console.outputs.digest }}
+          SOURCE_SHA: ${{ steps.build-info.outputs.commit }}
+        run: |
+          mkdir -p release-evidence
+          core="docker.io/$DOCKERHUB_NAMESPACE/$DOCKERHUB_IMAGE_NAME@$CORE_DIGEST"
+          replay="docker.io/$DOCKERHUB_NAMESPACE/$DOCKERHUB_IMAGE_NAME-replay@$REPLAY_DIGEST"
+          console="docker.io/$DOCKERHUB_NAMESPACE/$DOCKERHUB_IMAGE_NAME-console@$CONSOLE_DIGEST"
+          for image in "$core" "$replay" "$console"; do
+            cosign sign --yes -a "source-sha=$SOURCE_SHA" -a "release-tag=$TAG" "$image"
+          done
+          scripts/verify-release.sh "$core" "$replay" "$console" "$TAG" "$SOURCE_SHA" "$GITHUB_REPOSITORY" release-evidence
+          python3 scripts/release-smoke.py --core "$core" --replay "$replay" --console "$console" \
+            --version "$TAG" --commit "$SOURCE_SHA" --output release-evidence/install.json
+
+      - name: Retain release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-evidence
+          path: release-evidence/
+          if-no-files-found: error
+
+      - name: Promote verified stable images to latest
+        if: env.PRERELEASE == 'false'
+        env:
+          CORE_DIGEST: ${{ steps.core.outputs.digest }}
+          REPLAY_DIGEST: ${{ steps.replay.outputs.digest }}
+          CONSOLE_DIGEST: ${{ steps.console.outputs.digest }}
+        run: |
+          image="docker.io/$DOCKERHUB_NAMESPACE/$DOCKERHUB_IMAGE_NAME"
+          docker buildx imagetools create --tag "$image:latest" "$image@$CORE_DIGEST"
+          docker buildx imagetools create --tag "$image-replay:latest" "$image-replay@$REPLAY_DIGEST"
+          docker buildx imagetools create --tag "$image-console:latest" "$image-console@$CONSOLE_DIGEST"
+
       - name: Update Docker Hub description
-        if: github.event_name != 'pull_request'
-        uses: peter-evans/dockerhub-description@v5
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ env.DOCKERHUB_NAMESPACE }}/${{ env.DOCKERHUB_IMAGE_NAME }}
           readme-filepath: ./docs/dockerhub/README.md
           short-description: ${{ github.event.repository.description }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists"
+          else
+            extra=(--generate-notes --title "$TAG")
+            if [ "$PRERELEASE" = "true" ]; then
+              extra+=(--prerelease)
+            else
+              extra+=(--latest)
+            fi
+            gh release create "$TAG" "${extra[@]}"
+          fi
+          gh release upload "$TAG" release-evidence/* --clobber

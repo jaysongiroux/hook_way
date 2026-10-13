@@ -323,5 +323,5 @@ func (f *fakeRedisOpsWithGroupTracking) XGroupCreateMkStream(_ context.Context, 
 	if f.onXGroupCreate != nil {
 		f.onXGroupCreate(stream, group, start)
 	}
-	return f.fakeRedisOps.xgroupErr
+	return f.xgroupErr
 }

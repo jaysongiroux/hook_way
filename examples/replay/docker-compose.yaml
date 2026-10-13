@@ -1,0 +1,108 @@
+# Core with the optional replay service: two core replicas, two replay
+# replicas, PostgreSQL, a one-shot schema migration, and two HTTP sinks that
+# stand in for the destinations (`docker compose stop audit-sink` makes the
+# audit publish fail while orders still succeeds, so the failure is captured). Docker's service DNS round-robins "core" and
+# "replay" across their replicas, so each side reaches the other through one
+# name. See docs/operations/replay-service.md.
+#
+#   docker compose -f examples/replay/docker-compose.yaml up --build
+#
+# The token defaults are for local use only; export your own before `up`.
+x-replay-env: &replay-env
+  REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:-dev-capture-token-0123456789abcdef}
+  REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:-dev-control-token-0123456789abcdef}
+  REPLAY_OPERATOR_TOKEN: ${REPLAY_OPERATOR_TOKEN:-dev-operator-token-0123456789abcde}
+  REPLAY_METRICS_TOKEN: ${REPLAY_METRICS_TOKEN:-dev-metrics-token-0123456789abcdefg}
+  REPLAY_CONSOLE_ORIGIN: ${REPLAY_CONSOLE_ORIGIN:-http://localhost:8082}
+  REPLAY_DATABASE_URL: postgres://replay:replay@postgres:5432/replay?sslmode=disable
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: replay
+      POSTGRES_PASSWORD: replay
+      POSTGRES_DB: replay
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U replay -d replay"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: replay
+    command: ["migrate", "--config", "/etc/hookway-replay/replay.yaml"]
+    environment: *replay-env
+    volumes:
+      - ./replay.yaml:/etc/hookway-replay/replay.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  replay:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: replay
+    command: ["serve", "--config", "/etc/hookway-replay/replay.yaml"]
+    # Longer than workers.execution_timeout, so in-flight runs finalize.
+    stop_grace_period: 70s
+    deploy:
+      replicas: 2
+    environment: *replay-env
+    volumes:
+      - ./replay.yaml:/etc/hookway-replay/replay.yaml:ro
+    ports:
+      - "8090-8091:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  core:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: core
+    # Exceed core server.shutdown_total_timeout (60s), including redrives,
+    # publisher drains and capture cleanup.
+    stop_grace_period: 70s
+    deploy:
+      replicas: 2
+    environment:
+      HOOKWAY_CONFIG: /etc/hookway/config.yaml
+      ORDERS_WEBHOOK_SECRET: ${ORDERS_WEBHOOK_SECRET:-change-me}
+      REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:-dev-capture-token-0123456789abcdef}
+      REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:-dev-control-token-0123456789abcdef}
+    volumes:
+      - ./core.yaml:/etc/hookway/config.yaml:ro
+    ports:
+      - "8080-8081:8080"
+    depends_on:
+      replay:
+        condition: service_started
+      orders-sink:
+        condition: service_started
+      audit-sink:
+        condition: service_started
+
+  orders-sink:
+    image: hashicorp/http-echo:1.0
+    command: ["-listen=:8080", "-text=ok"]
+
+  audit-sink:
+    image: hashicorp/http-echo:1.0
+    command: ["-listen=:8080", "-text=ok"]
+
+  console:
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+    environment:
+      # Browser-reachable URL, never Docker service DNS. No API keys here.
+      REPLAY_API_URL: ${REPLAY_API_URL:-http://localhost:8090}
+    ports:
+      - "8082:8080"

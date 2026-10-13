@@ -1,0 +1,13 @@
+# Migration-only configuration: never use this file with serve.
+# The CLI validates HTTP settings even for migrate. These two validation-only
+# values derive from the job's own credential; no runtime HTTP keys enter the job.
+database:
+  url: "${REPLAY_MIGRATION_DATABASE_URL}"
+  max_conns: 2
+core:
+  control_url: "http://127.0.0.1:1"
+  control_token: "migration-only-${REPLAY_MIGRATION_PASSWORD}"
+keys:
+  - name: migration-only
+    token: "${REPLAY_MIGRATION_PASSWORD}"
+    scopes: [capture]

@@ -1,0 +1,24 @@
+# Keep approximately 20% of authenticated webhook requests.
+# 0 drops all; 1 keeps all. Each execution makes an independent decision.
+# Set WEBHOOK_SECRET before serving, then send signed JSON to /webhooks/sample.
+# Run: hookway serve --config examples/sample.yaml
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+destinations:
+  primary:
+    type: webhook
+    webhook:
+      url: "https://example.com/hooks"
+
+flows:
+  sampled_events:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: sample_events, type: sample, rate: 0.2}
+      - {id: send, type: publish, destination: primary, target: events}
+    edges: [in>body, body>auth, auth>env, env>sample_events, sample_events>send]

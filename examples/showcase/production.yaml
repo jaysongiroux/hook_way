@@ -1,0 +1,179 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+# Production showcase: gates, HMAC auth, replay protection, sampling, filtering, a
+# switch, transform, code, http_request with on_error, and fan-out publishes.
+# A second flow is the sync proxy; a third is a CIDR-trusted ingest (no_auth).
+# lookup is omitted: the standalone server has no lookup provider binding.
+#
+# Requires GITHUB_WEBHOOK_SECRET, ARCHIVE_BUCKET, RABBITMQ_URL, KAFKA_BROKER_*,
+# POSTGRES_URL, UPSTREAM_BASE, and PROXY_TOKEN in the environment.
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "10s"
+  max_body_bytes: 10485760
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+routing:
+  profiles: {sample: {account_id: "000000000000", credential_mode: sample}}
+  environments:
+    sample: {profiles: [sample], accounts: ["000000000000"], destination_prefix: internal}
+
+security:
+  trusted_proxy_headers: true
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
+
+destinations:
+  archive:
+    type: s3
+    s3:
+      region: "us-east-1"
+      bucket: "${ARCHIVE_BUCKET}"
+  orders:
+    type: sqs
+    sqs:
+      region: "us-east-1"
+  events:
+    type: kafka
+    kafka:
+      brokers:
+        - "${KAFKA_BROKER_1}"
+        - "${KAFKA_BROKER_2}"
+      acks: "all"
+  dlq:
+    type: rabbitmq
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.dlq"
+      exchange_type: "direct"
+      durable: true
+      declare_queues: true
+  warehouse:
+    type: postgres
+    postgres:
+      url: "${POSTGRES_URL}"
+      table: "webhook_events"
+
+flows:
+  github:
+    delivery_failure_policy: skip_failed
+    nodes:
+      - {id: in, type: http_trigger, description: "GitHub delivers push and pull request events here.", path: /webhooks/github, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects requests that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, store: local, description: "Sheds bursts per source IP before the body is read.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: "Verifies the GitHub HMAC signature over the raw body."
+        scheme: hmac_sha256_hex
+        secret: "${GITHUB_WEBHOOK_SECRET}"
+        signature_header: X-Hub-Signature-256
+      - {id: replay, type: replay_guard, store: local, description: "Drops redeliveries of an event already seen today.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - id: shape
+        type: json_validate
+        description: "Checks that the GitHub event has the fields used by the following nodes."
+        schema:
+          type: object
+          required: [repository, ref]
+          properties:
+            repository: {type: object, required: [private, full_name], properties: {private: {type: boolean}, full_name: {type: string}}}
+            ref: {type: string}
+      - {id: archive, type: publish, description: "Archives every verified event to S3, unfiltered.", destination: archive, target: github, create: true}
+      # Keep every event initially; lower the rate to sample the push branch.
+      - {id: sample_events, type: sample, description: "Randomly selects events for the push branch; 1 keeps all.", rate: 1}
+      - id: pushes
+        type: filter
+        description: "Keeps only pushes to public repositories."
+        on_no_match: drop
+        conditions:
+          - {source: header, path: X-GitHub-Event, operator: eq, value: push}
+          - {source: body, path: repository.private, operator: eq, value: false}
+      - id: map
+        type: transform
+        description: "Lifts the repository name into vars.repo for the ack URL."
+        kind: field_map
+        mappings:
+          - {from: body.repository.full_name, to: vars.repo}
+      - id: snippet
+        type: code
+        description: "Tags the payload so consumers can tell it came through Hookway."
+        timeout: 50ms
+        script: "return { body: input.body, vars: Object.assign({}, input.vars, { ingested: 'true' }) };"
+      - id: ack
+        type: http_request
+        description: "Acknowledges to the upstream API; a 5xx takes the on_error port."
+        url: "https://example.test/hooks/{repo}"
+        timeout: 5s
+        error_on_status: [5xx]
+        body: transformed
+      - id: route
+        type: switch
+        description: "Splits main-branch pushes from every other branch."
+        default: other
+        cases:
+          - port: main
+            when: {source: body, path: ref, operator: eq, value: "refs/heads/main"}
+      - id: gate
+        type: if_else
+        description: "Private repos (or a forced push) go to the order pipeline; the rest go to Kafka."
+        match: any
+        conditions:
+          - {source: body, path: repository.private, operator: eq, value: true}
+          - {source: header, path: X-Hookway-Force, operator: exists}
+      - {id: orders, type: publish, description: "Order pipeline queue for private main-branch pushes.", destination: orders, target: github-main, create: true}
+      - {id: public_main, type: publish, description: "Kafka topic for public main-branch pushes.", destination: events, target: github-public, create: true}
+      - {id: stream, type: publish, description: "Kafka topic for pushes to every other branch.", destination: events, target: github-pushes, create: true}
+      - {id: dlq, type: publish, description: "Dead letter queue for failed acknowledgements.", destination: dlq, target: github-failed, create: true}
+    edges:
+      - in>hops
+      - hops>rl
+      - rl>body
+      - body>auth
+      - auth>replay
+      - replay>env
+      - env>shape
+      - shape>archive
+      - shape>sample_events
+      - sample_events>pushes
+      - pushes>map
+      - map>snippet
+      - snippet>ack
+      - ack>route
+      - ack:on_error>dlq
+      - route:main>gate
+      - route:other>stream
+      - gate:true>orders
+      - gate:false>public_main
+
+  proxy:
+    nodes:
+      - {id: in, type: http_trigger, description: "Accepts any method under the upstream proxy prefix.", path: "/upstream/proxy/{rest...}", methods: [ANY]}
+      - {id: rl, type: rate_limit, store: local, description: "Caps proxy traffic at 120 requests per minute.", rpm: 120}
+      - {id: body, type: read_body, description: "Buffers the body so it can be signed and forwarded.", max_bytes: 10485760, allow_empty: true}
+      - {id: auth, type: auth, description: "Checks the shared proxy token in X-Auth.", scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
+      - {id: up, type: http_request, description: "Forwards method, query, and trailing path upstream.", url: "${UPSTREAM_BASE}/{rest}", forward_method: true, forward_query: true, remove_headers: [X-Auth], timeout: 10s}
+      - {id: resp, type: respond, description: "Returns the upstream response to the caller unchanged.", passthrough: true}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>up, up>resp]
+
+  trusted:
+    nodes:
+      - {id: in, type: http_trigger, description: "Internal job events published from inside the VPC.", path: /webhooks/internal/jobs, methods: [POST]}
+      - {id: allow, type: ip_allowlist, description: "Restricts the endpoint to private network ranges.", cidrs: ["10.0.0.0/8", "192.168.0.0/16"]}
+      - {id: rl, type: rate_limit, store: local, description: "Modest per-IP cap for internal callers.", rpm: 30, key_by: source_ip}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: no_auth, description: "Network trust replaces signature verification here."}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - {id: admission, type: route, description: "Admits the configured receiving environment, ignoring request overrides.", profile: sample, fixed: sample}
+      - {id: out, type: publish, description: "Inserts each event into the Postgres warehouse table.", destination: warehouse, target: '{route_prefix}-jobs', create: true}
+    edges: [in>allow, allow>rl, rl>body, body>auth, auth>env, env>admission, admission>out]

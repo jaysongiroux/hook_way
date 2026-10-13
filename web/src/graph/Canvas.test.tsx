@@ -1,16 +1,16 @@
-import { expect, test, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { expect, test, beforeEach, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { Canvas } from "./Canvas";
 import { useGraphStore } from "./store";
-import { createNode, resetIdCounters } from "./model";
+import { createNode, emptyDocument, resetIdCounters } from "./model";
 
 beforeEach(() => {
   resetIdCounters();
   useGraphStore.setState({
-    nodes: [createNode("endpoint", { x: 0, y: 0 }), createNode("destination", { x: 200, y: 0 })],
-    edges: [],
+    ...emptyDocument(),
+    nodes: [createNode("http_trigger", { x: 0, y: 0 }), createNode("publish", { x: 200, y: 0 })],
     selectedId: null,
   });
 });
@@ -24,4 +24,37 @@ test("Canvas mounts a React Flow surface fed by the store", () => {
     </MantineProvider>,
   );
   expect(container.querySelector(".react-flow")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Arrange nodes" })).toBeInTheDocument();
+});
+
+test("a single click selects a node without announcing the activation", () => {
+  const onNodeActivate = vi.fn();
+  const { container } = render(
+    <MantineProvider theme={theme}>
+      <div style={{ width: 800, height: 600 }}>
+        <Canvas onNodeActivate={onNodeActivate} />
+      </div>
+    </MantineProvider>,
+  );
+
+  fireEvent.click(container.querySelector(".react-flow__node")!);
+
+  expect(useGraphStore.getState().selectedId).toBe("http_trigger_1");
+  expect(onNodeActivate, "a single click should only select").not.toHaveBeenCalled();
+});
+
+test("a double click selects a node and announces the activation", () => {
+  const onNodeActivate = vi.fn();
+  const { container } = render(
+    <MantineProvider theme={theme}>
+      <div style={{ width: 800, height: 600 }}>
+        <Canvas onNodeActivate={onNodeActivate} />
+      </div>
+    </MantineProvider>,
+  );
+
+  fireEvent.doubleClick(container.querySelectorAll(".react-flow__node")[1]!);
+
+  expect(useGraphStore.getState().selectedId).toBe("publish_1");
+  expect(onNodeActivate).toHaveBeenCalledTimes(1);
 });

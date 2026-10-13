@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
 )
 
 type Publisher interface {
@@ -14,11 +16,12 @@ type Publisher interface {
 }
 
 type Message struct {
-	SchemaVersion  string `json:"schema_version"`
-	ID             string `json:"id"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-	RequestID      string `json:"request_id,omitempty"`
-	TraceID        string `json:"trace_id,omitempty"`
+	Publish        *deliverymeta.Publish `json:"-"`
+	SchemaVersion  string                `json:"schema_version"`
+	ID             string                `json:"id"`
+	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+	RequestID      string                `json:"request_id,omitempty"`
+	TraceID        string                `json:"trace_id,omitempty"`
 	// Traceparent is the outbound W3C traceparent header value: the inbound
 	// header verbatim when syntactically valid, otherwise one synthesized
 	// from TraceID. The webhook destination sets it on the outbound request
@@ -53,11 +56,23 @@ type Message struct {
 	// failed and is being redirected to a configured dead-letter destination. It
 	// is additive and omitted otherwise, so schema_version stays 1.0.
 	DeadLetter *DeadLetterMeta `json:"dead_letter,omitempty"`
-	// ReplayOf is set only on messages produced by the replay API: it carries
-	// the original captured event id this delivery is a replay of. It is
-	// additive and omitted for normal (first-time) deliveries, so
-	// schema_version stays 1.0.
-	ReplayOf string `json:"replay_of,omitempty"`
+	// MessageAttributes are SNS/SQS attributes. They ride on the AWS API,
+	// not inside the JSON envelope body.
+	MessageAttributes map[string]MessageAttribute `json:"-"`
+	// PayloadMode selects how object-capable destinations (s3, redis_kv) store
+	// the event. Empty or "envelope" writes the JSON Message; "object" writes
+	// ObjectBytes with ObjectContentType / ObjectFilename. In-memory only.
+	PayloadMode       string `json:"-"`
+	ObjectBytes       []byte `json:"-"`
+	ObjectContentType string `json:"-"`
+	ObjectFilename    string `json:"-"`
+}
+
+// MessageAttribute is one SNS/SQS message attribute. DataType is String,
+// Number, Binary, or String.Array (custom suffixes supported). StringValue is StringValue (JSON for arrays), or base64 for Binary.
+type MessageAttribute struct {
+	DataType    string
+	StringValue string
 }
 
 // DeadLetterMeta records why and how a webhook delivery was dead-lettered. It

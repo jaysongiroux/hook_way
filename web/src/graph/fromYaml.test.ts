@@ -1,21 +1,49 @@
 import { expect, test } from "vitest";
 import { fromYaml } from "./fromYaml";
 
-test("parses YAML into positioned nodes + edges", () => {
+test("parses flow YAML into positioned nodes + edges", () => {
   const yaml = `
 server: { addr: ":8080", max_body_bytes: 1048576 }
 destinations:
-  primary: { type: rabbitmq, rabbitmq: { url: u, exchange: e, exchange_type: direct } }
-endpoints:
+  primary: { type: webhook, webhook: { url: https://example.test } }
+flows:
   github:
-    enabled: true
-    path: /webhooks/github
-    auth: { type: hmac_sha256, scheme: hmac_sha256_hex, signature_header: X, secret: "\${S}" }
-    destinations: [{ destination: primary, target: gh, create: true }]
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: out, type: publish, destination: primary, target: gh}
+    edges: [in>out]
 `;
-  const { nodes, edges } = fromYaml(yaml);
-  expect(nodes.map((n) => n.id).sort()).toEqual(["destination:primary", "endpoint:github"]);
+  const { nodes, edges, activeFlow } = fromYaml(yaml);
+  expect(activeFlow).toBe("github");
+  expect(nodes.map((n) => n.id).sort()).toEqual(["in", "out"]);
   expect(edges).toHaveLength(1);
-  // positions assigned by dagre (not all zero)
   expect(nodes.some((n) => n.position.x !== 0 || n.position.y !== 0)).toBe(true);
+});
+
+test("layouts inactive flows so they are not stacked at the origin", () => {
+  const yaml = `
+server: { addr: ":8080" }
+destinations:
+  primary: { type: webhook, webhook: { url: https://example.test } }
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /github, methods: [POST]}
+      - {id: out, type: publish, destination: primary, target: gh}
+    edges: [in>out]
+  billing:
+    nodes:
+      - {id: in, type: http_trigger, path: /billing, methods: [POST]}
+      - {id: out, type: publish, destination: primary, target: bill}
+    edges: [in>out]
+`;
+  const doc = fromYaml(yaml);
+  const billing = doc.otherFlows.billing.nodes;
+  expect(billing).toHaveLength(2);
+  expect(billing[0].position).not.toEqual(billing[1].position);
+});
+
+test("requires a core YAML mapping", () => {
+  expect(() => fromYaml("# comments only\n")).toThrow(/must be a YAML mapping/);
+  expect(() => fromYaml("null\n")).toThrow(/must be a YAML mapping/);
 });

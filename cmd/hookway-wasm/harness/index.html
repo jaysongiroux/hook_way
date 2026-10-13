@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <title>Hookway WASM validator harness</title>
   <style>
-    body { font: 14px/1.5 system-ui, sans-serif; color: #152033; margin: 24px; max-width: 900px; }
+    body { font: 14px/1.5 system-ui, sans-serif; color: #14181F; margin: 24px; max-width: 900px; }
     textarea { width: 100%; height: 220px; font-family: ui-monospace, monospace; }
-    pre { background: #f8faff; padding: 12px; border-radius: 8px; overflow: auto; }
+    pre { background: #EBEEF2; padding: 12px; border-radius: 8px; overflow: auto; }
     button { margin-right: 8px; }
   </style>
 </head>
@@ -16,7 +16,20 @@
   <textarea id="yaml" spellcheck="false">
 server:
   addr: ":8080"
-endpoints: {}
+  max_body_bytes: 1048576
+destinations:
+  sink:
+    type: webhook
+    webhook: {url: "https://example.test/hooks"}
+flows:
+  demo:
+    nodes:
+      - {id: in, type: http_trigger, description: "Demo endpoint.", path: /webhooks/demo, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: sink, target: demo}
+    edges: [in>body, body>auth, auth>env, env>out]
 </textarea>
   <p>
     <button id="validate" disabled>hookwayValidate()</button>

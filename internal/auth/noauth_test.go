@@ -26,9 +26,6 @@ func TestNewVerifierBuildsNoAuthScheme(t *testing.T) {
 }
 
 func TestNoAuthSchemeMetadata(t *testing.T) {
-	if !SchemeRegistered(SchemeNoAuth) {
-		t.Fatal("no_auth scheme should be registered")
-	}
 	if SchemeRequiresTimestamp(SchemeNoAuth) {
 		t.Fatal("no_auth scheme must not require a timestamp")
 	}

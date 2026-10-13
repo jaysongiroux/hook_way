@@ -3,15 +3,17 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/auth"
-	"github.com/jasongiroux/hookway/internal/filter"
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/auth"
+	"github.com/jaysongiroux/hook_way/internal/egress"
+	"github.com/jaysongiroux/hook_way/internal/filter"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // targetLiteral constrains the literal (non-placeholder) text of a templated
@@ -24,9 +26,26 @@ var targetLiteral = regexp.MustCompile(`^[a-zA-Z0-9._-]*$`)
 var pgIdentifier = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type ValidationIssue struct {
+	Source     string
 	Field      string
 	Message    string
 	Suggestion string
+	Severity   string
+}
+
+const (
+	SeverityError   = "error"
+	SeverityWarning = "warning"
+)
+
+// EffectiveSeverity preserves the historical meaning of a zero-value issue:
+// validation issues are errors unless a caller explicitly marks one as
+// a warning.
+func (i ValidationIssue) EffectiveSeverity() string {
+	if i.Severity == "" {
+		return SeverityError
+	}
+	return i.Severity
 }
 
 type ConfigValidationError struct {
@@ -38,6 +57,10 @@ func (e ConfigValidationError) Error() string {
 	b.WriteString("config validation failed")
 	for _, issue := range e.Issues {
 		b.WriteString("\n- ")
+		if issue.Source != "" {
+			b.WriteString(issue.Source)
+			b.WriteString(": ")
+		}
 		b.WriteString(issue.Field)
 		b.WriteString(": ")
 		b.WriteString(issue.Message)
@@ -58,28 +81,69 @@ func validationError(field, message, suggestion string) ValidationIssue {
 	return ValidationIssue{Field: field, Message: message, Suggestion: suggestion}
 }
 
-func validationErrors(issues ...ValidationIssue) []ValidationIssue {
-	var out []ValidationIssue
-	for _, issue := range issues {
-		if issue.Field != "" {
-			out = append(out, issue)
+// ValidationIssues validates only process-scoped configuration. The shared
+// contract allows no destinations because a flow may only respond to its caller.
+func (s SharedConfig) ValidationIssues() []ValidationIssue {
+	return normalizeIssueSeverities(remapConnectionIssues(s.ConnectionOf, validationIssues(s.asConfig())))
+}
+
+// remapConnectionIssues re-points issues at the YAML path the operator wrote.
+// validationIssues runs against the post-merge config, so a value supplied by
+// a connection is reported as "destinations.events.postgres.url" even though
+// the file says "connections.pg_main.url".
+//
+// This is not cosmetic. configapi.ValidateWithEnv downgrades a structural
+// error to a warning when the field's value still contains an unresolved
+// "${", and it finds that value by walking the issue's dotted path through the
+// parsed YAML. A path that does not exist in the document resolves to nothing,
+// no downgrade happens, and `hookway validate --json` hard-fails in CI for
+// every connection-based config whose secrets are not exported -- which is
+// precisely the workflow that contract exists to support.
+func remapConnectionIssues(connectionOf map[string]ConnectionRef, issues []ValidationIssue) []ValidationIssue {
+	if len(connectionOf) == 0 {
+		return issues
+	}
+	for i, issue := range issues {
+		owner, rest, ok := splitOwnerPath(issue.Field)
+		if !ok {
+			continue
 		}
+		ref, bound := connectionOf[owner]
+		if !bound {
+			continue
+		}
+		// rest is "<block>.<path>"; drop the block, because a connection is
+		// authored flat rather than under a per-type block.
+		_, path, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		// Only connection-owned fields move. A sink field such as
+		// destinations.events.postgres.table stays where the operator wrote it.
+		if _, owned := ownedConnPaths(ref.Type)[path]; !owned {
+			continue
+		}
+		issues[i].Field = joinYAMLPath(joinYAMLPath("connections", ref.Name), path)
+		issues[i].Message = issue.Message + fmt.Sprintf(" (via %s.connection)", owner)
 	}
-	return out
+	return issues
 }
 
-func configValidationError(issues []ValidationIssue) error {
-	if len(issues) == 0 {
-		return nil
+// splitOwnerPath splits an issue field into the owner whose connection binding
+// applies ("destinations.events") and the remainder.
+func splitOwnerPath(field string) (owner, rest string, ok bool) {
+	after, found := strings.CutPrefix(field, "destinations.")
+	if !found {
+		return "", "", false
 	}
-	return ConfigValidationError{Issues: issues}
+	id, rest, found := strings.Cut(after, ".")
+	if !found {
+		return "", "", false
+	}
+	return "destinations." + id, rest, true
 }
 
-func (c Config) Validate() error {
-	return configValidationError(c.ValidationIssues())
-}
-
-func (c Config) ValidationIssues() []ValidationIssue {
+func validationIssues(c Config) []ValidationIssue {
 	var issues []ValidationIssue
 	if c.Server.Addr == "" {
 		issues = append(issues, validationError("server.addr", "listen address is required", "set server.addr to a host:port such as \":8080\""))
@@ -89,6 +153,21 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	}
 	if c.Server.MaxInflightRequests < maxInflightRequestsUnlimited {
 		issues = append(issues, validationError("server.max_inflight_requests", "must be -1 (unlimited) or a positive integer", fmt.Sprintf("omit the field or set 0 to use the default of %d, or -1 to disable the limit", defaultMaxInflightRequests)))
+	}
+	if c.Server.MaxPendingRequests < 0 || c.Server.AdmissionWaitTimeout < 0 || (c.Server.MaxPendingRequests > 0) != (c.Server.AdmissionWaitTimeout > 0) {
+		issues = append(issues, validationError("server.max_pending_requests", "waiting requires a positive max_pending_requests and admission_wait_timeout together", "omit both for immediate overload rejection"))
+	}
+	if c.Server.MaxPendingRequests > 0 && c.Server.MaxInflightRequests <= 0 {
+		issues = append(issues, validationError("server.max_pending_requests", "waiting requires a finite max_inflight_requests", "set an execution limit such as 256"))
+	}
+	if c.Server.AdmissionWaitTimeout > 0 && (c.Server.AdmissionWaitTimeout >= c.Server.ReadTimeout || c.Server.AdmissionWaitTimeout >= c.Server.WriteTimeout || c.Server.AdmissionWaitTimeout >= c.Server.ShutdownTimeout) {
+		issues = append(issues, validationError("server.admission_wait_timeout", "must be shorter than read, write and shutdown timeouts", "reserve time after waiting to read, process and respond"))
+	}
+	if c.Server.ShutdownDelay < 0 {
+		issues = append(issues, validationError("server.shutdown_delay", "must be zero or a positive duration", "use zero for immediate drain or a delay such as 5s for load-balancer withdrawal"))
+	}
+	if c.Server.ShutdownTotalTimeout < 0 || (c.Server.ShutdownTotalTimeout > 0 && (c.Server.ShutdownDelay >= c.Server.ShutdownTotalTimeout || c.Server.ShutdownTimeout >= c.Server.ShutdownTotalTimeout-c.Server.ShutdownDelay)) {
+		issues = append(issues, validationError("server.shutdown_total_timeout", "must exceed shutdown_delay plus shutdown_timeout", "reserve additional time for replay redrives, sequential asynchronous publisher drains, and replay capture cleanup"))
 	}
 	if c.Server.FanoutConcurrency < 0 {
 		issues = append(issues, validationError("server.fanout_concurrency", "must be zero (default) or a positive integer", "set a bound such as 8"))
@@ -117,6 +196,11 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fmt.Sprintf("security.forwarded_header_allowlist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"X-Request-ID\" or \"Content-Type\""))
 		}
 	}
+	for i, header := range c.Logging.HeaderAllowlist {
+		if !safeHeaderName.MatchString(header) {
+			issues = append(issues, validationError(fmt.Sprintf("logging.header_allowlist[%d]", i), "header name is empty or invalid", "use HTTP header names such as \"X-Request-ID\" or \"Content-Type\""))
+		}
+	}
 	for i, entry := range c.Security.TrustedProxies {
 		if net.ParseIP(entry) == nil {
 			if _, _, err := net.ParseCIDR(entry); err != nil {
@@ -127,19 +211,16 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	if c.Security.LoopProtection.MaxHops < 0 {
 		issues = append(issues, validationError("security.loop_protection.max_hops", "must be zero (use the default) or a positive integer", "set a small ceiling such as 3, or omit to use the default"))
 	}
-	if len(c.Destinations) == 0 {
-		issues = append(issues, validationError("destinations", "at least one destination is required", "add destinations.billing with type \"rabbitmq\""))
-	}
 	for id, dest := range c.Destinations {
 		fieldPrefix := "destinations." + id
 		if !safeName.MatchString(id) {
 			issues = append(issues, validationError(fieldPrefix, "destination id contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
 		}
 		if dest.Type == "" {
-			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", or \"temporal\""))
-		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
+			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"lambda\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", or \"temporal\""))
+		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "lambda" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
 			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" && dest.Type != "temporal" {
-			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", and \"temporal\""))
+			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"lambda\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", and \"temporal\""))
 		}
 		if dest.Type == "sqs" {
 			if dest.SQS.Region == "" {
@@ -149,6 +230,17 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		if dest.Type == "sns" {
 			if dest.SNS.Region == "" {
 				issues = append(issues, validationError(fieldPrefix+".sns.region", "region is required for sns destinations", "set region to an AWS region such as \"us-east-1\""))
+			}
+		}
+		if dest.Type == "lambda" {
+			if dest.Lambda.Region == "" {
+				issues = append(issues, validationError(fieldPrefix+".lambda.region", "region is required for lambda destinations", "set region to an AWS region such as \"us-east-1\""))
+			}
+			switch dest.Lambda.InvocationType {
+			case "", "Event", "RequestResponse":
+				// ok
+			default:
+				issues = append(issues, validationError(fieldPrefix+".lambda.invocation_type", fmt.Sprintf("%q is not supported", dest.Lambda.InvocationType), "use \"Event\" or \"RequestResponse\", or omit for Event"))
 			}
 		}
 		if dest.Type == "s3" {
@@ -191,6 +283,9 @@ func (c Config) ValidationIssues() []ValidationIssue {
 		}
 		if dest.Type == "webhook" {
 			w := dest.Webhook
+			if authority, err := vars.Parse(urlAuthority(w.URL)); err == nil && w.AllowPrivateTargets && !authority.HasPlaceholders() {
+				issues = append(issues, validationError(fieldPrefix+".webhook.allow_private_targets", "has no effect unless the url host contains a {variable}", "omit this setting for literal operator-configured hosts; they already support local/private targets"))
+			}
 			if w.URL == "" {
 				issues = append(issues, validationError(fieldPrefix+".webhook.url", "url is required for webhook destinations", "set url to an http(s) endpoint such as \"https://api.example.com/hooks\""))
 			} else if !strings.HasPrefix(w.URL, "http://") && !strings.HasPrefix(w.URL, "https://") {
@@ -350,9 +445,6 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 		}
 	}
-	if len(c.Endpoints) == 0 {
-		issues = append(issues, validationError("endpoints", "at least one endpoint is required", "add an endpoint such as endpoints.billing"))
-	}
 	if c.Metrics.Enabled && (c.Metrics.Path == "" || c.Metrics.Path[0] != '/') {
 		issues = append(issues, validationError("metrics.path", "must start with / when metrics are enabled", "set metrics.path to \"/metrics\""))
 	}
@@ -362,76 +454,18 @@ func (c Config) ValidationIssues() []ValidationIssue {
 	default:
 		issues = append(issues, validationError("logging.level", fmt.Sprintf("%q is not supported", c.Logging.Level), "use \"debug\", \"info\", \"warn\", or \"error\", or omit for the default of \"info\""))
 	}
-	if c.RateLimit.Enabled {
-		if c.RateLimit.RequestsPerMinute <= 0 {
-			issues = append(issues, validationError("rate_limit.requests_per_minute", "must be positive when rate limiting is enabled", "set a value such as 120"))
-		}
-		if c.RateLimit.Burst <= 0 {
-			issues = append(issues, validationError("rate_limit.burst", "must be positive when rate limiting is enabled", "set a value such as 20"))
-		}
-		if c.RateLimit.KeyBy != "ip" {
-			issues = append(issues, validationError("rate_limit.key_by", "only ip is supported for MVP", "set rate_limit.key_by to \"ip\""))
-		}
-	}
-	if c.Replay.Enabled {
-		if c.Replay.Postgres.URL == "" {
-			issues = append(issues, validationError("replay.postgres.url", "a Postgres URL is required when replay is enabled", "set replay.postgres.url, e.g. ${REPLAY_DB_URL}"))
-		}
-		if c.Security.APIKey == "" {
-			issues = append(issues, validationError("replay.enabled", "the replay API re-injects traffic and must be authenticated; set security.api_key when replay is enabled", "set security.api_key (e.g. ${REPLAY_API_KEY}) or disable replay"))
-		}
-		if c.Replay.Addr == "" {
-			issues = append(issues, validationError("replay.addr", "listen address is required when replay is enabled", "set replay.addr to a host:port such as \":9091\""))
-		}
-		if c.Replay.TTL < 0 {
-			issues = append(issues, validationError("replay.ttl", "must be zero (keep forever) or a positive duration", "168h or omit"))
-		}
-		if c.Replay.MaxEvents < 0 {
-			issues = append(issues, validationError("replay.max_events", "must be zero (no cap) or a positive integer", "1000000 or omit"))
-		}
-		if c.Replay.CleanupInterval < 0 {
-			issues = append(issues, validationError("replay.cleanup_interval", "must be a positive duration", "omit to use the 1h default"))
-		}
-		issues = append(issues, postgresConnValidationIssues("replay.postgres", c.Replay.Postgres)...)
-	}
 	var endpointPaths []compiledEndpointPath
 	queueOptions := map[string]RabbitMQQueueOptions{}
 	sqsTargetSettings := map[string]sqsRouteSettings{}
 	snsTargetSettings := map[string]snsRouteSettings{}
 	temporalTargetSettings := map[string]TemporalEndpointOptions{}
-	rabbitFallbackFields := map[string]string{}
-	sqsFallbackFields := map[string]string{}
-	snsFallbackFields := map[string]string{}
-	// Register every fallback before validating authored routes. Endpoints are
-	// stored in a map, so doing this inside the main loop made the reported
-	// conflict depend on map iteration order.
-	for name, endpoint := range c.Endpoints {
-		if !endpoint.Enabled {
-			continue
-		}
-		fb, ok := endpoint.FallbackRoute()
-		if !ok {
-			continue
-		}
-		dest, ok := c.Destinations[fb.Destination]
-		if !ok {
-			continue
-		}
-		field := "endpoints." + name + ".on_unresolved_variable.target"
-		key := fb.Destination + "\x00" + fb.Target
-		switch dest.Type {
-		case "sqs":
-			sqsTargetSettings[key] = sqsRouteSettings{}
-			sqsFallbackFields[key] = field
-		case "sns":
-			snsTargetSettings[key] = snsRouteSettings{}
-			snsFallbackFields[key] = field
-		case "rabbitmq", "":
-			queueOptions[key] = RabbitMQQueueOptions{}
-			rabbitFallbackFields[key] = field
-		}
+	endpointNames := make([]string, 0, len(c.Endpoints))
+	for name := range c.Endpoints {
+		endpointNames = append(endpointNames, name)
 	}
-	for name, endpoint := range c.Endpoints {
+	sort.Strings(endpointNames)
+	for _, name := range endpointNames {
+		endpoint := c.Endpoints[name]
 		fieldPrefix := "endpoints." + name
 		if !safeName.MatchString(name) {
 			issues = append(issues, validationError(fieldPrefix, "endpoint name contains unsupported characters", "use letters, numbers, dot, underscore, or hyphen only"))
@@ -456,6 +490,34 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			issues = append(issues, validationError(fieldPrefix+".destinations", "at least one destination is required for enabled endpoints", "add destination objects that reference destinations entries"))
 		}
 		seenRoutes := map[string]struct{}{}
+		// The fallback route carries no per-route options, yet the factory
+		// builds one target per (destination, target) across all endpoints
+		// with first-wins semantics over map iteration. Register it with
+		// zero options so a shared target that sets any is reported instead
+		// of provisioned nondeterministically.
+		if fb, ok := endpoint.FallbackRoute(); ok {
+			if dest, ok := c.Destinations[fb.Destination]; ok {
+				fbField := fieldPrefix + ".on_unresolved_variable.target"
+				key := fb.Destination + "\x00" + fb.Target
+				switch dest.Type {
+				case "sqs":
+					if prev, ok := sqsTargetSettings[key]; ok && !reflect.DeepEqual(prev, sqsRouteSettings{}) {
+						issues = append(issues, validationError(fbField, "shares an sqs target with a route that sets sqs_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
+					}
+					sqsTargetSettings[key] = sqsRouteSettings{}
+				case "sns":
+					if prev, ok := snsTargetSettings[key]; ok && !reflect.DeepEqual(prev, snsRouteSettings{}) {
+						issues = append(issues, validationError(fbField, "shares an sns target with a route that sets sns_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
+					}
+					snsTargetSettings[key] = snsRouteSettings{}
+				case "rabbitmq", "":
+					if prev, ok := queueOptions[key]; ok && prev != (RabbitMQQueueOptions{}) {
+						issues = append(issues, validationError(fbField, "shares a RabbitMQ queue with a route that sets queue_options; the fallback route carries none", "use a dedicated fallback target, or remove queue_options from the shared route"))
+					}
+					queueOptions[key] = RabbitMQQueueOptions{}
+				}
+			}
+		}
 		for i, destination := range endpoint.Destinations {
 			field := fmt.Sprintf("%s.destinations[%d]", fieldPrefix, i)
 			if destination.Destination == "" {
@@ -525,11 +587,7 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			for _, routeKey := range routeKeys {
 				if previous, ok := queueOptions[routeKey]; ok && previous != destination.QueueOptions {
-					if fallbackField, isFallback := rabbitFallbackFields[routeKey]; isFallback {
-						issues = append(issues, validationError(fallbackField, "shares a RabbitMQ queue with a route that sets queue_options; the fallback route carries none", "use a dedicated fallback target, or remove queue_options from the shared route"))
-					} else {
-						issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
-					}
+					issues = append(issues, validationError(field+".queue_options", "cannot differ between endpoints that share a RabbitMQ queue", "use one queue per endpoint when queue arguments need to differ"))
 					break
 				}
 				queueOptions[routeKey] = destination.QueueOptions
@@ -605,16 +663,15 @@ func (c Config) ValidationIssues() []ValidationIssue {
 					}
 				}
 			}
+			if err := ValidateBrokerAttributes(dest.Type, strings.HasSuffix(destination.Target, ".fifo"), destination.BrokerAttributes); err != nil {
+				issues = append(issues, validationError(field+".broker_attributes", err.Error(), ""))
+			}
 			// SQS cross-endpoint consistency
 			if destOK && dest.Type == "sqs" {
-				cur := sqsRouteSettings{opts: destination.SQSOptions, fifo: destination.FIFO}
+				cur := sqsRouteSettings{opts: destination.SQSOptions, fifo: destination.FIFO, attrs: destination.BrokerAttributes}
 				for _, routeKey := range routeKeys {
 					if prev, ok := sqsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
-						if fallbackField, isFallback := sqsFallbackFields[routeKey]; isFallback {
-							issues = append(issues, validationError(fallbackField, "shares an sqs target with a route that sets sqs_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
-						} else {
-							issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
-						}
+						issues = append(issues, validationError(field+".sqs_options", "cannot differ between endpoints that share an sqs target", "use one queue per endpoint when sqs options need to differ"))
 						break
 					}
 					sqsTargetSettings[routeKey] = cur
@@ -622,14 +679,10 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 			// SNS cross-endpoint consistency
 			if destOK && dest.Type == "sns" {
-				cur := snsRouteSettings{opts: destination.SNSOptions, fifo: destination.FIFO}
+				cur := snsRouteSettings{opts: destination.SNSOptions, fifo: destination.FIFO, attrs: destination.BrokerAttributes}
 				for _, routeKey := range routeKeys {
 					if prev, ok := snsTargetSettings[routeKey]; ok && !reflect.DeepEqual(prev, cur) {
-						if fallbackField, isFallback := snsFallbackFields[routeKey]; isFallback {
-							issues = append(issues, validationError(fallbackField, "shares an sns target with a route that sets sns_options or fifo; the fallback route carries none", "use a dedicated fallback target, or remove the options from the shared route"))
-						} else {
-							issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
-						}
+						issues = append(issues, validationError(field+".sns_options", "cannot differ between endpoints that share an sns target", "use one queue per endpoint when sns options need to differ"))
 						break
 					}
 					snsTargetSettings[routeKey] = cur
@@ -753,6 +806,7 @@ func (c Config) ValidationIssues() []ValidationIssue {
 			}
 		}
 	}
+	issues = append(issues, replayIssues(c)...)
 	return issues
 }
 
@@ -782,13 +836,15 @@ func filterValidationIssues(fieldPrefix string, filters []FilterConditionConfig)
 }
 
 type sqsRouteSettings struct {
-	opts SQSEndpointOptions
-	fifo *FIFOConfig
+	attrs map[string]string
+	opts  SQSEndpointOptions
+	fifo  *FIFOConfig
 }
 
 type snsRouteSettings struct {
-	opts SNSEndpointOptions
-	fifo *FIFOConfig
+	attrs map[string]string
+	opts  SNSEndpointOptions
+	fifo  *FIFOConfig
 }
 
 func sqsOptionsValidationIssues(fieldPrefix string, opts SQSEndpointOptions) []ValidationIssue {
@@ -889,7 +945,7 @@ func endpointPathIssues(fieldPrefix string, endpoint EndpointConfig) (vars.PathP
 	}
 	pp, err := vars.ParsePath(endpoint.Path)
 	if err != nil {
-		return vars.PathPattern{}, false, append(issues, validationError(fieldPrefix+".path", "path is malformed: "+err.Error(), "use literal segments or whole-segment placeholders such as \"/webhooks/{envName}/digifi\""))
+		return vars.PathPattern{}, false, append(issues, validationError(fieldPrefix+".path", "path is malformed: "+err.Error(), "use literal segments or whole-segment placeholders such as \"/webhooks/{envName}/events\""))
 	}
 	for _, seg := range pp.Names() {
 		found := false
@@ -1198,12 +1254,12 @@ func webhookURLTemplateIssues(field, rawURL string) []ValidationIssue {
 		return nil
 	}
 	authority := urlAuthority(rawURL)
-	if !strings.Contains(authority, "{") {
-		return nil
-	}
 	authTpl, err := vars.Parse(authority)
 	if err != nil {
 		return []ValidationIssue{validationError(field, "url host template is malformed: "+err.Error(), "use {variable} placeholders with balanced braces")}
+	}
+	if !authTpl.HasPlaceholders() {
+		return nil
 	}
 	suffix := authTpl.LiteralSuffix()
 	host := suffix
@@ -1219,14 +1275,7 @@ func webhookURLTemplateIssues(field, rawURL string) []ValidationIssue {
 // urlAuthority returns the authority (host[:port]) of a raw, possibly
 // templated URL without parsing it, so placeholders survive intact.
 func urlAuthority(rawURL string) string {
-	rest := rawURL
-	if i := strings.Index(rawURL, "://"); i >= 0 {
-		rest = rawURL[i+3:]
-	}
-	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		rest = rest[:slash]
-	}
-	return rest
+	return egress.Authority(rawURL)
 }
 
 // describeBindings renders enumerated bindings for error messages.
@@ -1248,16 +1297,11 @@ func describeBindings(b map[string]string) string {
 
 // postgresConnValidationIssues validates the fields shared by every Postgres
 // connection block: schema/table identifier safety, max_conns range, and
-// mutual-TLS both-or-neither. It is used by both the postgres-destination
-// path and the replay-store path (see rawPostgresConfig / convertPostgresConfig
-// in destinations.go), so the two never drift.
+// mutual-TLS both-or-neither. It is used by the postgres-destination path.
 //
-// It deliberately does NOT decide whether url or table are required -- that
-// differs by caller: a postgres destination always requires both a url and a
-// table (its single sink table name), while the replay store only requires a
-// url once enabled and treats table as an optional prefix override (see
-// ReplayConfig's doc comment). Callers check those themselves with
-// context-specific field names and messages before calling this helper.
+// It deliberately does NOT decide whether url or table are required; the
+// caller checks those with context-specific field names and messages before
+// calling this helper.
 func postgresConnValidationIssues(prefix string, cfg PostgresConfig) []ValidationIssue {
 	var issues []ValidationIssue
 	if cfg.Table != "" && !pgIdentifier.MatchString(cfg.Table) {
@@ -1349,9 +1393,12 @@ func redisOptionsValidationIssues(fieldPrefix string, opts RedisEndpointOptions,
 // block for a route that targets a temporal destination. field is the route
 // prefix (endpoints.<name>.destinations[<i>]).
 func temporalOptionsValidationIssues(field string, destination EndpointDestinationConfig) []ValidationIssue {
+	return TemporalOptionsValidationIssues(field+".temporal_options", destination.Target, destination.TemporalOptions)
+}
+
+// TemporalOptionsValidationIssues is shared by flow and embedded route validation.
+func TemporalOptionsValidationIssues(prefix, target string, opts TemporalEndpointOptions) []ValidationIssue {
 	var issues []ValidationIssue
-	opts := destination.TemporalOptions
-	prefix := field + ".temporal_options"
 	if opts.WorkflowType == "" {
 		issues = append(issues, validationError(prefix+".workflow_type", "workflow_type is required for temporal routes", "set temporal_options.workflow_type to the registered workflow type name"))
 	}
@@ -1369,8 +1416,19 @@ func temporalOptionsValidationIssues(field string, destination EndpointDestinati
 	if opts.ExecutionTimeout > 0 && opts.RunTimeout > opts.ExecutionTimeout {
 		issues = append(issues, validationError(prefix+".run_timeout", "must not exceed execution_timeout", "lower run_timeout or raise execution_timeout"))
 	}
-	if strings.HasSuffix(destination.Target, ".fifo") {
-		issues = append(issues, validationError(field+".target", "temporal task queue names must not end in .fifo", "rename the target; FIFO semantics do not apply to temporal task queues"))
+	for _, timeout := range []struct {
+		name  string
+		value time.Duration
+	}{{"execution_timeout", opts.ExecutionTimeout}, {"run_timeout", opts.RunTimeout}, {"task_timeout", opts.TaskTimeout}} {
+		if timeout.value < 0 {
+			issues = append(issues, validationError(prefix+"."+timeout.name, "must not be negative", "omit for the Temporal default or use a positive duration"))
+		}
+	}
+	if opts.TaskTimeout > 2*time.Minute {
+		issues = append(issues, validationError(prefix+".task_timeout", "must not exceed 2m", "Temporal limits workflow task timeouts to two minutes"))
+	}
+	if strings.HasSuffix(target, ".fifo") {
+		issues = append(issues, validationError(strings.TrimSuffix(prefix, ".temporal_options")+".target", "temporal task queue names must not end in .fifo", "rename the target; FIFO semantics do not apply to temporal task queues"))
 	}
 	return issues
 }
@@ -1402,6 +1460,52 @@ func sourceValueIssues(field, source, value, path, noun string, allowEmpty bool,
 		}
 	default:
 		issues = append(issues, validationError(field+".source", fmt.Sprintf("%q is not supported", source), sourceHint))
+	}
+	return issues
+}
+
+// minReplayTokenLen matches the replay service's own minimum for its keys.
+const minReplayTokenLen = 32
+
+// unexpandedReference reports a ${VAR} left in place by validation that does
+// not expand the environment; its length says nothing about the secret.
+func unexpandedReference(s string) bool { return strings.Contains(s, "${") }
+
+func replayIssues(c Config) []ValidationIssue {
+	r := c.Replay
+	if !r.Configured {
+		return nil
+	}
+	var issues []ValidationIssue
+	if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		issues = append(issues, validationError("replay.url", "must be the replay service's absolute http or https URL", "set replay.url, for example \"https://replay.internal\""))
+	}
+	if len(r.CaptureToken) < minReplayTokenLen && !unexpandedReference(r.CaptureToken) {
+		issues = append(issues, validationError("replay.capture_token", fmt.Sprintf("is required and must be at least %d characters", minReplayTokenLen), "reference a generated secret, for example \"${REPLAY_CAPTURE_TOKEN}\""))
+	}
+	if r.MaxRecordBytes < 0 {
+		issues = append(issues, validationError("replay.max_record_bytes", "must be positive", fmt.Sprintf("omit it for the default of %d (16 MiB)", DefaultReplayMaxRecordBytes)))
+	}
+	if (r.TLS.ClientCert == "") != (r.TLS.ClientKey == "") {
+		issues = append(issues, validationError("replay.tls", "client_cert and client_key must both be set for mutual TLS", "set both paths, or neither"))
+	}
+	ctl := r.Control
+	switch {
+	case ctl.Addr == "":
+		issues = append(issues, validationError("replay.control.addr", "is required: the replay service redrives failures through this listener", "set a private listen address such as \":9092\""))
+	case ctl.Addr == c.Server.Addr:
+		issues = append(issues, validationError("replay.control.addr", "must differ from server.addr", "keep the control listener off the public webhook port"))
+	case c.Metrics.Enabled && c.Metrics.Addr != "" && ctl.Addr == c.Metrics.Addr:
+		issues = append(issues, validationError("replay.control.addr", "must differ from metrics.addr", "give the control listener its own port"))
+	}
+	switch {
+	case len(ctl.Token) < minReplayTokenLen && !unexpandedReference(ctl.Token):
+		issues = append(issues, validationError("replay.control.token", fmt.Sprintf("is required and must be at least %d characters", minReplayTokenLen), "reference a generated secret, for example \"${REPLAY_CONTROL_TOKEN}\""))
+	case ctl.Token == r.CaptureToken:
+		issues = append(issues, validationError("replay.control.token", "must differ from replay.capture_token", "use separate secrets: one lets core write to replay, the other lets replay drive core"))
+	}
+	if ctl.MaxConcurrent < 0 {
+		issues = append(issues, validationError("replay.control.max_concurrent", "must be positive", fmt.Sprintf("omit it for the default of %d", DefaultReplayControlMaxConcurrent)))
 	}
 	return issues
 }

@@ -1,18 +1,26 @@
 // Package configapi exposes Hookway config validation and schema as UI-facing
-// JSON. It adds no validation logic — it wraps internal/config so a client (a
-// future config UI, an editor, scripts) gets a stable JSON contract.
+// JSON. It adds no validation logic — it wraps internal/config and
+// internal/flowconfig so a client (the config builder, the WASM validator,
+// scripts) gets a stable JSON contract.
 package configapi
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/invopop/jsonschema"
 	"gopkg.in/yaml.v3"
+
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/flowconfig"
+	"github.com/jaysongiroux/hook_way/internal/protection"
+	"github.com/jaysongiroux/hook_way/internal/routing"
 )
 
 // Issue is one validation problem, anchored to a dotted config path.
 type Issue struct {
+	Source     string `json:"source,omitempty"`
 	Field      string `json:"field"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
@@ -25,18 +33,16 @@ type ValidateResponse struct {
 }
 
 // Validate parses and validates raw YAML config bytes, returning structured
-// issues. All issues are currently severity "error".
+// issues. Policy lint may emit "warning"; everything else is "error".
 //
 // This is the function internal/editor's POST /validate calls. It must NEVER
 // expand ${VAR} references against the process environment: the editor
 // accepts candidate config from an untrusted HTTP client, and expanding env
 // here would let that client fish for server-side secrets/URLs by observing
-// which fields end up populated. It delegates straight to
-// config.ValidateBytes, which is non-expanding by construction (see that
-// function's doc comment) — do not route this through ValidateWithEnv(...,
-// true).
+// which fields end up populated. It delegates to flowconfig.ValidateBytes
+// (non-expanding) — do not route this through ValidateWithEnv(..., true).
 func Validate(data []byte) ValidateResponse {
-	return errorSeverity(config.NewService().ValidateBytes(data))
+	return preserveSeverity(flowconfig.ValidateBytes(data))
 }
 
 // ValidateWithEnv validates raw YAML config bytes like Validate, but when
@@ -63,30 +69,19 @@ func ValidateWithEnv(data []byte, expand bool) ValidateResponse {
 	if !expand {
 		return Validate(data)
 	}
-	expanded, missing := config.ExpandEnvLenient(string(data))
+	expanded, missing := flowconfig.ExpandConfigEnv(string(data), config.ExpandEnvLenient)
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range config.MissingEnvIssues(missing) {
 		out.Issues = append(out.Issues, Issue{
+			Source:     iss.Source,
 			Field:      iss.Field,
 			Message:    iss.Message,
 			Suggestion: iss.Suggestion,
 			Severity:   "warning",
 		})
 	}
-	structural := errorSeverity(config.NewService().ValidateBytes([]byte(expanded)))
+	structural := preserveSeverity(flowconfig.ValidateBytes([]byte(expanded)))
 
-	// A field whose raw scalar was a missing ${VAR} reference is left, by
-	// ExpandEnvLenient's contract, as the opaque literal "${VAR}" rather than
-	// "". That satisfies emptiness ("is required") checks, but a FORMAT
-	// validator (e.g. webhook.url's http(s)-prefix check) still trips on the
-	// literal and raises its own severity:"error" structural issue for the
-	// exact same unset variable that's already reported above as a
-	// "config.env.*" warning. Downgrade those duplicate, missing-var-caused
-	// structural issues to "warning" too, so CI without production secrets
-	// set still exits 0. Detect them by re-parsing the (lenient-expanded)
-	// YAML generically and checking whether the issue's own field still
-	// literally contains "${" — a genuine format error on a field with no
-	// env-var reference at all won't match, and stays "error".
 	var parsed any
 	canCorrelate := yaml.Unmarshal([]byte(expanded), &parsed) == nil
 	for _, iss := range structural.Issues {
@@ -177,14 +172,19 @@ func parseFieldSegment(seg string) (name string, idx int, hasIdx bool) {
 
 // errorSeverity wraps raw config issues as JSON Issues, all at severity
 // "error".
-func errorSeverity(issues []config.ValidationIssue) ValidateResponse {
+func preserveSeverity(issues []config.ValidationIssue) ValidateResponse {
 	out := ValidateResponse{Issues: []Issue{}}
 	for _, iss := range issues {
+		severity := iss.Severity
+		if severity == "" {
+			severity = "error"
+		}
 		out.Issues = append(out.Issues, Issue{
+			Source:     iss.Source,
 			Field:      iss.Field,
 			Message:    iss.Message,
 			Suggestion: iss.Suggestion,
-			Severity:   "error",
+			Severity:   severity,
 		})
 	}
 	return out
@@ -192,5 +192,47 @@ func errorSeverity(issues []config.ValidationIssue) ValidateResponse {
 
 // Schema returns the JSON Schema describing the config YAML.
 func Schema() ([]byte, error) {
-	return config.SchemaJSON()
+	data, err := config.SchemaJSON()
+	if err != nil {
+		return nil, err
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil, err
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	reflector := config.NewSchemaReflector()
+	reflector.DoNotReference = true
+	// Native-only declarations remain authorable without loading AWS or secrets.
+	credentials := reflector.Reflect(&map[string]flowconfig.CredentialProfile{})
+	routingSchema := reflector.Reflect(&routing.Config{})
+	if properties != nil {
+		properties["flows"] = map[string]any{"type": "object", "additionalProperties": map[string]any{"oneOf": []any{
+			map[string]any{"type": "object", "required": []string{"file"}, "additionalProperties": false, "properties": map[string]any{"file": map[string]any{"type": "string", "description": "Literal relative YAML path inside the entry directory"}}},
+			map[string]any{"type": "object", "not": map[string]any{"required": []string{"file"}}, "properties": map[string]any{"nodes": map[string]any{"type": "array"}, "edges": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+		}}}
+		properties["credentials"] = credentials
+		properties["lookups"] = reflector.Reflect(&map[string]flowconfig.LookupProviderConfig{})
+		properties["launchdarkly"] = reflector.Reflect(&map[string]flowconfig.LaunchDarklyConnection{})
+		properties["routing"] = routingSchema
+		stores := reflector.Reflect(&map[string]protection.Config{})
+		store := stores.AdditionalProperties
+		backends := []string{"memory", "redis", "postgres"}
+		for _, backend := range backends {
+			var others []*jsonschema.Schema
+			for _, other := range backends {
+				if other != backend {
+					others = append(others, &jsonschema.Schema{Required: []string{other}})
+				}
+			}
+			store.OneOf = append(store.OneOf, &jsonschema.Schema{Required: []string{backend}, Not: &jsonschema.Schema{AnyOf: others}})
+		}
+		properties["state_stores"] = stores
+	}
+	return json.MarshalIndent(schema, "", "  ")
+}
+
+// NodeSchemas returns the per-node option schemas used by the config UI.
+func NodeSchemas() ([]byte, error) {
+	return json.MarshalIndent(flowconfig.NodeSchemas(), "", "  ")
 }

@@ -1,174 +1,280 @@
-import { Anchor, Divider, Group, Stack, Switch, Text, Textarea, TextInput } from "@mantine/core";
+import { useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  Group,
+  Select,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+} from "@mantine/core";
 import { useGraphStore } from "./store";
-import type { DestinationData, EndpointData, FilterData } from "./model";
-import { destinationRoutes, endpointRoutes, owningEndpointId } from "./routes";
+import { nodeMeta, nodeLabel } from "./nodeSchema";
+import { nodeHelp, portLabel } from "./help";
+import { FlowResponseEditor } from "./FlowResponseEditor";
+import { NodeReadiness } from "./NodeReadiness";
+import { NodeOptionsForm } from "./NodeOptionsForm";
+import { nodeScope } from "./formDrafts";
 import { Sections, type SectionSpec } from "./InspectorSections";
-import { RouteRowList } from "./RouteRows";
-import { EndpointAuthFields, EndpointRequestFields } from "./EndpointForm";
-import { VariablesSection } from "./VariablesSection";
-import { DestinationSettingsFields } from "./DestinationForm";
-import { FilterConditionFields } from "./FilterForm";
+import { yamlIdOf } from "./model";
+import { DARK } from "../tokens";
 
 export function Inspector() {
   const selectedId = useGraphStore((s) => s.selectedId);
   const node = useGraphStore((s) => s.nodes.find((n) => n.id === s.selectedId));
   const updateNodeData = useGraphStore((s) => s.updateNodeData);
   const selectedEdgeId = useGraphStore((s) => s.selectedEdgeId);
-  const edge = useGraphStore((s) => s.edges.find((e) => e.id === s.selectedEdgeId));
-  const edges = useGraphStore((s) => s.edges);
-  const updateEdgeData = useGraphStore((s) => s.updateEdgeData);
-  const setSelected = useGraphStore((s) => s.setSelected);
+  const edge = useGraphStore((s) =>
+    s.edges.find((e) => e.id === s.selectedEdgeId),
+  );
   const nodes = useGraphStore((s) => s.nodes);
+  const activeFlow = useGraphStore((s) => s.activeFlow);
+  const deliveryFailurePolicy = useGraphStore((s) => s.deliveryFailurePolicy);
+  const captureFailures = useGraphStore((s) => s.flowExtra?.capture_failures);
+  const setDeliveryFailurePolicy = useGraphStore(
+    (s) => s.setDeliveryFailurePolicy,
+  );
+  const setSelected = useGraphStore((s) => s.setSelected);
 
   if (selectedEdgeId && edge) {
-    const data = (edge.data ?? { target: "", create: true }) as { target: string; create: boolean };
-    const epId = owningEndpointId(edge.id, nodes, edges);
-    const epName = nodes.find((n) => n.id === epId)?.data.name;
-    const destName = nodes.find((n) => n.id === edge.target)?.data.name;
+    const from = nodes.find((n) => n.id === edge.source);
+    const to = nodes.find((n) => n.id === edge.target);
+    const port =
+      edge.sourceHandle && edge.sourceHandle !== "out"
+        ? `:${edge.sourceHandle}`
+        : "";
     return (
-      <Stack gap="sm">
-        <Text fw={600} size="sm" tt="uppercase" c="dimmed">
-          Route
+      <Stack gap="sm" data-testid="inspector">
+        <Text
+          fw={600}
+          size="xs"
+          tt="uppercase"
+          c="dimmed"
+          style={{ letterSpacing: "0.08em" }}
+        >
+          Edge
         </Text>
-        <Text fw={600} size="sm">
-          {String(epName ?? "?")} → {String(destName ?? "?")}
+        <Text fw={600} size="sm" ff="monospace">
+          {from ? yamlIdOf(from) : "?"}
+          {port}&gt;{to ? yamlIdOf(to) : "?"}
         </Text>
-        <TextInput
-          label="Target"
-          placeholder="queue / topic name"
-          description="A name, or a template with {variable} placeholders declared on the endpoint"
-          value={data.target}
-          onChange={(e) => updateEdgeData(edge.id, { target: e.currentTarget.value })}
-        />
-        <Switch
-          label="Create target if missing"
-          checked={data.create}
-          onChange={(e) => updateEdgeData(edge.id, { create: e.currentTarget.checked })}
-        />
-        <Divider />
-        <Group gap="md">
-          {epId && (
-            <Anchor size="xs" onClick={() => setSelected(epId)}>
-              Edit endpoint
-            </Anchor>
-          )}
-          <Anchor size="xs" onClick={() => setSelected(edge.target)}>
-            Open destination
-          </Anchor>
-        </Group>
+        <Text size="xs" c="dimmed">
+          Nodes connect only when their input and output types match. Drag a new
+          connection to change this path.
+        </Text>
       </Stack>
     );
   }
 
   if (!selectedId || !node) {
     return (
-      <Text size="sm" c="dimmed">
-        Select a node to edit its properties.
-      </Text>
+      <Stack gap="sm" data-testid="inspector">
+        <Text
+          fw={600}
+          size="xs"
+          tt="uppercase"
+          c="dimmed"
+          style={{ letterSpacing: "0.08em" }}
+        >
+          Flow
+        </Text>
+        <Text size="sm" c="dimmed">
+          Double-click a node to configure it. These settings apply to the whole
+          flow.
+        </Text>
+        <FlowNameField />
+        <Select
+          label="Delivery failure policy"
+          description="Controls publish failures. Continue after failures tries every publish. The default response is 202 when at least one succeeds; HTTP response policies can override it."
+          data={[
+            { value: "", label: "Use default (stop on first failure)" },
+            { value: "stop_on_failure", label: "Stop on first failure" },
+            { value: "skip_failed", label: "Continue after failures" },
+          ]}
+          value={deliveryFailurePolicy ?? ""}
+          allowDeselect={false}
+          comboboxProps={{ keepMounted: false }}
+          onChange={(v) => setDeliveryFailurePolicy(v ?? "")}
+        />
+        <FlowResponseEditor />
+        {deliveryFailurePolicy === "skip_failed" && (
+          <Alert
+            color="orange"
+            title="Partial delivery can return success"
+            styles={{ title: { color: DARK.text } }}
+          >
+            With the default response policy, one successful publication is
+            enough for HTTP 202. Failed destinations may miss the event. Replay
+            capture is best effort; sender retries can repeat successful
+            deliveries.
+          </Alert>
+        )}
+        {captureFailures === false && (
+          <Text size="sm" c="dimmed">
+            Failure capture is disabled for this flow. Inspect nodes still collect observations when Replay is configured. Plan recovery separately;
+            batch flows do not support replay capture.
+          </Text>
+        )}
+        {nodes.length > 0 && (
+          <Stack gap={6}>
+            <Text
+              fw={600}
+              size="xs"
+              tt="uppercase"
+              c="dimmed"
+              style={{ letterSpacing: "0.08em" }}
+            >
+              Nodes
+            </Text>
+            <Stack gap={0} className="hookway-inspector-node-list">
+              {nodes.map((n) => (
+                <Button
+                  className="hookway-inspector-node"
+                  key={n.id}
+                  size="xs"
+                  variant="subtle"
+                  color="dark"
+                  radius={0}
+                  fullWidth
+                  justify="space-between"
+                  aria-label={`Select ${yamlIdOf(n)}`}
+                  onClick={() => setSelected(n.id)}
+                >
+                  <Group
+                    justify="space-between"
+                    wrap="nowrap"
+                    gap="xs"
+                    w="100%"
+                  >
+                    <Text ff="monospace" size="xs" c="dark">
+                      {yamlIdOf(n)}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      {nodeLabel(n.data.nodeType)}
+                    </Text>
+                  </Group>
+                </Button>
+              ))}
+            </Stack>
+          </Stack>
+        )}
+      </Stack>
     );
   }
 
-  const set = (patch: Record<string, unknown>) => updateNodeData(node.id, patch);
-  const notes = (node.data as { notes?: string }).notes ?? "";
-
-  const notesSection: SectionSpec = {
-    value: "notes",
-    label: "Notes",
-    badge: notes.trim() ? "note" : undefined,
-    render: () => (
-      // The section header already reads "Notes", so the field carries an
-      // accessible name without repeating the label on screen.
-      <Textarea
-        aria-label="Notes"
-        placeholder="Exported as a YAML comment"
-        value={notes}
-        autosize
-        minRows={2}
-        onChange={(e) => set({ notes: e.currentTarget.value })}
-      />
-    ),
-  };
-
-  const sections: SectionSpec[] = [];
-  if (node.data.kind === "endpoint") {
-    const data = node.data as EndpointData;
-    const routes = endpointRoutes(node.id, nodes, edges);
-    sections.push(
-      { value: "request", label: "Request", render: () => <EndpointRequestFields data={data} set={set} /> },
-      {
-        value: "auth",
-        label: "Authentication",
-        badge: data.auth.type,
-        render: () => <EndpointAuthFields data={data} set={set} />,
-      },
-      {
-        value: "variables",
-        label: "Variables",
-        badge: (data.variables ?? []).length || undefined,
-        render: () => <VariablesSection data={data} set={set} />,
-      },
-      {
-        value: "routes",
-        label: "Routes",
-        badge: routes.length || undefined,
-        render: () => (
-          <RouteRowList
-            rows={routes.map((r) => ({
-              edgeId: r.edgeId,
-              caption: `→ ${r.dest}`,
-              target: r.target,
-              aria: `route to ${r.dest}: ${r.target || "(no target)"}`,
-            }))}
-            emptyText="Draw a link to a destination to add a route."
+  const meta = nodeMeta(node.data.nodeType, node.data.options);
+  const description = node.data.description ?? "";
+  const setOptions = (options: Record<string, unknown>) =>
+    updateNodeData(node.id, { options });
+  const sections: SectionSpec[] = [
+    {
+      value: "metadata",
+      label: "Identity and description",
+      render: () => (
+        <Stack gap="sm">
+          <TextInput
+            label="Node ID"
+            description="Unique name used in YAML connections, for example in>out."
+            value={yamlIdOf(node)}
+            onChange={(e) =>
+              updateNodeData(node.id, { yamlId: e.currentTarget.value })
+            }
           />
-        ),
-      },
-      notesSection,
-    );
-  } else if (node.data.kind === "destination") {
-    const data = node.data as DestinationData;
-    const incoming = destinationRoutes(node.id, nodes, edges);
-    sections.push(
-      {
-        value: "settings",
-        label: "Settings",
-        badge: data.destType,
-        render: () => <DestinationSettingsFields data={data} set={set} />,
-      },
-      {
-        value: "incoming",
-        label: "Incoming routes",
-        badge: incoming.length || undefined,
-        render: () => (
-          <RouteRowList
-            rows={incoming.map((r) => ({
-              edgeId: r.edgeId,
-              caption: `from ${r.endpoint}`,
-              target: r.target,
-              aria: `route from ${r.endpoint}: ${r.target || "(no target)"}`,
-            }))}
-            emptyText="No endpoints route here yet."
+          <Textarea
+            label="Description"
+            description="Optional note exported with this node."
+            value={description}
+            autosize
+            minRows={2}
+            onChange={(e) =>
+              updateNodeData(node.id, { description: e.currentTarget.value })
+            }
           />
-        ),
-      },
-      notesSection,
-    );
-  } else {
-    const data = node.data as FilterData;
-    sections.push(
-      { value: "condition", label: "Condition", render: () => <FilterConditionFields data={data} set={set} /> },
-      notesSection,
-    );
-  }
+        </Stack>
+      ),
+    },
+  ];
 
   return (
-    <Stack gap="sm">
-      <Text fw={600} size="sm" tt="uppercase" c="dimmed">
-        {String(node.data.kind)}
+    <Stack gap="sm" data-testid="inspector">
+      <Text
+        fw={600}
+        size="xs"
+        tt="uppercase"
+        c="dimmed"
+        style={{ letterSpacing: "0.08em" }}
+      >
+        {nodeLabel(node.data.nodeType)}
       </Text>
-      <TextInput label="Name" value={String(node.data.name)} onChange={(e) => set({ name: e.currentTarget.value })} />
-      {/* Keyed by node so the open section resets when a different node is selected. */}
-      <Sections key={node.id} sections={sections} />
+      {nodeHelp(node.data.nodeType) && (
+        <Text size="sm" c="dimmed" lh={1.4}>
+          {nodeHelp(node.data.nodeType)}
+        </Text>
+      )}
+      <Text size="xs" c="dimmed">
+        YAML type:{" "}
+        <Text component="code" inherit>
+          {node.data.nodeType}
+        </Text>
+        {meta ? ` · ${portLabel(meta.input)} → ${portLabel(meta.output)}` : ""}
+        {meta?.detached ? " · delivery step" : ""}
+      </Text>
+      <NodeReadiness nodeId={node.id} />
+      <NodeOptionsForm
+        key={`options/${node.id}`}
+        nodeType={node.data.nodeType}
+        value={node.data.options}
+        onChange={setOptions}
+        scope={nodeScope(activeFlow, node.id)}
+        nodeId={yamlIdOf(node)}
+      />
+      <Sections
+        key={`metadata/${node.id}`}
+        sections={sections}
+        defaultOpen={[]}
+      />
     </Stack>
+  );
+}
+
+function FlowNameField() {
+  const activeFlow = useGraphStore((s) => s.activeFlow);
+  const otherFlows = useGraphStore((s) => s.otherFlows);
+  const renameFlow = useGraphStore((s) => s.renameFlow);
+  const [draft, setDraft] = useState(activeFlow);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDraft(activeFlow);
+    setError("");
+  }, [activeFlow]);
+
+  return (
+    <TextInput
+      label="Flow name"
+      description="Name of this flow in YAML. Set its public URL in the HTTP endpoint node."
+      value={draft}
+      error={error || undefined}
+      onChange={(e) => {
+        const next = e.currentTarget.value;
+        setDraft(next);
+        const trimmed = next.trim();
+        if (!trimmed) {
+          setError("");
+          return;
+        }
+        if (trimmed !== activeFlow && otherFlows[trimmed]) {
+          setError("That flow already exists.");
+          return;
+        }
+        setError("");
+        renameFlow(trimmed);
+      }}
+      onBlur={() => {
+        setDraft(activeFlow);
+        setError("");
+      }}
+    />
   );
 }

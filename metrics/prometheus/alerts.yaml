@@ -1,0 +1,255 @@
+groups:
+  - name: hookway.runtime
+    rules:
+      - alert: HookwayProtectionStoreNotReady
+        expr: hookway_protection_store_ready == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#protection
+          summary: Traffic protection store is unavailable
+          description: Core remains alive, withdraws readiness and rejects protected requests. Inspect connection, permissions, schema and policy status.
+      - alert: HookwayProtectionCapacity
+        expr: increase(hookway_protection_operations_total{result="capacity"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#protection
+          summary: Protection live-identity capacity exhausted
+          description: New identities receive 503. Check expiry cleanup, policy capacity and unexpected identity cardinality.
+      - alert: HookwayProtectionPolicyConflict
+        expr: increase(hookway_protection_operations_total{result="policy_conflict"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#protection
+          summary: Protection policy is missing, conflicting or updating
+          description: Inspect state-store status and deploy matching policy configuration. Do not reset state or change namespace to restore readiness.
+      - alert: HookwayPanics
+        expr: increase(hookway_panics_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#telemetry
+          summary: Hookway recovered a panic
+          description: A panic was recovered (hookway_panics_total). Investigate location=handler|node|fanout|webhook_worker.
+      - alert: HookwayCompensationFailures
+        expr: increase(hookway_compensation_failed_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#protection
+          summary: Replay-guard reservation release failed
+          description: A replay_guard reservation could not be released. Legitimate retries may be rejected until TTL expiry.
+      - alert: HookwaySecretRefreshFailures
+        expr: increase(hookway_secret_refresh_failures_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#authentication
+          summary: Secret refresh failed
+          description: A secret_ref background refresh failed. The process is serving the last known-good value.
+      - alert: HookwayWebhookDrops
+        expr: increase(hookway_webhook_dropped_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#capture-loss
+          summary: Webhook deliveries were dropped
+          description: hookway_webhook_dropped_total increased (queue_full or engine_closing).
+      - alert: HookwayWebhookDeadLetterFailures
+        expr: increase(hookway_webhook_dead_letter_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#capture-loss
+          summary: Webhook dead-letter redirect failed
+          description: A terminally failed webhook could not be written to the dead-letter destination.
+      - alert: HookwayDestinationNotReady
+        expr: hookway_destination_ready == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#destination
+          summary: Destination not ready
+          description: hookway_destination_ready has been 0 for 5m.
+      - alert: HookwayPublishErrorRatio
+        expr: |
+          (
+            sum by (job) (rate(hookway_publish_total{status="error"}[10m]))
+            /
+            clamp_min(sum by (job) (rate(hookway_publish_total[10m])), 1e-9)
+          ) > 0.05
+          and
+          sum by (job) (increase(hookway_publish_total[10m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#destination
+          summary: Publish error ratio above 5%
+          description: At least 20 publish attempts in 10m with more than 5% errors, sustained for 10m.
+      - alert: HookwayAuthRejections
+        expr: sum by (job, endpoint, reason) (increase(hookway_auth_failures_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#authentication
+          summary: Webhook authentication rejected requests
+          description: Check the bounded reason, sender signing format and current credential before retrying. Rejections are not destination failures; do not disable authentication.
+      - alert: HookwayIngressSaturated
+        expr: sum by (job, endpoint) (increase(hookway_saturated_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#saturation
+          summary: Ingress rejected requests at its execution budget
+          description: Check admitted work, configured concurrency, destination latency and sender backoff. Do not remove limits blindly.
+      - alert: HookwayProtectionCleanupFailures
+        expr: increase(hookway_protection_cleanup_total{result="error"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#cleanup
+          summary: Protection expiry cleanup failed
+          description: Check store connectivity, permissions and cleanup bounds; live state must not be reset to remove the alert.
+      - alert: HookwayMetricsScrapeFailed
+        expr: up{job=~"hookway-.*"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#metrics-scrape
+          summary: Hookway metrics scrape failed
+          description: Check private listener reachability, scrape credentials and target status. Missing metrics do not prove the application is healthy or down.
+      - alert: HookwayTelemetrySuppressed
+        expr: increase(hookway_logs_suppressed_total[5m]) > 0 or increase(hookway_replay_logs_suppressed_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#telemetry
+          summary: Diagnostic records were suppressed during a storm
+          description: Inspect bounded counters and the suppression summary. Default hot-path limits preserve liveness; debug explicitly increases diagnostic volume and must be scoped.
+  - name: hookway.replay
+    rules:
+      - alert: HookwayCaptureDrops
+        expr: sum by (job) (increase(hookway_capture_dropped_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#capture-loss
+          summary: Core dropped captured failures
+          description: Failed deliveries core acknowledged were not stored in the replay service and cannot be retried (hookway_capture_dropped_total by reason). See docs/operations/replay-service.md#runbook.
+      - alert: HookwayInspectionDrops
+        expr: sum by (job) (increase(hookway_inspection_dropped_total[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#capture-loss
+          summary: Requested inspection captures were dropped
+          description: Inspect the bounded drop reason and replay availability/capacity. Inspection loss is diagnostic-data loss and does not itself prove delivery failure.
+      - alert: HookwayReplayAuthRejections
+        expr: increase(hookway_replay_auth_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#authentication
+          summary: Replay rejected authentication or permission
+          description: Inspect the bounded reason, removed/replaced or invalid startup key and requested scope. These keys have no built-in expiry. Do not broaden scopes or disable authentication to clear the alert.
+      - alert: HookwayReplayUsageHigh
+        expr: (max by (job) (hookway_replay_usage_records) / max by (job) (hookway_replay_capacity_records) > 0.8) or (max by (job) (hookway_replay_usage_bytes) / max by (job) (hookway_replay_capacity_bytes) > 0.8)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#replay-capacity
+          summary: Replay storage is over 80% of a retention limit
+          description: New captures are refused with 507 at a configured retention limit. Successful retry does not free retained artifacts or change expiry. Inspect GC and retention; authorize dismissal/deletion or capacity changes only after preserving required evidence.
+      - alert: HookwayReplayCapacityRejections
+        expr: sum by (job) (increase(hookway_replay_captures_total{outcome="capacity"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#replay-capacity
+          summary: The replay service is refusing captures at capacity
+          description: Capture requests were answered 507. Core counts failure drops in hookway_capture_dropped_total and inspection drops in hookway_inspection_dropped_total, with reason="capacity".
+      - alert: HookwayReplayQueuedRunStale
+        expr: max by (job) (hookway_replay_oldest_queued_run_seconds) > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#stale-work
+          summary: Retry runs have waited over 5 minutes
+          description: Workers are not claiming queued runs. Check that replay replicas are running, workers.concurrency, and core's control listener.
+      - alert: HookwayReplayUnknownRecords
+        expr: max by (job) (hookway_replay_records{kind="failure",delivery_status="unknown",dismissed="false"}) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#unknown-delivery
+          summary: A redrive outcome is unknown
+          description: A run's response was lost or its lease expired, so the destination may or may not have received the event. An operator must check it and retry with acknowledge_duplicate_risk only after reconciling independent receipts, or explicitly resolve/dismiss it. Includes lease-expired runs, which hookway_replay_runs_total does not count as unknown.
+      - alert: HookwayReplayRunFailureRatio
+        expr: (sum by (job) (increase(hookway_replay_runs_total{status="failed"}[15m])) / sum by (job) (increase(hookway_replay_runs_total[15m])) > 0.2) and sum by (job) (increase(hookway_replay_runs_total[15m])) >= 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#destination
+          summary: Over 20% of retry runs are failing
+          description: Redrives keep failing at the destination or at core (executor_* reasons). Check hookway_replay_executor_calls_total and the run results.
+      - alert: HookwayReplayDatabaseDown
+        expr: hookway_replay_db_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#database
+          summary: A replay replica cannot reach its database
+          description: Captures fail (core drops them after its retries) and no runs progress until PostgreSQL is reachable.
+      - alert: HookwayReplayGCStalled
+        expr: increase(hookway_replay_gc_runs_total{outcome="error"}[30m]) > 0 or (time() - max by (job) (hookway_replay_gc_last_success_timestamp_seconds and on (job, instance) (hookway_replay_gc_interval_seconds > 0)) > 4 * max by (job) (hookway_replay_gc_interval_seconds > 0) + 120)
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#cleanup
+          summary: Replay GC is failing or shared-database cleanup is stale
+          description: Errors identify the affected replica. Freshness uses the latest enabled replica per database job, allowing healthy advisory-lock losers; the threshold is four times the largest enabled interval plus 120s sweep/jitter allowance. Keep replica cadence consistent; zero excludes automatic staleness. The timestamp starts at startup; external GC needs its own monitoring.
+      - alert: HookwayReplayStateStale
+        expr: time() - hookway_replay_state_last_success_timestamp_seconds > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#database
+          summary: Replay shared-state sample is stale
+          description: Last-success freshness is per replica, not a database total. Investigate DB access or a stalled sampler before trusting retained gauges.
+      - alert: HookwayReplayPhysicalStorageExhausted
+        expr: increase(hookway_replay_store_failures_total{reason="storage_exhausted"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          runbook_url: https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#replay-capacity
+          summary: PostgreSQL reported physical storage exhaustion
+          description: SQLSTATE 53100 is distinct from configured retention capacity. Inspect the database volume, WAL and free space; preserve data and do not reset volumes to restore captures.

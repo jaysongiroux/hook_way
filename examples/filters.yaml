@@ -1,18 +1,19 @@
 # examples/filters.yaml
 #
 # Reference config demonstrating webhook filtering. A filter chain is a list of
-# conditions combined with AND — every condition must pass. Filters attach at
-# two levels:
+# conditions combined with AND — every condition must pass. Filters attach as
+# nodes in a flow:
 #
-#   endpoint-level (endpoints.<name>.filters)
+#   flow-level (a filter node after envelope, before every publish)
 #       Evaluated first, after auth and body parsing. If the chain fails,
-#       nothing is published. The response is controlled by filter_response
-#       (default: a silent 202 ack with no destinations).
+#       nothing is published. The response is controlled by on_no_match
+#       (default: silent drop / 202 ack with no destinations). Set
+#       on_no_match: reject to return 422.
 #
-#   route-level (endpoints.<name>.destinations[].filters)
-#       Evaluated per destination. A route whose chain fails is dropped from
-#       delivery; other routes still receive the payload. Route filtering always
-#       acks with 202 — filter_response applies only to the endpoint chain.
+#   branch-level (a filter node on only some edges after envelope)
+#       Evaluated per destination. A branch whose chain fails is dropped from
+#       delivery; other branches still receive the payload. Branch filtering
+#       always acks with 202 when on_no_match is the default drop.
 #
 # Condition fields:
 #   source    header | body
@@ -41,87 +42,78 @@ destinations:
       publish_timeout: "5s"
       declare_queues: true
 
-endpoints:
-  # Endpoint-level filtering: only GitHub "push" events on public repos are
+flows:
+  # Flow-level filtering: only GitHub "push" events on public repos are
   # accepted. Anything else is dropped with a silent 202 ack (the default), so
   # GitHub does not retry filtered-out deliveries.
   github_push_public:
-    enabled: true
-    path: "/webhooks/github"
-    filters:
-      - source: header
-        path: X-GitHub-Event
-        operator: eq
-        value: "push"
-      - source: body
-        path: repository.private
-        operator: eq
-        value: false
-    destinations:
-      - destination: "primary"
-        target: "github-public-pushes"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
-      idempotency_header: "X-GitHub-Delivery"
+    nodes:
+      - {id: in, type: http_trigger, description: "GitHub posts webhook deliveries here.", path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      # No idempotency_header field; replay_guard is a separate node.
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON envelope the filter reads fields from.", body_format: json}
+      - id: filt
+        type: filter
+        description: "Keeps only pushes to public repositories; drops the rest."
+        conditions:
+          - source: header
+            path: X-GitHub-Event
+            operator: eq
+            value: "push"
+          - source: body
+            path: repository.private
+            operator: eq
+            value: false
+      - {id: out, type: publish, description: "Receives only the events that cleared the filter.", destination: primary, target: github-public-pushes, create: true}
+    edges: [in>body, body>auth, auth>env, env>filt, filt>out]
 
-  # Route-level filtering: every accepted event fans out selectively. Main-branch
-  # pushes go to one queue, all pushes to another. A route whose filter fails is
-  # simply skipped — it is never counted as a delivery failure — so this endpoint
+  # Branch-level filtering: every accepted event fans out selectively. Main-branch
+  # pushes go to one queue, all pushes to another. A branch whose filter fails is
+  # simply skipped — it is never counted as a delivery failure — so this flow
   # always returns 202.
   github_branch_router:
-    enabled: true
-    path: "/webhooks/github-router"
-    destinations:
-      - destination: "primary"
-        target: "github-main-pushes"
-        create: true
-        filters:
+    nodes:
+      - {id: in, type: http_trigger, description: "Router endpoint that fans one event out two ways.", path: /webhooks/github-router, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON envelope both branches receive.", body_format: json}
+      - id: main_filt
+        type: filter
+        description: "Gates the main-branch branch only; a drop here is not a failure."
+        conditions:
           - source: body
             path: ref
             operator: eq
             value: "refs/heads/main"
-      - destination: "primary"
-        target: "github-all-pushes"
-        create: true
-        # No filters: receives every event this endpoint accepts.
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+      - {id: main_out, type: publish, description: "Main-branch pushes only.", destination: primary, target: github-main-pushes, create: true}
+      # No filters: receives every event this flow accepts.
+      - {id: all_out, type: publish, description: "Every event the flow accepts, unfiltered.", destination: primary, target: github-all-pushes, create: true}
+    edges: [in>body, body>auth, auth>env, env>main_filt, env>all_out, main_filt>main_out]
 
-  # Endpoint filtering that rejects non-matching payloads with a configured
-  # status instead of a silent ack. Shows numeric (gte), regex, and exists
-  # operators. filter_response.status returns 422 to the sender when the chain
-  # fails; omit filter_response for the default silent 202.
+  # Flow filtering that rejects non-matching payloads with 422 instead of a
+  # silent ack. Shows numeric (gte), regex, and exists operators.
   orders_high_value:
-    enabled: true
-    path: "/webhooks/orders"
-    filters:
-      - source: body
-        path: order.total
-        operator: gte
-        value: 100
-      - source: body
-        path: order.currency
-        operator: regex
-        value: "^(USD|EUR|GBP)$"
-      - source: body
-        path: customer.id
-        operator: exists
-    filter_response:
-      status: 422
-    destinations:
-      - destination: "primary"
-        target: "high-value-orders"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_ts_colon"
-      secret: "${ORDERS_WEBHOOK_SECRET}"
-      signature_header: "X-Order-Signature"
-      timestamp_tolerance: "5m"
+    nodes:
+      - {id: in, type: http_trigger, description: "Order events from the commerce platform.", path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the timestamped HMAC within a 5 minute window.", scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Order-Signature, timestamp_tolerance: "5m"}
+      - {id: env, type: envelope, description: "Builds the JSON envelope the filter reads fields from.", body_format: json}
+      - id: filt
+        type: filter
+        description: "Requires a large order in a known currency; rejects with 422."
+        on_no_match: reject
+        conditions:
+          - source: body
+            path: order.total
+            operator: gte
+            value: 100
+          - source: body
+            path: order.currency
+            operator: regex
+            value: "^(USD|EUR|GBP)$"
+          - source: body
+            path: customer.id
+            operator: exists
+      - {id: out, type: publish, description: "Receives only high-value orders.", destination: primary, target: high-value-orders, create: true}
+    edges: [in>body, body>auth, auth>env, env>filt, filt>out]

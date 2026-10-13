@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // HTTPOptions configures an HTTP lookup. URL contains exactly one {key}
@@ -21,11 +21,13 @@ import (
 // A 404 is a clean miss; any other non-2xx status, an unparsable body, or a
 // missing value path is an error.
 type HTTPOptions struct {
-	URL       string
-	Method    string // GET (default) | POST
-	Headers   map[string]string
-	ValuePath string
-	Timeout   time.Duration // transport timeout; the caller also bounds via context
+	URL           string
+	Method        string // GET (default) | POST
+	Headers       map[string]string
+	ValuePath     string
+	Timeout       time.Duration // transport timeout; the caller also bounds via context
+	Client        *http.Client  // optional server-owned transport with DNS egress protection
+	SecretHeaders func(context.Context) (http.Header, error)
 }
 
 // maxHTTPResponse caps the body read so a misbehaving resolver cannot exhaust memory.
@@ -43,6 +45,12 @@ func newHTTP(opts HTTPOptions) (*httpProvider, error) {
 	if strings.Count(opts.URL, "{key}") != 1 {
 		return nil, errors.New("http: url must contain exactly one {key} placeholder")
 	}
+	parsed, err := url.Parse(strings.ReplaceAll(opts.URL, "{key}", "LOOKUPKEY"))
+	authority := strings.SplitN(strings.TrimPrefix(strings.TrimPrefix(opts.URL, "https://"), "http://"), "/", 2)[0]
+	authority = strings.SplitN(strings.SplitN(authority, "?", 2)[0], "#", 2)[0]
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || strings.Contains(authority, "{key}") {
+		return nil, errors.New("http: url requires a fixed host, no userinfo or fragment, and {key} in the path or query")
+	}
 	switch strings.ToUpper(opts.Method) {
 	case "", "GET":
 		opts.Method = http.MethodGet
@@ -58,7 +66,14 @@ func newHTTP(opts HTTPOptions) (*httpProvider, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	return &httpProvider{opts: opts, client: &http.Client{Timeout: timeout}}, nil
+	client := &http.Client{}
+	if opts.Client != nil {
+		copy := *opts.Client
+		client = &copy
+	}
+	client.Timeout = timeout
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &httpProvider{opts: opts, client: client}, nil
 }
 
 // escapeKey percent-encodes every byte outside the unreserved set so the key
@@ -87,20 +102,32 @@ func (p *httpProvider) Lookup(ctx context.Context, key string) (string, bool, er
 	for k, v := range p.opts.Headers {
 		req.Header.Set(k, v)
 	}
+	if p.opts.SecretHeaders != nil {
+		headers, err := p.opts.SecretHeaders(ctx)
+		if err != nil {
+			return "", false, errors.New("http: lookup credentials unavailable")
+		}
+		for name, values := range headers {
+			req.Header[name] = values
+		}
+	}
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return "", false, fmt.Errorf("http: %w", err)
+		return "", false, errors.New("http: lookup request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", false, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return "", false, fmt.Errorf("http: status %d", resp.StatusCode)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponse))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxHTTPResponse+1))
 	if err != nil {
 		return "", false, fmt.Errorf("http: read body: %w", err)
+	}
+	if len(raw) > maxHTTPResponse {
+		return "", false, errors.New("http: response exceeds 1 MiB")
 	}
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {

@@ -2,14 +2,16 @@ package queue
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 func TestJoinWebhookURL(t *testing.T) {
@@ -91,7 +93,7 @@ func TestWebhookPublisherDefaultRetryPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ctor: %v", err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 
 	d, ok := pub.delivery.lookup("orders")
 	if !ok || d == nil {
@@ -129,6 +131,56 @@ func TestWebhookSyncPublishReturnsNilOn2xx(t *testing.T) {
 	}
 	if err := pub.Close(); err != nil {
 		t.Fatalf("close: %v", err)
+	}
+}
+
+func TestWebhookRedirectDoesNotForwardCredentialsOrBody(t *testing.T) {
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		for _, authType := range []string{"api_key", "proxy"} {
+			for _, sameOrigin := range []bool{false, true} {
+				t.Run(fmt.Sprintf("status=%d/auth=%s/same-origin=%t", status, authType, sameOrigin), func(t *testing.T) {
+					var leaked, calls atomic.Int32
+					other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						leaked.Add(1)
+						w.WriteHeader(http.StatusOK)
+					}))
+					defer other.Close()
+					source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.URL.Path == "/redirected" {
+							leaked.Add(1)
+							w.WriteHeader(http.StatusOK)
+							return
+						}
+						calls.Add(1)
+						body, _ := io.ReadAll(r.Body)
+						if r.Method != http.MethodPost || r.Header.Get("X-Delivery-Key") != "CREDENTIALSECRET" || !strings.Contains(string(body), "PAYLOADSECRET") {
+							t.Error("configured local receiver did not receive expected POST/auth/body")
+						}
+						target := other.URL
+						if sameOrigin {
+							target = "/redirected"
+						}
+						w.Header().Set("Location", target)
+						w.WriteHeader(status)
+					}))
+					defer source.Close()
+					pub, err := NewWebhookPublisher(config.WebhookConfig{URL: source.URL, Timeout: time.Second, DeliveryMode: "sync",
+						Auth: config.WebhookAuthConfig{Type: authType, Header: "X-Delivery-Key", Value: "CREDENTIALSECRET"}},
+						"notify", []WebhookTarget{{Name: "orders"}}, WebhookPublisherOptions{Logger: testLogger()})
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = pub.Close() }()
+					msg := Message{ID: "PAYLOADSECRET", ReceivedAt: time.Now(), RawBody: []byte("PAYLOADSECRET"), OrigHeaders: http.Header{"X-Delivery-Key": {"CREDENTIALSECRET"}}}
+					if err := pub.Publish(t.Context(), "notify", "orders", msg); err == nil {
+						t.Fatal("redirect was reported as successful delivery")
+					}
+					if calls.Load() != 1 || leaked.Load() != 0 {
+						t.Fatal("redirect forwarded credentials/body or retried a terminal response")
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -224,12 +276,10 @@ type fakeWebhookMetrics struct {
 	deadLetter          int32
 	deadLetterFail      int32
 	lastDroppedReceived string
-	lastDepth           int32
-	lastCapacity        int32
+	lastDepth           int64
+	lastCapacity        int64
 	panics              int32
 	lastPanicLocation   string
-	// deliveries[outcome]++
-	deliveries map[string]int32
 }
 
 func (f *fakeWebhookMetrics) WebhookDropped(_, _, reason string) {
@@ -245,10 +295,10 @@ func (f *fakeWebhookMetrics) WebhookDeadLetterFailure(_, _ string) {
 	atomic.AddInt32(&f.deadLetterFail, 1)
 }
 func (f *fakeWebhookMetrics) WebhookQueueDepth(_ string, depth int) {
-	atomic.StoreInt32(&f.lastDepth, int32(depth))
+	atomic.StoreInt64(&f.lastDepth, int64(depth))
 }
 func (f *fakeWebhookMetrics) WebhookQueueCapacity(_ string, capacity int) {
-	atomic.StoreInt32(&f.lastCapacity, int32(capacity))
+	atomic.StoreInt64(&f.lastCapacity, int64(capacity))
 }
 func (f *fakeWebhookMetrics) Panic(location string) {
 	atomic.AddInt32(&f.panics, 1)

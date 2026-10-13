@@ -3,33 +3,23 @@ import { expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DARK } from "./tokens";
-import { BUILDER_CSS, BUILDER_FLOATING_CLASS, BUILDER_ROOT_CLASS } from "./builderStyles";
 
 const read = (rel: string) => readFileSync(resolve(__dirname, "..", rel), "utf8");
 
-// A white band appeared on overscroll because the document itself was still
-// light, and native scrollbars rendered light for the same reason.
-test("the document carries the dark canvas and colour scheme", () => {
+test("the document carries the canvas and colour scheme", () => {
   const html = read("index.html");
   expect(html).toContain(DARK.bg);
-  expect(html).toContain("color-scheme: dark");
+  expect(html).toContain("color-scheme: light");
+  expect(html).toContain('href="/favicon.ico"');
+  expect(html).not.toContain("favicon.svg");
 });
 
-// Both routes are dark, so the provider forces it rather than following the
-// operating system preference.
-test("the app forces the dark colour scheme for the builder too", () => {
-  expect(read("src/main.tsx")).toContain('forceColorScheme="dark"');
+test("the app forces the light colour scheme for the builder too", () => {
+  expect(read("src/main.tsx")).toContain("<UIProvider>");
+  expect(read("src/console/main.tsx")).toContain("<UIProvider>");
+  expect(read("src/shared/ui/UIProvider.tsx")).toContain('forceColorScheme="light"');
 });
 
-// React Flow paints its own canvas, controls and selection styles, which stay
-// light unless it is told the colour mode.
-test("the builder canvas runs in dark colour mode", () => {
-  expect(read("src/graph/Canvas.tsx")).toContain('colorMode="dark"');
-});
-
-test("the builder finishes third-party controls with its dark surface system", () => {
-  expect(BUILDER_CSS).toContain(`.${BUILDER_ROOT_CLASS}`);
-  expect(BUILDER_CSS).toContain(".mantine-Input-input");
-  expect(BUILDER_CSS).toContain(`.${BUILDER_ROOT_CLASS} .react-flow__controls-button`);
-  expect(BUILDER_CSS).toContain(`.${BUILDER_FLOATING_CLASS}`);
+test("the builder canvas runs in light colour mode", () => {
+  expect(read("src/graph/Canvas.tsx")).toContain('colorMode="light"');
 });

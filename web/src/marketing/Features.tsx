@@ -1,40 +1,72 @@
-import { Box, Stack, Text } from "@mantine/core";
+import { Stack, Text } from "@mantine/core";
 import { Bento, Tile } from "./Bento";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
+import { DEST_TYPES, NODE_SCHEMAS } from "../graph/nodeSchema";
 
-// Spans are deliberately uneven: the two capabilities that differentiate
-// Hookway get the wide tiles, the rest sit in narrower ones.
-const FEATURES: { span: 2 | 3 | 4 | 6; accent: string; title: string; body: string }[] = [
+const FEATURES: { span: 2 | 3 | 4 | 6; title: string; body: string }[] = [
   {
     span: 3,
-    accent: DARK.accent,
-    title: "Verified on arrival",
-    body: "HMAC signatures, static header matching, or JWT bearer tokens, chosen per endpoint and named by wire format rather than by vendor.",
+    title: "Send events to the systems you run",
+    body: `Connect to ${DEST_TYPES.length} destination types, including RabbitMQ, SQS, Kafka, Redis, databases, S3, Lambda and HTTP webhooks. Reuse credentials across destinations with named connections.`,
   },
   {
     span: 3,
-    accent: "#7070FF",
-    title: "Fan out anywhere",
-    body: "One event reaches every destination you route it to, each with its own target and its own filters.",
+    title: "Verify who sent each request",
+    body: `Choose from ${Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length} authentication formats: HMAC or ECDSA signatures, HTTP Basic, exact tokens, and JWT. Invalid credentials and unknown schemes are rejected; accepting unauthenticated traffic is an explicit choice.`,
   },
-  { span: 2, accent: "#25BE8A", title: "Provisioned for you", body: "Queues, topics and streams created on first use." },
-  { span: 2, accent: DARK.highlight, title: "Routed per request", body: "Targets filled from a header, path, body or lookup." },
-  { span: 2, accent: "#35B2AD", title: "Safe under load", body: "Allowlists, rate limits and replay protection." },
+  {
+    span: 3,
+    title: "Keep traffic protection consistent as you scale",
+    body: "Share rate limits and duplicate checks across servers with Redis or PostgreSQL, or use memory for one server. Control bursts or rolling quotas by caller or verified tenant. If protection becomes unavailable, affected requests are rejected until it recovers.",
+  },
+  {
+    span: 3,
+    title: "Handle events and file uploads",
+    body: "Read JSON, XML, multipart form data, or raw bodies. Use fields to route events, store decoded file bytes in S3 or Redis key/value storage, or forward the original request to an API.",
+  },
+  {
+    span: 2,
+    title: "Decide which events go where",
+    body: "Filter out events you do not need. Use if / else for two outcomes, or a switch for several routes. Conditions can check request headers and fields in the parsed body.",
+  },
+  {
+    span: 2,
+    title: "Prepare data for the next service",
+    body: "Check required JSON fields, value types and formats before delivery. Map or remove fields, compare JSON changes, or clean up ordered XML. Use sandboxed JavaScript when the receiving service needs a custom payload.",
+  },
+  {
+    span: 2,
+    title: "Route to the right environment",
+    body: "Choose only environments allowed by your routing rules. Use HTTP, PostgreSQL or DynamoDB lookups to resolve routing values. Save a new route after an API creates a resource so later events reach the same backend.",
+  },
+  {
+    span: 2,
+    title: "Call APIs and return their responses",
+    body: "Forward a request to an HTTP API and return its response to the caller. Choose which headers, query parameters, and body to send; managed credential profiles handle outbound authentication.",
+  },
+  {
+    span: 2,
+    title: "Process batches with limits",
+    body: "Split a JSON batch into individual events, check each event’s environment, and deliver each through its own flow. Set batch size, concurrency, and time limits to bound the work.",
+  },
+  {
+    span: 2,
+    title: "Investigate uncertain deliveries",
+    body: "Retry only a failed destination through the optional replay console or API. Investigate uncertain delivery before repeating it, or record independent confirmation with a note, preserving the evidence.",
+  },
 ];
 
 export function Features() {
   return (
     <Section
-      eyebrow="Capabilities"
-      title="Everything between the sender and your systems"
-      lead="Hookway sits in front of your infrastructure and does the work you would otherwise write by hand for every integration."
+      title="From incoming webhook to delivered event"
+      lead="Define how requests are checked, how their data is prepared, and where each event goes. Configure the flow in YAML or export it from the visual builder."
     >
       <Bento>
         {FEATURES.map((f) => (
           <Tile key={f.title} span={f.span}>
-            <Stack gap={10}>
-              <Box style={{ width: 28, height: 4, borderRadius: 2, background: f.accent }} />
+            <Stack gap={8}>
               <Text fw={600} c={DARK.text} size="md">
                 {f.title}
               </Text>

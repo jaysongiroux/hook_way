@@ -1,14 +1,17 @@
 package webhook
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jaysongiroux/hook_way/internal/jsonbudget"
 
-	hooklogging "github.com/jasongiroux/hookway/internal/logging"
+	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 )
 
 type Envelope struct {
@@ -54,13 +57,10 @@ type AuthInfo struct {
 	Verified bool   `json:"verified"`
 }
 
-func BuildEnvelope(req *http.Request, endpoint, queue string, rawBody []byte, receivedAt time.Time, sourceIP string) (Envelope, error) {
-	return BuildEnvelopeWithOptions(req, EnvelopeOptions{
-		Endpoint: endpoint, Queue: queue, RawBody: rawBody, ReceivedAt: receivedAt, SourceIP: sourceIP,
-	})
-}
-
 type EnvelopeOptions struct {
+	JSONLimits jsonbudget.Limits
+	// SkipBodyParsing keeps raw proxy bodies out of JSON and base64 copies.
+	SkipBodyParsing    bool
 	Endpoint           string
 	DestinationQueueID string
 	Queue              string
@@ -109,12 +109,23 @@ func BuildEnvelopeWithOptions(req *http.Request, opts EnvelopeOptions) (Envelope
 		copied := append([]string(nil), values...)
 		env.Query[key] = copied
 	}
-	var parsed any
-	if err := json.Unmarshal(opts.RawBody, &parsed); err == nil {
-		env.Body = parsed
-	} else {
-		encoded := base64.StdEncoding.EncodeToString(opts.RawBody)
-		env.RawBodyBase64 = &encoded
+	if !opts.SkipBodyParsing {
+		err := jsonbudget.Check(opts.RawBody, opts.JSONLimits)
+		if errors.Is(err, jsonbudget.ErrLimit) {
+			return Envelope{}, err
+		}
+		if err == nil {
+			var parsed any
+			decoder := json.NewDecoder(bytes.NewReader(opts.RawBody))
+			decoder.UseNumber()
+			if err := decoder.Decode(&parsed); err != nil {
+				return Envelope{}, err
+			}
+			env.Body = parsed
+		} else {
+			encoded := base64.StdEncoding.EncodeToString(opts.RawBody)
+			env.RawBodyBase64 = &encoded
+		}
 	}
 	env.RawBody = opts.RawBody
 	env.OrigHeaders = req.Header.Clone()

@@ -29,21 +29,14 @@ destinations:
       # access_key_id: "AKIA..."
       # secret_access_key: "..."
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "alerts"
-        # Target is the SNS topic name. Hookway will publish to this topic.
-        target: "order-alerts"
-        create: true                        # auto-create the topic at startup
-        sns_options:
-          # Optional message subject (visible in email subscriptions and console).
-          subject: "order event"
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_ts_colon"
-      secret: "${ORDERS_WEBHOOK_SECRET}"
-      signature_header: "X-Signature"
-      timestamp_tolerance: "5m"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_ts_colon, secret: "${ORDERS_WEBHOOK_SECRET}", signature_header: X-Signature, timestamp_tolerance: "5m"}
+      - {id: env, type: envelope, body_format: json}
+      # Target is the SNS topic name. Hookway will publish to this topic.
+      # Previously set sns_options.subject: "order event" (not a publish-node field).
+      - {id: out, type: publish, destination: alerts, target: order-alerts, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

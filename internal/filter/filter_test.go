@@ -208,3 +208,122 @@ func TestMatchReturnsFailingIndex(t *testing.T) {
 		t.Fatalf("Describe = %q %q %q", source, path, op)
 	}
 }
+
+func TestMatchAnyRequiresOneCondition(t *testing.T) {
+	specs := []Spec{
+		{SourceBody, "ref", OpEq, "refs/heads/release"}, // fails against the fixture
+		{SourceBody, "count", OpEq, 42},                 // holds
+	}
+	chain, issues := CompileMode(specs, MatchAny)
+	if len(issues) != 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	ok, idx := chain.Match(nil, fixtureBody(t))
+	if !ok {
+		t.Fatal("any-chain should match when one condition holds")
+	}
+	// The decisive condition under MatchAny is the one that satisfied it, so
+	// Describe still names something a log reader can act on.
+	if idx != 1 {
+		t.Fatalf("want satisfying index 1, got %d", idx)
+	}
+	if _, path, _ := chain.Describe(idx); path != "count" {
+		t.Fatalf("Describe path = %q, want count", path)
+	}
+}
+
+func TestMatchAnyFailsWhenNoConditionHolds(t *testing.T) {
+	chain, issues := CompileMode([]Spec{
+		{SourceBody, "ref", OpEq, "refs/heads/release"},
+		{SourceBody, "count", OpEq, 7},
+	}, MatchAny)
+	if len(issues) != 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	ok, idx := chain.Match(nil, fixtureBody(t))
+	if ok {
+		t.Fatal("any-chain should not match when every condition fails")
+	}
+	// No single condition is to blame for an OR failing.
+	if idx != -1 {
+		t.Fatalf("want decisive index -1, got %d", idx)
+	}
+}
+
+func TestCompileModeDefaultsToAllAndReportsIssues(t *testing.T) {
+	if chain, issues := CompileMode(nil, MatchAny); len(issues) != 0 || !chain.Empty() {
+		t.Fatalf("empty any-chain should compile empty: %+v", issues)
+	} else if ok, _ := chain.Match(nil, nil); !ok {
+		t.Fatal("empty any-chain should match everything")
+	}
+	// Compile is CompileMode(MatchAll): both conditions must hold.
+	chain, issues := Compile([]Spec{
+		{SourceBody, "count", OpEq, 42},
+		{SourceBody, "count", OpEq, 7},
+	})
+	if len(issues) != 0 {
+		t.Fatalf("issues: %+v", issues)
+	}
+	if ok, _ := chain.Match(nil, fixtureBody(t)); ok {
+		t.Fatal("all-chain should not match when a condition fails")
+	}
+	if _, issues := CompileMode([]Spec{{SourceBody, "x", OpRegex, "["}}, MatchAny); len(issues) != 1 {
+		t.Fatalf("want 1 issue for a bad regex, got %+v", issues)
+	}
+}
+
+func TestMatchResolvesXMLBody(t *testing.T) {
+	body := doc(t, `<MESSAGE><ORDER id="O1"><Amount>500</Amount></ORDER></MESSAGE>`)
+	for _, tc := range []struct {
+		name string
+		spec Spec
+		want bool
+	}{
+		{"element equals", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpEq, Value: "500"}, true},
+		{"element numeric compare", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpGt, Value: 100}, true},
+		{"element numeric compare below", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpLt, Value: 100}, false},
+		{"attribute equals", Spec{Source: SourceBody, Path: "ORDER.@id", Operator: OpEq, Value: "O1"}, true},
+		{"element exists", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpExists}, true},
+		{"missing element does not exist", Spec{Source: SourceBody, Path: "ORDER.Nope", Operator: OpNotExists}, true},
+		{"missing element exists is false", Spec{Source: SourceBody, Path: "ORDER.Nope", Operator: OpExists}, false},
+		{"regex on element text", Spec{Source: SourceBody, Path: "ORDER.Amount", Operator: OpRegex, Value: "^5[0-9]+$"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chain, issues := Compile([]Spec{tc.spec})
+			if len(issues) > 0 {
+				t.Fatalf("Compile issues: %+v", issues)
+			}
+			got, _ := chain.Match(http.Header{}, body)
+			if got != tc.want {
+				t.Fatalf("Match = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMatchXMLBodyByPointer guards the other shape an XML body arrives in:
+// node_code and node_transform both accept *transform.Document, so a filter
+// placed after one of them can see a pointer.
+func TestMatchXMLBodyByPointer(t *testing.T) {
+	d := doc(t, `<MESSAGE><ORDER><Amount>500</Amount></ORDER></MESSAGE>`)
+	chain, issues := Compile([]Spec{{Source: SourceBody, Path: "ORDER.Amount", Operator: OpEq, Value: "500"}})
+	if len(issues) > 0 {
+		t.Fatalf("Compile issues: %+v", issues)
+	}
+	if got, _ := chain.Match(http.Header{}, &d); !got {
+		t.Fatal("Match on *transform.Document = false, want true")
+	}
+}
+
+// TestMatchJSONBodyUnaffected is the regression guard: adding XML dispatch
+// must not change how a JSON body resolves.
+func TestMatchJSONBodyUnaffected(t *testing.T) {
+	body := map[string]any{"repository": map[string]any{"private": true}}
+	chain, issues := Compile([]Spec{{Source: SourceBody, Path: "repository.private", Operator: OpEq, Value: true}})
+	if len(issues) > 0 {
+		t.Fatalf("Compile issues: %+v", issues)
+	}
+	if got, _ := chain.Match(http.Header{}, body); !got {
+		t.Fatal("Match on a JSON body = false, want true")
+	}
+}

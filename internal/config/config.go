@@ -1,9 +1,7 @@
 package config
 
 import (
-	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"regexp"
@@ -11,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"github.com/jaysongiroux/hook_way/internal/routing"
 )
 
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
@@ -51,9 +49,14 @@ type ServerConfig struct {
 	WriteTimeout    time.Duration
 	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
+	// ShutdownDelay withdraws readiness before stopping HTTP admission (default zero).
+	ShutdownDelay time.Duration
+	// ShutdownTotalTimeout bounds withdrawal, request/redrive draining and resource cleanup.
+	// Exceeding it terminates the process with an error; unfinished work may be lost.
+	ShutdownTotalTimeout time.Duration
 	// PublishTimeout bounds how long a webhook request's fan-out publish is
 	// allowed to run once detached from the inbound request context (see
-	// internal/httpapi Server.handleWebhook). Defaults to 10s when omitted,
+	// FlowServer publish). Defaults to 10s when omitted,
 	// matching the WriteTimeout/ShutdownTimeout defaults so a synchronous
 	// publish can't outlive the response write or a graceful shutdown; an
 	// explicitly-set non-positive value is rejected at load time. Config
@@ -63,7 +66,12 @@ type ServerConfig struct {
 	PublishTimeout      time.Duration
 	MaxBodyBytes        int64
 	MaxInflightRequests int
-	FanoutConcurrency   int
+	// MaxPendingRequests bounds HTTP handlers waiting for an execution slot.
+	// Both this and AdmissionWaitTimeout must be positive to enable waiting.
+	// Bodies are read only after admission; zero retains immediate overload rejection.
+	MaxPendingRequests   int
+	AdmissionWaitTimeout time.Duration
+	FanoutConcurrency    int
 	// ReadinessInterval is how often the background readiness prober re-checks
 	// every destination. Defaults to 10s when omitted; an explicitly-set
 	// non-positive value is rejected at load time.
@@ -72,6 +80,11 @@ type ServerConfig struct {
 	// Defaults to 5s when omitted; an explicitly-set non-positive value is
 	// rejected at load time.
 	ReadinessTimeout time.Duration
+	// ReadinessRequireAll, when true, makes /ready return 503 if any flow is
+	// unready (AND-aggregation). The default is false: /ready stays 200
+	// when at least one flow is ready so one bad destination does not take
+	// unrelated flows out of rotation (D9).
+	ReadinessRequireAll bool
 }
 
 type SecurityConfig struct {
@@ -136,165 +149,77 @@ func (m MetricsConfig) RuntimeMetricsEnabled() bool {
 // LoggingConfig configures the process-wide structured logger.
 type LoggingConfig struct {
 	// Level is the minimum severity logged: "debug", "info", "warn", or
-	// "error". Empty defaults to "info". See internal/logging.ParseLevel for
-	// the values accepted at runtime; ValidationIssues enforces the same enum
-	// at config-load time.
+	// "error". Empty defaults to "info". HOOKWAY_LOG_LEVEL overrides this at
+	// process start. See internal/logging.ParseLevel for the values accepted
+	// at runtime; ValidationIssues enforces the same enum at config-load time.
 	Level string `yaml:"level"`
+	// HeaderAllowlist is the request headers that may appear in structured
+	// request logs. Empty (the default) logs no request headers. Allowed
+	// names are still redacted by the built-in sensitive-header heuristics
+	// and security.redacted_header_denylist. Proxy forwarding uses
+	// security.forwarded_header_allowlist instead.
+	HeaderAllowlist []string `yaml:"header_allowlist"`
 }
 
-// ReplayConfig configures the optional webhook-replay store: a Postgres-backed
-// record of accepted inbound events, served over its own protected listener so
-// operators can inspect and re-deliver past webhooks. Disabled (the zero
-// value) by default; nothing is captured, no listener is started, and no
-// Postgres connection is required.
+// Replay defaults.
+const (
+	DefaultReplayMaxRecordBytes       int64 = 16 << 20
+	DefaultReplayControlMaxConcurrent       = 8
+)
+
+// ReplayConfig connects core to the optional replay service. With the block
+// absent Configured is false, and failure capture and the control listener
+// are both off.
 type ReplayConfig struct {
-	Enabled bool
-	// Addr is the dedicated listener address for the replay API, e.g. ":9091".
-	// Required when Enabled, so the replay API is never accidentally exposed
-	// on the public webhook port.
-	Addr string
-	// SkipUnauthenticated, when true, skips event capture for endpoints whose
-	// auth.type is "no_auth", since such endpoints have no caller identity to
-	// attribute a captured event to.
-	SkipUnauthenticated bool
-	// TTL bounds how long a captured event is retained before the background
-	// cleanup sweep deletes it. Zero means keep forever.
-	TTL time.Duration
-	// MaxEvents caps the total number of retained events (oldest evicted
-	// first by the cleanup sweep). Zero means no cap.
-	MaxEvents int64
-	// CleanupInterval is how often the background sweep runs to enforce TTL
-	// and MaxEvents. Defaults to 1h when Enabled and left unset.
-	CleanupInterval time.Duration
-	// Postgres is the replay store's database connection. Reuses the same
-	// PostgresConfig shape as postgres destinations; unlike a postgres
-	// destination, Table is not a required single-sink table name -- replay
-	// uses its own fixed table names and treats Table as an optional prefix.
-	Postgres PostgresConfig
+	Configured     bool
+	URL            string
+	CaptureToken   string
+	MaxRecordBytes int64 // per artifact; larger artifacts make a metadata-only record
+	TLS            ReplayTLSConfig
+	Control        ReplayControlConfig
+}
+
+// ReplayTLSConfig is core's client TLS for uploads to the replay service.
+type ReplayTLSConfig struct {
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	ServerName         string
+	InsecureSkipVerify bool
+}
+
+// ReplayControlConfig is the private listener replay calls to redrive.
+type ReplayControlConfig struct {
+	Addr          string
+	Token         string
+	MaxConcurrent int
 }
 
 type rawConfig struct {
-	Server struct {
-		Addr                string `yaml:"addr"`
-		ReadTimeout         string `yaml:"read_timeout"`
-		WriteTimeout        string `yaml:"write_timeout"`
-		IdleTimeout         string `yaml:"idle_timeout"`
-		ShutdownTimeout     string `yaml:"shutdown_timeout"`
-		PublishTimeout      string `yaml:"publish_timeout"`
-		MaxBodyBytes        int64  `yaml:"max_body_bytes"`
-		MaxInflightRequests int    `yaml:"max_inflight_requests"`
-		FanoutConcurrency   int    `yaml:"fanout_concurrency"`
-		ReadinessInterval   string `yaml:"readiness_interval"`
-		ReadinessTimeout    string `yaml:"readiness_timeout"`
-	} `yaml:"server"`
-	Security  SecurityConfig  `yaml:"security"`
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Logging   LoggingConfig   `yaml:"logging"`
-	Replay    struct {
-		Enabled             bool              `yaml:"enabled"`
-		Addr                string            `yaml:"addr"`
-		SkipUnauthenticated bool              `yaml:"skip_unauthenticated"`
-		TTL                 string            `yaml:"ttl"`
-		MaxEvents           int64             `yaml:"max_events"`
-		CleanupInterval     string            `yaml:"cleanup_interval"`
-		Postgres            rawPostgresConfig `yaml:"postgres"`
-	} `yaml:"replay"`
+	Routing      routing.Config                  `yaml:"routing,omitempty"`
+	Server       rawServerConfig                 `yaml:"server"`
+	Security     SecurityConfig                  `yaml:"security"`
+	RateLimit    RateLimitConfig                 `yaml:"rate_limit"`
+	Metrics      MetricsConfig                   `yaml:"metrics"`
+	Logging      LoggingConfig                   `yaml:"logging"`
+	Replay       *rawReplayConfig                `yaml:"replay"`
+	Connections  map[string]rawConnectionConfig  `yaml:"connections"`
 	Destinations map[string]rawDestinationConfig `yaml:"destinations"`
-	Endpoints    map[string]struct {
-		Enabled               bool                           `yaml:"enabled"`
-		Path                  string                         `yaml:"path"`
-		DeliveryFailurePolicy string                         `yaml:"delivery_failure_policy"`
-		Destinations          []rawEndpointDestinationConfig `yaml:"destinations"`
-		MaxBodyBytes          int64                          `yaml:"max_body_bytes"`
-		RateLimit             EndpointRateLimitConfig        `yaml:"rate_limit"`
-		ReplayProtection      struct {
-			Enabled    bool   `yaml:"enabled"`
-			TTL        string `yaml:"ttl"`
-			MaxEntries int    `yaml:"max_entries"`
-		} `yaml:"replay_protection"`
-		IPAllowlist []string `yaml:"ip_allowlist"`
-		Auth        struct {
-			Type               string `yaml:"type"`
-			Scheme             string `yaml:"scheme"`
-			Secret             string `yaml:"secret"`
-			SignatureHeader    string `yaml:"signature_header"`
-			TimestampTolerance string `yaml:"timestamp_tolerance"`
-			IdempotencyHeader  string `yaml:"idempotency_header"`
-			RemoveBearer       bool   `yaml:"remove_bearer"`
-			ExpectedIssuer     string `yaml:"expected_issuer"`
-			ExpectedAudience   string `yaml:"expected_audience"`
-			BodyHashClaim      string `yaml:"body_hash_claim"`
-			AllowUnboundBody   bool   `yaml:"allow_unbound_body"`
-		} `yaml:"auth"`
-		Filters        []rawFilterConditionConfig `yaml:"filters"`
-		FilterResponse struct {
-			Status int `yaml:"status"`
-		} `yaml:"filter_response"`
-		Variables            map[string]rawVariableConfig `yaml:"variables"`
-		OnUnresolvedVariable *rawFallbackRouteConfig      `yaml:"on_unresolved_variable"`
-	} `yaml:"endpoints"`
+	Flows        map[string]flowSchema           `yaml:"flows"`
 }
 
-func Load(path string) (Config, error) {
-	return NewService().Load(path)
-}
-
-type Service struct{}
-
-func NewService() Service {
-	return Service{}
-}
-
-func (s Service) Load(path string) (Config, error) {
-	if path == "" {
-		return Config{}, ConfigValidationError{Issues: []ValidationIssue{{
-			Field: "config", Message: "path is required", Suggestion: "set --config ./config.yaml or HOOKWAY_CONFIG",
-		}}}
-	}
-	rawBytes, err := os.ReadFile(path)
-	if err != nil {
-		return Config{}, err
-	}
-	return s.loadBytes(rawBytes, path, true)
-}
-
-// loadBytes parses, converts, and validates config from raw YAML bytes. source
-// names the origin (a file path, or "config" for in-memory bytes) for error
-// text. When expandEnv is true, ${VAR} references are expanded against the
-// process environment before parsing; when false, they are left as opaque
-// literals (see ValidateBytes).
-func (s Service) loadBytes(rawBytes []byte, source string, expandEnv bool) (Config, error) {
-	raw := string(rawBytes)
-	if expandEnv {
-		expanded, missing := expandEnvStrict(raw)
-		if len(missing) > 0 {
-			return Config{}, ConfigValidationError{Issues: MissingEnvIssues(missing)}
-		}
-		raw = expanded
-	}
-	var config rawConfig
-	decoder := yaml.NewDecoder(bytes.NewBufferString(raw))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&config); err != nil {
-		if strings.Contains(err.Error(), "field") && strings.Contains(err.Error(), "not found") {
-			return Config{}, fmt.Errorf("unknown or invalid YAML field in %s: %w", source, err)
-		}
-		return Config{}, fmt.Errorf("invalid YAML syntax in %s: %w", source, err)
-	}
-	cfg, issues := convert(config)
-	if len(issues) > 0 {
-		return Config{}, ConfigValidationError{Issues: issues}
-	}
-	if issues := cfg.ValidationIssues(); len(issues) > 0 {
-		return Config{}, ConfigValidationError{Issues: issues}
-	}
-	return cfg, nil
+// flowSchema describes one flow for `hookway schema` only; internal/flowconfig
+// decodes flows. Node options are per type (hookway schema --nodes).
+type flowSchema struct {
+	Nodes                 []map[string]any `yaml:"nodes"`
+	Edges                 []string         `yaml:"edges"`
+	DeliveryFailurePolicy string           `yaml:"delivery_failure_policy,omitempty" jsonschema:"enum=stop_on_failure,enum=skip_failed"`
+	CaptureFailures       *bool            `yaml:"capture_failures,omitempty"`
 }
 
 // MissingEnvIssues builds one ValidationIssue per referenced-but-unset
 // environment variable name (as produced by expandEnvStrict / ExpandEnvLenient
-// missing lists). Shared by Load's hard-failure path and by
+// missing lists). Shared by flowconfig.Load's hard-failure path and by
 // internal/configapi's expand-and-downgrade-to-warning path, so both surfaces
 // report the exact same field/message/suggestion text for the same problem.
 func MissingEnvIssues(missing []string) []ValidationIssue {
@@ -363,6 +288,13 @@ func ExpandEnvLenient(raw string) (expanded string, missing []string) {
 	return expandEnvCollect(raw, false)
 }
 
+// ExpandEnvStrict is the load-time expander used by LoadBytes
+// when environment substitution is requested. Unset variables are reported in
+// missing and expanded is empty in that case.
+func ExpandEnvStrict(raw string) (expanded string, missing []string) {
+	return expandEnvStrict(raw)
+}
+
 // expandEnvCollect does the actual ${VAR}/$VAR substitution against the
 // process environment. When zeroMissing is true, a missing variable expands
 // to "" and the returned expanded string is only meaningful when missing is
@@ -397,44 +329,6 @@ func expandEnvCollect(raw string, zeroMissing bool) (expanded string, missing []
 	return out, names
 }
 
-// ValidateBytes validates raw YAML config bytes and returns structured issues.
-// A nil slice means the config is valid. Unlike Load, this path does NOT
-// expand ${VAR} references against the process environment: the bytes are
-// treated as untrusted candidate config (e.g. from the HTTP /validate
-// endpoint), and ${VAR} is left as an opaque literal so validating it cannot
-// leak process-environment secrets.
-func (s Service) ValidateBytes(data []byte) []ValidationIssue {
-	_, err := s.loadBytes(data, "config", false)
-	return issuesFromError(err)
-}
-
-// issuesFromError converts a load error into structured issues. Structured
-// ConfigValidationError issues pass through; any other error (YAML syntax,
-// unknown field) becomes a single "config" issue carrying the message.
-func issuesFromError(err error) []ValidationIssue {
-	if err == nil {
-		return nil
-	}
-	var cve ConfigValidationError
-	if errors.As(err, &cve) {
-		return cve.Issues
-	}
-	return []ValidationIssue{{Field: "config", Message: err.Error()}}
-}
-
-func (s Service) Validate(path string) error {
-	_, err := s.Load(path)
-	return err
-}
-
-func MustLoad(path string) Config {
-	cfg, err := Load(path)
-	if err != nil {
-		panic(err)
-	}
-	return cfg
-}
-
 func ResolvePath(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -443,10 +337,6 @@ func ResolvePath(flagValue string) (string, error) {
 		return env, nil
 	}
 	return "", errors.New("config path required via --config or HOOKWAY_CONFIG")
-}
-
-func ConfigFlag() *string {
-	return flag.String("config", "", "path to Hookway YAML config")
 }
 
 // defaultMaxInflightRequests is the concurrent-request cap applied when
@@ -470,115 +360,4 @@ func maxInflightRequests(raw int) int {
 		return defaultMaxInflightRequests
 	}
 	return raw
-}
-
-func convert(raw rawConfig) (Config, []ValidationIssue) {
-	var issues []ValidationIssue
-	read, issue := parsePositiveDefaultDuration("server.read_timeout", raw.Server.ReadTimeout, 5*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	write, issue := parsePositiveDefaultDuration("server.write_timeout", raw.Server.WriteTimeout, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	idle, issue := parsePositiveDefaultDuration("server.idle_timeout", raw.Server.IdleTimeout, 60*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	shutdown, issue := parsePositiveDefaultDuration("server.shutdown_timeout", raw.Server.ShutdownTimeout, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	publish, issue := parsePositiveDefaultDuration("server.publish_timeout", raw.Server.PublishTimeout, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	readinessInterval, issue := parsePositiveDefaultDuration("server.readiness_interval", raw.Server.ReadinessInterval, 10*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	readinessTimeout, issue := parsePositiveDefaultDuration("server.readiness_timeout", raw.Server.ReadinessTimeout, 5*time.Second)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	replayTTL, issue := parseDuration("replay.ttl", raw.Replay.TTL, 0)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	replayCleanupInterval, issue := parseDuration("replay.cleanup_interval", raw.Replay.CleanupInterval, 0)
-	if issue.Field != "" {
-		issues = append(issues, issue)
-	}
-	if raw.Replay.Enabled && replayCleanupInterval == 0 {
-		replayCleanupInterval = time.Hour
-	}
-	cfg := Config{
-		Server: ServerConfig{
-			Addr: raw.Server.Addr, ReadTimeout: read, WriteTimeout: write,
-			IdleTimeout: idle, ShutdownTimeout: shutdown, PublishTimeout: publish, MaxBodyBytes: raw.Server.MaxBodyBytes,
-			MaxInflightRequests: maxInflightRequests(raw.Server.MaxInflightRequests), FanoutConcurrency: raw.Server.FanoutConcurrency,
-			ReadinessInterval: readinessInterval, ReadinessTimeout: readinessTimeout,
-		},
-		Security:  raw.Security,
-		RateLimit: raw.RateLimit,
-		Metrics:   raw.Metrics,
-		Logging:   raw.Logging,
-		Replay: ReplayConfig{
-			Enabled:             raw.Replay.Enabled,
-			Addr:                raw.Replay.Addr,
-			SkipUnauthenticated: raw.Replay.SkipUnauthenticated,
-			TTL:                 replayTTL,
-			MaxEvents:           raw.Replay.MaxEvents,
-			CleanupInterval:     replayCleanupInterval,
-			Postgres:            convertPostgresConfig(raw.Replay.Postgres),
-		},
-		Destinations: map[string]DestinationConfig{},
-		Endpoints:    map[string]EndpointConfig{},
-	}
-	for id, rawDest := range raw.Destinations {
-		dest, destIssues := convertDestination("destinations."+id, rawDest)
-		issues = append(issues, destIssues...)
-		cfg.Destinations[id] = dest
-	}
-	for name, endpoint := range raw.Endpoints {
-		tolerance, issue := parsePositiveDefaultDuration("endpoints."+name+".auth.timestamp_tolerance", endpoint.Auth.TimestampTolerance, 5*time.Minute)
-		if issue.Field != "" {
-			issues = append(issues, issue)
-		}
-		replayTTL, issue := parseDuration("endpoints."+name+".replay_protection.ttl", endpoint.ReplayProtection.TTL, 0)
-		if issue.Field != "" {
-			issues = append(issues, issue)
-		}
-		destinations, destinationIssues := convertEndpointDestinations("endpoints."+name+".destinations", endpoint.Destinations)
-		issues = append(issues, destinationIssues...)
-		variables, variableIssues := convertVariables("endpoints."+name+".variables", endpoint.Variables)
-		issues = append(issues, variableIssues...)
-		cfg.Endpoints[name] = EndpointConfig{
-			Enabled:               endpoint.Enabled,
-			Path:                  endpoint.Path,
-			DeliveryFailurePolicy: deliveryFailurePolicy(endpoint.DeliveryFailurePolicy),
-			Destinations:          destinations,
-			MaxBodyBytes:          endpoint.MaxBodyBytes,
-			RateLimit:             endpoint.RateLimit,
-			ReplayProtection: ReplayProtectionConfig{
-				Enabled: endpoint.ReplayProtection.Enabled, TTL: replayTTL, MaxEntries: endpoint.ReplayProtection.MaxEntries,
-			},
-			IPAllowlist: endpoint.IPAllowlist,
-			Auth: AuthConfig{Type: endpoint.Auth.Type, Scheme: authScheme(endpoint.Auth.Scheme), Secret: endpoint.Auth.Secret,
-				SignatureHeader:    endpoint.Auth.SignatureHeader,
-				TimestampTolerance: tolerance,
-				IdempotencyHeader:  endpoint.Auth.IdempotencyHeader,
-				RemoveBearer:       endpoint.Auth.RemoveBearer,
-				ExpectedIssuer:     endpoint.Auth.ExpectedIssuer,
-				ExpectedAudience:   endpoint.Auth.ExpectedAudience,
-				BodyHashClaim:      endpoint.Auth.BodyHashClaim,
-				AllowUnboundBody:   endpoint.Auth.AllowUnboundBody},
-			Filters:              convertFilters(endpoint.Filters),
-			FilterResponse:       FilterResponseConfig{Status: endpoint.FilterResponse.Status},
-			Variables:            variables,
-			OnUnresolvedVariable: convertFallback(endpoint.OnUnresolvedVariable),
-		}
-	}
-	return cfg, issues
 }

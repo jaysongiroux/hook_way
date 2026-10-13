@@ -1,0 +1,791 @@
+{
+  "kafka": {
+    "block": "kafka",
+    "connection": "kafka",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "brokers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "acks": {
+          "type": "string"
+        },
+        "compression": {
+          "type": "string"
+        },
+        "publish_timeout": {
+          "type": "string"
+        },
+        "sasl": {
+          "properties": {
+            "mechanism": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "tls": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "retry": {
+          "properties": {
+            "max_attempts": {
+              "type": "integer"
+            },
+            "initial_backoff": {
+              "type": "string"
+            },
+            "max_backoff": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "lambda": {
+    "block": "lambda",
+    "connection": "aws",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "access_key_id": {
+          "type": "string"
+        },
+        "secret_access_key": {
+          "type": "string"
+        },
+        "invocation_type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "mongodb": {
+    "block": "mongodb",
+    "connection": "mongodb",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "uri": {
+          "type": "string"
+        },
+        "database": {
+          "type": "string"
+        },
+        "max_pool_size": {
+          "type": "integer"
+        },
+        "tls": {
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "postgres": {
+    "block": "postgres",
+    "connection": "postgres",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "max_conns": {
+          "type": "integer"
+        },
+        "tls": {
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "rabbitmq": {
+    "block": "rabbitmq",
+    "connection": "rabbitmq",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "exchange": {
+          "type": "string"
+        },
+        "exchange_type": {
+          "type": "string"
+        },
+        "durable": {
+          "type": "boolean"
+        },
+        "publish_timeout": {
+          "type": "string"
+        },
+        "declare_queues": {
+          "type": "boolean"
+        },
+        "publisher_channels": {
+          "type": "integer"
+        },
+        "queue_defaults": {
+          "properties": {
+            "message_ttl": {
+              "type": "string"
+            },
+            "expires": {
+              "type": "string"
+            },
+            "max_length": {
+              "type": "integer"
+            },
+            "overflow": {
+              "type": "string"
+            },
+            "dead_letter_routing_key": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "retry": {
+          "properties": {
+            "max_attempts": {
+              "type": "integer"
+            },
+            "initial_backoff": {
+              "type": "string"
+            },
+            "max_backoff": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "tls": {
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "dead_letter": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "exchange": {
+              "type": "string"
+            },
+            "exchange_type": {
+              "type": "string"
+            },
+            "queue": {
+              "type": "string"
+            },
+            "routing_key": {
+              "type": "string"
+            },
+            "durable": {
+              "type": "boolean"
+            },
+            "create_queue": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "redis_kv": {
+    "block": "redis",
+    "connection": "redis",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "addrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "master_name": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "db": {
+          "type": "integer"
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "tls": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "redis_list": {
+    "block": "redis",
+    "connection": "redis",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "addrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "master_name": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "db": {
+          "type": "integer"
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "tls": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "redis_pubsub": {
+    "block": "redis",
+    "connection": "redis",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "addrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "master_name": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "db": {
+          "type": "integer"
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "tls": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "redis_stream": {
+    "block": "redis",
+    "connection": "redis",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "addrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "master_name": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "db": {
+          "type": "integer"
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "tls": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "s3": {
+    "block": "s3",
+    "connection": "aws",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "access_key_id": {
+          "type": "string"
+        },
+        "secret_access_key": {
+          "type": "string"
+        },
+        "bucket": {
+          "type": "string"
+        },
+        "create": {
+          "type": "boolean"
+        },
+        "sse": {
+          "type": "string"
+        },
+        "sse_kms_key_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "sns": {
+    "block": "sns",
+    "connection": "aws",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "access_key_id": {
+          "type": "string"
+        },
+        "secret_access_key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "sqs": {
+    "block": "sqs",
+    "connection": "aws",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "region": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "access_key_id": {
+          "type": "string"
+        },
+        "secret_access_key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "temporal": {
+    "block": "temporal",
+    "connection": "temporal",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "host_port": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "connect_timeout": {
+          "type": "string"
+        },
+        "start_timeout": {
+          "type": "string"
+        },
+        "tls": {
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "webhook": {
+    "block": "webhook",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "allow_private_targets": {
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "string"
+        },
+        "max_queue": {
+          "type": "integer"
+        },
+        "max_queue_bytes": {
+          "type": "integer"
+        },
+        "drain_timeout": {
+          "type": "string"
+        },
+        "delivery_mode": {
+          "type": "string"
+        },
+        "dead_letter": {
+          "properties": {
+            "destination": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "retry": {
+          "properties": {
+            "max_attempts": {
+              "type": "integer"
+            },
+            "initial_backoff": {
+              "type": "string"
+            },
+            "max_backoff": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "auth": {
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "header": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "secret": {
+              "type": "string"
+            },
+            "scheme": {
+              "type": "string"
+            },
+            "event_id_header": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "tls": {
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  }
+}

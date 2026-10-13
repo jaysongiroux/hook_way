@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // RedisStreamTarget describes a single Redis Stream destination. Name is the

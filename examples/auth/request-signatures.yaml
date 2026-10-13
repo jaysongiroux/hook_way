@@ -1,0 +1,67 @@
+# Synthetic request-signature protocols, independent of any vendor.
+# Demonstrates separate headers, JavaScript JSON signing, multiple signatures,
+# P-256 ECDSA and route-specific authentication responses. Configure test keys.
+# HMAC signatures are hex SHA-256. ECDSA signatures are base64 ASN.1 DER;
+# SAMPLE_ECDSA_KEY contains the base64 PKIX DER public key, not a JWT key.
+server: {addr: ":8080", max_body_bytes: 1048576}
+destinations:
+  broker: {type: sqs, sqs: {region: us-east-1}}
+flows:
+  json_hmac:
+    responses:
+      auth_error: {status: 400, body: '{"error":"invalid signature"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample-json, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: 'Signs timestamp + "." + JSON.stringify(JSON.parse(original body)).'
+        scheme: hmac_sha256_headers_dot
+        secret_ref: {provider: env, name: SAMPLE_SIGNING_BUNDLE, json_field: signing_key, overlap: 5m}
+        signature_header: X-Sample-Signature
+        timestamp_header: X-Sample-Timestamp
+        timestamp_unit: milliseconds
+        timestamp_policy: age # Explicitly preserves an age-only contract; permits future timestamps.
+        timestamp_tolerance: 5m
+        body_representation: json_js
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: broker, target: sample-json, create: true, wire_body: json_js}
+    edges: [in>body, body>auth, auth>env, env>out]
+  multi_hmac:
+    responses:
+      auth_error: {status: 400, body: '{"error":"invalid signature"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample-multi, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: 'Accepts t=<seconds>,s=<hex>,s=<hex>; signs t + "." + original bytes.'
+        scheme: hmac_sha256_ts_dot_multi
+        secret: "${SAMPLE_WEBHOOK_SECRET}"
+        signature_header: X-Sample-Signature
+        timestamp_unit: seconds
+        timestamp_policy: symmetric
+        timestamp_tolerance: 5m
+        signature_label: s
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: broker, target: sample-multi, create: true, wire_body: raw}
+    edges: [in>body, body>auth, auth>env, env>out]
+  ecdsa:
+    responses:
+      auth_error: {status: 403, body: '{"error":"invalid signature"}'}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/sample-ecdsa, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: 'P-256/SHA-256 over timestamp concatenated directly with original body bytes.'
+        scheme: ecdsa_p256_sha256_headers
+        secret_ref: {provider: env, name: SAMPLE_ECDSA_KEY, overlap: 5m}
+        signature_header: X-Sample-Signature
+        timestamp_header: X-Sample-Timestamp
+        timestamp_unit: seconds
+        timestamp_policy: symmetric # Choose explicitly; an unverified legacy window is not implied.
+        timestamp_tolerance: 5m
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: broker, target: sample-ecdsa, create: true, wire_body: raw}
+    edges: [in>body, body>auth, auth>env, env>out]

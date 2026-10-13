@@ -1,18 +1,13 @@
-import { Box, Container, Text, Title } from "@mantine/core";
+import { Box, Container, Title } from "@mantine/core";
 import type { ReactNode } from "react";
 import { DARK } from "../tokens";
 
-// Section is the shared band: an accent eyebrow, a heading, an optional lead,
-// and content. Every band on the page uses it, so the vertical rhythm and the
-// type scale are defined in exactly one place.
 export function Section({
-  eyebrow,
   title,
   lead,
   children,
   background,
 }: {
-  eyebrow: string;
   title: string;
   lead?: string;
   children: ReactNode;
@@ -21,22 +16,17 @@ export function Section({
   return (
     <Box component="section" py={72} style={{ background: background ?? DARK.bg }}>
       <Container size="lg">
-        <Text
-          size="xs"
-          fw={600}
-          c={DARK.accentText}
-          mb={10}
-          style={{ letterSpacing: 1.4, textTransform: "uppercase" }}
+        <Title
+          order={2}
+          c={DARK.text}
+          style={{ fontSize: "clamp(28px, 5vw, 32px)", lineHeight: 1.2, letterSpacing: -0.4, fontWeight: 650 }}
         >
-          {eyebrow}
-        </Text>
-        <Title order={2} c={DARK.text} style={{ fontSize: 34, letterSpacing: -0.4 }}>
           {title}
         </Title>
         {lead && (
-          <Text size="md" c={DARK.muted} mt="sm" maw={620}>
+          <Box mt={12} maw={620} c={DARK.muted} style={{ fontSize: 16, lineHeight: 1.5 }}>
             {lead}
-          </Text>
+          </Box>
         )}
         <Box mt={36}>{children}</Box>
       </Container>

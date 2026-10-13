@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/console/main.tsx",
+    "playwright.website.config.ts",
+    "website-e2e/*.ts",
+    "scripts/docs/*.mjs"
+  ],
+  "ignore": [
+    "src/shared/contracts/generated/**"
+  ],
+  "ignoreDependencies": [
+    "openapi-typescript"
+  ]
+}

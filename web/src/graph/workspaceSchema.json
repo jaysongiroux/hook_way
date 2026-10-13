@@ -1,0 +1,720 @@
+{
+  "routing": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/jaysongiroux/hook_way/internal/routing/config",
+    "properties": {
+      "stores": {
+        "additionalProperties": {
+          "properties": {
+            "table": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "string"
+            },
+            "id_field": {
+              "type": "string"
+            },
+            "type_field": {
+              "type": "string"
+            },
+            "environment_field": {
+              "type": "string"
+            },
+            "created_at_field": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "type": "object"
+      },
+      "profiles": {
+        "additionalProperties": {
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "credential_mode": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "type": "object"
+      },
+      "environments": {
+        "additionalProperties": {
+          "properties": {
+            "aliases": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "profiles": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "accounts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "destination_prefix": {
+              "type": "string"
+            },
+            "backend_host": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "type": "object"
+  },
+  "credentials": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "allowed_origins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_private_targets": {
+          "type": "boolean"
+        },
+        "headers": {
+          "additionalProperties": {
+            "properties": {
+              "secret_ref": {
+                "properties": {
+                  "selection": {
+                    "type": "string",
+                    "enum": [
+                      "exact",
+                      "newest_matching"
+                    ]
+                  },
+                  "json_field": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "env",
+                      "file",
+                      "aws_secrets_manager"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "refresh": {
+                    "type": "string"
+                  },
+                  "overlap": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "provider",
+                  "name"
+                ]
+              },
+              "prefix": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "token_url": {
+          "type": "string"
+        },
+        "client_id": {
+          "properties": {
+            "selection": {
+              "type": "string",
+              "enum": [
+                "exact",
+                "newest_matching"
+              ]
+            },
+            "json_field": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "env",
+                "file",
+                "aws_secrets_manager"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "refresh": {
+              "type": "string"
+            },
+            "overlap": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "provider",
+            "name"
+          ]
+        },
+        "client_secret": {
+          "properties": {
+            "selection": {
+              "type": "string",
+              "enum": [
+                "exact",
+                "newest_matching"
+              ]
+            },
+            "json_field": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "env",
+                "file",
+                "aws_secrets_manager"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "refresh": {
+              "type": "string"
+            },
+            "overlap": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "provider",
+            "name"
+          ]
+        },
+        "client_auth": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "secret_parameters": {
+          "additionalProperties": {
+            "properties": {
+              "selection": {
+                "type": "string",
+                "enum": [
+                  "exact",
+                  "newest_matching"
+                ]
+              },
+              "json_field": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "env",
+                  "file",
+                  "aws_secrets_manager"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "refresh": {
+                "type": "string"
+              },
+              "overlap": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "provider",
+              "name"
+            ]
+          },
+          "type": "object"
+        },
+        "request_format": {
+          "type": "string"
+        },
+        "token_path": {
+          "type": "string"
+        },
+        "instance_path": {
+          "type": "string"
+        },
+        "expiry_path": {
+          "type": "string"
+        },
+        "ttl": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "string"
+        },
+        "invalid_session": {
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "type": "object"
+  },
+  "lookups": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {
+      "properties": {
+        "timeout": {
+          "type": "string",
+          "default": "2s"
+        },
+        "cache": {
+          "properties": {
+            "ttl": {
+              "type": "string",
+              "default": "5m"
+            },
+            "negative_ttl": {
+              "type": "string",
+              "default": "0s"
+            },
+            "max_entries": {
+              "type": "integer",
+              "maximum": 1000000,
+              "minimum": 1,
+              "default": 10000
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "http": {
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "GET",
+                "POST"
+              ],
+              "default": "GET"
+            },
+            "headers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "secret_headers": {
+              "additionalProperties": {
+                "properties": {
+                  "secret_ref": {
+                    "properties": {
+                      "selection": {
+                        "type": "string",
+                        "enum": [
+                          "exact",
+                          "newest_matching"
+                        ]
+                      },
+                      "json_field": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "enum": [
+                          "env",
+                          "file",
+                          "aws_secrets_manager"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "refresh": {
+                        "type": "string"
+                      },
+                      "overlap": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "provider",
+                      "name"
+                    ]
+                  },
+                  "prefix": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "value_path": {
+              "type": "string"
+            },
+            "allow_private_targets": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "url",
+            "value_path"
+          ]
+        },
+        "postgres": {
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "url",
+            "query"
+          ]
+        },
+        "dynamodb": {
+          "properties": {
+            "table": {
+              "type": "string"
+            },
+            "index": {
+              "type": "string"
+            },
+            "key_attribute": {
+              "type": "string",
+              "default": "id"
+            },
+            "value_attribute": {
+              "type": "string"
+            },
+            "filter_attribute": {
+              "type": "string"
+            },
+            "filter_value": {
+              "type": "string"
+            },
+            "consistent_read": {
+              "type": "boolean"
+            },
+            "page_limit": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 25
+            },
+            "region": {
+              "type": "string"
+            },
+            "endpoint": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "table",
+            "value_attribute"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "type": "object"
+  },
+  "state_stores": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "redis"
+                ]
+              },
+              {
+                "required": [
+                  "postgres"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "memory"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "memory"
+                ]
+              },
+              {
+                "required": [
+                  "postgres"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "redis"
+          ]
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "memory"
+                ]
+              },
+              {
+                "required": [
+                  "redis"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "postgres"
+          ]
+        }
+      ],
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "string"
+        },
+        "startup_timeout": {
+          "type": "string"
+        },
+        "cleanup": {
+          "properties": {
+            "interval": {
+              "type": "string"
+            },
+            "budget": {
+              "type": "string"
+            },
+            "batch_size": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "memory": {
+          "properties": {},
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "redis": {
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "single",
+                "cluster",
+                "sentinel"
+              ]
+            },
+            "addrs": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "master_name": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "db": {
+              "type": "integer"
+            },
+            "pool_size": {
+              "type": "integer"
+            },
+            "tls": {
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ca_cert": {
+                  "type": "string"
+                },
+                "client_cert": {
+                  "type": "string"
+                },
+                "client_key": {
+                  "type": "string"
+                },
+                "server_name": {
+                  "type": "string"
+                },
+                "insecure_skip_verify": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "postgres": {
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "max_conns": {
+              "type": "integer"
+            },
+            "tls": {
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ca_cert": {
+                  "type": "string"
+                },
+                "client_cert": {
+                  "type": "string"
+                },
+                "client_key": {
+                  "type": "string"
+                },
+                "server_name": {
+                  "type": "string"
+                },
+                "insecure_skip_verify": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "namespace"
+      ]
+    },
+    "type": "object"
+  },
+  "launchdarkly": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {
+      "properties": {
+        "sdk_key_env": {
+          "type": "string"
+        },
+        "initialization_timeout": {
+          "type": "string",
+          "default": "5s"
+        },
+        "send_events": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sdk_key_env"
+      ]
+    },
+    "type": "object"
+  }
+}

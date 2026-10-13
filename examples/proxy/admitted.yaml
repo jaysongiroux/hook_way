@@ -1,0 +1,51 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+# Dynamic proxy: a request environment is admitted against the native registry.
+# Synthetic hosts below intentionally use different domains. Replace them with
+# approved deployment bindings. Requests cannot provide an arbitrary host.
+# JSON routing fields remain forwarded in this profile; query repeats use the last value.
+server: {addr: ":8080", max_body_bytes: 20971520, max_inflight_requests: 16}
+routing:
+  profiles:
+    sample: {account_id: "000000000000", credential_mode: sample}
+  environments:
+    preview:
+      aliases: [staging]
+      profiles: [sample]
+      accounts: ["000000000000"]
+      destination_prefix: preview
+      backend_host: preview.example.org
+    production:
+      profiles: [sample]
+      accounts: ["000000000000"]
+      destination_prefix: production
+      backend_host: api.example.net
+flows:
+  admitted_proxy:
+    nodes:
+      - {id: in, type: http_trigger, description: "Accepts a JSON or bodyless request under the proxy prefix.", path: "/proxy/admitted/{rest...}", methods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]}
+      - {id: rate, type: rate_limit, store: local, rpm: 1200, burst: 20}
+      - {id: body, type: read_body, allow_empty: true, max_bytes: 20971520}
+      - {id: auth, type: auth, scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, body_format: json}
+      - id: route
+        type: route
+        description: "Chooses body before query before header, rejects ambiguous values, and admits the environment."
+        profile: sample
+        candidates: [{source: body, path: env_name}, {source: query, path: env_name}, {source: header, path: X-Env}]
+      - id: up
+        type: http_request
+        description: "Reads the actual host from the registry; script variables cannot override its binding."
+        upstream: {profile: sample, environment_variable: route, path: "/{rest}"}
+        forward_method: true
+        forward_query: true
+        query_mode: last
+        remove_headers: [X-Auth]
+        body_methods: [POST, PUT, PATCH, DELETE]
+        max_response_bytes: 20971520
+        response_bindings: {status: upstream_status, fields: {created_id: data.id}, max_json_bytes: 65536}
+      - {id: reply, type: respond, description: "Preserves the upstream response even when the optional ID selection is unavailable.", passthrough: true}
+    edges: [in>rate, rate>body, body>auth, auth>env, env>route, route>up, up>reply]

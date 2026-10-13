@@ -1,0 +1,128 @@
+# Multipart split with S3 object storage + Lambda notify: one upload stores
+# the file as raw bytes in S3, then Event-invokes Lambda with metadata after
+# PutObject returns (publish success continuation).
+#
+# Requires UPLOAD_SOURCE_SECRET and ARCHIVE_BUCKET.
+#
+# Why not payload: object on Lambda?
+#   Lambda Invoke has hard payload limits (256 KiB Event / 6 MiB RequestResponse)
+#   and is not an object store. The established file path is: PutObject the
+#   bytes to S3, then Event-invoke Lambda with metadata so the function can
+#   GetObject by bucket/key (or process the form fields alone).
+#
+# How it works:
+#   1. envelope body_format: multipart parses the request into {fields, files}.
+#   2. for_s3 reshapes body to the single file object for payload: object.
+#   3. out_s3 PutObjects the decoded bytes.
+#   4. After S3 returns, for_lambda strips content so the Lambda envelope is
+#      metadata only; out_lambda Event-invokes the worker.
+#
+# Object payload body contract: {content: "<base64>", filename?, content_type?}.
+# The 4 MiB code-node limits account for base64 expansion of the 2 MiB file cap.
+#
+# IAM (Lambda): lambda:InvokeFunction (+ lambda:GetFunction for /ready).
+# IAM (S3): s3:PutObject (and s3:CreateBucket when create: true).
+# The function itself typically needs s3:GetObject on ARCHIVE_BUCKET if it
+# reads the uploaded object.
+
+server:
+  addr: ":8080"
+  max_body_bytes: 3145728
+
+# Both destinations below talk to the same AWS account, so the region and
+# credentials are declared once here and referenced by name. See
+# examples/connections.yaml for the full walkthrough.
+connections:
+  aws:
+    type: aws
+    region: "us-east-1"
+
+destinations:
+  archive:
+    type: s3
+    connection: aws
+    s3:
+      bucket: "${ARCHIVE_BUCKET}"
+      create: true
+  workers:
+    type: lambda
+    connection: aws
+    lambda:
+      # Event (default): succeed when AWS accepts the invoke. Use
+      # RequestResponse only when the inbound sender should see function errors.
+      invocation_type: Event
+
+flows:
+  upload_s3_lambda:
+    nodes:
+      - {id: in, type: http_trigger, description: "Vendor posts multipart/form-data (fields + file).", path: /webhooks/upload-s3-lambda, methods: [POST]}
+      - {id: body, type: read_body, description: "Buffers the whole request so HMAC can cover file bytes.", max_bytes: 3145728}
+      - {id: auth, type: auth, description: "Verifies HMAC over the raw multipart bytes before parsing.", scheme: hmac_sha256_hex, secret: "${UPLOAD_SOURCE_SECRET}", signature_header: X-Hub-Signature-256}
+      - id: env
+        type: envelope
+        description: "Parses parts into {fields, files}. include_content keeps file bytes for the S3 publish."
+        body_format: multipart
+        multipart:
+          max_parts: 2
+          max_part_bytes: 2097152
+          include_content: true
+      - id: for_s3
+        type: code
+        description: "S3 object payload needs the file object as body; stash form fields in vars for the post-S3 Lambda step."
+        timeout: 50ms
+        max_input_bytes: 4194304
+        max_output_bytes: 4194304
+        script: |
+          const files = (input.body && input.body.files) || {};
+          const doc = files.document;
+          if (!doc) {
+            throw new Error('missing files.document');
+          }
+          return {
+            body: doc,
+            vars: Object.assign({}, input.vars || {}, {
+              fields: (input.body && input.body.fields) || {}
+            })
+          };
+      - id: out_s3
+        type: publish
+        description: "Stores decoded file bytes under uploads/…/<id>-<filename> in S3."
+        destination: archive
+        target: uploads
+        payload: object
+      - id: for_lambda
+        type: code
+        description: "After S3 succeeds: strip file bytes; Lambda gets fields + file metadata."
+        timeout: 50ms
+        max_input_bytes: 4194304
+        script: |
+          const file = input.body || {};
+          return {
+            body: {
+              // Object key layout: uploads/yyyy/mm/dd/<timestamp>-<id>[-<filename>]
+              // under destinations.archive.s3.bucket (see docs/reference/configuration.md § S3).
+              archive_prefix: 'uploads',
+              fields: (input.vars && input.vars.fields) || {},
+              files: {
+                document: {
+                  filename: file.filename || '',
+                  content_type: file.content_type || '',
+                  size: file.size || 0
+                }
+              }
+            },
+            vars: input.vars || {}
+          };
+      - id: out_lambda
+        type: publish
+        description: "Event-invokes upload-worker with fields + file metadata (no bytes)."
+        destination: workers
+        target: upload-worker
+    edges:
+      - in>body
+      - body>auth
+      - auth>env
+      - env>for_s3
+      - for_s3>out_s3
+      - out_s3>for_lambda
+      - for_lambda>out_lambda

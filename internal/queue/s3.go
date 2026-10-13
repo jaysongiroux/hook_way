@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 type s3API interface {
@@ -57,7 +57,8 @@ type S3Publisher struct {
 
 // s3ObjectKey builds the object key for a message:
 //
-//	<base_folder>/yyyy/mm/dd/<received_at>-<id>.json
+//	envelope: <base_folder>/yyyy/mm/dd/<received_at>-<id>.json
+//	object:   <base_folder>/yyyy/mm/dd/<received_at>-<id>[-<filename>]
 //
 // The date partition and timestamp are derived from ReceivedAt in UTC. The
 // timestamp is formatted without colons (S3-key-safe) with an explicit "Z"
@@ -66,7 +67,14 @@ func s3ObjectKey(folder string, msg Message) string {
 	t := msg.ReceivedAt.UTC()
 	datePath := t.Format("2006/01/02")
 	ts := t.Format("20060102T150405.000000000") + "Z"
-	name := ts + "-" + msg.ID + ".json"
+	name := ts + "-" + msg.ID
+	if msg.PayloadMode == "object" {
+		if safe := SanitizeObjectFilename(msg.ObjectFilename); safe != "" {
+			name += "-" + safe
+		}
+	} else {
+		name += ".json"
+	}
 
 	parts := make([]string, 0, 3)
 	if folder = strings.Trim(folder, "/"); folder != "" {
@@ -140,7 +148,7 @@ func (p *S3Publisher) Publish(ctx context.Context, destinationID, target string,
 	if _, err := p.folders.resolve(ctx, target, passthroughProvision[struct{}]); err != nil {
 		return fmt.Errorf("s3 target %q is not configured", target)
 	}
-	body, err := json.Marshal(msg)
+	body, contentType, err := s3PutBody(msg)
 	if err != nil {
 		return err
 	}
@@ -148,7 +156,13 @@ func (p *S3Publisher) Publish(ctx context.Context, destinationID, target string,
 		Bucket:      aws.String(p.bucket),
 		Key:         aws.String(s3ObjectKey(target, msg)),
 		Body:        bytes.NewReader(body),
-		ContentType: aws.String("application/json"),
+		ContentType: aws.String(contentType),
+	}
+	if msg.PayloadMode == "object" && msg.ID != "" {
+		in.Metadata = map[string]string{"hookway-event-id": msg.ID}
+		if safe := SanitizeObjectFilename(msg.ObjectFilename); safe != "" {
+			in.Metadata["hookway-filename"] = safe
+		}
 	}
 	if p.sse != "" {
 		in.ServerSideEncryption = s3types.ServerSideEncryption(p.sse)
@@ -158,6 +172,21 @@ func (p *S3Publisher) Publish(ctx context.Context, destinationID, target string,
 	}
 	_, err = p.client.PutObject(ctx, in)
 	return err
+}
+
+func s3PutBody(msg Message) ([]byte, string, error) {
+	if msg.PayloadMode == "object" {
+		contentType, err := normalizeObjectContentType(msg.ObjectContentType)
+		if err != nil {
+			return nil, "", err
+		}
+		return msg.ObjectBytes, contentType, nil
+	}
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return nil, "", err
+	}
+	return body, "application/json", nil
 }
 
 // Ready confirms the destination bucket is reachable.

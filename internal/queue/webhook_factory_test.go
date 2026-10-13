@@ -2,12 +2,13 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // dlqFactoryConfig wires a webhook destination "notify" (endpoint-routed) whose
@@ -192,7 +193,7 @@ func TestFactoryPerDestinationMaxQueueSizing(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	rp := pub.(*RoutingPublisher)
-	defer rp.Close()
+	defer func() { _ = rp.Close() }()
 	small := rp.publishers["small"].(*WebhookPublisher)
 	big := rp.publishers["big"].(*WebhookPublisher)
 	if small.engine.capacity() != 5 {
@@ -233,4 +234,47 @@ func TestFactoryWebhookConnectorSeam(t *testing.T) {
 	if rp.publishers["notify"] != rec {
 		t.Fatal("factory did not use the connector's returned publisher")
 	}
+}
+
+func TestRoutingPublisherLeavesDeadLetterOpenAfterDrainTimeout(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	rec := &recordingPublisher{rejectAfterClose: true}
+	factory := NewFactory(FactoryOptions{RabbitMQConnector: func(context.Context, string, RabbitMQConfig) (Publisher, error) { return rec, nil }, Logger: testLogger()})
+	cfg := dlqFactoryConfig(srv.URL, true)
+	dest := cfg.Destinations["notify"]
+	dest.Webhook.DrainTimeout = 20 * time.Millisecond
+	cfg.Destinations["notify"] = dest
+	pub, err := factory.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rp := pub.(*RoutingPublisher)
+	if err := rp.Publish(context.Background(), "notify", "orders", Message{ID: "evt", ReceivedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	err = rp.Close()
+	// Capture state before unblocking workers; the fake publisher is not concurrent.
+	closed := rec.closed
+	close(release)
+	rp.publishers["notify"].(*WebhookPublisher).engine.wg.Wait()
+	if !errors.Is(err, ErrWebhookDrainTimeout) {
+		t.Fatalf("Close = %v", err)
+	}
+	if closed {
+		t.Fatal("dead-letter closed while workers were active")
+	}
+	if rec.published != 1 {
+		t.Fatalf("dead-letter deliveries = %d", rec.published)
+	}
+	if err := rp.Close(); !errors.Is(err, ErrWebhookDrainTimeout) {
+		t.Fatalf("idempotent Close lost failure: %v", err)
+	}
+	_ = rec.Close()
 }

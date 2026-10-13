@@ -1,0 +1,24 @@
+# Optional localhost TLS termination. Use together with ../docker-compose.yaml.
+services:
+  tls-proxy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine}
+    # Match the owner of the 0600 private key; no application credentials here.
+    user: "${HOOKWAY_PROXY_UID:-1000}"
+    command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+    volumes:
+      - ./tls/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${HOOKWAY_LOCAL_DIRECTORY}/localhost.crt:/etc/hookway/localhost.crt:ro
+      - ${HOOKWAY_LOCAL_DIRECTORY}/localhost.key:/etc/hookway/localhost.key:ro
+    ports:
+      - "127.0.0.1:${HOOKWAY_TLS_PORT:-18443}:8443"
+      - "127.0.0.1:${REPLAY_TLS_PORT:-18444}:8444"
+      - "127.0.0.1:${CONSOLE_TLS_PORT:-18445}:8445"
+    read_only: true
+    restart: unless-stopped
+    stop_grace_period: 70s
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    depends_on:
+      hookway: {condition: service_healthy}

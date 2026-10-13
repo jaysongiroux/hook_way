@@ -1,0 +1,58 @@
+# Core config for `make dev-up` (examples/docker-compose.yaml). It is the
+# GitHub flow from ../config.yaml with a second delivery and the replay
+# service switched on:
+#
+#   GitHub ──▶ hookway ──▶ RabbitMQ (queue github-webhooks)
+#                     └──▶ notify-sink (an HTTP endpoint)
+#
+# The flow uses skip_failed, so when notify-sink is down RabbitMQ still gets
+# the event and GitHub still gets its 202. Core hands the missed delivery to
+# the replay service, where it waits for you to retry it.
+# docs/development/local-development.md walks through it.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+replay:
+  url: "http://replay:8080"
+  capture_token: "${REPLAY_CAPTURE_TOKEN}"
+  control:
+    # Only the replay service calls this; the compose file keeps it off the
+    # host.
+    addr: ":9092"
+    token: "${REPLAY_CONTROL_TOKEN}"
+
+destinations:
+  primary:
+    type: "rabbitmq"
+    rabbitmq:
+      url: "${RABBITMQ_URL}"
+      exchange: "hookway.webhooks"
+      exchange_type: "direct"
+      durable: true
+      publish_timeout: "5s"
+      declare_queues: true
+  notify:
+    type: webhook
+    webhook:
+      url: "http://notify-sink:8080/github"
+      delivery_mode: sync
+
+flows:
+  github_events:
+    # One destination failing does not fail the request: the other still
+    # delivers, and the failure is kept for replay.
+    delivery_failure_policy: skip_failed
+    nodes:
+      - {id: in, type: http_trigger, description: "GitHub posts webhook deliveries here.", path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - {id: out, type: publish, description: "Publishes to the RabbitMQ exchange, declaring the queue.", destination: primary, target: github-webhooks, create: true}
+      - {id: notify, type: publish, description: "Posts the envelope to the notification endpoint.", destination: notify, target: github}
+    edges: [in>body, body>auth, auth>env, env>out, env>notify]

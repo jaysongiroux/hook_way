@@ -2,38 +2,74 @@ package configapi
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-func TestValidate_ValidConfigMarshalsEmptyIssuesArray(t *testing.T) {
-	resp := Validate([]byte(`server:
+func TestValidate_RejectsLegacyTopLevelKeys(t *testing.T) {
+	// There is no config version field and no endpoints format, so both are
+	// ordinary unknown top-level keys at error severity.
+	for _, tc := range []struct{ name, src, field string }{
+		{"endpoints", "endpoints: {}\n", "endpoints"},
+		{"schema_version", "schema_version: 2\nflows: {}\n", "schema_version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := Validate([]byte(tc.src))
+			var found bool
+			for _, iss := range resp.Issues {
+				if iss.Field == tc.field && iss.Severity == "error" && strings.Contains(iss.Message, "not found") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("issues = %+v, want an error-severity unknown-field issue on %q", resp.Issues, tc.field)
+			}
+		})
+	}
+}
+
+const validDeliveryConfig = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
   billing:
-    type: "rabbitmq"
-    rabbitmq:
-      url: "amqp://guest:guest@localhost:5672/"
-      exchange: "webhooks"
-      exchange_type: "direct"
-      durable: true
-endpoints:
+    type: "webhook"
+    webhook:
+      url: "https://example.test/hooks"
+      delivery_mode: sync
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
-`))
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
+`
+
+func TestValidate_ValidConfigMarshalsEmptyIssuesArray(t *testing.T) {
+	resp := Validate([]byte(validDeliveryConfig))
 	out, _ := json.Marshal(resp)
 	if string(out) != `{"issues":[]}` {
 		t.Fatalf("expected empty issues array, got %s", out)
+	}
+}
+
+func TestValidateAsyncDeliveryIsNonBlockingWarning(t *testing.T) {
+	src := strings.ReplaceAll(validDeliveryConfig, "delivery_mode: sync", "delivery_mode: async")
+	resp := Validate([]byte(src))
+	if len(resp.Issues) != 1 {
+		t.Fatalf("issues = %+v", resp.Issues)
+	}
+	issue := resp.Issues[0]
+	if issue.Severity != "warning" || issue.Field != "destinations.billing.webhook.delivery_mode" || !strings.Contains(issue.Message, "in-memory queue") || issue.Suggestion == "" {
+		t.Fatalf("expected actionable delivery warning, got %+v", issue)
 	}
 }
 
@@ -60,7 +96,42 @@ func TestSchema_ReturnsValidJSON(t *testing.T) {
 	}
 }
 
-const configMissingEnvVar = `server:
+func TestStateStoreSchemaRequiresExactlyOneBackend(t *testing.T) {
+	data, err := Schema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	stores := doc["properties"].(map[string]any)["state_stores"]
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("https://hookway.test/state-stores", stores); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile("https://hookway.test/state-stores")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for mask := 0; mask < 8; mask++ {
+		store := map[string]any{"namespace": "test"}
+		count := 0
+		for i, backend := range []string{"memory", "redis", "postgres"} {
+			if mask&(1<<i) != 0 {
+				store[backend] = map[string]any{}
+				count++
+			}
+		}
+		err := schema.Validate(map[string]any{"test": store})
+		if (err == nil) != (count == 1) {
+			t.Errorf("backend mask %d: validation error=%v, want valid=%t", mask, err, count == 1)
+		}
+	}
+}
+
+const configMissingEnvVar = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -71,19 +142,31 @@ destinations:
       exchange: "webhooks"
       exchange_type: "direct"
       durable: true
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "billing"
-        target: "test-target"
-        create: true
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: billing, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
+
+func TestValidateWithEnvSchemaKeywordsAreLiteral(t *testing.T) {
+	data, err := os.ReadFile("../../examples/json-validation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("schema", "not-a-keyword")
+	t.Setenv("ref", "not-a-keyword")
+	for _, issue := range ValidateWithEnv(data, true).Issues {
+		if issue.Severity == "error" || strings.HasPrefix(issue.Field, "config.env.") {
+			t.Fatalf("valid schema rejected after CLI environment expansion: %+v", issue)
+		}
+	}
+}
 
 func TestValidateWithEnv_MissingVarIsWarningSeverity(t *testing.T) {
 	resp := ValidateWithEnv([]byte(configMissingEnvVar), true)
@@ -118,7 +201,8 @@ func TestValidateWithEnv_ExpandTrueStillReportsStructuralErrors(t *testing.T) {
 	}
 }
 
-const configWebhookURLMissingEnvVar = `server:
+const configWebhookURLMissingEnvVar = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -126,17 +210,16 @@ destinations:
     type: "webhook"
     webhook:
       url: "${DEFINITELY_UNSET_HOOKWAY_TEST_WEBHOOK_URL}"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "forward"
-        target: "test-target"
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: forward, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 
 // TestValidateWithEnv_MissingWebhookURLDowngradesFormatCheckToWarning is the
@@ -175,7 +258,8 @@ func TestValidateWithEnv_MissingWebhookURLDowngradesFormatCheckToWarning(t *test
 	_ = sawURLIssue // downgraded-to-warning or absent are both acceptable per spec
 }
 
-const configWebhookURLGenuinelyInvalid = `server:
+const configWebhookURLGenuinelyInvalid = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
@@ -183,17 +267,16 @@ destinations:
     type: "webhook"
     webhook:
       url: "ftp://x"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "forward"
-        target: "test-target"
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: forward, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
 
 // TestValidateWithEnv_GenuineURLFormatErrorStaysError guards against
@@ -254,7 +337,7 @@ func TestValidate_NeverExpandsEnv(t *testing.T) {
 //     response, for either a config referencing a SET var or one referencing
 //     an UNSET var.
 func TestValidate_ExfilBoundary_SetEnvVarValueNeverLeaks(t *testing.T) {
-	const secretValue = "sk_live_should_never_leave_the_server_abc123"
+	const secretValue = "test-secret-must-never-appear-in-validate-json"
 	t.Setenv("HOOKWAY_TEST_EXFIL_HOME_STYLE_VAR", secretValue)
 
 	cases := map[string]string{
@@ -306,22 +389,134 @@ func TestValidate_ExfilBoundary_SetEnvVarValueNeverLeaks(t *testing.T) {
 // raw value in the issue message — when (and only when) envRef is NOT
 // expanded against the environment.
 func exfilBoundaryConfig(envRef string) string {
-	return `server:
+	return `state_stores: {test: {namespace: tests, memory: {}}}
+server:
   addr: ":8080"
   max_body_bytes: 1048576
 destinations:
   exfil:
     type: "` + envRef + `"
-endpoints:
+flows:
   test:
-    enabled: true
-    path: "/test"
-    destinations:
-      - destination: "exfil"
-        target: "test-target"
-    auth:
-      type: "hmac_sha256"
-      secret: "test-secret"
-      signature_header: "X-Signature"
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: rl, type: rate_limit, store: test, rpm: 60}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "test-secret", signature_header: X-Signature}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: exfil, target: test-target}
+    edges: [in>rl, rl>body, body>auth, auth>env, env>out]
 `
+}
+
+func TestValidate_PreservesLintWarningSeverity(t *testing.T) {
+	src := `
+state_stores: {test: {namespace: tests, memory: {}}}
+server: {addr: ":8080", max_body_bytes: 1024}
+destinations:
+  primary: {type: webhook, webhook: {url: "https://example.test/hooks"}}
+flows:
+  github:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1024}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: s, signature_header: X-S}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: t}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+	resp := Validate([]byte(src))
+	if len(resp.Issues) == 0 {
+		t.Fatal("expected lint warnings on an unthrottled flow")
+	}
+	found := false
+	for _, iss := range resp.Issues {
+		if strings.Contains(iss.Message, "unthrottled") {
+			found = true
+			if iss.Severity != "warning" {
+				t.Fatalf("unthrottled severity = %q, want warning", iss.Severity)
+			}
+		}
+		if iss.Severity == "" {
+			t.Fatalf("issue %q has empty severity", iss.Message)
+		}
+	}
+	if !found {
+		t.Fatalf("issues = %#v", resp.Issues)
+	}
+}
+
+const configConnectionModeMissingEnvVar = `state_stores: {test: {namespace: tests, memory: {}}}
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+connections:
+  cache:
+    type: redis
+    mode: "${DEFINITELY_UNSET_HOOKWAY_TEST_REDIS_MODE}"
+    url: "redis://redis:6379"
+destinations:
+  events:
+    type: "redis_stream"
+    connection: cache
+flows:
+  test:
+    nodes:
+      - {id: in, type: http_trigger, path: /test, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: test-target}
+    edges: [in>body, body>auth, auth>env, env>out]
+`
+
+// TestValidateWithEnv_MissingConnectionVarDowngradesToWarning is the
+// regression guard for the one thing about named connections that could not be
+// handled purely by merging them into the destination.
+//
+// Structural issues are produced against the post-merge config, so without
+// config.remapConnectionIssues this enum failure would be reported at
+// "destinations.events.redis.mode" -- a path that does not exist in the
+// document, because the operator wrote it under connections. fieldStillHasMissingRef
+// would then fail to resolve it, the downgrade would not happen, and
+// `hookway validate --json` would hard-fail in CI for every connection-based
+// config whose secrets are not exported. That is precisely the workflow the
+// lenient-expansion contract exists to support.
+func TestValidateWithEnv_MissingConnectionVarDowngradesToWarning(t *testing.T) {
+	resp := ValidateWithEnv([]byte(configConnectionModeMissingEnvVar), true)
+
+	for _, iss := range resp.Issues {
+		if iss.Severity == "error" {
+			t.Fatalf("expected no error-severity issues, got %#v in %#v", iss, resp.Issues)
+		}
+	}
+	var sawModeIssue bool
+	for _, iss := range resp.Issues {
+		if iss.Field == "connections.cache.mode" {
+			sawModeIssue = true
+		}
+		if iss.Field == "destinations.events.redis.mode" {
+			t.Errorf("issue was left on a path the operator never wrote: %#v", iss)
+		}
+	}
+	if !sawModeIssue {
+		t.Fatalf("expected the mode issue to be reported on connections.cache.mode, got %#v", resp.Issues)
+	}
+}
+
+func TestNativeDeclarationSchemas(t *testing.T) {
+	b, err := Schema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(b, &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	for _, name := range []string{"credentials", "routing"} {
+		if properties[name] == nil {
+			t.Fatal("missing declaration schema", name)
+		}
+	}
 }

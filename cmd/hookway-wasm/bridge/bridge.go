@@ -8,7 +8,9 @@ package bridge
 import (
 	"encoding/json"
 
-	"github.com/jasongiroux/hookway/internal/configapi"
+	"github.com/jaysongiroux/hook_way/internal/configapi"
+	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
+	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 // Validate validates raw YAML config and returns the JSON encoding of
@@ -36,4 +38,72 @@ func Schema() (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// NodeSchemas returns the per-node option schemas (the same document as
+// `hookway schema --nodes`).
+func NodeSchemas() (string, error) {
+	b, err := configapi.NodeSchemas()
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ReplayValidate validates replay.yaml without expanding environment
+// references against the browser or editor host.
+func ReplayValidate(yaml string) (string, error) {
+	resp := replayconfigapi.Validate([]byte(yaml))
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ReplaySchema returns the replay service's on-disk YAML shape.
+func ReplaySchema() (string, error) {
+	b, err := replayconfigapi.Schema()
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ContractInfo identifies the exact browser bridge contract and implemented
+// capabilities. Keep this sourced from uicontract, also used by editor HTTP.
+func ContractInfo() (string, error) {
+	b, err := json.Marshal(uicontract.Info())
+	return string(b), err
+}
+
+// ReplayActionValidate checks retry and resolution inputs without consulting secrets,
+// authentication, or replay store state. The API is still the final authority.
+func ReplayActionValidate(raw string) (string, error) {
+	var input uicontract.ReplayActionInput
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(uicontract.ValidateReplayAction(input))
+	return string(b), err
+}
+
+// JSONSampleValidate runs the same pure validation contract as the editor API.
+func JSONSampleValidate(raw string) (string, error) {
+	input, err := uicontract.DecodeJSONSampleInput([]byte(raw))
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(uicontract.ValidateJSONSample(input))
+	return string(b), err
+}
+
+// ValidateBundle validates only files supplied by the browser.
+func ValidateBundle(raw string) (string, error) {
+	input, err := configapi.DecodeBundleInput([]byte(raw))
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(configapi.ValidateBundle(input))
+	return string(b), err
 }

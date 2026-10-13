@@ -16,8 +16,7 @@
 #
 # NOTE — no redis_options block:
 #   All redis_options fields (max_len, consumer_group, ttl, key_template) are
-#   invalid for redis_pubsub and will be rejected by validation. Do NOT add a
-#   redis_options block to a redis_pubsub route.
+#   invalid for redis_pubsub. They are not fields on the publish node.
 #
 # Valkey is fully supported; point redis.url at a Valkey node.
 
@@ -71,23 +70,18 @@ destinations:
       #   # Dev only — disables certificate verification; never use in production:
       #   # insecure_skip_verify: false
 
-endpoints:
+flows:
   # Webhook events broadcast to a Redis Pub/Sub channel. Any subscriber
   # connected to the channel at delivery time receives the message instantly.
   # Subscribers that are offline at delivery time will NOT receive the message.
   webhook_events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "events"
-        # Channel name (without the key_prefix, if set). Must match
-        # ^[a-zA-Z0-9._-]{1,128}$
-        target: "webhooks.channel"
-        # NOTE: redis_options must NOT be set for redis_pubsub — all
-        # redis_options fields are invalid for this destination type and will
-        # be rejected by validation.
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/events, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: hmac_sha256_hex, secret: "${WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, body_format: json}
+      # Channel name (without the key_prefix, if set). Must match
+      # ^[a-zA-Z0-9._-]{1,128}$
+      # NOTE: redis_options is not a publish-node field.
+      - {id: out, type: publish, destination: events, target: webhooks.channel}
+    edges: [in>body, body>auth, auth>env, env>out]

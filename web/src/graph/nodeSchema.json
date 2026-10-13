@@ -1,0 +1,2175 @@
+{
+  "auth": {
+    "input": "RawRequest",
+    "output": "Verified",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "secret_ref"
+            ]
+          },
+          "required": [
+            "secret"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "secret"
+            ]
+          },
+          "required": [
+            "secret_ref"
+          ]
+        }
+      ],
+      "properties": {
+        "credential_id": {
+          "type": "string"
+        },
+        "tenant_claim": {
+          "type": "string"
+        },
+        "timestamp_header": {
+          "type": "string"
+        },
+        "timestamp_unit": {
+          "type": "string",
+          "enum": [
+            "seconds",
+            "milliseconds"
+          ]
+        },
+        "timestamp_policy": {
+          "type": "string",
+          "enum": [
+            "symmetric",
+            "age",
+            "unchecked"
+          ]
+        },
+        "body_representation": {
+          "type": "string",
+          "enum": [
+            "raw",
+            "json_js"
+          ]
+        },
+        "signature_label": {
+          "type": "string"
+        },
+        "scheme": {
+          "type": "string",
+          "enum": [
+            "basic",
+            "ecdsa_p256_sha256_headers",
+            "exact",
+            "hmac_sha1_hex",
+            "hmac_sha256_base64",
+            "hmac_sha256_headers_dot",
+            "hmac_sha256_hex",
+            "hmac_sha256_slack_v0",
+            "hmac_sha256_ts_colon",
+            "hmac_sha256_ts_dot",
+            "hmac_sha256_ts_dot_multi",
+            "jwt_es256",
+            "jwt_hs256",
+            "jwt_rs256"
+          ]
+        },
+        "secret": {
+          "type": "string"
+        },
+        "secret_ref": {
+          "properties": {
+            "selection": {
+              "type": "string",
+              "enum": [
+                "exact",
+                "newest_matching"
+              ]
+            },
+            "json_field": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "env",
+                "file",
+                "aws_secrets_manager"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "refresh": {
+              "type": "string"
+            },
+            "overlap": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "provider",
+            "name"
+          ]
+        },
+        "signature_header": {
+          "type": "string"
+        },
+        "source": {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "header",
+                "query"
+              ]
+            },
+            "key": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        "timestamp_tolerance": {
+          "type": "string"
+        },
+        "remove_prefix": {
+          "type": "string"
+        },
+        "remove_bearer": {
+          "type": "boolean"
+        },
+        "expected_issuer": {
+          "type": "string"
+        },
+        "expected_audience": {
+          "type": "string"
+        },
+        "body_hash_claim": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "scheme"
+      ]
+    },
+    "auth_schemes": {
+      "basic": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "ecdsa_p256_sha256_headers": {
+        "request_signature": true,
+        "separate_timestamp": true,
+        "jwt": false,
+        "key_format": "base64_der"
+      },
+      "exact": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha1_hex": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_base64": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_headers_dot": {
+        "request_signature": true,
+        "separate_timestamp": true,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_hex": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_slack_v0": {
+        "request_signature": true,
+        "separate_timestamp": true,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_ts_colon": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_ts_dot": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_ts_dot_multi": {
+        "request_signature": true,
+        "separate_timestamp": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "jwt_es256": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": true,
+        "key_format": "pem"
+      },
+      "jwt_hs256": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": true,
+        "key_format": "shared_secret"
+      },
+      "jwt_rs256": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "jwt": true,
+        "key_format": "pem"
+      }
+    }
+  },
+  "batch": {
+    "input": "Envelope",
+    "output": "Terminal",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "shared",
+            "dedicated"
+          ]
+        },
+        "profile": {
+          "type": "string"
+        },
+        "environment_path": {
+          "type": "string"
+        },
+        "receiving_environment": {
+          "type": "string"
+        },
+        "event_id_path": {
+          "type": "string"
+        },
+        "group_id_path": {
+          "type": "string"
+        },
+        "max_children": {
+          "type": "integer",
+          "maximum": 10000,
+          "minimum": 1,
+          "default": 1000
+        },
+        "concurrency": {
+          "type": "integer",
+          "maximum": 64,
+          "minimum": 1
+        },
+        "max_inflight": {
+          "type": "integer",
+          "maximum": 1024,
+          "minimum": 1,
+          "default": 64
+        },
+        "timeout": {
+          "type": "string",
+          "default": "30s"
+        },
+        "child": {
+          "properties": {
+            "entry": {
+              "type": "string"
+            },
+            "nodes": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array",
+              "maxItems": 64,
+              "minItems": 1
+            },
+            "edges": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "entry",
+            "nodes"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "mode",
+        "profile",
+        "environment_path",
+        "event_id_path",
+        "child"
+      ]
+    }
+  },
+  "code": {
+    "batch_child_order": 2,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "script": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "string",
+          "default": "1s"
+        },
+        "max_input_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1048576
+        },
+        "max_output_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1048576
+        },
+        "max_call_stack": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "script"
+      ]
+    }
+  },
+  "envelope": {
+    "input": "Verified",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "json": {
+          "properties": {
+            "max_depth": {
+              "type": "integer",
+              "maximum": 1024,
+              "minimum": 1,
+              "default": 128
+            },
+            "max_nodes": {
+              "type": "integer",
+              "maximum": 1000000,
+              "minimum": 1,
+              "default": 1000000
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "xml": {
+          "properties": {
+            "max_bytes": {
+              "type": "integer",
+              "maximum": 67108864,
+              "minimum": 1,
+              "default": 1048576
+            },
+            "max_depth": {
+              "type": "integer",
+              "maximum": 1024,
+              "minimum": 1,
+              "default": 256
+            },
+            "max_nodes": {
+              "type": "integer",
+              "maximum": 1000000,
+              "minimum": 1,
+              "default": 100000
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "body_format": {
+          "type": "string",
+          "enum": [
+            "json",
+            "xml",
+            "raw",
+            "multipart"
+          ],
+          "default": "json"
+        },
+        "multipart": {
+          "properties": {
+            "max_total_bytes": {
+              "type": "integer",
+              "maximum": 67108864,
+              "minimum": 1
+            },
+            "max_parts": {
+              "type": "integer",
+              "maximum": 256,
+              "minimum": 1,
+              "default": 16
+            },
+            "max_part_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1048576
+            },
+            "include_content": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "filter": {
+    "batch_child_order": 3,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "drop_reason": {
+          "type": "string",
+          "enum": [
+            "dropped_unused_event_type",
+            "dropped_unsupported_event_type"
+          ]
+        },
+        "conditions": {
+          "items": {
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": true
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "path",
+              "operator"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        },
+        "on_no_match": {
+          "type": "string",
+          "enum": [
+            "drop",
+            "reject"
+          ],
+          "default": "drop"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "conditions"
+      ]
+    }
+  },
+  "http_request": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "upstream"
+            ]
+          },
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "url"
+            ]
+          },
+          "required": [
+            "upstream"
+          ]
+        }
+      ],
+      "properties": {
+        "credential": {
+          "properties": {
+            "profile": {
+              "type": "string"
+            },
+            "environment_profiles": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "routing_profile": {
+              "type": "string"
+            },
+            "environment_variable": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "require_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "require_body_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "url": {
+          "type": "string"
+        },
+        "upstream": {
+          "properties": {
+            "profile": {
+              "type": "string"
+            },
+            "environment_variable": {
+              "type": "string"
+            },
+            "scheme": {
+              "type": "string",
+              "enum": [
+                "http",
+                "https"
+              ]
+            },
+            "port": {
+              "type": "integer",
+              "maximum": 65535,
+              "minimum": 1
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "profile",
+            "environment_variable"
+          ]
+        },
+        "method": {
+          "type": "string",
+          "default": "POST"
+        },
+        "body_methods": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "query_mode": {
+          "type": "string",
+          "enum": [
+            "all",
+            "first",
+            "last"
+          ]
+        },
+        "remove_query": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "header_mode": {
+          "type": "string",
+          "enum": [
+            "forward",
+            "replace"
+          ]
+        },
+        "remove_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "remove_body_fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "maximum": 67108864,
+          "minimum": 1
+        },
+        "response_bindings": {
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "fields": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "max_json_bytes": {
+              "type": "integer",
+              "maximum": 1048576,
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "redirects": {
+          "properties": {
+            "max_hops": {
+              "type": "integer",
+              "maximum": 10,
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "max_hops"
+          ]
+        },
+        "forward_method": {
+          "type": "boolean"
+        },
+        "forward_query": {
+          "type": "boolean"
+        },
+        "forward_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeout": {
+          "type": "string",
+          "default": "10s"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "error_on_status": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "body": {
+          "type": "string",
+          "enum": [
+            "raw",
+            "transformed"
+          ]
+        },
+        "retry": {
+          "properties": {
+            "on": {
+              "type": "string",
+              "enum": [
+                "network",
+                "network_and_status"
+              ]
+            },
+            "methods": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "total_timeout": {
+              "type": "string"
+            },
+            "max_attempts": {
+              "type": "integer",
+              "maximum": 10,
+              "minimum": 1
+            },
+            "initial_backoff": {
+              "type": "string",
+              "default": "500ms"
+            },
+            "max_backoff": {
+              "type": "string",
+              "default": "30s"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "allow_private_targets": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "http_trigger": {
+    "input": "None",
+    "output": "RequestHead",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "methods": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ]
+    }
+  },
+  "if_else": {
+    "batch_child_order": 4,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "match": {
+          "type": "string",
+          "enum": [
+            "all",
+            "any"
+          ]
+        },
+        "conditions": {
+          "items": {
+            "properties": {
+              "source": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string"
+              },
+              "value": true
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "path",
+              "operator"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "conditions"
+      ]
+    }
+  },
+  "inspect": {
+    "allow_leaf": true,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "ip_allowlist": {
+    "input": "RequestHead",
+    "output": "RequestHead",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cidrs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cidrs"
+      ]
+    }
+  },
+  "json_validate": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "schema": {
+          "type": "object"
+        },
+        "coercions": {
+          "items": {
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "string",
+                  "number",
+                  "integer",
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "path",
+              "type"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema"
+      ]
+    }
+  },
+  "launchdarkly": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "connection": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "context": {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "default": "user"
+            },
+            "key": {
+              "oneOf": [
+                {
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "source"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "path"
+                        ]
+                      }
+                    ]
+                  },
+                  "required": [
+                    "value"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "value"
+                    ]
+                  },
+                  "required": [
+                    "source",
+                    "path"
+                  ]
+                }
+              ],
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "body",
+                    "header",
+                    "vars"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "value": true
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "attributes": {
+              "additionalProperties": {
+                "oneOf": [
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "source"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "path"
+                          ]
+                        }
+                      ]
+                    },
+                    "required": [
+                      "value"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "required": [
+                        "value"
+                      ]
+                    },
+                    "required": [
+                      "source",
+                      "path"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "body",
+                      "header",
+                      "vars"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "type": "object"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "key"
+          ]
+        },
+        "flags": {
+          "additionalProperties": {
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "boolean",
+                  "string",
+                  "number",
+                  "json"
+                ]
+              },
+              "fallback": true,
+              "variable": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "key",
+              "type",
+              "fallback"
+            ]
+          },
+          "type": "object",
+          "minProperties": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "connection",
+        "name",
+        "context",
+        "flags"
+      ]
+    }
+  },
+  "lookup": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "cache": {
+          "properties": {
+            "ttl": {
+              "type": "string"
+            },
+            "max_entries": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "fallback": {
+          "type": "string"
+        },
+        "negative_ttl": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "key"
+      ]
+    }
+  },
+  "loop_guard": {
+    "input": "RequestHead",
+    "output": "RequestHead",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "max_hops": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 3
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "no_auth": {
+    "input": "RawRequest",
+    "output": "Verified",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {},
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "publish": {
+    "allow_multiple_inputs": true,
+    "batch_child_order": 6,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": true,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "temporal": {
+          "properties": {
+            "workflow_type": {
+              "type": "string"
+            },
+            "input": {
+              "type": "string",
+              "enum": [
+                "envelope",
+                "body"
+              ],
+              "default": "envelope"
+            },
+            "workflow_id": {
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "static",
+                    "endpoint",
+                    "header",
+                    "body"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "prefix": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "id_reuse_policy": {
+              "type": "string",
+              "enum": [
+                "allow_duplicate",
+                "allow_duplicate_failed_only",
+                "reject_duplicate",
+                "terminate_if_running"
+              ]
+            },
+            "execution_timeout": {
+              "type": "string"
+            },
+            "run_timeout": {
+              "type": "string"
+            },
+            "task_timeout": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "workflow_type"
+          ]
+        },
+        "group_id": {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "static",
+                "body",
+                "header",
+                "variable",
+                "raw_sha256",
+                "json_js_sha256"
+              ]
+            },
+            "value": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "fallback": {
+              "type": "string"
+            },
+            "hash_length": {
+              "type": "integer",
+              "maximum": 64,
+              "minimum": 1
+            },
+            "fallback_hash": {
+              "type": "string",
+              "enum": [
+                "raw_sha256",
+                "json_js_sha256"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "source"
+          ]
+        },
+        "sqs": {
+          "properties": {
+            "queue_owner_account_id": {
+              "type": "string"
+            },
+            "delay_seconds": {
+              "type": "integer",
+              "maximum": 900,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "sns": {
+          "properties": {
+            "topic_arn": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "message_structure": {
+              "type": "string",
+              "enum": [
+                "json"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "resource_attributes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "wire_body": {
+          "type": "string",
+          "enum": [
+            "envelope",
+            "raw",
+            "json",
+            "json_js"
+          ],
+          "default": "envelope"
+        },
+        "fifo": {
+          "properties": {
+            "group_id": {
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "static",
+                    "body",
+                    "header",
+                    "variable",
+                    "raw_sha256",
+                    "json_js_sha256"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "fallback": {
+                  "type": "string"
+                },
+                "hash_length": {
+                  "type": "integer",
+                  "maximum": 64,
+                  "minimum": 1
+                },
+                "fallback_hash": {
+                  "type": "string",
+                  "enum": [
+                    "raw_sha256",
+                    "json_js_sha256"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "source"
+              ]
+            },
+            "deduplication_id": {
+              "properties": {
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "static",
+                    "body",
+                    "header",
+                    "variable",
+                    "raw_sha256",
+                    "json_js_sha256"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "fallback": {
+                  "type": "string"
+                },
+                "hash_length": {
+                  "type": "integer",
+                  "maximum": 64,
+                  "minimum": 1
+                },
+                "fallback_hash": {
+                  "type": "string",
+                  "enum": [
+                    "raw_sha256",
+                    "json_js_sha256"
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "source"
+              ]
+            },
+            "content_based_deduplication": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "group_id"
+          ]
+        },
+        "retry": {
+          "properties": {
+            "max_attempts": {
+              "type": "integer",
+              "maximum": 10,
+              "minimum": 1
+            },
+            "initial_backoff": {
+              "type": "string",
+              "default": "100ms"
+            },
+            "max_backoff": {
+              "type": "string",
+              "default": "1s"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "max_attempts"
+          ]
+        },
+        "destination": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "create": {
+          "type": "boolean"
+        },
+        "message_attributes": {
+          "type": "object"
+        },
+        "payload": {
+          "type": "string",
+          "enum": [
+            "envelope",
+            "object"
+          ],
+          "default": "envelope"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "destination",
+        "target"
+      ]
+    }
+  },
+  "rate_limit": {
+    "stage_ports": {
+      "request_head": {
+        "input": "RequestHead",
+        "output": "RequestHead"
+      },
+      "verified": {
+        "input": "Verified",
+        "output": "Verified"
+      }
+    },
+    "input": "RequestHead",
+    "output": "RequestHead",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "store": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "request_head",
+            "verified"
+          ],
+          "default": "request_head"
+        },
+        "strategy": {
+          "type": "string",
+          "enum": [
+            "token_bucket",
+            "sliding_window_counter"
+          ],
+          "default": "token_bucket"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "window": {
+          "type": "string"
+        },
+        "rpm": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "burst": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "key_by": {
+          "type": "string",
+          "default": "source_ip"
+        },
+        "max_keys": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10000
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "store"
+      ]
+    }
+  },
+  "read_body": {
+    "input": "RequestHead",
+    "output": "RawRequest",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "allow_empty": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "max_bytes"
+      ]
+    }
+  },
+  "register_route": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "require_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "after_create",
+            "direct"
+          ]
+        },
+        "store": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "environment_variable": {
+          "type": "string"
+        },
+        "id_source": {
+          "type": "string",
+          "enum": [
+            "upstream",
+            "body",
+            "variable"
+          ]
+        },
+        "id_path": {
+          "type": "string"
+        },
+        "id_type": {
+          "type": "string"
+        },
+        "pattern": {
+          "type": "string"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "maximum": 5,
+          "minimum": 1
+        },
+        "timeout": {
+          "type": "string"
+        },
+        "backoff": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "mode",
+        "store",
+        "profile",
+        "environment_variable",
+        "id_source",
+        "id_path",
+        "id_type"
+      ]
+    }
+  },
+  "replay_guard": {
+    "input": "Verified",
+    "output": "Verified",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "store": {
+          "type": "string"
+        },
+        "policy_id": {
+          "type": "string"
+        },
+        "ttl": {
+          "type": "string",
+          "default": "5m"
+        },
+        "max_entries": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1024
+        },
+        "key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "store"
+      ]
+    }
+  },
+  "respond": {
+    "input": "Envelope",
+    "output": "Terminal",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "passthrough"
+            ]
+          },
+          "required": [
+            "status"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "status"
+            ]
+          },
+          "required": [
+            "passthrough"
+          ]
+        }
+      ],
+      "properties": {
+        "forward_set_cookie": {
+          "type": "boolean"
+        },
+        "forward_headers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "type": "integer",
+          "maximum": 599,
+          "minimum": 200
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "body": {
+          "type": "string"
+        },
+        "passthrough": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "route": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "candidates"
+            ]
+          },
+          "required": [
+            "fixed"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "fixed"
+            ]
+          },
+          "required": [
+            "candidates"
+          ]
+        }
+      ],
+      "properties": {
+        "profile": {
+          "type": "string"
+        },
+        "store": {
+          "type": "string"
+        },
+        "candidates": {
+          "items": {
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "body",
+                  "query",
+                  "header",
+                  "variable"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "id_type": {
+                "type": "string"
+              },
+              "pattern": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "source",
+              "path"
+            ]
+          },
+          "type": "array"
+        },
+        "fixed": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "profile"
+      ]
+    }
+  },
+  "sample": {
+    "batch_child_order": 7,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "rate": {
+          "type": "number",
+          "maximum": 1,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "rate"
+      ]
+    }
+  },
+  "switch": {
+    "batch_child_order": 5,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "cases": {
+          "items": {
+            "oneOf": [
+              {
+                "not": {
+                  "required": [
+                    "conditions"
+                  ]
+                },
+                "required": [
+                  "when"
+                ]
+              },
+              {
+                "not": {
+                  "required": [
+                    "when"
+                  ]
+                },
+                "required": [
+                  "conditions"
+                ]
+              }
+            ],
+            "properties": {
+              "port": {
+                "type": "string"
+              },
+              "when": {
+                "properties": {
+                  "source": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "operator": {
+                    "type": "string"
+                  },
+                  "value": true
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "source",
+                  "path",
+                  "operator"
+                ]
+              },
+              "match": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "any"
+                ]
+              },
+              "conditions": {
+                "items": {
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "operator": {
+                      "type": "string"
+                    },
+                    "value": true
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "path",
+                    "operator"
+                  ]
+                },
+                "type": "array",
+                "minItems": 1
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "port"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        },
+        "default": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cases"
+      ]
+    }
+  },
+  "transform": {
+    "batch_child_order": 1,
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "json_schema": {
+          "type": "object"
+        },
+        "coercions": {
+          "items": {
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "string",
+                  "number",
+                  "integer",
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "path",
+              "type"
+            ]
+          },
+          "type": "array"
+        },
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "xml_adapter": {
+          "properties": {
+            "link": {
+              "properties": {
+                "local": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "local"
+              ]
+            },
+            "entity": {
+              "properties": {
+                "local": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "local"
+              ]
+            },
+            "extension_item": {
+              "properties": {
+                "local": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "local"
+              ]
+            },
+            "item_name": {
+              "properties": {
+                "local": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "local"
+              ]
+            },
+            "item_value": {
+              "properties": {
+                "local": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "local"
+              ]
+            },
+            "sequence_attribute": {
+              "type": "string"
+            },
+            "placeholder_texts": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "optional_items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "changed_fields",
+            "field_map",
+            "xml_prune",
+            "xml_ordered_prune",
+            "json_schema",
+            "strip_fields",
+            "changed_fields_js"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mappings": {
+          "items": {
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ]
+          },
+          "type": "array"
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind"
+      ]
+    }
+  }
+}

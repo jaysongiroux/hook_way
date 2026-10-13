@@ -71,9 +71,6 @@ func TestNewVerifierBuildsJWTSchemes(t *testing.T) {
 
 func TestJWTSchemeMetadata(t *testing.T) {
 	for _, s := range []string{SchemeJWTHS256, SchemeJWTRS256, SchemeJWTES256} {
-		if !SchemeRegistered(s) {
-			t.Fatalf("%s should be registered", s)
-		}
 		if SchemeRequiresTimestamp(s) {
 			t.Fatalf("%s must not require a timestamp", s)
 		}
@@ -87,10 +84,12 @@ func TestJWTSchemeMetadata(t *testing.T) {
 }
 
 func TestSchemeMetadata(t *testing.T) {
-	if !SchemeRegistered(SchemeHMACSHA256TSColon) || !SchemeRegistered(SchemeHMACSHA256Hex) || !SchemeRegistered(SchemeExact) {
+	if !SchemeAllowedForAuthType(AuthTypeHMACSHA256, SchemeHMACSHA256TSColon) ||
+		!SchemeAllowedForAuthType(AuthTypeHMACSHA256, SchemeHMACSHA256Hex) ||
+		!SchemeAllowedForAuthType(AuthTypeHeaderExact, SchemeExact) {
 		t.Fatal("built-in schemes should be registered")
 	}
-	if SchemeRegistered("nope") {
+	if SchemeAllowedForAuthType(AuthTypeHMACSHA256, "nope") {
 		t.Fatal("unknown scheme should not be registered")
 	}
 	if !SchemeRequiresTimestamp(SchemeHMACSHA256TSColon) {

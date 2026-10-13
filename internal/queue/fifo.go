@@ -1,7 +1,7 @@
 package queue
 
 import (
-	"github.com/jasongiroux/hookway/internal/vars"
+	"github.com/jaysongiroux/hook_way/internal/vars"
 )
 
 // FIFOSettings is the queue-package view of a destination's per-target FIFO

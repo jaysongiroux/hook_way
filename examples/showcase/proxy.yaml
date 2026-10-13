@@ -1,0 +1,17 @@
+# Synchronous proxy flow: authenticate, forward upstream, return the reply.
+# UPSTREAM_BASE should have no trailing slash (e.g. http://127.0.0.1:9999).
+# PROXY_TOKEN is compared to the inbound X-Auth header.
+server:
+  addr: ":8080"
+  max_body_bytes: 20971520
+
+flows:
+  upstream_proxy:
+    nodes:
+      - {id: in, type: http_trigger, description: "Accepts any method under the proxy prefix.", path: "/upstream/proxy/{rest...}", methods: [ANY]}
+      - {id: body, type: read_body, description: "Buffers the body so it can be forwarded upstream.", max_bytes: 20971520, allow_empty: true}
+      - {id: auth, type: auth, description: "Compares the inbound X-Auth header to the shared token.", scheme: exact, secret: "${PROXY_TOKEN}", signature_header: X-Auth}
+      - {id: env, type: envelope, description: "Leaves the body unparsed so the proxy stays byte-exact.", body_format: raw}
+      - {id: up, type: http_request, description: "Forwards method, query, and trailing path to the upstream.", url: "${UPSTREAM_BASE}/{rest}", forward_method: true, forward_query: true, remove_headers: [X-Auth], max_response_bytes: 20971520}
+      - {id: resp, type: respond, description: "Returns the upstream response to the caller unchanged.", passthrough: true}
+    edges: [in>body, body>auth, auth>env, env>up, up>resp]

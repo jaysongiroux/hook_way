@@ -1,0 +1,82 @@
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+# TEMPLATE: post an event summary to a Slack incoming webhook.
+#
+# This file has two jobs. It is a complete, runnable config so that
+# `make validate-examples` proves the template still compiles against the
+# current node schema. It is also the source of a builder palette template:
+# the config UI extracts only the `fmt` and `post` nodes (see the TEMPLATES
+# manifest in web/src/graph/templates.ts) and drops them onto the canvas.
+# The trigger/gates/auth/envelope prefix exists to make the file valid and
+# to show a complete flow; it is not part of the inserted template.
+#
+# Requires SLACK_WEBHOOK_URL (the incoming-webhook URL, which is itself the
+# credential — never commit it), SLACK_SOURCE_SECRET (the HMAC secret of
+# whatever system posts TO Hookway), and HOOKWAY_API_KEY to keep /metrics
+# off an open port.
+#
+# The inbound prefix is GitHub-style HMAC (no signed timestamp), so
+# replay_guard is what stops a captured body from being replayed. Do not
+# swap that auth node for no_auth. The outbound URL is an env reference, not
+# a value from the request, so a caller cannot redirect the POST.
+#
+# Slack incoming webhooks accept roughly one message per second and answer a
+# malformed payload with 400 invalid_payload. A 4xx is therefore terminal: fix
+# the script, do not retry. 429/5xx still retry. Inbound Authorization and
+# Cookie are not forwarded to Slack.
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "10s"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  forwarded_header_allowlist:
+    - Content-Type
+
+flows:
+  slack_notify:
+    nodes:
+      - {id: in, type: http_trigger, description: "Where the source system delivers its webhook.", path: /webhooks/slack-notify, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound callers per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: "Verifies the sending system's HMAC signature."
+        scheme: hmac_sha256_hex
+        secret_ref: {provider: env, name: SLACK_SOURCE_SECRET, refresh: 15m, overlap: 5m}
+        signature_header: X-Hub-Signature-256
+      - {id: replay, type: replay_guard, store: local, description: "Drops a body already accepted within the TTL. Hex HMAC has no signed timestamp.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Decodes the JSON event.", body_format: json}
+      - id: fmt
+        type: code
+        description: "Builds the Slack message payload. Edit the text to suit your event."
+        timeout: 50ms
+        script: |
+          const summary = input.body && input.body.summary ? String(input.body.summary) : 'event received';
+          return { body: { text: 'Hookway: ' + summary }, vars: input.vars };
+      - id: post
+        type: http_request
+        description: "Posts the message to the Slack incoming webhook. 4xx is terminal; 429/5xx retry."
+        url: "${SLACK_WEBHOOK_URL}"
+        body: transformed
+        timeout: 5s
+        error_on_status: [4xx, 5xx]
+        retry: {max_attempts: 4, initial_backoff: 1s, max_backoff: 10s}
+      - {id: ack, type: respond, description: "Acknowledges the source system once the Slack post succeeded. Not part of the inserted template.", status: 202, body: "notified"}
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>fmt, fmt>post, post>ack]

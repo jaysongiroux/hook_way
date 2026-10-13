@@ -1,7 +1,9 @@
-// Package filter evaluates AND-chains of conditions against a webhook's headers
-// and parsed JSON body. Chains are compiled once (regex included) from config and
-// evaluated per request, independent of the httpapi and queue packages so both
-// endpoint- and route-level filtering can share them.
+// Package filter evaluates chains of conditions against a webhook's headers
+// and parsed body — JSON objects by dotted key, XML documents by dotted element
+// name with "@" for attributes. A chain combines its conditions with AND
+// (the default) or OR. Chains are compiled once (regex included) from config
+// and evaluated per request, independent of the httpapi and queue packages so
+// both endpoint- and route-level filtering can share them.
 package filter
 
 import (
@@ -11,12 +13,15 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/jaysongiroux/hook_way/internal/transform"
 )
 
 // Source values.
 const (
 	SourceHeader = "header"
 	SourceBody   = "body"
+	SourceFlags  = "flags"
 )
 
 // Operators.
@@ -76,20 +81,37 @@ type condition struct {
 	re      *regexp.Regexp
 }
 
-// Chain is a compiled AND-chain of conditions. The zero value is an empty chain
-// that matches everything.
+// Mode is the boolean combinator over a chain's flat condition list. One level
+// only: there are no nested groups.
+type Mode int
+
+const (
+	// MatchAll requires every condition. It is the zero value, so a Chain
+	// built without an explicit mode behaves as it always has.
+	MatchAll Mode = iota
+	// MatchAny requires at least one condition.
+	MatchAny
+)
+
+// Chain is a compiled chain of conditions combined per its Mode. The zero value
+// is an empty chain that matches everything.
 type Chain struct {
 	conds        []condition
+	mode         Mode
 	matchNothing bool
 }
 
 // operatorList is the canonical set surfaced in validation suggestions.
 const operatorList = "use eq, ne, gt, gte, lt, lte, contains, prefix, suffix, regex, exists, or not_exists"
 
-// Compile validates and compiles an AND-chain. Regex values are compiled here,
-// once. On any problem it returns a nil-safe zero Chain plus one Issue per bad
-// spec; a non-empty Issue slice means the chain must not be used.
-func Compile(specs []Spec) (Chain, []Issue) {
+// Compile validates and compiles an AND-chain.
+func Compile(specs []Spec) (Chain, []Issue) { return CompileMode(specs, MatchAll) }
+
+// CompileMode validates and compiles a chain under the given combinator. Regex
+// values are compiled here, once. On any problem it returns a nil-safe zero
+// Chain plus one Issue per bad spec; a non-empty Issue slice means the chain
+// must not be used.
+func CompileMode(specs []Spec, mode Mode) (Chain, []Issue) {
 	var issues []Issue
 	conds := make([]condition, 0, len(specs))
 	for i, spec := range specs {
@@ -103,7 +125,7 @@ func Compile(specs []Spec) (Chain, []Issue) {
 	if len(issues) > 0 {
 		return Chain{}, issues
 	}
-	return Chain{conds: conds}, nil
+	return Chain{conds: conds, mode: mode}, nil
 }
 
 // MatchNothing returns a chain that rejects every input. Used as a fail-closed
@@ -116,14 +138,30 @@ func MatchNothing() Chain {
 // fail-closed MatchNothing chain is not empty.
 func (c Chain) Empty() bool { return !c.matchNothing && len(c.conds) == 0 }
 
-// Match evaluates all conditions with AND semantics. On failure it returns false
-// and the index of the first failing condition. An empty chain matches.
+// Match evaluates the chain under its mode. The second return is the index of
+// the condition that decided the outcome, or -1 when no single condition did:
+// under MatchAll that is the first failing condition on a false result, and
+// under MatchAny the first satisfying condition on a true result. An empty
+// chain matches under either mode.
 func (c Chain) Match(headers http.Header, body any) (bool, int) {
+	return c.MatchWithFlags(headers, body, nil)
+}
+
+// MatchWithFlags adds typed metadata without changing legacy body/header matching.
+func (c Chain) MatchWithFlags(headers http.Header, body any, flags map[string]any) (bool, int) {
 	if c.matchNothing {
 		return false, 0
 	}
+	if c.mode == MatchAny && len(c.conds) > 0 {
+		for i, cond := range c.conds {
+			if cond.eval(headers, body, flags) {
+				return true, i
+			}
+		}
+		return false, -1
+	}
 	for i, cond := range c.conds {
-		if !cond.eval(headers, body) {
+		if !cond.eval(headers, body, flags) {
 			return false, i
 		}
 	}
@@ -144,9 +182,9 @@ func compileOne(index int, spec Spec) (condition, []Issue) {
 	cond := condition{source: spec.Source, path: spec.Path, operator: spec.Operator}
 
 	switch spec.Source {
-	case SourceHeader, SourceBody:
+	case SourceHeader, SourceBody, SourceFlags:
 	default:
-		return condition{}, []Issue{{index, "source", fmt.Sprintf("unknown filter source %q", spec.Source), "use header or body"}}
+		return condition{}, []Issue{{index, "source", fmt.Sprintf("unknown filter source %q", spec.Source), "use header, body or flags"}}
 	}
 	if strings.TrimSpace(spec.Path) == "" {
 		return condition{}, []Issue{{index, "path", "filter path is required", "set path to a header name or dotted body path such as repository.private"}}
@@ -224,8 +262,11 @@ func compileTyped(index int, spec Spec, cond condition) (condition, []Issue) {
 	return cond, nil
 }
 
-func (c condition) eval(headers http.Header, body any) bool {
+func (c condition) eval(headers http.Header, body any, flags map[string]any) bool {
 	actual, found := resolve(c.source, c.path, headers, body)
+	if c.source == SourceFlags {
+		actual, found = walkBodyPath(flags, c.path)
+	}
 
 	switch c.kind {
 	case kindExists:
@@ -314,6 +355,20 @@ func resolve(source, path string, headers http.Header, body any) (any, bool) {
 		}
 		return headers.Get(path), true
 	case SourceBody:
+		// An XML envelope puts a transform.Document on the body, which
+		// walkBodyPath cannot traverse: it asserts map[string]any and would
+		// report every path as missing, silently sending every event down the
+		// on_no_match path. Both shapes appear in practice — node_transform
+		// and node_code accept a pointer as well as a value.
+		switch xmlBody := body.(type) {
+		case transform.Document:
+			return walkXMLPath(xmlBody, path)
+		case *transform.Document:
+			if xmlBody == nil {
+				return nil, false
+			}
+			return walkXMLPath(*xmlBody, path)
+		}
 		return walkBodyPath(body, path)
 	}
 	return nil, false

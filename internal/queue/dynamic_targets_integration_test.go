@@ -12,8 +12,8 @@ import (
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	segkafka "github.com/segmentio/kafka-go"
 
-	"github.com/jasongiroux/hookway/internal/awsconf"
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // TestAWSSQSDynamicTargetCreatesQueueOnFirstSight publishes to a rendered
@@ -33,18 +33,18 @@ func TestAWSSQSDynamicTargetCreatesQueueOnFirstSight(t *testing.T) {
 	client := sqs.NewFromConfig(awsCfg)
 	pub, err := NewSQSPublisher(ctx, client, SQSConfig{
 		Region: "us-east-1", Endpoint: endpoint, AccessKeyID: "test", SecretAccessKey: "test",
-		Targets: []SQSTarget{{Name: "{env}-dyn-jobs", Create: true, VisibilityTimeout: 45 * time.Second, Template: mustMatcher("{env}-dyn-jobs", map[string]string{"env": "^qa-gm[0-9]+$"})}},
+		Targets: []SQSTarget{{Name: "{env}-dyn-jobs", Create: true, VisibilityTimeout: 45 * time.Second, Template: mustMatcher("{env}-dyn-jobs", map[string]string{"env": "^tenant-[a-z0-9]+$"})}},
 	})
 	if err != nil {
 		t.Fatalf("NewSQSPublisher: %v", err)
 	}
-	if _, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String("qa-gm3-dyn-jobs")}); err == nil {
+	if _, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String("tenant-a-dyn-jobs")}); err == nil {
 		t.Fatal("queue must not exist before the first publish")
 	}
-	if err := pub.Publish(ctx, "jobs", "qa-gm3-dyn-jobs", Message{ID: "evt_dyn", Body: map[string]any{"a": 1}}); err != nil {
+	if err := pub.Publish(ctx, "jobs", "tenant-a-dyn-jobs", Message{ID: "evt_dyn", Body: map[string]any{"a": 1}}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	urlOut, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String("qa-gm3-dyn-jobs")})
+	urlOut, err := client.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String("tenant-a-dyn-jobs")})
 	if err != nil {
 		t.Fatalf("queue should exist after first publish: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestKafkaDynamicTargetCreatesTopic(t *testing.T) {
 	}
 	brokers := startKafka(t)
 	ctx := context.Background()
-	targets := []KafkaTarget{{Topic: "{env}-dyn-events", Create: true, Template: mustMatcher("{env}-dyn-events", map[string]string{"env": "^qa-gm[0-9]+$"})}}
+	targets := []KafkaTarget{{Topic: "{env}-dyn-events", Create: true, Template: mustMatcher("{env}-dyn-events", map[string]string{"env": "^tenant-[a-z0-9]+$"})}}
 	ops, err := newKafkaOps(ctx, "events", config.KafkaConfig{Brokers: brokers, Acks: "all", PublishTimeout: 15 * time.Second}, targets, slog.Default())
 	if err != nil {
 		t.Fatalf("newKafkaOps: %v", err)
@@ -89,7 +89,7 @@ func TestKafkaDynamicTargetCreatesTopic(t *testing.T) {
 	// the writer retries within its attempts, but allow one more try here.
 	var pubErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		if pubErr = pub.Publish(ctx, "events", "qa-gm3-dyn-events", Message{ID: "evt-dyn", ReceivedAt: time.Now().UTC()}); pubErr == nil {
+		if pubErr = pub.Publish(ctx, "events", "tenant-a-dyn-events", Message{ID: "evt-dyn", ReceivedAt: time.Now().UTC()}); pubErr == nil {
 			break
 		}
 		time.Sleep(time.Second)
@@ -97,7 +97,7 @@ func TestKafkaDynamicTargetCreatesTopic(t *testing.T) {
 	if pubErr != nil {
 		t.Fatalf("Publish: %v", pubErr)
 	}
-	reader := segkafka.NewReader(segkafka.ReaderConfig{Brokers: brokers, Topic: "qa-gm3-dyn-events", MinBytes: 1, MaxBytes: 10e6})
+	reader := segkafka.NewReader(segkafka.ReaderConfig{Brokers: brokers, Topic: "tenant-a-dyn-events", MinBytes: 1, MaxBytes: 10e6})
 	t.Cleanup(func() { _ = reader.Close() })
 	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -126,21 +126,21 @@ func TestRedisStreamDynamicTargetCreatesGroup(t *testing.T) {
 	}
 	pub, err := NewRedisStreamPublisher(ctx, ops, RedisStreamConfig{
 		DestinationID: "streams", KeyPrefix: "hw",
-		Targets: []RedisStreamTarget{{Name: "{env}-dyn", ConsumerGroup: "workers", Create: true, Template: mustMatcher("{env}-dyn", map[string]string{"env": "^qa-gm[0-9]+$"})}},
+		Targets: []RedisStreamTarget{{Name: "{env}-dyn", ConsumerGroup: "workers", Create: true, Template: mustMatcher("{env}-dyn", map[string]string{"env": "^tenant-[a-z0-9]+$"})}},
 	})
 	if err != nil {
 		t.Fatalf("NewRedisStreamPublisher: %v", err)
 	}
 	t.Cleanup(func() { _ = pub.Close() })
-	if err := pub.Publish(ctx, "streams", "qa-gm3-dyn", Message{ID: "evt-dyn", ReceivedAt: time.Now().UTC()}); err != nil {
+	if err := pub.Publish(ctx, "streams", "tenant-a-dyn", Message{ID: "evt-dyn", ReceivedAt: time.Now().UTC()}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 	raw := rawRedisClient(t, redisURL)
 	t.Cleanup(func() { _ = raw.Close() })
-	if n, err := raw.XLen(ctx, "hw:qa-gm3-dyn").Result(); err != nil || n != 1 {
-		t.Fatalf("XLEN hw:qa-gm3-dyn = %d, %v", n, err)
+	if n, err := raw.XLen(ctx, "hw:tenant-a-dyn").Result(); err != nil || n != 1 {
+		t.Fatalf("XLEN hw:tenant-a-dyn = %d, %v", n, err)
 	}
-	groups, err := raw.XInfoGroups(ctx, "hw:qa-gm3-dyn").Result()
+	groups, err := raw.XInfoGroups(ctx, "hw:tenant-a-dyn").Result()
 	if err != nil || len(groups) != 1 || groups[0].Name != "workers" {
 		t.Fatalf("consumer group should exist on the rendered stream: %v %v", groups, err)
 	}

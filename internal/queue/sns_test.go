@@ -14,6 +14,7 @@ import (
 )
 
 type fakeSNS struct {
+	listCalls  int
 	topics     map[string]string            // name -> arn
 	attrs      map[string]map[string]string // arn -> attributes
 	published  []*sns.PublishInput
@@ -59,6 +60,7 @@ func (f *fakeSNS) SetTopicAttributes(ctx context.Context, in *sns.SetTopicAttrib
 }
 
 func (f *fakeSNS) ListTopics(ctx context.Context, in *sns.ListTopicsInput, _ ...func(*sns.Options)) (*sns.ListTopicsOutput, error) {
+	f.listCalls++
 	out := &sns.ListTopicsOutput{}
 	for _, arn := range f.topics {
 		out.Topics = append(out.Topics, snstypes.Topic{TopicArn: aws.String(arn)})
@@ -103,6 +105,62 @@ func TestSNSPublisherCreatesTopicAndPublishes(t *testing.T) {
 	}
 	if aws.ToString(fake.published[0].TopicArn) != "arn:aws:sns:us-east-1:000000000000:billing-alerts" {
 		t.Fatalf("topic arn = %q", aws.ToString(fake.published[0].TopicArn))
+	}
+}
+
+func TestSNSPublisherAttachesMessageAttributes(t *testing.T) {
+	fake := newFakeSNS()
+	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SNSTarget{{Name: "billing-alerts", Create: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pub.Publish(context.Background(), "alerts", "billing-alerts", Message{
+		ID: "evt_1",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["status"]`},
+			"event":          {DataType: "String", StringValue: "opened"},
+			"count":          {DataType: "Number", StringValue: "2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	got := fake.published[0].MessageAttributes
+	if aws.ToString(got["fields_changed"].DataType) != "String.Array" || aws.ToString(got["fields_changed"].StringValue) != `["status"]` {
+		t.Fatalf("fields_changed = %+v", got["fields_changed"])
+	}
+	if aws.ToString(got["event"].DataType) != "String" {
+		t.Fatalf("event DataType = %q", aws.ToString(got["event"].DataType))
+	}
+	if aws.ToString(got["count"].DataType) != "Number" {
+		t.Fatalf("count DataType = %q", aws.ToString(got["count"].DataType))
+	}
+}
+
+func TestSNSPublisherRejectsOversizeMessageAttribute(t *testing.T) {
+	fake := newFakeSNS()
+	pub, err := NewSNSPublisher(context.Background(), fake, SNSConfig{
+		Region:  "us-east-1",
+		Policy:  ConflictReconcile,
+		Targets: []SNSTarget{{Name: "billing-alerts", Create: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pub.Publish(context.Background(), "alerts", "billing-alerts", Message{
+		MessageAttributes: map[string]MessageAttribute{
+			"too_big": {DataType: "String", StringValue: strings.Repeat("x", maxMessageAttributeValueBytes+1)},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "AWS limit") {
+		t.Fatalf("err = %v, want AWS size-limit error", err)
+	}
+	if len(fake.published) != 0 {
+		t.Fatal("oversize attributes must fail closed, not publish")
 	}
 }
 

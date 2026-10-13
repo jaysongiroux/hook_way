@@ -11,7 +11,7 @@ import (
 
 func hmacSHA256TSDotHeader(secret string, ts time.Time, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%d.%s", ts.Unix(), body)))
+	_, _ = fmt.Fprintf(mac, "%d.%s", ts.Unix(), body)
 	return fmt.Sprintf("t=%d,v1=%s", ts.Unix(), hex.EncodeToString(mac.Sum(nil)))
 }
 

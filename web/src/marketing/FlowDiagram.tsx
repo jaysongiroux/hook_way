@@ -1,32 +1,23 @@
-import { Anchor, Box, Card, Group, Stack, Text } from "@mantine/core";
+import { Card, Stack, Text } from "@mantine/core";
+import type { CSSProperties } from "react";
 import { useMediaQuery } from "@mantine/hooks";
-import { Link } from "react-router-dom";
-import { FLOW_EDGES, FLOW_NODES, LAYOUT, edgePath, flowDescription, nodeBox, type FlowNode } from "./flowGraph";
+import {
+  FLOW_EDGES,
+  FLOW_NODES,
+  LAYOUT,
+  edgePath,
+  flowDescription,
+  nodeBox,
+  nodeChrome,
+  type FlowNode,
+} from "./flowGraph";
 import { Section } from "./Section";
-import { DARK } from "../tokens";
+import { nodeLabel } from "../graph/nodeSchema";
+import { DARK, EDGE, PORT } from "../tokens";
 
-const BORDER = DARK.border;
-const TEXT = DARK.text;
+const MONO = "ui-monospace, Menlo, monospace";
 
-// The pulse is a short dash travelling each edge, which reads as an event
-// moving through the graph. Driven by CSS rather than SMIL so that
-// prefers-reduced-motion can switch it off, which a media query cannot do to
-// an SVG <animate> element.
-const PULSE_CSS = `
-@keyframes hookway-pulse {
-  from { stroke-dashoffset: 240; }
-  to { stroke-dashoffset: 0; }
-}
-.hookway-pulse {
-  stroke-dasharray: 14 226;
-  animation: hookway-pulse 3s linear infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .hookway-pulse { animation: none; opacity: 0; }
-}
-`;
-
-// FlowDiagram shows one verified endpoint fanning out to three different
+// FlowDiagram shows one verified flow fanning out to three different
 // backends, with route-level filters gating two of the branches. Drawn as
 // inline SVG rather than embedding the builder's canvas, so the overview does
 // not pay for React Flow.
@@ -36,22 +27,15 @@ export function FlowDiagram() {
   const wide = useMediaQuery("(min-width: 48em)", true);
   return (
     <Section
-      eyebrow="Routing"
-      title="One webhook, every destination that needs it"
-      lead="Give a route its own filter and only that branch drops when the condition fails, while the rest still deliver."
+      title="Fan out without duplicate handlers"
+      lead="A condition can stop one branch without blocking delivery on the others."
     >
       {wide ? <DiagramSvg /> : <DiagramCards />}
-      <Group mt="xl">
-        <Anchor component={Link} to="/builder" size="sm" fw={600} c={DARK.accentText}>
-          Draw your own in the builder →
-        </Anchor>
-      </Group>
     </Section>
   );
 }
 
 function DiagramSvg() {
-  const nodeById = (id: string) => FLOW_NODES.find((n) => n.id === id)!;
   return (
     <svg
       role="img"
@@ -60,48 +44,121 @@ function DiagramSvg() {
       width="100%"
       style={{ display: "block", maxWidth: LAYOUT.width, fontFamily: "inherit" }}
     >
-      <style>{PULSE_CSS}</style>
+      <FlowGraphSvg markerId="hookway-diagram-edge" />
+    </svg>
+  );
+}
+
+/** Shared graph used by the section diagram and the hero builder frame. */
+export function FlowGraphSvg({ selectedId, markerId = "hookway-edge", animate = false }: { selectedId?: string; markerId?: string; animate?: boolean }) {
+  const nodeById = (id: string) => FLOW_NODES.find((n) => n.id === id)!;
+  return (
+    <>
+      <defs>
+        <marker id={markerId} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+          <polygon points="0 0, 10 4, 0 8" fill={EDGE.line} />
+        </marker>
+      </defs>
       {FLOW_EDGES.map((e) => (
         <path
           key={`${e.from}-${e.to}`}
           d={edgePath(nodeById(e.from), nodeById(e.to))}
           fill="none"
-          stroke="#3A4D70"
+          stroke={EDGE.line}
           strokeWidth={1.5}
+          markerEnd={`url(#${markerId})`}
         />
       ))}
-      {FLOW_EDGES.map((e, i) => (
+      {animate && FLOW_EDGES.map((e) => (
         <path
-          key={`pulse-${e.from}-${e.to}`}
-          className="hookway-pulse"
+          key={`event-${e.from}-${e.to}`}
+          className="hookway-flow-event"
           d={edgePath(nodeById(e.from), nodeById(e.to))}
+          pathLength={1}
           fill="none"
-          stroke={DARK.highlight}
-          strokeWidth={2.5}
+          stroke={DARK.accent}
+          strokeWidth={3}
           strokeLinecap="round"
-          style={{ animationDelay: `${i * 0.45}s` }}
+          strokeDasharray="0.07 1.93"
+          aria-hidden="true"
+          style={{ "--flow-delay": `${nodeById(e.from).column * 2.5}s` } as CSSProperties}
         />
       ))}
       {FLOW_NODES.map((n) => (
-        <SvgNode key={n.id} node={n} />
+        <DiagramNode key={n.id} node={n} selected={n.id === selectedId} />
       ))}
-    </svg>
+    </>
   );
 }
 
-function SvgNode({ node }: { node: FlowNode }) {
+function DiagramNode({ node, selected }: { node: FlowNode; selected?: boolean }) {
   const b = nodeBox(node);
+  const chrome = nodeChrome(node);
+  const r = LAYOUT.handle;
+  const outColor = PORT[chrome.output] ?? EDGE.line;
   return (
     <g>
-      <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={8} fill={DARK.surface} stroke={BORDER} strokeWidth={1} />
-      <rect x={b.x + 12} y={b.y + 12} width={24} height={3} rx={1.5} fill={node.accent} />
-      <text x={b.x + 12} y={b.y + 32} fontSize={13} fontWeight={600} fill={TEXT}>
-        {node.label}
+      {selected && (
+        <rect
+          x={b.x - 4}
+          y={b.y - 4}
+          width={b.w + 8}
+          height={b.h + 8}
+          rx={6}
+          fill="none"
+          stroke={outColor}
+          strokeWidth={2}
+        />
+      )}
+      <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={4} fill={DARK.surface} stroke={DARK.border} strokeWidth={1} />
+      <text x={b.x + 12} y={b.y + 22} fontSize={13} fontWeight={600} fill={DARK.text}>
+        {node.yamlId}
       </text>
-      <text x={b.x + 12} y={b.y + 48} fontSize={11} fill={DARK.muted}>
-        {node.sub}
+      <text x={b.x + 12} y={b.y + 40} fontSize={11} fill={DARK.muted} fontFamily={MONO}>
+        {nodeLabel(node.nodeType)}
       </text>
+      <text x={b.x + 12} y={b.y + 56} fontSize={11} fill={DARK.muted}>
+        {node.summary}
+      </text>
+      {chrome.showError && (
+        <text
+          x={b.x + b.w / 2}
+          y={b.y + b.h - 12}
+          fontSize={10}
+          fontWeight={600}
+          fill={PORT.on_error}
+          textAnchor="middle"
+          letterSpacing="0.03em"
+        >
+          on error
+        </text>
+      )}
+      {chrome.showIn && <circle cx={b.x} cy={b.y + b.h / 2} r={r} fill={PORT[chrome.input] ?? EDGE.line} />}
+      {chrome.showOut && <circle cx={b.x + b.w} cy={b.y + b.h / 2} r={r} fill={outColor} />}
+      {chrome.showError && <circle cx={b.x + b.w / 2} cy={b.y + b.h} r={r} fill={PORT.on_error} />}
     </g>
+  );
+}
+
+function NodeCopy({ node }: { node: FlowNode }) {
+  const chrome = nodeChrome(node);
+  return (
+    <>
+      <Text size="sm" fw={600} c={DARK.text}>
+        {node.yamlId}
+      </Text>
+      <Text size="xs" c={DARK.muted} style={{ fontFamily: MONO }}>
+        {nodeLabel(node.nodeType)}
+      </Text>
+      <Text size="xs" c={DARK.muted}>
+        {node.summary}
+      </Text>
+      {chrome.showError && (
+        <Text size="xs" fw={600} c={PORT.on_error} mt={4} ta="center" style={{ fontSize: 10, letterSpacing: "0.03em" }}>
+          on error
+        </Text>
+      )}
+    </>
   );
 }
 
@@ -116,18 +173,12 @@ function DiagramCards() {
         return (
           <Card
             key={n.id}
-            radius="md"
+            radius="sm"
             padding="sm"
             ml={n.column * 16}
             style={{ background: DARK.surface, border: `1px solid ${DARK.border}` }}
           >
-            <Box style={{ width: 24, height: 3, borderRadius: 1.5, background: n.accent, marginBottom: 6 }} />
-            <Text size="sm" fw={600} c={TEXT}>
-              {n.label}
-            </Text>
-            <Text size="xs" c={DARK.muted}>
-              {n.sub}
-            </Text>
+            <NodeCopy node={n} />
           </Card>
         );
       })}

@@ -1,8 +1,14 @@
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
-# Binaries for programs and plugins
+# Binaries for programs and plugins. `make build` writes the two commands to
+# bin/; `go build ./cmd/hookway` (one package at a time) writes to the repo
+# root.
 /hookway
+/hookway-replay
+/hookway-wasm
+/bin/hookway
+/bin/hookway-replay
 *.exe
 *.exe~
 *.dll
@@ -12,11 +18,19 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Code coverage profiles and other test artifacts
-*.out
-coverage.*
+# Code coverage profiles and other test artifacts. These are anchored to the
+# repo root on purpose: an unanchored *.out would silently swallow Go golden
+# files under any testdata/ directory.
+/coverage.out
+/replay-store-coverage.out
+/coverage.txt
+/*.out
 *.coverprofile
 profile.cov
+!**/testdata/**
+
+# Downloaded CI/tooling binaries (promtool, etc.)
+.tools/
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -25,16 +39,53 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# Env files. This project is configured almost entirely through environment
+# variables (see the validate-examples target), so a stray .env.local holding
+# real webhook secrets is the most plausible accidental commit here.
 .env
+.env.*
+!.env.example
+
+# Keys and certificates. JWT verification and file-backed secret refs make
+# locally generated test keypairs a realistic hazard.
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+id_rsa*
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+# Private product planning documents kept at the repository root.
+/PRODUCT.md
+/DESIGN.md
+/VISION.md
+/MONETIZATION.md
 docs/superpowers/
 docs/scratch/
+/docs/local-plans/
+/docs/plans/hardening/
+/examples/production-local/.local*/
 *.log
+!**/testdata/**
 .superpowers/brainstorm/
+
+# Per-machine agent instructions and settings stay out of this repository.
+.agents/
+.claude/
+.codex/
+.codex-doc-bridge/
+.cursor/
+CLAUDE.md
+AGENTS.md
+.cursorrules
+
+# Impeccable is local design-tool state, not project source.
+.impeccable/
+**/.impeccable/
 
 # Generated config-UI WASM/build assets (produced by `make wasm` / `make ui`)
 internal/editor/assets/*
@@ -48,6 +99,11 @@ cmd/hookway-wasm/harness/wasm_exec.js
 web/node_modules/
 web/dist/
 web/.vite/
+web/playwright-report/
+web/test-results/
+web/blob-report/
+web/public/hookway.wasm
+web/public/wasm_exec.js
 # tsc -b (composite build) byproducts
 web/*.tsbuildinfo
 web/vite.config.js
@@ -59,3 +115,22 @@ web/vite.config.d.ts
 # serves the tracked internal/editor/placeholder.html instead.
 internal/editor/webui/*
 !internal/editor/webui/.gitkeep
+
+node_modules/
+
+# macOS finder metadata
+.DS_Store
+**/.DS_Store
+
+# scratch build output
+tmp/
+/bin/
+
+# Python build and verification-tool bytecode
+__pycache__/
+*.py[cod]
+
+/web/dist-console/
+
+# Documentation publication output is generated inside the web project.
+/web/.generated/

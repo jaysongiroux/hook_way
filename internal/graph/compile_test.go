@@ -1,0 +1,269 @@
+package graph
+
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func flowConfig(nodes [][2]string, edges ...string) FlowConfig {
+	fc := FlowConfig{Edges: edges}
+	for _, n := range nodes {
+		fc.Nodes = append(fc.Nodes, NodeConfig{ID: n[0], Type: n[1]})
+	}
+	return fc
+}
+
+func TestCompileAcceptsAValidFlow(t *testing.T) {
+	fc := flowConfig([][2]string{
+		{"in", "trigger"}, {"rl", "gate"}, {"body", "read_body"},
+		{"auth", "auth"}, {"env", "envelope"}, {"out", "dest"},
+	}, "in>rl", "rl>body", "body>auth", "auth>env", "env>out")
+
+	f, err := Compile("github", fc, testRegistry(t))
+	if err != nil {
+		t.Fatalf("Compile() = %v, want nil", err)
+	}
+	if f.Name() != "github" {
+		t.Errorf("Name() = %q, want github", f.Name())
+	}
+	if f.Root() != "in" {
+		t.Errorf("Root() = %q, want in", f.Root())
+	}
+	if len(f.NodeIDs()) != 6 {
+		t.Errorf("NodeIDs() has %d entries, want 6", len(f.NodeIDs()))
+	}
+}
+
+// TestCompileRejectsGateAfterReadBody is the invariant regression test: this
+// is the exact wiring that would break I1-I4, and it must not compile.
+func TestCompileRejectsGateAfterReadBody(t *testing.T) {
+	fc := flowConfig([][2]string{
+		{"in", "trigger"}, {"body", "read_body"}, {"rl", "gate"},
+		{"auth", "auth"}, {"env", "envelope"}, {"out", "dest"},
+	}, "in>body", "body>rl", "rl>auth", "auth>env", "env>out")
+
+	_, err := Compile("bad", fc, testRegistry(t))
+	if err == nil {
+		t.Fatal("Compile() = nil; a gate wired after read_body must not compile (I1-I4)")
+	}
+	if !strings.Contains(err.Error(), "RequestHead") || !strings.Contains(err.Error(), "RawRequest") {
+		t.Errorf("error %q should name both port types so the operator sees the mismatch", err)
+	}
+}
+
+// TestCompileRejectsAuthBypass covers the property the whole design rests on:
+// there is no path to Envelope that skips auth.
+func TestCompileRejectsAuthBypass(t *testing.T) {
+	fc := flowConfig([][2]string{
+		{"in", "trigger"}, {"body", "read_body"}, {"env", "envelope"}, {"out", "dest"},
+	}, "in>body", "body>env", "env>out")
+
+	if _, err := Compile("bypass", fc, testRegistry(t)); err == nil {
+		t.Fatal("Compile() = nil; envelope wired straight to read_body bypasses auth")
+	}
+}
+
+func TestCompileStructuralChecks(t *testing.T) {
+	cases := []struct {
+		name    string
+		fc      FlowConfig
+		wantMsg string
+	}{
+		{
+			name: "unknown node type",
+			fc: flowConfig([][2]string{{"in", "trigger"}, {"x", "nonexistent"}},
+				"in>x"),
+			wantMsg: "unknown node type",
+		},
+		{
+			name: "duplicate node id",
+			fc: flowConfig([][2]string{{"in", "trigger"}, {"in", "gate"}},
+				"in>in"),
+			wantMsg: "duplicate node id",
+		},
+		{
+			name: "no root",
+			fc: flowConfig([][2]string{{"rl", "gate"}, {"body", "read_body"}},
+				"rl>body"),
+			wantMsg: "no trigger",
+		},
+		{
+			name: "two roots",
+			fc: flowConfig([][2]string{{"a", "trigger"}, {"b", "trigger"}, {"body", "read_body"}},
+				"a>body", "b>body"),
+			wantMsg: "more than one trigger",
+		},
+		{
+			name: "edge to missing node",
+			fc: flowConfig([][2]string{{"in", "trigger"}},
+				"in>ghost"),
+			wantMsg: "unknown node",
+		},
+		{
+			name: "unreachable node",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"out", "dest"}, {"orphan", "process"},
+			}, "in>body", "body>auth", "auth>env", "env>out"),
+			wantMsg: "unreachable",
+		},
+		{
+			name: "non-terminal leaf",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"},
+			}, "in>body", "body>auth", "auth>env"),
+			wantMsg: "not Terminal",
+		},
+		{
+			name: "cycle",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"p1", "process"}, {"p2", "process"}, {"out", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>p1", "p1>p2", "p2>p1", "p1>out"),
+			wantMsg: "cycle",
+		},
+		{
+			name: "trigger on_error",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"out", "dest"},
+			}, "in>body", "in:on_error>body", "body>auth", "auth>env", "env>out"),
+			wantMsg: "trigger nodes cannot declare on_error",
+		},
+		{
+			name: "on_error only",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"fb", "envelope"}, {"out", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env:on_error>fb", "fb>out"),
+			wantMsg: "only on_error successors",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Compile("f", tc.fc, testRegistry(t))
+			if err == nil {
+				t.Fatalf("Compile() = nil, want error containing %q", tc.wantMsg)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("Compile() error = %q, want it to contain %q", err, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestCompileAggregatesProblems keeps `hookway validate` useful: one run
+// should report every problem in a flow, not just the first.
+func TestCompileAggregatesProblems(t *testing.T) {
+	fc := flowConfig([][2]string{{"in", "trigger"}, {"x", "nonexistent"}, {"y", "alsomissing"}},
+		"in>x", "x>y")
+	_, err := Compile("f", fc, testRegistry(t))
+	if err == nil {
+		t.Fatal("Compile() = nil, want error")
+	}
+	var ce *CompileError
+	if !asCompileError(err, &ce) {
+		t.Fatalf("error is %T, want *CompileError", err)
+	}
+	if len(ce.Problems) < 2 {
+		t.Errorf("Problems has %d entries, want >= 2: %v", len(ce.Problems), ce.Problems)
+	}
+}
+
+func asCompileError(err error, target **CompileError) bool {
+	return errors.As(err, target)
+}
+
+func TestCompileSuccessContinuation(t *testing.T) {
+	reg := testRegistry(t)
+	cases := []struct {
+		name    string
+		fc      FlowConfig
+		wantErr string
+	}{
+		{
+			name: "leaf publish",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"out", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>out"),
+		},
+		{
+			name: "publish to publish",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"b", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>b"),
+		},
+		{
+			name: "publish to code",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"mid", "process"}, {"b", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>mid", "mid>b"),
+		},
+		{
+			name: "two success edges",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"b", "dest"}, {"c", "dest"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>b", "a>c"),
+			wantErr: "at most one",
+		},
+		{
+			name: "publish to respond",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"r", "respond"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>r"),
+			wantErr: "respond",
+		},
+		{
+			name: "publish to code to respond",
+			fc: flowConfig([][2]string{
+				{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"},
+				{"env", "envelope"}, {"a", "dest"}, {"mid", "process"}, {"r", "respond"},
+			}, "in>body", "body>auth", "auth>env", "env>a", "a>mid", "mid>r"),
+			wantErr: "respond",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Compile("f", tc.fc, reg)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Compile() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Compile() = nil, want error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("Compile() error = %q, want it to contain %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Node ids travel in capture metadata and redrive results, which replay
+// accepts only as printable UTF-8 of at most 1024 bytes. An id outside that
+// would make every record at the node unstorable and every redrive unknown.
+func TestNodeIDsMustBeStorableText(t *testing.T) {
+	for _, id := range []string{"af\x01ter", "caf\xe9", strings.Repeat("a", 1025), "del\x7f"} {
+		if validID(id) {
+			t.Errorf("validID(%q) = true", id)
+		}
+	}
+	for _, id := range []string{"out", "publish-2", "café", strings.Repeat("a", 1024)} {
+		if !validID(id) {
+			t.Errorf("validID(%q) = false", id)
+		}
+	}
+	fc := flowConfig([][2]string{{"in", "trigger"}, {"body", "read_body"}, {"auth", "auth"}, {"env", "envelope"}, {"o\x01ut", "dest"}},
+		"in>body", "body>auth", "auth>env", "env>o\x01ut")
+	if _, err := Compile("github", fc, testRegistry(t)); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("Compile = %v, want the control character refused", err)
+	}
+}

@@ -1,65 +1,83 @@
 import Dexie, { type Table } from "dexie";
-import type { Edge } from "@xyflow/react";
-import type { HookwayNode } from "./model";
+import type { GraphDocument } from "./model";
+import { emptyDocument } from "./model";
 
-interface GraphRecord {
+interface GraphRecord extends GraphDocument {
   id: string;
-  nodes: HookwayNode[];
-  edges: Edge[];
-  serverConfig?: Record<string, unknown>;
-  configExtra?: Record<string, unknown>;
 }
 
 class HookwayDB extends Dexie {
   graphs!: Table<GraphRecord, string>;
   constructor() {
     super("hookway-config-ui");
-    // v2 adds serverConfig/configExtra to the record. They aren't indexed, so
-    // the schema string is unchanged; the bump just documents the shape change.
-    // v1 records load with the fields undefined and default on read.
     this.version(2).stores({ graphs: "id" });
+    this.version(3).stores({ graphs: "id" });
   }
 }
 
 const db = new HookwayDB();
-const CURRENT = "current";
+const CURRENT = "current.v4";
 
-// All three functions are best-effort: IndexedDB can legitimately fail (storage
-// quota, private-browsing restrictions, disabled storage), and persistence must
-// never break the editor. Errors are swallowed; a failed load restores nothing.
-export async function saveGraph(
-  nodes: HookwayNode[],
-  edges: Edge[],
-  serverConfig?: Record<string, unknown>,
-  configExtra?: Record<string, unknown>,
-): Promise<void> {
+export async function saveGraph(doc: GraphDocument): Promise<void> {
   try {
-    await db.graphs.put({ id: CURRENT, nodes, edges, serverConfig, configExtra });
+    await db.graphs.put({ id: CURRENT, ...doc });
   } catch {
-    /* best effort — ignore storage failures */
+    /* best effort */
   }
 }
 
-export async function loadGraph(): Promise<{
-  nodes: HookwayNode[];
-  edges: Edge[];
-  serverConfig?: Record<string, unknown>;
-  configExtra?: Record<string, unknown>;
-} | null> {
+export async function loadGraph(): Promise<GraphDocument | null> {
   try {
     const rec = await db.graphs.get(CURRENT);
-    return rec
-      ? { nodes: rec.nodes, edges: rec.edges, serverConfig: rec.serverConfig, configExtra: rec.configExtra }
-      : null;
+    if (!rec) return null;
+    const base = emptyDocument();
+    return {
+      ...base,
+      yamlMode: rec.yamlMode ?? "single",
+      entryFilename: rec.entryFilename ?? "core.yaml",
+      flowFiles: rec.flowFiles ?? {},
+      replayFilename: rec.replayFilename ?? "replay.yaml",
+      formDrafts: rec.formDrafts ?? {},
+      nodes: rec.nodes ?? [],
+      edges: rec.edges ?? [],
+      serverConfig: rec.serverConfig ?? base.serverConfig,
+      coreReplayConfig:
+        rec.coreReplayConfig ??
+        (isRecord(rec.configExtra?.replay)
+          ? { ...(rec.configExtra.replay as Record<string, unknown>) }
+          : null),
+      replayServiceConfig: rec.replayServiceConfig ?? null,
+      configExtra: isRecord(rec.configExtra?.replay)
+        ? withoutLegacyReplay(rec.configExtra)
+        : { ...(rec.configExtra ?? {}) },
+      connections: rec.connections ?? {},
+      destinations: rec.destinations ?? {},
+      activeFlow: rec.activeFlow ?? base.activeFlow,
+      otherFlows: rec.otherFlows ?? {},
+      deliveryFailurePolicy: rec.deliveryFailurePolicy,
+      flowExtra: rec.flowExtra,
+    };
   } catch {
     return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function withoutLegacyReplay(
+  extra: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const next = { ...(extra ?? {}) };
+  delete next.replay;
+  return next;
 }
 
 export async function clearGraph(): Promise<void> {
   try {
     await db.graphs.delete(CURRENT);
   } catch {
-    /* best effort — ignore storage failures */
+    /* best effort */
   }
 }

@@ -1,0 +1,73 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - errorlint
+    - nilerr
+    - bodyclose
+    - noctx
+    - ineffassign
+    - unused
+    - gosec
+    - depguard
+  settings:
+    depguard:
+      rules:
+        # Core and the replay service share only wire types and plumbing
+        # (internal/replaywire, tlsfiles, pgtls, config, logging). depguard
+        # checks direct imports only: internal/config still links core's
+        # auth, filter, vars, and transform packages into hookway-replay.
+        core:
+          files:
+            - "$all"
+            - "!**/internal/replay/**"
+            - "!**/cmd/hookway-replay/**"
+            # Native contract generation intentionally reads both API packages.
+            - "!**/cmd/hookway-openapi/**"
+            - "!**/internal/redrivecontract/**"
+            - "!**/internal/acceptance/**"
+            - "!**/internal/editor/**"
+            - "!**/cmd/hookway-wasm/bridge/**"
+          deny:
+            - pkg: "github.com/jaysongiroux/hook_way/internal/replay/"
+              desc: "core must not depend on the replay service; share types through internal/replaywire"
+        # Config tooling may use replay's schema/validator, but not its runtime.
+        config_ui:
+          list-mode: lax
+          files:
+            - "**/internal/editor/**"
+            - "**/cmd/hookway-wasm/bridge/**"
+          allow:
+            - "github.com/jaysongiroux/hook_way/internal/replay/configapi$"
+          deny:
+            - pkg: "github.com/jaysongiroux/hook_way/internal/replay/"
+              desc: "config tooling may import replay/configapi only, not replay runtime"
+        replay:
+          files:
+            - "**/internal/replay/**"
+            - "**/cmd/hookway-replay/**"
+          deny:
+            - pkg: "github.com/jaysongiroux/hook_way/internal/httpapi"
+              desc: "the replay service must not depend on core's runtime"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/flowconfig"
+              desc: "the replay service must not depend on core's runtime"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/graph"
+              desc: "the replay service must not depend on core's runtime"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/queue"
+              desc: "the replay service must not depend on core's runtime"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/capture"
+              desc: "the replay service must not depend on core's runtime"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/control"
+              desc: "the replay service must not depend on core's runtime"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/deliverysnapshot"
+              desc: "replay stores snapshots as opaque bytes; only core decodes them"
+            - pkg: "github.com/jaysongiroux/hook_way/internal/publishmsg"
+              desc: "the replay service must not depend on core's runtime"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

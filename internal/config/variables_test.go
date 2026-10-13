@@ -1,586 +1,241 @@
 package config
 
 import (
-	"github.com/jasongiroux/hookway/internal/vars"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
 
-// variablesBody builds a config with two destinations (a mongodb sink, which
-// accepts dynamic targets, and an s3 archive for fallbacks) and one endpoint
-// whose path/variables/destinations are supplied by the caller.
-func variablesBody(path, variables, fallback, routes string) string {
-	return `
-server:
-  addr: ":8080"
-  max_body_bytes: 1048576
-destinations:
-  sink:
-    type: mongodb
-    mongodb:
-      uri: "mongodb://localhost:27017"
-      database: "hooks"
-  archive:
-    type: s3
-    s3:
-      region: "us-east-1"
-      bucket: "archive"
-  hub:
-    type: webhook
-    webhook:
-      url: "https://{envName}-api.htap.sh/api/v3/digifi/webhook"
-endpoints:
-  digifi:
-    enabled: true
-    path: "` + path + `"
-` + variables + fallback + `
-    destinations:
-` + routes + `
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-`
+// The v1 `endpoints:` YAML loader is gone, so per-request routing variables are
+// validated by building the endpoint directly and calling validationIssues --
+// the same entry SharedConfig.ValidationIssues uses.
+
+var variableDestinations = map[string]DestinationConfig{
+	"sink":  {Type: "s3", S3: S3Config{Region: "us-east-1", Bucket: "events"}},
+	"queue": {Type: "sqs", SQS: SQSConfig{Region: "us-east-1"}},
+	"mq":    {Type: "rabbitmq", RabbitMQ: RabbitMQConfig{URL: "amqp://x", Exchange: "e", ExchangeType: "direct"}},
+	"wf": {Type: "temporal", Temporal: TemporalConfig{
+		HostPort: "localhost:7233", Namespace: "default",
+		ConnectTimeout: 10 * time.Second, StartTimeout: 5 * time.Second,
+	}},
+	"hub": {Type: "webhook", Webhook: WebhookConfig{URL: "https://{envName}-api.example.com/v3/events"}},
 }
 
-const enumVar = `    variables:
-      envName:
-        source: header
-        path: X-Env
-        values: [qa-gm3, staging-portal, portal]
-`
-
-const patternVar = `    variables:
-      envName:
-        source: header
-        path: X-Env
-        pattern: "^qa-gm[0-9]+$"
-`
-
-const sinkRoute = `      - destination: "sink"
-        target: "{envName}-events"
-`
-
-func TestLoadParsesVariables(t *testing.T) {
-	body := variablesBody("/webhooks/{envName}/digifi", `    variables:
-      envName:
-        source: path
-        values: [qa-gm3, staging-portal, portal]
-        default: "portal"
-      tenant:
-        source: body
-        path: "account.id"
-        pattern: "^[a-z]+$"
-`, `    on_unresolved_variable:
-      destination: "archive"
-      target: "unrouted"
-`, `      - destination: "sink"
-        target: "{envName}-{tenant}-events"
-`)
-	cfg, err := Load(writeConfig(t, body))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+// varEndpoint builds a Config with one enabled endpoint declaring variables.
+func varEndpoint(path string, variables map[string]VariableConfig, fallback *FallbackRouteConfig, routes ...EndpointDestinationConfig) Config {
+	if len(routes) == 0 {
+		routes = []EndpointDestinationConfig{{Destination: "sink", Target: "events-{envName}"}}
 	}
-	ep := cfg.Endpoints["digifi"]
-	env := ep.Variables["envName"]
-	if env.Source != "path" || env.Path != "envName" || !reflect.DeepEqual(env.Values, []string{"qa-gm3", "staging-portal", "portal"}) || env.Default != "portal" {
-		t.Fatalf("envName: %#v", env)
-	}
-	tenant := ep.Variables["tenant"]
-	if tenant.Source != "body" || tenant.Path != "account.id" || tenant.Pattern != "^[a-z]+$" {
-		t.Fatalf("tenant: %#v", tenant)
-	}
-	if ep.OnUnresolvedVariable == nil || ep.OnUnresolvedVariable.Destination != "archive" || ep.OnUnresolvedVariable.Target != "unrouted" {
-		t.Fatalf("fallback: %#v", ep.OnUnresolvedVariable)
-	}
-	specs, err := ep.VariableSpecs()
-	if err != nil || len(specs) != 2 || specs[0].Name != "envName" || specs[1].Name != "tenant" || specs[1].Pattern == nil {
-		t.Fatalf("specs: %#v %v", specs, err)
-	}
-	if src := ep.PatternSources(); !reflect.DeepEqual(src, map[string]string{"tenant": "^[a-z]+$"}) {
-		t.Fatalf("PatternSources: %#v", src)
+	return Config{
+		Server:       ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: variableDestinations,
+		Endpoints: map[string]EndpointConfig{"e": {
+			Enabled: true, Path: path,
+			Auth:                 AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+			Variables:            variables,
+			OnUnresolvedVariable: fallback,
+			Destinations:         routes,
+		}},
 	}
 }
 
-func TestDestinationRoutesWithoutVariablesIsUnchanged(t *testing.T) {
-	cfg, err := Load(writeConfig(t, variablesBody("/webhooks/digifi", "", "", `      - destination: "sink"
-        target: "events"
-      - destination: "archive"
-        target: "raw"
-`)))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	routes := cfg.Endpoints["digifi"].DestinationRoutes()
-	if len(routes) != 2 {
-		t.Fatalf("expected 2 routes, got %d", len(routes))
-	}
-	for i, r := range routes {
-		if r.Index != i || r.Template != r.Target || r.Dynamic || r.Bindings != nil {
-			t.Fatalf("route %d should be plain: %#v", i, r)
-		}
-	}
-	if cfg.Endpoints["digifi"].TargetLabel() != "events,raw" {
-		t.Fatalf("TargetLabel: %q", cfg.Endpoints["digifi"].TargetLabel())
+func enumVar() map[string]VariableConfig {
+	return map[string]VariableConfig{
+		"envName": {Source: "header", Path: "X-Env", Values: []string{"tenant-a", "staging"}},
 	}
 }
 
-func TestDestinationRoutesExpandsEnumeratedVariables(t *testing.T) {
-	cfg, err := Load(writeConfig(t, variablesBody("/webhooks/digifi", enumVar, `    on_unresolved_variable:
-      destination: "archive"
-      target: "unrouted"
-`, sinkRoute+`      - destination: "archive"
-        target: "static"
-`)))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	ep := cfg.Endpoints["digifi"]
-	routes := ep.DestinationRoutes()
-	var got []string
-	for _, r := range routes {
-		got = append(got, r.Destination+":"+r.Target)
-	}
-	want := []string{"sink:qa-gm3-events", "sink:staging-portal-events", "sink:portal-events", "archive:static", "archive:unrouted"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("routes: got %v want %v", got, want)
-	}
-	if routes[1].Index != 0 || routes[1].Template != "{envName}-events" || routes[1].Bindings["envName"] != "staging-portal" || routes[1].Dynamic {
-		t.Fatalf("expanded route meta: %#v", routes[1])
-	}
-	if routes[3].Index != 1 || routes[3].Template != "static" {
-		t.Fatalf("static route meta: %#v", routes[3])
-	}
-	if routes[4].Index != -1 || routes[4].Template != "unrouted" {
-		t.Fatalf("fallback route meta: %#v", routes[4])
-	}
-	// The label stays the authored templates.
-	if ep.TargetLabel() != "{envName}-events,static" {
-		t.Fatalf("TargetLabel: %q", ep.TargetLabel())
-	}
-	fb, ok := ep.FallbackRoute()
-	if !ok || fb.Destination != "archive" || fb.Target != "unrouted" {
-		t.Fatalf("FallbackRoute: %#v %v", fb, ok)
+func patternVar() map[string]VariableConfig {
+	return map[string]VariableConfig{
+		"envName": {Source: "header", Path: "X-Env", Pattern: "^[a-z0-9-]+$"},
 	}
 }
 
-func TestDestinationRoutesCartesianAndDynamic(t *testing.T) {
-	body := variablesBody("/webhooks/digifi", `    variables:
-      envName:
-        source: header
-        path: X-Env
-        values: [qa, prod]
-      region:
-        source: header
-        path: X-Region
-        values: [us, eu, ap]
-      tenant:
-        source: header
-        path: X-Tenant
-        pattern: "^[a-z]+$"
-`, "", `      - destination: "sink"
-        target: "{envName}-{region}-events"
-      - destination: "sink"
-        target: "{envName}-{tenant}"
-`)
-	cfg, err := Load(writeConfig(t, body))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+func lookupVar(mutate func(*LookupConfig)) map[string]VariableConfig {
+	lc := LookupConfig{
+		Key:      VariableKeyConfig{Source: "body", Path: "data.object.accountId"},
+		Provider: "dynamodb",
+		Timeout:  2 * time.Second,
+		Cache:    LookupCacheConfig{TTL: 5 * time.Minute},
+		DynamoDB: &LookupDynamoDBConfig{Table: "routing", KeyAttribute: "id", ValueAttribute: "env_name", Region: "us-east-1"},
 	}
-	routes := cfg.Endpoints["digifi"].DestinationRoutes()
-	if len(routes) != 6+2 {
-		t.Fatalf("expected 8 routes, got %d", len(routes))
+	if mutate != nil {
+		mutate(&lc)
 	}
-	if routes[0].Target != "qa-us-events" || routes[1].Target != "qa-eu-events" || routes[5].Target != "prod-ap-events" {
-		t.Fatalf("cartesian order: %v %v %v", routes[0].Target, routes[1].Target, routes[5].Target)
-	}
-	if !routes[6].Dynamic || routes[6].Target != "qa-{tenant}" || routes[6].Bindings["envName"] != "qa" || routes[6].Template != "{envName}-{tenant}" {
-		t.Fatalf("mixed route: %#v", routes[6])
-	}
+	return map[string]VariableConfig{"envName": {Source: "lookup", Lookup: &lc}}
 }
 
-func TestLoadAcceptsVariablesExample(t *testing.T) {
-	cases := map[string]string{
-		"pattern var on dynamic-capable destination": variablesBody("/webhooks/digifi", patternVar, "", sinkRoute),
-		"pattern var on sqs (provisioned on first sight)": strings.Replace(variablesBody("/webhooks/digifi", patternVar, "", `      - destination: "queue"
-        target: "{envName}-events"
-        create: true
-`), "  archive:\n", "  queue:\n    type: sqs\n    sqs:\n      region: us-east-1\n  archive:\n", 1),
-		"path var with webhook url host": variablesBody("/webhooks/{envName}/digifi", `    variables:
-      envName:
-        source: path
-        pattern: "^qa-gm[0-9]+$"
-`, "", `      - destination: "hub"
-        target: "event"
-`),
-		"enumerated fifo target on sqs": strings.Replace(variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "queue"
-        target: "{envName}-events.fifo"
-        fifo:
-          group_id:
-            source: endpoint
-          dedup:
-            content_based_fallback: true
-`), "  archive:\n", "  queue:\n    type: sqs\n    sqs:\n      region: us-east-1\n  archive:\n", 1),
+func TestVariablesValidateCleanly(t *testing.T) {
+	cases := map[string]Config{
+		"enumerated on s3":      varEndpoint("/webhooks/events", enumVar(), nil),
+		"pattern on s3":         varEndpoint("/webhooks/events", patternVar(), nil),
+		"path source":           varEndpoint("/webhooks/{envName}/events", map[string]VariableConfig{"envName": {Source: "path", Path: "envName", Pattern: "^[a-z0-9-]+$"}}, nil),
+		"body source":           varEndpoint("/webhooks/events", map[string]VariableConfig{"envName": {Source: "body", Path: "account.env", Values: []string{"tenant-a"}}}, nil),
+		"query source":          varEndpoint("/webhooks/events", map[string]VariableConfig{"envName": {Source: "query", Path: "env", Values: []string{"tenant-a"}}}, nil),
+		"lookup source":         varEndpoint("/webhooks/events", lookupVar(nil), nil),
+		"webhook url reference": varEndpoint("/webhooks/events", enumVar(), nil, EndpointDestinationConfig{Destination: "hub", Target: "events"}),
+		"temporal prefix reference": varEndpoint("/webhooks/events", enumVar(), nil, EndpointDestinationConfig{
+			Destination: "wf", Target: "orders",
+			TemporalOptions: TemporalEndpointOptions{WorkflowType: "OrderWorkflow", WorkflowID: TemporalWorkflowIDConfig{Prefix: "{envName}-"}},
+		}),
+		"fallback route": varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "sink", Target: "unrouted"}),
 	}
-	for name, body := range cases {
+	for name, cfg := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Load(writeConfig(t, body)); err != nil {
-				t.Fatalf("Load: %v", err)
+			if issues := validationIssues(cfg); len(issues) != 0 {
+				t.Fatalf("valid variables config rejected: %#v", issues)
 			}
 		})
-	}
-}
-
-func TestLoadAcceptsTemporalPrefixTemplate(t *testing.T) {
-	body := strings.Replace(variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "wf"
-        target: "adverse-action"
-        temporal_options:
-          workflow_type: "W"
-          workflow_id:
-            source: body
-            path: applicationId
-            prefix: "{envName}-aan-"
-`), "  archive:\n", "  wf:\n    type: temporal\n    temporal:\n      host_port: \"localhost:7233\"\n      namespace: \"default\"\n  archive:\n", 1)
-	if _, err := Load(writeConfig(t, body)); err != nil {
-		t.Fatalf("Load: %v", err)
 	}
 }
 
 func TestLoadRejectsInvalidVariables(t *testing.T) {
-	sqsDest := func(body string) string {
-		return strings.Replace(body, "  archive:\n", "  queue:\n    type: sqs\n    sqs:\n      region: us-east-1\n  archive:\n", 1)
+	v := func(mutate func(*VariableConfig)) map[string]VariableConfig {
+		vc := VariableConfig{Source: "header", Path: "X-Env", Values: []string{"tenant-a"}}
+		mutate(&vc)
+		return map[string]VariableConfig{"envName": vc}
 	}
-	twoEndpoints := func(pathA, pathB string) string {
-		return `
-server:
-  addr: ":8080"
-  max_body_bytes: 1048576
-destinations:
-  sink:
-    type: mongodb
-    mongodb:
-      uri: "mongodb://localhost:27017"
-      database: "hooks"
-endpoints:
-  a:
-    enabled: true
-    path: "` + pathA + `"
-    variables:
-      x:
-        source: path
-        pattern: "^[a-z]+$"
-    destinations:
-      - destination: "sink"
-        target: "{x}"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-  b:
-    enabled: true
-    path: "` + pathB + `"
-    destinations:
-      - destination: "sink"
-        target: "b"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-`
-	}
-	v := func(spec string) string { return "    variables:\n      envName:\n" + spec }
 	cases := []struct {
 		name string
-		body string
+		cfg  Config
 		want string
 	}{
-		{"bad name", variablesBody("/webhooks/digifi", "    variables:\n      9bad:\n        source: header\n        values: [a]\n", "", `      - destination: "sink"
-        target: "{9bad}"
-`), "variables.9bad"},
-		{"reserved name", variablesBody("/webhooks/digifi", "    variables:\n      target:\n        source: header\n        values: [a]\n", "", `      - destination: "sink"
-        target: "{target}"
-`), "variables.target"},
-		{"missing source", variablesBody("/webhooks/digifi", v("        values: [a]\n"), "", sinkRoute), "variables.envName.source"},
-		{"bad source", variablesBody("/webhooks/digifi", v("        source: cookie\n        values: [a]\n"), "", sinkRoute), "variables.envName.source"},
-		{"bad header path", variablesBody("/webhooks/digifi", v("        source: header\n        path: \"X Env\"\n        values: [a]\n"), "", sinkRoute), "variables.envName.path"},
-		{"path source without segment", variablesBody("/webhooks/digifi", v("        source: path\n        values: [a]\n"), "", sinkRoute), "variables.envName.path"},
-		{"values and pattern", variablesBody("/webhooks/digifi", v("        source: header\n        values: [a]\n        pattern: \"^a$\"\n"), "", sinkRoute), "variables.envName"},
-		{"neither values nor pattern", variablesBody("/webhooks/digifi", v("        source: header\n"), "", sinkRoute), "variables.envName"},
-		{"empty values", variablesBody("/webhooks/digifi", v("        source: header\n        values: []\n"), "", sinkRoute), "variables.envName.values"},
-		{"unsafe value", variablesBody("/webhooks/digifi", v("        source: header\n        values: [\"a/b\"]\n"), "", sinkRoute), "variables.envName.values"},
-		{"duplicate value", variablesBody("/webhooks/digifi", v("        source: header\n        values: [a, a]\n"), "", sinkRoute), "variables.envName.values"},
-		{"fifo value", variablesBody("/webhooks/digifi", v("        source: header\n        values: [\"a.fifo\"]\n"), "", sinkRoute), "variables.envName.values"},
-		{"bad regex", variablesBody("/webhooks/digifi", v("        source: header\n        pattern: \"^[a$\"\n"), "", sinkRoute), "variables.envName.pattern"},
-		{"unanchored regex", variablesBody("/webhooks/digifi", v("        source: header\n        pattern: \"[a-z]+\"\n"), "", sinkRoute), "variables.envName.pattern"},
-		{"default not accepted", variablesBody("/webhooks/digifi", v("        source: header\n        values: [a]\n        default: b\n"), "", sinkRoute), "variables.envName.default"},
-		{"unreferenced variable", variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "sink"
-        target: "events"
-`), "variables.envName"},
-		{"path placeholder undeclared", variablesBody("/webhooks/{envName}/digifi", "", "", `      - destination: "sink"
-        target: "events"
-`), "digifi.path"},
-		{"path placeholder wrong source", variablesBody("/webhooks/{envName}/digifi", enumVar, "", sinkRoute), "digifi.path"},
-		{"path malformed", variablesBody("/webhooks/a{envName}/digifi", enumVar, "", sinkRoute), "digifi.path"},
-		{"path overlap literal vs placeholder", twoEndpoints("/webhooks/{x}/digifi", "/webhooks/portal/digifi"), "path overlaps"},
-		{"path overlap parent child", twoEndpoints("/webhooks/{x}", "/webhooks/portal/digifi"), "path overlaps"},
-		{"target undeclared placeholder", variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "sink"
-        target: "{envName}-{other}"
-`), "destinations[0].target"},
-		{"target malformed", variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "sink"
-        target: "{envName"
-`), "destinations[0].target"},
-		{"target bad literal", variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "sink"
-        target: "{envName}/events"
-`), "destinations[0].target"},
-		{"target literal leaves no room for values", variablesBody("/webhooks/digifi", patternVar, "", `      - destination: "sink"
-        target: "{envName}-`+strings.Repeat("a", 128)+`"
-`), "destinations[0].target"},
-		{"fifo suffix from placeholder", sqsDest(variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "queue"
-        target: "events-{envName}"
-        fifo:
-          group_id:
-            source: endpoint
-          dedup:
-            content_based_fallback: true
-`)), "fifo"},
-		{"expanded duplicate", variablesBody("/webhooks/digifi", `    variables:
-      envName:
-        source: header
-        path: X-Env
-        values: [qa]
-`, "", `      - destination: "sink"
-        target: "{envName}-events"
-      - destination: "sink"
-        target: "qa-events"
-`), "duplicated"},
-		{"expansion cap", variablesBody("/webhooks/digifi", `    variables:
-      a:
-        source: header
-        path: X-A
-        pattern: "^x$"
-      b:
-        source: header
-        path: X-B
-        values: [`+strings.TrimSuffix(strings.Repeat("v,", 300), ",")+`]
-`, "", `      - destination: "sink"
-        target: "{a}-{b}"
-`), "expand to"},
-		{"rabbitmq create on dynamic", strings.Replace(variablesBody("/webhooks/digifi", patternVar, "", `      - destination: "mq"
-        target: "{envName}-events"
-        create: true
-`), "  archive:\n", "  mq:\n    type: rabbitmq\n    rabbitmq:\n      url: \"amqp://x\"\n      exchange: \"e\"\n      exchange_type: \"direct\"\n  archive:\n", 1), "destinations[0].create"},
-		{"temporal prefix undeclared variable", strings.Replace(variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "wf"
-        target: "{envName}-jobs"
-        temporal_options:
-          workflow_type: "W"
-          workflow_id:
-            prefix: "{other}-"
-`), "  archive:\n", "  wf:\n    type: temporal\n    temporal:\n      host_port: \"localhost:7233\"\n      namespace: \"default\"\n  archive:\n", 1), "temporal_options.workflow_id.prefix"},
-		{"webhook url malformed", strings.Replace(variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "hub"
-        target: "event"
-`), "https://{envName}-api.htap.sh", "https://{envName-api.htap.sh", 1), "destinations.hub.webhook.url"},
-		{"webhook url var not declared by endpoint", variablesBody("/webhooks/digifi", "", "", `      - destination: "hub"
-        target: "event"
-`), "destinations[0].destination"},
-		{"webhook url whole-host placeholder", strings.Replace(variablesBody("/webhooks/digifi", enumVar, "", `      - destination: "hub"
-        target: "event"
-`), "https://{envName}-api.htap.sh", "https://{envName}", 1), "destinations.hub.webhook.url"},
-		{"fallback without variables", variablesBody("/webhooks/digifi", "", `    on_unresolved_variable:
-      destination: "archive"
-      target: "unrouted"
-`, `      - destination: "sink"
-        target: "events"
-`), "on_unresolved_variable"},
-		{"fallback unknown destination", variablesBody("/webhooks/digifi", enumVar, `    on_unresolved_variable:
-      destination: "nope"
-      target: "unrouted"
-`, sinkRoute), "on_unresolved_variable.destination"},
-		{"fallback to webhook", variablesBody("/webhooks/digifi", enumVar, `    on_unresolved_variable:
-      destination: "hub"
-      target: "unrouted"
-`, sinkRoute), "on_unresolved_variable.destination"},
-		{"fallback templated target", variablesBody("/webhooks/digifi", enumVar, `    on_unresolved_variable:
-      destination: "archive"
-      target: "{envName}"
-`, sinkRoute), "on_unresolved_variable.target"},
-		{"fallback missing target", variablesBody("/webhooks/digifi", enumVar, `    on_unresolved_variable:
-      destination: "archive"
-`, sinkRoute), "on_unresolved_variable.target"},
+		{"bad name", varEndpoint("/webhooks/events", map[string]VariableConfig{
+			"9bad": {Source: "header", Path: "X-Env", Values: []string{"a"}},
+		}, nil), "variables.9bad"},
+		{"reserved name", varEndpoint("/webhooks/events", map[string]VariableConfig{
+			"target": {Source: "header", Path: "X-Env", Values: []string{"a"}},
+		}, nil), "variables.target"},
+		{"missing source", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Source = "" }), nil), "variables.envName.source"},
+		{"bad source", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Source = "cookie" }), nil), "variables.envName.source"},
+		{"bad header path", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Path = "X Env" }), nil), "variables.envName.path"},
+		{"empty body path segment", varEndpoint("/webhooks/events", v(func(c *VariableConfig) {
+			c.Source, c.Path = "body", "account..env"
+		}), nil), "variables.envName.path"},
+		{"path source without segment", varEndpoint("/webhooks/events", v(func(c *VariableConfig) {
+			c.Source, c.Path = "path", "envName"
+		}), nil), "variables.envName.path"},
+		{"values and pattern", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Pattern = "^a$" }), nil), "variables.envName"},
+		{"neither values nor pattern", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values = nil }), nil), "variables.envName"},
+		{"empty values", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values = []string{} }), nil), "variables.envName.values"},
+		{"unsafe value", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values = []string{"a/b"} }), nil), "variables.envName.values"},
+		{"duplicate value", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values = []string{"a", "a"} }), nil), "variables.envName.values"},
+		{"fifo value", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values = []string{"a.fifo"} }), nil), "variables.envName.values"},
+		{"bad regex", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values, c.Pattern = nil, "^[a$" }), nil), "variables.envName.pattern"},
+		{"unanchored regex", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Values, c.Pattern = nil, "[a-z]+" }), nil), "variables.envName.pattern"},
+		{"over-long pattern", varEndpoint("/webhooks/events", v(func(c *VariableConfig) {
+			c.Values, c.Pattern = nil, "^"+strings.Repeat("a", 260)+"$"
+		}), nil), "variables.envName.pattern"},
+		{"default not accepted", varEndpoint("/webhooks/events", v(func(c *VariableConfig) { c.Default = "b" }), nil), "variables.envName.default"},
+		{"unsafe default", varEndpoint("/webhooks/events", v(func(c *VariableConfig) {
+			c.Values, c.Pattern, c.Default = nil, "^.+$", "a/b"
+		}), nil), "variables.envName.default"},
+		{"lookup block without lookup source", varEndpoint("/webhooks/events", v(func(c *VariableConfig) {
+			c.Lookup = &LookupConfig{Provider: "http"}
+		}), nil), "variables.envName.lookup"},
+		{"unreferenced variable", varEndpoint("/webhooks/events", enumVar(), nil,
+			EndpointDestinationConfig{Destination: "sink", Target: "events"}), "variables.envName"},
+		{"path placeholder undeclared", varEndpoint("/webhooks/{envName}/events", nil, nil,
+			EndpointDestinationConfig{Destination: "sink", Target: "events"}), "e.path"},
+		{"path placeholder wrong source", varEndpoint("/webhooks/{envName}/events", enumVar(), nil), "e.path"},
+		{"path malformed", varEndpoint("/webhooks/a{envName}/events", enumVar(), nil), "e.path"},
+		{"target undeclared placeholder", varEndpoint("/webhooks/events", enumVar(), nil,
+			EndpointDestinationConfig{Destination: "sink", Target: "events-{envName}-{other}"}), "destinations[0].target"},
+		{"target malformed", varEndpoint("/webhooks/events", enumVar(), nil,
+			EndpointDestinationConfig{Destination: "sink", Target: "events-{envName"}), "destinations[0].target"},
+		{"target bad literal", varEndpoint("/webhooks/events", enumVar(), nil,
+			EndpointDestinationConfig{Destination: "sink", Target: "events {envName}"}), "destinations[0].target"},
+		{"target literal leaves no room for values", varEndpoint("/webhooks/events", patternVar(), nil,
+			EndpointDestinationConfig{Destination: "sink", Target: strings.Repeat("e", 128) + "{envName}"}), "destinations[0].target"},
+		{"rabbitmq create on dynamic target", varEndpoint("/webhooks/events", patternVar(), nil,
+			EndpointDestinationConfig{Destination: "mq", Target: "events-{envName}", Create: true}), "destinations[0].create"},
+		{"webhook url var not declared", varEndpoint("/webhooks/events", nil, nil,
+			EndpointDestinationConfig{Destination: "hub", Target: "events"}), "webhook.url"},
+		{"fallback without variables", varEndpoint("/webhooks/events", nil, &FallbackRouteConfig{Destination: "sink", Target: "unrouted"},
+			EndpointDestinationConfig{Destination: "sink", Target: "events"}), "on_unresolved_variable"},
+		{"fallback unknown destination", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "nope", Target: "unrouted"}), "on_unresolved_variable.destination"},
+		{"fallback to webhook", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "hub", Target: "unrouted"}), "on_unresolved_variable.destination"},
+		{"fallback missing destination", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Target: "unrouted"}), "on_unresolved_variable.destination"},
+		{"fallback templated target", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "sink", Target: "unrouted-{envName}"}), "on_unresolved_variable.target"},
+		{"fallback missing target", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "sink"}), "on_unresolved_variable.target"},
+		{"fallback fifo target", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "sink", Target: "unrouted.fifo"}), "on_unresolved_variable.target"},
+		{"fallback unsafe target", varEndpoint("/webhooks/events", enumVar(), &FallbackRouteConfig{Destination: "sink", Target: "un routed"}), "on_unresolved_variable.target"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, tc.body))
-			if err == nil {
-				t.Fatalf("expected validation error containing %q, got nil", tc.want)
-			}
+			err := ConfigValidationError{Issues: validationIssues(tc.cfg)}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error %q does not mention %q", err.Error(), tc.want)
-			}
-		})
-	}
-}
-
-const lookupDest = "  sink:\n"
-
-func lookupVar(provider, block string) string {
-	return `    variables:
-      env:
-        source: lookup
-        lookup:
-          key:
-            source: body
-            path: "data.object.applicationId"
-          provider: ` + provider + `
-` + block
-}
-
-const dynamoBlock = `          dynamodb:
-            table: "routing"
-            index: "CreatedAtIndex"
-            filter:
-              attribute: "id_type"
-              value: "application"
-            value_attribute: "env_name"
-`
-
-func TestLoadParsesLookupVariable(t *testing.T) {
-	body := variablesBody("/webhooks/digifi", lookupVar("dynamodb", dynamoBlock+`          timeout: "3s"
-          cache:
-            ttl: "10m"
-            negative_ttl: "30s"
-            max_entries: 500
-        pattern: "^[a-z0-9-]+$"
-`), "", `      - destination: "sink"
-        target: "{env}-events"
-`)
-	cfg, err := Load(writeConfig(t, body))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	v := cfg.Endpoints["digifi"].Variables["env"]
-	if v.Source != "lookup" || v.Lookup == nil {
-		t.Fatalf("lookup not parsed: %#v", v)
-	}
-	lc := v.Lookup
-	if lc.Key.Source != "body" || lc.Key.Path != "data.object.applicationId" || lc.Provider != "dynamodb" {
-		t.Fatalf("key/provider: %#v", lc)
-	}
-	if lc.Timeout != 3*time.Second || lc.Cache.TTL != 10*time.Minute || lc.Cache.NegativeTTL != 30*time.Second || lc.Cache.MaxEntries != 500 {
-		t.Fatalf("timeout/cache: %#v", lc)
-	}
-	d := lc.DynamoDB
-	if d == nil || d.Table != "routing" || d.Index != "CreatedAtIndex" || d.FilterAttribute != "id_type" || d.FilterValue != "application" || d.ValueAttribute != "env_name" {
-		t.Fatalf("dynamodb block: %#v", d)
-	}
-	specs, err := cfg.Endpoints["digifi"].VariableSpecs()
-	if err != nil || specs[0].KeySource != "body" || specs[0].KeyPath != "data.object.applicationId" {
-		t.Fatalf("specs: %#v %v", specs, err)
-	}
-}
-
-func TestLoadDefaultsLookupTimeoutsAndKeyPath(t *testing.T) {
-	body := variablesBody("/webhooks/digifi", `    variables:
-      env:
-        source: lookup
-        lookup:
-          key:
-            source: header
-          provider: http
-          http:
-            url: "https://resolver.internal/env?id={key}"
-            value_path: "env_name"
-`, "", `      - destination: "sink"
-        target: "{env}-events"
-`)
-	cfg, err := Load(writeConfig(t, body))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	lc := cfg.Endpoints["digifi"].Variables["env"].Lookup
-	if lc.Timeout != 2*time.Second || lc.Cache.TTL != 5*time.Minute || lc.Cache.NegativeTTL != 0 || lc.Key.Path != "env" {
-		t.Fatalf("defaults: %#v", lc)
-	}
-}
-
-func TestLoadAcceptsEachLookupProvider(t *testing.T) {
-	route := `      - destination: "sink"
-        target: "{env}-events"
-`
-	cases := map[string]string{
-		"dynamodb": variablesBody("/webhooks/digifi", lookupVar("dynamodb", dynamoBlock), "", route),
-		"http": variablesBody("/webhooks/digifi", lookupVar("http", `          http:
-            url: "https://resolver.internal/env?id={key}"
-            method: POST
-            headers:
-              Authorization: "Bearer x"
-            value_path: "data.env_name"
-`), "", route),
-		"postgres": variablesBody("/webhooks/digifi", lookupVar("postgres", `          postgres:
-            url: "postgres://localhost:5432/routing"
-            query: "SELECT env_name FROM routing WHERE id = {key}"
-`), "", route),
-		"lookup with values": variablesBody("/webhooks/digifi", lookupVar("dynamodb", dynamoBlock+"        values: [qa-gm3, portal]\n"), "", route),
-	}
-	for name, body := range cases {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Load(writeConfig(t, body)); err != nil {
-				t.Fatalf("Load: %v", err)
 			}
 		})
 	}
 }
 
 func TestLoadRejectsInvalidLookupVariables(t *testing.T) {
-	route := `      - destination: "sink"
-        target: "{env}-events"
-`
-	lv := func(provider, block string) string {
-		return variablesBody("/webhooks/digifi", lookupVar(provider, block), "", route)
-	}
-	cases := []struct{ name, body, want string }{
-		{"lookup without block", variablesBody("/webhooks/digifi", "    variables:\n      env:\n        source: lookup\n", "", route), "variables.env.lookup"},
-		{"block without lookup source", variablesBody("/webhooks/digifi", "    variables:\n      env:\n        source: header\n        values: [a]\n        lookup:\n          provider: http\n", "", route), "variables.env.lookup"},
-		{"missing key source", variablesBody("/webhooks/digifi", `    variables:
-      env:
-        source: lookup
-        lookup:
-          provider: dynamodb
-`+dynamoBlock, "", route), "lookup.key.source"},
-		{"key from lookup", strings.Replace(lv("dynamodb", dynamoBlock), "source: body\n            path", "source: lookup\n            path", 1), "lookup.key.source"},
-		{"key path source without segment", strings.Replace(lv("dynamodb", dynamoBlock), "source: body\n            path: \"data.object.applicationId\"", "source: path\n            path: envName", 1), "lookup.key.path"},
-		{"missing provider", variablesBody("/webhooks/digifi", `    variables:
-      env:
-        source: lookup
-        lookup:
-          key:
-            source: body
-            path: id
-`+dynamoBlock, "", route), "lookup.provider"},
-		{"bad provider", lv("redis", ""), "lookup.provider"},
-		{"provider block missing", lv("http", ""), "lookup.http"},
-		{"two provider blocks", lv("dynamodb", dynamoBlock+"          http:\n            url: \"https://x/{key}\"\n            value_path: v\n"), "variables.env.lookup"},
-		{"dynamodb missing table", lv("dynamodb", "          dynamodb:\n            value_attribute: env\n"), "dynamodb.table"},
-		{"dynamodb missing value_attribute", lv("dynamodb", "          dynamodb:\n            table: t\n"), "dynamodb.value_attribute"},
-		{"dynamodb half filter", lv("dynamodb", "          dynamodb:\n            table: t\n            value_attribute: env\n            filter:\n              attribute: id_type\n"), "dynamodb.filter"},
-		{"http missing url", lv("http", "          http:\n            value_path: v\n"), "http.url"},
-		{"http non-http url", lv("http", "          http:\n            url: \"ftp://x/{key}\"\n            value_path: v\n"), "http.url"},
-		{"http no key placeholder", lv("http", "          http:\n            url: \"https://x/env\"\n            value_path: v\n"), "http.url"},
-		{"http key in host", lv("http", "          http:\n            url: \"https://{key}/env\"\n            value_path: v\n"), "http.url"},
-		{"http key in host suffix", lv("http", "          http:\n            url: \"https://{key}.internal:8443/env\"\n            value_path: v\n"), "http.url"},
-		{"http bad method", lv("http", "          http:\n            url: \"https://x/{key}\"\n            method: DELETE\n            value_path: v\n"), "http.method"},
-		{"http missing value_path", lv("http", "          http:\n            url: \"https://x/{key}\"\n"), "http.value_path"},
-		{"postgres missing url", lv("postgres", "          postgres:\n            query: \"SELECT 1 WHERE id = {key}\"\n"), "postgres.url"},
-		{"postgres query without key placeholder", lv("postgres", "          postgres:\n            url: \"postgres://x/db\"\n            query: \"SELECT env FROM t\"\n"), "postgres.query"},
-		{"bad timeout", lv("dynamodb", dynamoBlock+"          timeout: \"soon\"\n"), "lookup.timeout"},
-		{"zero ttl", lv("dynamodb", dynamoBlock+"          cache:\n            ttl: \"0s\"\n"), "lookup.cache.ttl"},
-		{"negative max_entries", lv("dynamodb", dynamoBlock+"          cache:\n            max_entries: -1\n"), "cache.max_entries"},
-		{"values and pattern", lv("dynamodb", dynamoBlock+"        values: [a]\n        pattern: \"^a$\"\n"), "variables.env"},
+	cases := []struct {
+		name   string
+		mutate func(*LookupConfig)
+		want   string
+	}{
+		{"missing key source", func(lc *LookupConfig) { lc.Key.Source = "" }, "lookup.key.source"},
+		{"lookup key from lookup", func(lc *LookupConfig) { lc.Key.Source = "lookup" }, "lookup.key.source"},
+		{"bad key source", func(lc *LookupConfig) { lc.Key.Source = "cookie" }, "lookup.key.source"},
+		{"missing provider", func(lc *LookupConfig) { lc.Provider = "" }, "lookup.provider"},
+		{"bad provider", func(lc *LookupConfig) { lc.Provider = "cassandra" }, "lookup.provider"},
+		{"provider block missing", func(lc *LookupConfig) { lc.DynamoDB = nil }, "lookup.dynamodb"},
+		{"two provider blocks", func(lc *LookupConfig) {
+			lc.HTTP = &LookupHTTPConfig{URL: "https://r.example.com/?id={key}", ValuePath: "env_name"}
+		}, "variables.envName.lookup"},
+		{"dynamodb without table", func(lc *LookupConfig) { lc.DynamoDB.Table = "" }, "lookup.dynamodb.table"},
+		{"dynamodb without value_attribute", func(lc *LookupConfig) { lc.DynamoDB.ValueAttribute = "" }, "lookup.dynamodb.value_attribute"},
+		{"dynamodb half filter", func(lc *LookupConfig) { lc.DynamoDB.FilterAttribute = "tenant" }, "lookup.dynamodb.filter"},
+		{"http without url", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{ValuePath: "env_name"}
+		}, "lookup.http.url"},
+		{"http non-http scheme", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "ftp://r.example.com/?id={key}", ValuePath: "env_name"}
+		}, "lookup.http.url"},
+		{"http without key placeholder", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "https://r.example.com/env", ValuePath: "env_name"}
+		}, "lookup.http.url"},
+		{"http key in host", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "https://{key}.example.com/env", ValuePath: "env_name"}
+		}, "lookup.http.url"},
+		{"http bad method", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "https://r.example.com/?id={key}", Method: "DELETE", ValuePath: "env_name"}
+		}, "lookup.http.method"},
+		{"http without value_path", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "https://r.example.com/?id={key}"}
+		}, "lookup.http.value_path"},
+		{"http bad header name", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "https://r.example.com/?id={key}", ValuePath: "env_name",
+				Headers: map[string]string{"Bad Header": "v"}}
+		}, "lookup.http.headers"},
+		{"postgres without url", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "postgres", nil
+			lc.Postgres = &LookupPostgresConfig{Query: "SELECT env_name FROM routing WHERE id = {key}"}
+		}, "lookup.postgres.url"},
+		{"postgres without query", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "postgres", nil
+			lc.Postgres = &LookupPostgresConfig{URL: "postgres://localhost/db"}
+		}, "lookup.postgres.query"},
+		{"postgres query without key placeholder", func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "postgres", nil
+			lc.Postgres = &LookupPostgresConfig{URL: "postgres://localhost/db", Query: "SELECT env_name FROM routing"}
+		}, "lookup.postgres.query"},
+		{"negative cache max_entries", func(lc *LookupConfig) { lc.Cache.MaxEntries = -1 }, "lookup.cache.max_entries"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, tc.body))
-			if err == nil {
-				t.Fatalf("expected validation error containing %q, got nil", tc.want)
-			}
+			cfg := varEndpoint("/webhooks/events", lookupVar(tc.mutate), nil)
+			err := ConfigValidationError{Issues: validationIssues(cfg)}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error %q does not mention %q", err.Error(), tc.want)
 			}
@@ -588,84 +243,208 @@ func TestLoadRejectsInvalidLookupVariables(t *testing.T) {
 	}
 }
 
-// A lookup variable with neither values nor pattern is an open set bounded
-// only by the safe-name rule; the queue layer must be able to compile a
-// matcher for a dynamic route that uses it, or `validate` passes and `serve`
-// exits at startup.
-func TestPatternSourcesDefaultsPatternlessLookupVariable(t *testing.T) {
-	cfg, err := Load(writeConfig(t, variablesBody("/webhooks/digifi", lookupVar("dynamodb", dynamoBlock), "", `      - destination: "sink"
-        target: "{env}-events"
-`)))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
+func TestLoadAcceptsEachLookupProvider(t *testing.T) {
+	cases := map[string]func(*LookupConfig){
+		"dynamodb": nil,
+		"http": func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "http", nil
+			lc.HTTP = &LookupHTTPConfig{URL: "https://resolver.example.com/env?id={key}", Method: "GET", ValuePath: "env_name"}
+		},
+		"postgres": func(lc *LookupConfig) {
+			lc.Provider, lc.DynamoDB = "postgres", nil
+			lc.Postgres = &LookupPostgresConfig{URL: "postgres://localhost/db", Query: "SELECT env_name FROM routing WHERE id = {key}"}
+		},
+		"lookup with values": func(lc *LookupConfig) {},
 	}
-	ps := cfg.Endpoints["digifi"].PatternSources()
-	if ps["env"] != lookupAnyPattern {
-		t.Fatalf("PatternSources = %v, want implicit safe-name pattern for env", ps)
-	}
-	m, err := vars.CompileMatcher("{env}-events", ps)
-	if err != nil {
-		t.Fatalf("CompileMatcher: %v", err)
-	}
-	if !m.Match("qa-gm3-events") || m.Match("a/b-events") || m.Match("-events") {
-		t.Fatal("implicit pattern must accept safe names only")
-	}
-	// An enumerated lookup variable stays out of PatternSources.
-	enum := EndpointConfig{Variables: map[string]VariableConfig{"env": {Source: "lookup", Values: []string{"a"}}}}
-	if ps := enum.PatternSources(); len(ps) != 0 {
-		t.Fatalf("enumerated lookup variable must not get a pattern: %v", ps)
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			decl := lookupVar(mutate)
+			if name == "lookup with values" {
+				v := decl["envName"]
+				v.Values = []string{"tenant-a", "prod"}
+				decl["envName"] = v
+			}
+			if issues := validationIssues(varEndpoint("/webhooks/events", decl, nil)); len(issues) != 0 {
+				t.Fatalf("valid %s lookup rejected: %#v", name, issues)
+			}
+		})
 	}
 }
 
-// The fallback route carries no per-route options, so sharing a target with a
-// route that sets some would make the factory pick options nondeterministically.
-func TestLoadRejectsFallbackSharingTargetWithOptions(t *testing.T) {
-	body := `
-server:
-  addr: ":8080"
-  max_body_bytes: 1048576
-destinations:
-  queue:
-    type: sqs
-    sqs:
-      region: us-east-1
-endpoints:
-  a:
-    enabled: true
-    path: "/webhooks/a"
-    destinations:
-      - destination: "queue"
-        target: "unrouted"
-        sqs_options:
-          visibility_timeout: "5m"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-  b:
-    enabled: true
-    path: "/webhooks/b"
-    variables:
-      envName:
-        source: header
-        path: X-Env
-        pattern: "^qa-gm[0-9]+$"
-    on_unresolved_variable:
-      destination: "queue"
-      target: "unrouted"
-    destinations:
-      - destination: "queue"
-        target: "{envName}-events"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-`
-	_, err := Load(writeConfig(t, body))
-	if err == nil || !strings.Contains(err.Error(), "unrouted") && !strings.Contains(err.Error(), "on_unresolved_variable") {
-		t.Fatalf("expected fallback/options conflict, got %v", err)
+func TestDestinationRoutesWithoutVariablesIsUnchanged(t *testing.T) {
+	ep := EndpointConfig{Destinations: []EndpointDestinationConfig{
+		{Destination: "sink", Target: "events"},
+		{Destination: "sink", Target: "raw"},
+	}}
+	routes := ep.DestinationRoutes()
+	if len(routes) != 2 || routes[0].Target != "events" || routes[0].Index != 0 || routes[0].Dynamic {
+		t.Fatalf("routes = %#v", routes)
 	}
-	// Without the options the shared target is fine.
-	ok := strings.Replace(body, "        sqs_options:\n          visibility_timeout: \"5m\"\n", "", 1)
-	if _, err := Load(writeConfig(t, ok)); err != nil {
-		t.Fatalf("shared optionless target must load: %v", err)
+	if ep.DestinationLabel() != "sink,sink" {
+		t.Fatalf("DestinationLabel: %q", ep.DestinationLabel())
+	}
+	if ep.TargetLabel() != "events,raw" {
+		t.Fatalf("TargetLabel: %q", ep.TargetLabel())
+	}
+	if got := ep.DestinationIDs(); len(got) != 2 || got[0] != "sink" {
+		t.Fatalf("DestinationIDs: %#v", got)
+	}
+}
+
+func TestDestinationRoutesExpandsEnumeratedVariables(t *testing.T) {
+	ep := EndpointConfig{
+		Variables:            enumVar(),
+		OnUnresolvedVariable: &FallbackRouteConfig{Destination: "sink", Target: "unrouted"},
+		Destinations:         []EndpointDestinationConfig{{Destination: "sink", Target: "events-{envName}"}},
+	}
+	routes := ep.DestinationRoutes()
+	if len(routes) != 3 {
+		t.Fatalf("routes = %#v", routes)
+	}
+	got := map[string]bool{}
+	for _, r := range routes {
+		got[r.Target] = true
+	}
+	for _, want := range []string{"events-tenant-a", "events-staging", "unrouted"} {
+		if !got[want] {
+			t.Fatalf("missing expanded target %q: %#v", want, routes)
+		}
+	}
+	if routes[len(routes)-1].Index != -1 {
+		t.Fatalf("fallback route index = %d, want -1", routes[len(routes)-1].Index)
+	}
+	if routes[0].Bindings["envName"] == "" || routes[0].Template != "events-{envName}" {
+		t.Fatalf("bindings/template not recorded: %#v", routes[0])
+	}
+}
+
+func TestDestinationRoutesCartesianAndDynamic(t *testing.T) {
+	ep := EndpointConfig{
+		Variables: map[string]VariableConfig{
+			"envName": {Source: "header", Path: "X-Env", Values: []string{"tenant-a", "staging"}},
+			"kind":    {Source: "header", Path: "X-Kind", Values: []string{"orders", "refunds"}},
+			"free":    {Source: "header", Path: "X-Free", Pattern: "^[a-z]+$"},
+		},
+		Destinations: []EndpointDestinationConfig{
+			{Destination: "sink", Target: "{envName}-{kind}"},
+			{Destination: "sink", Target: "raw-{free}"},
+		},
+	}
+	routes := ep.DestinationRoutes()
+	if len(routes) != 5 {
+		t.Fatalf("routes = %d, want 4 cartesian + 1 dynamic: %#v", len(routes), routes)
+	}
+	dynamic := 0
+	for _, r := range routes {
+		if r.Dynamic {
+			dynamic++
+			if r.Target != "raw-{free}" {
+				t.Fatalf("dynamic target = %q", r.Target)
+			}
+		}
+	}
+	if dynamic != 1 {
+		t.Fatalf("dynamic routes = %d, want 1", dynamic)
+	}
+}
+
+func TestDestinationRoutesCapsExpansion(t *testing.T) {
+	values := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		values = append(values, string(rune('a'+i))+"-env")
+	}
+	ep := EndpointConfig{
+		Variables: map[string]VariableConfig{
+			"a": {Source: "header", Path: "X-A", Values: values},
+			"b": {Source: "header", Path: "X-B", Values: values},
+		},
+		Destinations: []EndpointDestinationConfig{{Destination: "sink", Target: "{a}-{b}"}},
+	}
+	if got := len(ep.DestinationRoutes()); got <= MaxExpandedRoutes {
+		t.Fatalf("expansion cap not reported: %d routes", got)
+	}
+	cfg := Config{
+		Server:       ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: variableDestinations,
+		Endpoints:    map[string]EndpointConfig{"e": {Enabled: true, Path: "/webhooks/events", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"}, Variables: ep.Variables, Destinations: ep.Destinations}},
+	}
+	err := ConfigValidationError{Issues: validationIssues(cfg)}
+	if !strings.Contains(err.Error(), "expand to more than") {
+		t.Fatalf("expected an expansion-cap issue, got %v", err)
+	}
+}
+
+func TestVariableSpecsAndPatternSources(t *testing.T) {
+	ep := EndpointConfig{Variables: map[string]VariableConfig{
+		"envName": {Source: "header", Path: "X-Env", Values: []string{"tenant-a"}},
+		"free":    {Source: "header", Pattern: "^[a-z]+$"},
+		"looked":  {Source: "lookup", Lookup: &LookupConfig{Key: VariableKeyConfig{Source: "body", Path: "account.id"}}},
+	}}
+	specs, err := ep.VariableSpecs()
+	if err != nil {
+		t.Fatalf("VariableSpecs: %v", err)
+	}
+	if len(specs) != 3 || specs[0].Name != "envName" || specs[1].Name != "free" || specs[2].Name != "looked" {
+		t.Fatalf("specs not sorted by name: %#v", specs)
+	}
+	if specs[1].Pattern == nil || specs[1].Path != "free" {
+		t.Fatalf("pattern/defaulted path not compiled: %#v", specs[1])
+	}
+	if specs[2].KeySource != "body" || specs[2].KeyPath != "account.id" {
+		t.Fatalf("lookup key not plumbed: %#v", specs[2])
+	}
+
+	ps := ep.PatternSources()
+	if ps["free"] != "^[a-z]+$" {
+		t.Fatalf("declared pattern missing: %#v", ps)
+	}
+	if ps["looked"] != lookupAnyPattern {
+		t.Fatalf("patternless lookup variable should default to the safe-name pattern: %#v", ps)
+	}
+	if _, ok := ps["envName"]; ok {
+		t.Fatalf("enumerated variable must not appear in PatternSources: %#v", ps)
+	}
+
+	bad := EndpointConfig{Variables: map[string]VariableConfig{"x": {Source: "header", Pattern: "^[a$"}}}
+	if _, err := bad.VariableSpecs(); err == nil {
+		t.Fatal("expected an error for an uncompilable pattern")
+	}
+}
+
+func TestFallbackRouteAccessor(t *testing.T) {
+	var ep EndpointConfig
+	if _, ok := ep.FallbackRoute(); ok {
+		t.Fatal("no fallback configured")
+	}
+	ep.OnUnresolvedVariable = &FallbackRouteConfig{Destination: "sink", Target: "unrouted"}
+	fb, ok := ep.FallbackRoute()
+	if !ok || fb.Destination != "sink" || fb.Target != "unrouted" {
+		t.Fatalf("fallback = %#v %v", fb, ok)
+	}
+}
+
+func TestEffectiveDeliveryFailurePolicyAndFanoutLimit(t *testing.T) {
+	var ep EndpointConfig
+	if ep.EffectiveDeliveryFailurePolicy() != DeliveryFailurePolicyStopOnFailure {
+		t.Fatalf("default policy = %q", ep.EffectiveDeliveryFailurePolicy())
+	}
+	ep.DeliveryFailurePolicy = DeliveryFailurePolicySkipFailed
+	if ep.EffectiveDeliveryFailurePolicy() != DeliveryFailurePolicySkipFailed {
+		t.Fatalf("explicit policy = %q", ep.EffectiveDeliveryFailurePolicy())
+	}
+	if (ServerConfig{}).FanoutConcurrencyLimit() != 8 {
+		t.Fatal("fanout concurrency should default to 8")
+	}
+	if (ServerConfig{FanoutConcurrency: 3}).FanoutConcurrencyLimit() != 3 {
+		t.Fatal("explicit fanout concurrency should pass through")
+	}
+}
+
+func TestIsSafeName(t *testing.T) {
+	if !IsSafeName("billing-events.v1_2") {
+		t.Fatal("expected a conventional target name to be safe")
+	}
+	if IsSafeName("bad target") || IsSafeName("") {
+		t.Fatal("spaces and empty names are not safe")
 	}
 }

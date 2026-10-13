@@ -76,12 +76,19 @@ type RedisConfig struct {
 }
 
 type DestinationConfig struct {
-	Type               string
+	Type string
+	// Connection is the connections entry this destination referenced, or ""
+	// when it was configured inline. It records what was *authored*: the name
+	// is kept even when it failed to resolve, so a consumer reading a Config
+	// can still see the intent. Whether a merge actually happened is a
+	// separate question, answered by SharedConfig.ConnectionOf.
+	Connection         string
 	OnExistingConflict string
 	RabbitMQ           RabbitMQConfig
 	SQS                SQSConfig
 	SNS                SNSConfig
 	S3                 S3Config
+	Lambda             LambdaConfig
 	Postgres           PostgresConfig
 	Mongo              MongoConfig
 	Redis              RedisConfig
@@ -114,15 +121,19 @@ type WebhookAuthConfig struct {
 }
 
 type WebhookConfig struct {
-	URL          string
-	Timeout      time.Duration
-	MaxQueue     int
-	DrainTimeout time.Duration
-	DeliveryMode string // "" (async) | "sync" | "async"
-	DeadLetter   WebhookDeadLetterConfig
-	Retry        RetryPolicyConfig
-	Auth         WebhookAuthConfig
-	TLS          WebhookTLSConfig
+	URL string
+	// AllowPrivateTargets permits deliberately internal request-templated hosts.
+	// Literal operator-configured hosts retain their existing trust policy.
+	AllowPrivateTargets bool
+	Timeout             time.Duration
+	MaxQueue            int
+	MaxQueueBytes       int64
+	DrainTimeout        time.Duration
+	DeliveryMode        string // "" (async) | "sync" | "async"
+	DeadLetter          WebhookDeadLetterConfig
+	Retry               RetryPolicyConfig
+	Auth                WebhookAuthConfig
+	TLS                 WebhookTLSConfig
 }
 
 // WebhookDeadLetterConfig points a failed async webhook delivery at another
@@ -144,6 +155,17 @@ type SNSConfig struct {
 	Endpoint        string
 	AccessKeyID     string
 	SecretAccessKey string
+}
+
+// LambdaConfig is the AWS Lambda destination connection block. Credentials
+// mirror SQS/SNS: both static keys or neither (default credential chain).
+// InvocationType is "" (Event) | Event | RequestResponse.
+type LambdaConfig struct {
+	Region          string
+	Endpoint        string
+	AccessKeyID     string
+	SecretAccessKey string
+	InvocationType  string
 }
 
 type S3Config struct {
@@ -249,11 +271,8 @@ type rawRabbitMQQueueOptions struct {
 	DeadLetterRoutingKey string `yaml:"dead_letter_routing_key"`
 }
 
-// rawPostgresConfig is the YAML mirror of PostgresConfig, shared by every raw
-// config block that embeds a Postgres connection: postgres destinations
-// (rawDestinationConfig.Postgres) and the replay store (rawConfig.Replay.Postgres,
-// see config.go). Keeping one raw shape (and one convertPostgresConfig below)
-// means ${ENV} expansion and TLS fields behave identically for both.
+// rawPostgresConfig is the YAML mirror of PostgresConfig, used by postgres
+// destinations (rawDestinationConfig.Postgres).
 type rawPostgresConfig struct {
 	URL      string `yaml:"url"`
 	Schema   string `yaml:"schema"`
@@ -269,8 +288,7 @@ type rawPostgresConfig struct {
 }
 
 // convertPostgresConfig maps a raw postgres connection block to the typed
-// PostgresConfig, defaulting Schema to "public" when omitted. Shared by the
-// postgres-destination conversion path and the replay store's conversion path.
+// PostgresConfig, defaulting Schema to "public" when omitted.
 func convertPostgresConfig(raw rawPostgresConfig) PostgresConfig {
 	return PostgresConfig{
 		URL:      raw.URL,
@@ -288,7 +306,12 @@ func convertPostgresConfig(raw rawPostgresConfig) PostgresConfig {
 }
 
 type rawDestinationConfig struct {
-	Type               string `yaml:"type"`
+	Type string `yaml:"type"`
+	// Connection names an entry in the top-level connections block whose type
+	// can serve this destination type (see connTypeForDestType). Its fields
+	// are merged into the backend block below by applyConnection, before
+	// convertDestination runs.
+	Connection         string `yaml:"connection"`
 	OnExistingConflict string `yaml:"on_existing_conflict"`
 	RabbitMQ           struct {
 		URL               string                  `yaml:"url"`
@@ -333,6 +356,13 @@ type rawDestinationConfig struct {
 		AccessKeyID     string `yaml:"access_key_id"`
 		SecretAccessKey string `yaml:"secret_access_key"`
 	} `yaml:"sns"`
+	Lambda struct {
+		Region          string `yaml:"region"`
+		Endpoint        string `yaml:"endpoint"`
+		AccessKeyID     string `yaml:"access_key_id"`
+		SecretAccessKey string `yaml:"secret_access_key"`
+		InvocationType  string `yaml:"invocation_type"`
+	} `yaml:"lambda"`
 	S3 struct {
 		Region          string `yaml:"region"`
 		Endpoint        string `yaml:"endpoint"`
@@ -357,12 +387,14 @@ type rawDestinationConfig struct {
 		} `yaml:"tls"`
 	} `yaml:"mongodb"`
 	Webhook struct {
-		URL          string `yaml:"url"`
-		Timeout      string `yaml:"timeout"`
-		MaxQueue     int    `yaml:"max_queue"`
-		DrainTimeout string `yaml:"drain_timeout"`
-		DeliveryMode string `yaml:"delivery_mode"`
-		DeadLetter   struct {
+		URL                 string `yaml:"url"`
+		AllowPrivateTargets bool   `yaml:"allow_private_targets,omitempty"`
+		Timeout             string `yaml:"timeout"`
+		MaxQueue            int    `yaml:"max_queue"`
+		MaxQueueBytes       int64  `yaml:"max_queue_bytes"`
+		DrainTimeout        string `yaml:"drain_timeout"`
+		DeliveryMode        string `yaml:"delivery_mode"`
+		DeadLetter          struct {
 			Destination string `yaml:"destination"`
 			Target      string `yaml:"target"`
 		} `yaml:"dead_letter"`
@@ -506,6 +538,9 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 		issues = append(issues, issue)
 	}
 	webhookTimeout, issue := parseDuration(fieldPrefix+".webhook.timeout", raw.Webhook.Timeout, 10*time.Second)
+	if raw.Webhook.MaxQueueBytes < 0 {
+		issues = append(issues, validationError(fieldPrefix+".webhook.max_queue_bytes", "must be non-negative", "omit or use 0 for the 64 MiB default; use a positive finite byte budget to admit larger async deliveries"))
+	}
 	if issue.Field != "" {
 		issues = append(issues, issue)
 	}
@@ -523,6 +558,7 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 	}
 	return DestinationConfig{
 		Type:               raw.Type,
+		Connection:         raw.Connection,
 		OnExistingConflict: policy,
 		RabbitMQ: RabbitMQConfig{
 			URL: raw.RabbitMQ.URL, Exchange: raw.RabbitMQ.Exchange,
@@ -558,6 +594,13 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			Endpoint:        raw.SNS.Endpoint,
 			AccessKeyID:     raw.SNS.AccessKeyID,
 			SecretAccessKey: raw.SNS.SecretAccessKey,
+		},
+		Lambda: LambdaConfig{
+			Region:          raw.Lambda.Region,
+			Endpoint:        raw.Lambda.Endpoint,
+			AccessKeyID:     raw.Lambda.AccessKeyID,
+			SecretAccessKey: raw.Lambda.SecretAccessKey,
+			InvocationType:  raw.Lambda.InvocationType,
 		},
 		S3: S3Config{
 			Region:          raw.S3.Region,
@@ -625,11 +668,13 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 			},
 		},
 		Webhook: WebhookConfig{
-			URL:          raw.Webhook.URL,
-			Timeout:      webhookTimeout,
-			MaxQueue:     raw.Webhook.MaxQueue,
-			DrainTimeout: webhookDrain,
-			DeliveryMode: raw.Webhook.DeliveryMode,
+			URL:                 raw.Webhook.URL,
+			AllowPrivateTargets: raw.Webhook.AllowPrivateTargets,
+			Timeout:             webhookTimeout,
+			MaxQueue:            raw.Webhook.MaxQueue,
+			MaxQueueBytes:       raw.Webhook.MaxQueueBytes,
+			DrainTimeout:        webhookDrain,
+			DeliveryMode:        raw.Webhook.DeliveryMode,
 			DeadLetter: WebhookDeadLetterConfig{
 				Destination: raw.Webhook.DeadLetter.Destination,
 				Target:      raw.Webhook.DeadLetter.Target,

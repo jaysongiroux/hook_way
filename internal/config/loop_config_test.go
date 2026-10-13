@@ -28,15 +28,14 @@ func TestLoopProtectionExplicitDisableAndMax(t *testing.T) {
 
 func TestLoadParsesLoopProtection(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
-	body := strings.Replace(validYAML(), "security:\n", `security:
+	body := strings.Replace(validSharedYAML(), "security:\n", `security:
   loop_protection:
     enabled: true
     max_hops: 5
 `, 1)
-	cfg, err := Load(writeConfig(t, body))
+	cfg, err := loadSharedYAML(t, body)
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("load returned error: %v", err)
 	}
 	if !cfg.Security.LoopProtectionEnabled() || cfg.Security.LoopMaxHops() != 5 {
 		t.Fatalf("loop protection = %#v", cfg.Security.LoopProtection)
@@ -45,12 +44,11 @@ func TestLoadParsesLoopProtection(t *testing.T) {
 
 func TestLoadRejectsNegativeMaxHops(t *testing.T) {
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	t.Setenv("PADDLE_SECRET", "pdl_secret")
-	body := strings.Replace(validYAML(), "security:\n", `security:
+	body := strings.Replace(validSharedYAML(), "security:\n", `security:
   loop_protection:
     max_hops: -1
 `, 1)
-	_, err := Load(writeConfig(t, body))
+	_, err := loadSharedYAML(t, body)
 	if err == nil {
 		t.Fatal("expected validation error for negative max_hops")
 	}

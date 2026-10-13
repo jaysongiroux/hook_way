@@ -1,59 +1,80 @@
-// Shared dark surface tokens. The marketing page applies these explicitly;
-// the builder layers its denser editor surfaces on top in builderStyles.ts.
-//
-// Every pair below was checked with contrastRatio (see tokens.test.ts) rather
-// than by eye. Measured against the canvas: white 16.3:1, muted 6.4:1,
-// accent 3.5:1 (large text and UI only), accentText 6.9:1.
-export const DARK = {
-  /** Page canvas. Hometap's text navy, used here as the base. */
-  bg: "#152033",
-  /** Lifted surface for cards and tiles. */
-  surface: "#1B2840",
-  /** Recessed band, for code blocks and the closing call to action. */
-  recessed: "#0F1826",
-  /** Hairline border, visible without reading as a hard rule. */
-  border: "#2A3A57",
-  text: "#FFFFFF",
-  muted: "#8FA3C7",
-  /** Hometap Accent 1. Fills and large text only; 3.5:1 on the canvas. */
-  accent: "#366CED",
-  /** A lighter step of the accent, for small text that must be coloured. */
-  accentText: "#7FA9F5",
-  /** Hometap Accent 4, used sparingly for the event pulse. */
-  highlight: "#70DAFF",
-} as const;
+export { DARK } from "./shared/ui/tokens";
 
 // NODE is the shared identity palette for graph nodes, used by the builder
 // canvas and by the marketing page's builder frame so the two match.
-//
-// Measured on DARK.surface: endpoint border 3.2:1, destination 3.8:1, filter
-// 6.2:1, labels above 6:1, badge text 7.7:1 on its tint. The previous
-// destination border (#434C5E) measured 1.7:1 and was effectively invisible.
 export const NODE = {
   border: {
-    endpoint: "#366CED",
-    destination: "#6D82AB",
-    filter: "#25BE8A",
+    endpoint: "#0C447C",
+    destination: "#4A5568",
+    filter: "#1B5E3B",
   },
   label: {
-    endpoint: "#7FA9F5",
-    destination: "#FFFFFF",
-    filter: "#FFFFFF",
+    endpoint: "#0C447C",
+    destination: "#14181F",
+    filter: "#14181F",
   },
   /** Subtle tint behind the destination type badge. */
-  badgeBg: "#24365C",
-  badgeText: "#C6D0E3",
+  badgeBg: "#D8DDE4",
+  badgeText: "#14181F",
 } as const;
 
-// EDGE colours for the builder canvas. The defaults React Flow ships are
-// tuned for a light background: a thin #b1b1b7 line reads as warm grey against
-// navy, and the unselected stroke was left to React Flow entirely.
+// PORT colours handles by payload type so illegal wiring is visible, not just
+// refused. Muted enough to sit on white cards without reading as decoration.
+export const PORT: Record<string, string> = {
+  None: "#5C6778",
+  RequestHead: "#0C447C",
+  RawRequest: "#7A4E0E",
+  Verified: "#1B5E3B",
+  Envelope: "#0C447C",
+  Terminal: "#4A5568",
+  on_error: "#8F2D2D",
+};
+
+// NODE_SIZE is the card geometry, shared on purpose: layout.ts feeds these
+// numbers to dagre and nodes.tsx renders them, so the size the layout reserves
+// is the size the canvas actually draws. When the two drifted apart, cards were
+// laid out 180px wide and rendered up to 290px wide, which bunched them
+// together and let each card clip into its neighbour's text.
+//
+// handle is the diameter of a port dot, drawn by nodes.tsx. It is a token
+// because the RouteEdge geometry test asserts against it.
+//
+// padding is the card's inner inset, and has to be a number rather than the
+// Mantine "xs" spacing name: a labelled port row sits inside that padding but
+// its dot must straddle the card border, so nodes.tsx offsets the handle by
+// padding + handle/2 and would silently misalign if the two disagreed.
+// portRow is the height of one labelled port row.
+export const NODE_SIZE = { width: 280, height: 96, handle: 10, padding: 10, portRow: 18 } as const;
+
 export const EDGE = {
-  /** Resting stroke and arrowhead; ~4:1 on the canvas. */
-  line: "#6D82AB",
-  selected: "#366CED",
+  /** Resting stroke and arrowhead. */
+  line: "#5C6778",
+  selected: "#0C447C",
   /** Border on the target-name pill that sits on the canvas. */
-  labelBorder: "#4A5C80",
+  labelBorder: "#C5CBD4",
+  /** Resting stroke width. Thin enough to stay quiet, thick enough to follow. */
+  width: 2.25,
+  selectedWidth: 3.25,
+  /** Arrowhead box, in canvas units (markerUnits: userSpaceOnUse). */
+  arrowSize: 20,
+  /**
+   * The canvas gap you actually see between the arrow's point and the near edge
+   * of the target port dot. RouteEdge stops the path this far short of the
+   * connection point React Flow hands it; without any gap the arrowhead is
+   * drawn over the dot and is never seen.
+   *
+   * This is the visible gap 1:1, not an offset to a dot centre. Two facts make
+   * it come out that way, both measured in Chromium rather than reasoned about:
+   * React Flow's arrowhead marker uses refX/refY of 0 with the polyline's tip
+   * at 0,0, so the tip lands exactly on the path's end point; and the target
+   * connection point it reports sits on the dot's near edge, not its centre.
+   * An earlier version of this token subtracted a dot radius on the assumption
+   * the connection point was the centre, which silently left the gap at 9px.
+   *
+   * 1 reads as the arrow touching the dot while keeping the whole arrowhead on
+   * open canvas. canvas-geometry.spec.ts holds the budget as its own literal.
+   */
+  arrowGap: 1,
 } as const;
 
 const linearize = (channel: number): number => {
@@ -62,7 +83,7 @@ const linearize = (channel: number): number => {
 };
 
 /** relativeLuminance implements the WCAG 2.1 definition. */
-export function relativeLuminance(hex: string): number {
+function relativeLuminance(hex: string): number {
   const h = hex.replace("#", "");
   const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
   return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);

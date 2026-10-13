@@ -130,13 +130,13 @@ func TestResolveWorkflowIDSources(t *testing.T) {
 
 func TestResolveWorkflowIDPrefixTemplate(t *testing.T) {
 	msg := temporalTestMessage()
-	msg.Variables = map[string]string{"envName": "qa-gm3"}
+	msg.Variables = map[string]string{"envName": "tenant-a"}
 	s, err := WorkflowIDSettings{Source: "body", Path: "order.id", Prefix: "{envName}-aan-"}.withParsedPrefix()
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := resolveWorkflowID(msg, s)
-	if err != nil || got != "qa-gm3-aan-o-1" {
+	if err != nil || got != "tenant-a-aan-o-1" {
 		t.Fatalf("templated prefix: %q %v", got, err)
 	}
 	msg.Variables = nil

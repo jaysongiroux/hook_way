@@ -10,23 +10,29 @@
 #     and (optionally) a dead_letter destination.
 #   sync: Publish() delivers inline (with retries) and returns the outcome, so
 #     the inbound request only succeeds when the downstream delivery does. This
-#     adds up to (max_attempts × timeout + backoff) latency to the inbound
-#     request. RECOMMENDED for critical, low-volume hooks where the sender
+#     adds delivery/retry latency within the finite publish budget. Use it for
+#     critical, low-volume hooks where the sender
 #     should see delivery failures directly. dead_letter does not apply to sync.
 #
 # Each webhook destination has its OWN delivery engine (worker pool + queue), so
 # a slow target cannot block deliveries to other destinations. The pool size is
-# controlled by server.fanout_concurrency; the queue is bounded by max_queue
-# (per-destination, default 1000). When the queue is full, Publish fails and the
+# controlled by server.fanout_concurrency; max_queue bounds queued job count
+# (per-destination, default 1000), and max_queue_bytes bounds queued plus active
+# payload bytes (default 64 MiB). When a budget is full, Publish fails and the
 # upstream sender receives a non-2xx response, creating backpressure.
 #
-# On shutdown, hook_way drains the queue within drain_timeout (defaults to
-# server.shutdown_timeout) before exiting, so in-flight deliveries are not lost
-# across graceful restarts / deploys.
+# On shutdown, hook_way attempts to drain the queue within drain_timeout
+# (defaults to server.shutdown_timeout). An expired deadline or forced exit can
+# abandon queued and in-flight deliveries.
 #
-# NON-DURABLE (async): a hard crash (kill -9, OOM, host failure) loses any events
-# that were queued or in-flight but not yet delivered — UNLESS a dead_letter
-# destination is configured, which durably captures terminally-failed deliveries.
+# NON-DURABLE (async): a hard crash (kill -9, OOM, host failure) can lose events
+# already acknowledged to the sender. dead_letter handles observed terminal
+# failures while the process runs; it cannot recover jobs lost with the process.
+# Publish directly to a durable broker when accepted work must survive a crash.
+# See ../reliable-ingestion.yaml and docs/operations/delivery-guarantees.md.
+# Retries after a destination commits but loses its response may repeat work.
+# Preserve a stable provider identity and deduplicate atomically at the consumer;
+# Hookway's envelope ID changes on each new inbound provider request.
 # hook_way is not a transparent proxy — the downstream response is not returned
 # to the inbound sender in async mode.
 #
@@ -35,17 +41,13 @@
 #
 # LOOP PROTECTION: every outbound delivery is stamped with an X-Hookway-Hops
 # header (incremented per Hookway hop). If this URL points back at a Hookway
-# endpoint, that endpoint rejects the request with 400 once the count reaches
-# security.loop_protection.max_hops (default 3). See docs/configuration.md.
-security:
-  loop_protection:
-    max_hops: 2
+# flow, put a `loop_guard` on that flow — `security.loop_protection` is leftover
+# YAML and is not wired to inbound rejection. See docs/reference/configuration.md.
 
 server:
   addr: ":8088"
   max_body_bytes: 1048576
-  # fanout_concurrency controls the webhook delivery worker-pool size (shared
-  # across ALL webhook destinations in this server).
+  # fanout_concurrency sets the worker count for each destination's own pool.
   fanout_concurrency: 8
 
 destinations:
@@ -143,15 +145,15 @@ destinations:
   #     exchange_type: "direct"
   #     declare_queues: true   # declares the dead-letter target queue on startup
 
-endpoints:
+flows:
   order_events:
-    enabled: true
-    path: "/webhooks/orders"
-    destinations:
-      - destination: "forward"
-        # target is passed in the X-Hookway-Target header on envelope deliveries
-        # and is used in log fields / metrics labels.
-        target: "orders"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/orders, methods: [POST]}
+      - {id: hops, type: loop_guard, max_hops: 3}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: no_auth}
+      - {id: env, type: envelope, body_format: json}
+      # target is passed in the X-Hookway-Target header on envelope deliveries
+      # and is used in log fields / metrics labels.
+      - {id: out, type: publish, destination: forward, target: orders}
+    edges: [in>hops, hops>body, body>auth, auth>env, env>out]

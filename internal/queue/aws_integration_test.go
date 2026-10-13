@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"github.com/jasongiroux/hookway/internal/awsconf"
 	"strings"
 	"testing"
 	"time"
@@ -14,19 +13,22 @@ import (
 	sqstypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/localstack"
+
+	"github.com/jaysongiroux/hook_way/internal/awsconf"
+	"github.com/jaysongiroux/hook_way/internal/deliverymeta"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 )
 
 // startLocalStack boots a LocalStack container with SQS+SNS and returns its
 // endpoint. Skips the test when Docker is unavailable.
 func startLocalStack(t *testing.T) string {
 	t.Helper()
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := localstack.Run(ctx, "localstack/localstack:3.4",
 		testcontainers.WithEnv(map[string]string{"SERVICES": "sqs,sns"}),
 	)
-	if err != nil {
-		t.Skipf("localstack unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "localstack")
 	t.Cleanup(func() { _ = container.Terminate(ctx) })
 	host, err := container.Host(ctx)
 	if err != nil {
@@ -261,7 +263,7 @@ func snsFromConfig(cfg aws.Config) *snsservice.Client {
 	return snsservice.NewFromConfig(cfg)
 }
 
-func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicName, queueURL string) {
+func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicName, queueURL string, filterPolicy ...string) {
 	t.Helper()
 	snsClient := snsservice.NewFromConfig(cfg)
 	sqsClient := sqs.NewFromConfig(cfg)
@@ -279,20 +281,172 @@ func subscribeSQSToSNS(t *testing.T, ctx context.Context, cfg aws.Config, topicN
 	if topicARN == "" {
 		t.Fatalf("topic %q not found", topicName)
 	}
-	attrs, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+	qattrs, err := sqsClient.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       aws.String(queueURL),
 		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	queueARN := attrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
+	queueARN := qattrs.Attributes[string(sqstypes.QueueAttributeNameQueueArn)]
+	subAttrs := map[string]string{"RawMessageDelivery": "true"}
+	if len(filterPolicy) > 0 && filterPolicy[0] != "" {
+		subAttrs["FilterPolicy"] = filterPolicy[0]
+	}
 	if _, err := snsClient.Subscribe(ctx, &snsservice.SubscribeInput{
 		TopicArn:   aws.String(topicARN),
 		Protocol:   aws.String("sqs"),
 		Endpoint:   aws.String(queueARN),
-		Attributes: map[string]string{"RawMessageDelivery": "true"},
+		Attributes: subAttrs,
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAWSSNSMessageAttributeFilterPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in -short mode")
+	}
+	endpoint := startLocalStack(t)
+	ctx := context.Background()
+	awsCfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqsClient := sqs.NewFromConfig(awsCfg)
+	pub, err := NewSNSPublisher(ctx, snsFromConfig(awsCfg), SNSConfig{
+		Region: "us-east-1", Endpoint: endpoint, AccessKeyID: "test", SecretAccessKey: "test",
+		Targets: []SNSTarget{{Name: "filter-topic", Create: true}},
+	})
+	if err != nil {
+		t.Fatalf("NewSNSPublisher: %v", err)
+	}
+	qOut, err := sqsClient.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("filter-sub-queue")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscribeSQSToSNS(t, ctx, awsCfg, "filter-topic", aws.ToString(qOut.QueueUrl), `{"fields_changed":["status"]}`)
+
+	match := Message{
+		ID: "evt_match",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["status","amount"]`},
+		},
+	}
+	if err := pub.Publish(ctx, "alerts", "filter-topic", match); err != nil {
+		t.Fatalf("Publish match: %v", err)
+	}
+	if received := receiveSQSMessage(t, ctx, sqsClient, aws.ToString(qOut.QueueUrl), 15*time.Second); received == nil || received.ID != "evt_match" {
+		t.Fatalf("filter policy should match String.Array containing status, got %#v", received)
+	}
+
+	miss := Message{
+		ID: "evt_miss",
+		MessageAttributes: map[string]MessageAttribute{
+			"fields_changed": {DataType: "String.Array", StringValue: `["other"]`},
+		},
+	}
+	if err := pub.Publish(ctx, "alerts", "filter-topic", miss); err != nil {
+		t.Fatalf("Publish miss: %v", err)
+	}
+	if received := receiveSQSMessage(t, ctx, sqsClient, aws.ToString(qOut.QueueUrl), 5*time.Second); received != nil {
+		t.Fatalf("filter policy should drop non-matching attributes, got %#v", received)
+	}
+}
+
+func receiveSQSMessage(t *testing.T, ctx context.Context, client *sqs.Client, queueURL string, wait time.Duration) *Message {
+	t.Helper()
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		out, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl: aws.String(queueURL), MaxNumberOfMessages: 1, WaitTimeSeconds: 2,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Messages) == 0 {
+			continue
+		}
+		var m Message
+		if err := json.Unmarshal([]byte(aws.ToString(out.Messages[0].Body)), &m); err != nil {
+			t.Fatalf("body not json: %v", err)
+		}
+		return &m
+	}
+	return nil
+}
+
+// TestAWSBrokerBodyStandardAndFIFO covers all four queue/topic types with
+// retained subscriptions. Only this isolated test consumes queues.
+func TestAWSBrokerBodyStandardAndFIFO(t *testing.T) {
+	endpoint := startLocalStack(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cfg, err := awsconf.Load(ctx, "us-east-1", endpoint, "test", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sq := sqs.NewFromConfig(cfg)
+	sn := snsservice.NewFromConfig(cfg)
+	for _, fifo := range []bool{false, true} {
+		suffix := ""
+		if fifo {
+			suffix = ".fifo"
+		}
+		queueName := "sample-direct" + suffix
+		sp, err := NewSQSPublisher(ctx, sq, SQSConfig{Targets: []SQSTarget{{Name: queueName, Create: true, Attributes: map[string]string{"VisibilityTimeout": "60"}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg := Message{Publish: &deliverymeta.Publish{WireBody: "raw", Body: []byte(`{"sample":true}`)}, MessageAttributes: map[string]MessageAttribute{"sample": {DataType: "Binary", StringValue: "AP8="}}}
+		if fifo {
+			msg.Publish.FIFO = &deliverymeta.FIFO{GroupID: "sample-group", DeduplicationID: "sample-direct"}
+		}
+		if err := sp.Publish(ctx, "broker", queueName, msg); err != nil {
+			t.Fatal(err)
+		}
+		url, err := sq.GetQueueUrl(ctx, &sqs.GetQueueUrlInput{QueueName: aws.String(queueName)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := sq.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: url.QueueUrl, WaitTimeSeconds: 5, MessageAttributeNames: []string{"All"}, AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll}, MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll}}) //nolint:staticcheck // LocalStack 3.4 needs the legacy selector alongside the current SQS field.
+		if err != nil || len(out.Messages) != 1 {
+			t.Fatalf("SQS fifo=%v: %+v %v", fifo, out, err)
+		}
+		received := out.Messages[0]
+		if aws.ToString(received.Body) != string(msg.Publish.Body) || string(received.MessageAttributes["sample"].BinaryValue) != string([]byte{0, 255}) {
+			t.Fatalf("SQS wire changed: %+v", received)
+		}
+		topicName := "sample-topic" + suffix
+		np, err := NewSNSPublisher(ctx, sn, SNSConfig{Targets: []SNSTarget{{Name: topicName, Create: true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		attrs := map[string]string{}
+		if fifo {
+			attrs["FifoQueue"] = "true"
+		}
+		sub, err := sq.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("sample-sub" + suffix), Attributes: attrs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		subscribeSQSToSNS(t, ctx, cfg, topicName, aws.ToString(sub.QueueUrl))
+		if fifo {
+			msg.Publish.FIFO.DeduplicationID = "sample-topic"
+		}
+		if err := np.Publish(ctx, "broker", topicName, msg); err != nil {
+			t.Fatal(err)
+		}
+		out, err = sq.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: sub.QueueUrl, WaitTimeSeconds: 5, MessageAttributeNames: []string{"All"}, AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll}, MessageSystemAttributeNames: []sqstypes.MessageSystemAttributeName{sqstypes.MessageSystemAttributeNameAll}}) //nolint:staticcheck // LocalStack 3.4 needs the legacy selector alongside the current SQS field.
+		if err != nil || len(out.Messages) != 1 {
+			t.Fatalf("SNS fifo=%v: %+v %v", fifo, out, err)
+		}
+		received = out.Messages[0]
+		if aws.ToString(received.Body) != string(msg.Publish.Body) {
+			t.Fatalf("SNS wire changed: %+v", received)
+		}
+		if fifo && (received.Attributes["MessageGroupId"] != "sample-group" || received.Attributes["MessageDeduplicationId"] != "sample-topic") {
+			t.Fatalf("SNS FIFO identity changed: %+v", received.Attributes)
+		}
 	}
 }

@@ -6,7 +6,7 @@
 #   exact  — constant-time comparison of the header value against secret
 #   basic  — HTTP Basic Authorization: decodes base64(user:pass) and compares
 #
-# Use header_exact for providers that send a static API key or Bearer token
+# Use exact auth for providers that send a static API key or Bearer token
 # in a header (e.g. RevenueCat, Shopify admin webhooks).
 #
 # remove_bearer: true strips the leading "Bearer " prefix before comparison,
@@ -27,34 +27,16 @@ destinations:
       publish_timeout: "5s"
       declare_queues: true
 
-endpoints:
+flows:
   # RevenueCat-style: static Bearer token in the Authorization header.
   # Set REVENUECAT_WEBHOOK_AUTH to the token value (not the full "Bearer <token>" string).
   revenuecat_billing:
-    enabled: true
-    path: "/webhooks/revenuecat"
-    destinations:
-      - destination: "primary"
-        target: "revenuecat-events"
-        create: true
-    auth:
-      type: "header_exact"
-      scheme: "exact"
-      secret: "${REVENUECAT_WEBHOOK_AUTH}"
-      signature_header: "Authorization"
-      remove_bearer: true
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/revenuecat, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: "${REVENUECAT_WEBHOOK_AUTH}", signature_header: Authorization, remove_bearer: true}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: primary, target: revenuecat-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
 
-  # HTTP Basic auth: set BASIC_WEBHOOK_SECRET to "user:pass" matching the
-  # provider's credentials. Hookway decodes the Base64 value and compares.
-  basic_webhook:
-    enabled: false
-    path: "/webhooks/basic"
-    destinations:
-      - destination: "primary"
-        target: "basic-events"
-        create: true
-    auth:
-      type: "header_exact"
-      scheme: "basic"
-      secret: "${BASIC_WEBHOOK_SECRET}"
-      signature_header: "Authorization"
+  # basic_webhook (scheme: basic / HTTP Basic Authorization) is omitted.

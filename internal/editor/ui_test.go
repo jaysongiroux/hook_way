@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,11 +16,11 @@ func TestServesSPAIndexUnauthenticated(t *testing.T) {
 	srv := httptest.NewServer(Handler("secret-key"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/")
+	resp, err := http.DefaultClient.Do(mustGet(t, srv.URL+"/"))
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", resp.StatusCode)
 	}
@@ -33,11 +34,11 @@ func TestUnknownPathFallsBackToIndex(t *testing.T) {
 	srv := httptest.NewServer(Handler(""))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/some/client/route")
+	resp, err := http.DefaultClient.Do(mustGet(t, srv.URL+"/some/client/route"))
 	if err != nil {
 		t.Fatalf("GET unknown: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unknown path status = %d, want 200 (index fallback)", resp.StatusCode)
 	}
@@ -49,14 +50,23 @@ func TestSchemaStillGuarded(t *testing.T) {
 	srv := httptest.NewServer(Handler("secret-key"))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/schema")
+	resp, err := http.DefaultClient.Do(mustGet(t, srv.URL+"/schema"))
 	if err != nil {
 		t.Fatalf("GET /schema: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("GET /schema without key returned 200; want guarded (401)")
 	}
+}
+
+func mustGet(t *testing.T, url string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
 }
 
 // builtFS mimics a bundle staged by `make ui`.
@@ -72,11 +82,11 @@ func get(t *testing.T, h http.Handler, path string) (int, string, string) {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	defer srv.Close()
-	resp, err := http.Get(srv.URL + path)
+	resp, err := http.DefaultClient.Do(mustGet(t, srv.URL+path))
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)

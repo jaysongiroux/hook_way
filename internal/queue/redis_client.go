@@ -2,15 +2,11 @@ package queue
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"errors"
-	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -101,109 +97,15 @@ func (r *goRedisOps) Close() error {
 	return r.client.Close()
 }
 
-// newRedisClient builds a redisOps from the shared RedisConfig block.
-// redis.NewUniversalClient selects the correct client type automatically:
-//   - "single" (or ""): single-node Client (or URL-parsed address)
-//   - "cluster":         ClusterClient
-//   - "sentinel":        FailoverClient (Sentinel-managed primary)
+// newRedisClient keeps the publisher's historical socket/pool defaults and
+// go-redis retry defaults; consumers of redisconn choose their own policy.
 func newRedisClient(cfg config.RedisConfig) (redisOps, error) {
-	opts := &redis.UniversalOptions{
-		DialTimeout:  5 * time.Second,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		PoolSize:     10,
+	client, err := redisconn.New(cfg, redisconn.Policy{
+		DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
+		WriteTimeout: 5 * time.Second, PoolSize: 10,
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	switch cfg.Mode {
-	case "", "single":
-		if cfg.URL != "" {
-			parsed, err := redis.ParseURL(cfg.URL)
-			if err != nil {
-				return nil, fmt.Errorf("redis: parse url: %w", err)
-			}
-			// Seed from the parsed URL; explicit cfg fields override below.
-			opts.Addrs = []string{parsed.Addr}
-			if parsed.Username != "" {
-				opts.Username = parsed.Username
-			}
-			if parsed.Password != "" {
-				opts.Password = parsed.Password
-			}
-			if parsed.DB != 0 {
-				opts.DB = parsed.DB
-			}
-			if parsed.TLSConfig != nil {
-				opts.TLSConfig = parsed.TLSConfig
-			}
-		} else if len(cfg.Addrs) > 0 {
-			opts.Addrs = cfg.Addrs
-		}
-
-	case "cluster":
-		opts.Addrs = cfg.Addrs
-
-	case "sentinel":
-		opts.MasterName = cfg.MasterName
-		opts.Addrs = cfg.Addrs
-
-	default:
-		return nil, fmt.Errorf("redis: unsupported mode %q (expected single, cluster, or sentinel)", cfg.Mode)
-	}
-
-	// Explicit overrides take precedence over values parsed from the URL.
-	if cfg.Username != "" {
-		opts.Username = cfg.Username
-	}
-	if cfg.Password != "" {
-		opts.Password = cfg.Password
-	}
-	if cfg.DB != 0 {
-		opts.DB = cfg.DB
-	}
-
-	// Build TLS config from the explicit TLS block when enabled.
-	if cfg.TLS.Enabled {
-		tlsCfg, err := buildRedisTLSConfig(cfg.TLS)
-		if err != nil {
-			return nil, err
-		}
-		opts.TLSConfig = tlsCfg
-	}
-
-	return &goRedisOps{client: redis.NewUniversalClient(opts)}, nil
-}
-
-// buildRedisTLSConfig assembles a *tls.Config from the Redis TLS options.
-// It mirrors buildTLSConfig (rabbitmq.go) so the two implementations stay
-// consistent.
-func buildRedisTLSConfig(c config.RedisTLSConfig) (*tls.Config, error) {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.ServerName != "" {
-		cfg.ServerName = c.ServerName
-	}
-	if c.InsecureSkipVerify {
-		cfg.InsecureSkipVerify = true //nolint:gosec // intentional, user-opted in
-	}
-	if c.CACert != "" {
-		pem, err := os.ReadFile(c.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("read redis tls ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("redis tls ca_cert %q contained no valid certificates", c.CACert)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.ClientCert != "" || c.ClientKey != "" {
-		if c.ClientCert == "" || c.ClientKey == "" {
-			return nil, errors.New("redis tls client_cert and client_key must both be set for mutual TLS")
-		}
-		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load redis tls client cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	return cfg, nil
+	return &goRedisOps{client: client}, nil
 }

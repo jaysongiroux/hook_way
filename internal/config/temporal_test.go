@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-func temporalConfigBody(destLines, routeLines string) string {
+// temporalDestYAML builds a shared config with one temporal destination.
+// destLines are extra indented lines under `temporal:`.
+func temporalDestYAML(destLines string) string {
 	return `
 server:
   addr: ":8080"
@@ -15,27 +17,27 @@ destinations:
   orchestrator:
     type: temporal
     temporal:
-` + destLines + `
-endpoints:
-  events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "orchestrator"
-        target: "order-events"
-` + routeLines + `
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-`
+` + destLines + "\n"
 }
 
 const temporalMinimalDest = "      host_port: \"localhost:7233\"\n      namespace: \"default\""
-const temporalMinimalRoute = "        temporal_options:\n          workflow_type: \"OrderWorkflow\""
+
+// temporalRouteConfig builds a Config with one temporal destination and one
+// endpoint route carrying the given temporal_options. Route-option validation
+// is reachable only through validationIssues.
+func temporalRouteConfig(target string, opts TemporalEndpointOptions) Config {
+	return endpointConfigFor(
+		map[string]DestinationConfig{"orchestrator": {Type: "temporal", Temporal: TemporalConfig{
+			HostPort: "localhost:7233", Namespace: "default",
+			ConnectTimeout: 10 * time.Second, StartTimeout: 5 * time.Second,
+		}}},
+		EndpointConfig{Enabled: true, Path: "/webhooks/events", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+			Destinations: []EndpointDestinationConfig{{Destination: "orchestrator", Target: target, TemporalOptions: opts}}})
+}
 
 func TestLoadParsesTemporalDestination(t *testing.T) {
 	t.Setenv("TEMPORAL_ADDRESS", "frontend.ecs-ht-temporal:7233")
-	body := temporalConfigBody(`      host_port: "${TEMPORAL_ADDRESS}"
+	body := temporalDestYAML(`      host_port: "${TEMPORAL_ADDRESS}"
       namespace: "prod"
       api_key: "secret"
       connect_timeout: "3s"
@@ -46,20 +48,10 @@ func TestLoadParsesTemporalDestination(t *testing.T) {
         client_cert: "/etc/hookway/c.pem"
         client_key: "/etc/hookway/k.pem"
         server_name: "temporal.internal"
-        insecure_skip_verify: true`, `        temporal_options:
-          workflow_type: "OrderWorkflow"
-          input: "body"
-          workflow_id:
-            source: "body"
-            path: "order.id"
-            prefix: "order-"
-          id_reuse_policy: "reject_duplicate"
-          execution_timeout: "24h"
-          run_timeout: "1h"
-          task_timeout: "10s"`)
-	cfg, err := Load(writeConfig(t, body))
+        insecure_skip_verify: true`)
+	cfg, err := loadSharedYAML(t, body)
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("load returned error: %v", err)
 	}
 	tc := cfg.Destinations["orchestrator"].Temporal
 	if tc.HostPort != "frontend.ecs-ht-temporal:7233" || tc.Namespace != "prod" || tc.APIKey != "secret" {
@@ -72,23 +64,12 @@ func TestLoadParsesTemporalDestination(t *testing.T) {
 		tc.TLS.ClientKey != "/etc/hookway/k.pem" || tc.TLS.ServerName != "temporal.internal" || !tc.TLS.InsecureSkipVerify {
 		t.Fatalf("bad tls: %#v", tc.TLS)
 	}
-	route := cfg.Endpoints["events"].Destinations[0]
-	opts := route.TemporalOptions
-	if opts.WorkflowType != "OrderWorkflow" || opts.Input != "body" || opts.IDReusePolicy != "reject_duplicate" {
-		t.Fatalf("bad route options: %#v", opts)
-	}
-	if opts.WorkflowID != (TemporalWorkflowIDConfig{Source: "body", Path: "order.id", Prefix: "order-"}) {
-		t.Fatalf("bad workflow_id: %#v", opts.WorkflowID)
-	}
-	if opts.ExecutionTimeout != 24*time.Hour || opts.RunTimeout != time.Hour || opts.TaskTimeout != 10*time.Second {
-		t.Fatalf("bad route timeouts: %#v", opts)
-	}
 }
 
 func TestLoadDefaultsTemporalTimeouts(t *testing.T) {
-	cfg, err := Load(writeConfig(t, temporalConfigBody(temporalMinimalDest, temporalMinimalRoute)))
+	cfg, err := loadSharedYAML(t, temporalDestYAML(temporalMinimalDest))
 	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
+		t.Fatalf("load returned error: %v", err)
 	}
 	tc := cfg.Destinations["orchestrator"].Temporal
 	if tc.ConnectTimeout != 10*time.Second {
@@ -100,13 +81,9 @@ func TestLoadDefaultsTemporalTimeouts(t *testing.T) {
 	if tc.TLS.Enabled {
 		t.Fatal("tls should default to disabled")
 	}
-	opts := cfg.Endpoints["events"].Destinations[0].TemporalOptions
-	if opts.Input != "" || opts.IDReusePolicy != "" || opts.WorkflowID != (TemporalWorkflowIDConfig{}) {
-		t.Fatalf("route options should stay zero when omitted: %#v", opts)
-	}
 }
 
-func TestLoadRejectsInvalidTemporal(t *testing.T) {
+func TestLoadRejectsInvalidTemporalDestination(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
@@ -114,103 +91,43 @@ func TestLoadRejectsInvalidTemporal(t *testing.T) {
 	}{
 		{
 			name: "missing host_port",
-			body: temporalConfigBody("      namespace: \"default\"", temporalMinimalRoute),
+			body: temporalDestYAML("      namespace: \"default\""),
 			want: "destinations.orchestrator.temporal.host_port",
 		},
 		{
 			name: "missing namespace",
-			body: temporalConfigBody("      host_port: \"localhost:7233\"", temporalMinimalRoute),
+			body: temporalDestYAML("      host_port: \"localhost:7233\""),
 			want: "destinations.orchestrator.temporal.namespace",
 		},
 		{
 			name: "api_key without tls",
-			body: temporalConfigBody(temporalMinimalDest+"\n      api_key: \"k\"\n      tls:\n        enabled: false", temporalMinimalRoute),
+			body: temporalDestYAML(temporalMinimalDest + "\n      api_key: \"k\"\n      tls:\n        enabled: false"),
 			want: "destinations.orchestrator.temporal.api_key",
 		},
 		{
 			name: "half mTLS",
-			body: temporalConfigBody(temporalMinimalDest+"\n      tls:\n        enabled: true\n        client_cert: \"/c.pem\"", temporalMinimalRoute),
+			body: temporalDestYAML(temporalMinimalDest + "\n      tls:\n        enabled: true\n        client_cert: \"/c.pem\""),
 			want: "destinations.orchestrator.temporal.tls.client_cert",
 		},
 		{
 			name: "bad connect_timeout",
-			body: temporalConfigBody(temporalMinimalDest+"\n      connect_timeout: \"soon\"", temporalMinimalRoute),
+			body: temporalDestYAML(temporalMinimalDest + "\n      connect_timeout: \"soon\""),
 			want: "destinations.orchestrator.temporal.connect_timeout",
 		},
 		{
 			name: "zero start_timeout",
-			body: temporalConfigBody(temporalMinimalDest+"\n      start_timeout: \"0s\"", temporalMinimalRoute),
+			body: temporalDestYAML(temporalMinimalDest + "\n      start_timeout: \"0s\""),
 			want: "destinations.orchestrator.temporal.start_timeout",
-		},
-		{
-			name: "missing workflow_type",
-			body: temporalConfigBody(temporalMinimalDest, "        temporal_options:\n          input: \"body\""),
-			want: "temporal_options.workflow_type",
-		},
-		{
-			name: "no temporal_options at all",
-			body: temporalConfigBody(temporalMinimalDest, ""),
-			want: "temporal_options.workflow_type",
-		},
-		{
-			name: "bad input",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          input: \"headers\""),
-			want: "temporal_options.input",
-		},
-		{
-			name: "workflow_id static without value",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          workflow_id:\n            source: \"static\""),
-			want: "temporal_options.workflow_id.value",
-		},
-		{
-			name: "workflow_id body without path",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          workflow_id:\n            source: \"body\""),
-			want: "temporal_options.workflow_id.path",
-		},
-		{
-			name: "workflow_id bad source",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          workflow_id:\n            source: \"random\""),
-			want: "temporal_options.workflow_id.source",
-		},
-		{
-			name: "bad id_reuse_policy",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          id_reuse_policy: \"whatever\""),
-			want: "temporal_options.id_reuse_policy",
-		},
-		{
-			name: "run_timeout exceeds execution_timeout",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          execution_timeout: \"1h\"\n          run_timeout: \"2h\""),
-			want: "temporal_options.run_timeout",
-		},
-		{
-			name: "bad execution_timeout",
-			body: temporalConfigBody(temporalMinimalDest, temporalMinimalRoute+"\n          execution_timeout: \"-1h\""),
-			want: "temporal_options.execution_timeout",
-		},
-		{
-			name: "temporal_options on non-temporal dest",
-			body: rabbitWithTemporalOptionsBody(),
-			want: "temporal_options",
-		},
-		{
-			name: "fifo target",
-			body: strings.Replace(temporalConfigBody(temporalMinimalDest, temporalMinimalRoute), "order-events", "order-events.fifo", 1),
-			want: "target",
 		},
 		{
 			name: "webhook dead_letter to temporal",
 			body: webhookWithTemporalDeadLetterBody(),
 			want: "webhook.dead_letter.destination",
 		},
-		{
-			name: "shared target with differing options",
-			body: temporalSharedTargetBody("OrderWorkflow", "OtherWorkflow"),
-			want: "temporal_options",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Load(writeConfig(t, tc.body))
+			_, err := loadSharedYAML(t, tc.body)
 			if err == nil {
 				t.Fatalf("expected validation error containing %q, got nil", tc.want)
 			}
@@ -221,37 +138,71 @@ func TestLoadRejectsInvalidTemporal(t *testing.T) {
 	}
 }
 
-func TestLoadAcceptsTemporalSharedTargetWithSameOptions(t *testing.T) {
-	if _, err := Load(writeConfig(t, temporalSharedTargetBody("OrderWorkflow", "OrderWorkflow"))); err != nil {
-		t.Fatalf("Load returned error: %v", err)
+func TestValidateTemporalRouteOptions(t *testing.T) {
+	minimal := TemporalEndpointOptions{WorkflowType: "OrderWorkflow"}
+	with := func(mutate func(*TemporalEndpointOptions)) TemporalEndpointOptions {
+		o := minimal
+		mutate(&o)
+		return o
+	}
+	cases := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"missing workflow_type", temporalRouteConfig("order-events", TemporalEndpointOptions{Input: "body"}), "temporal_options.workflow_type"},
+		{"no temporal_options at all", temporalRouteConfig("order-events", TemporalEndpointOptions{}), "temporal_options.workflow_type"},
+		{"bad input", temporalRouteConfig("order-events", with(func(o *TemporalEndpointOptions) { o.Input = "headers" })), "temporal_options.input"},
+		{"workflow_id static without value", temporalRouteConfig("order-events", with(func(o *TemporalEndpointOptions) {
+			o.WorkflowID = TemporalWorkflowIDConfig{Source: "static"}
+		})), "temporal_options.workflow_id.value"},
+		{"workflow_id body without path", temporalRouteConfig("order-events", with(func(o *TemporalEndpointOptions) {
+			o.WorkflowID = TemporalWorkflowIDConfig{Source: "body"}
+		})), "temporal_options.workflow_id.path"},
+		{"workflow_id bad source", temporalRouteConfig("order-events", with(func(o *TemporalEndpointOptions) {
+			o.WorkflowID = TemporalWorkflowIDConfig{Source: "random"}
+		})), "temporal_options.workflow_id.source"},
+		{"bad id_reuse_policy", temporalRouteConfig("order-events", with(func(o *TemporalEndpointOptions) {
+			o.IDReusePolicy = "whatever"
+		})), "temporal_options.id_reuse_policy"},
+		{"run_timeout exceeds execution_timeout", temporalRouteConfig("order-events", with(func(o *TemporalEndpointOptions) {
+			o.ExecutionTimeout, o.RunTimeout = time.Hour, 2*time.Hour
+		})), "temporal_options.run_timeout"},
+		{"fifo target", temporalRouteConfig("order-events.fifo", minimal), "target"},
+		{"temporal_options on non-temporal dest", endpointConfigFor(
+			map[string]DestinationConfig{"events": {Type: "rabbitmq", RabbitMQ: RabbitMQConfig{URL: "amqp://x", Exchange: "e", ExchangeType: "direct"}}},
+			EndpointConfig{Enabled: true, Path: "/webhooks/events", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"},
+				Destinations: []EndpointDestinationConfig{{Destination: "events", Target: "billing-events", TemporalOptions: minimal}}}),
+			"temporal_options"},
+		{"shared target with differing options", temporalSharedTargetConfig("OrderWorkflow", "OtherWorkflow"), "temporal_options"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ConfigValidationError{Issues: validationIssues(tc.cfg)}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err.Error(), tc.want)
+			}
+		})
 	}
 }
 
-func rabbitWithTemporalOptionsBody() string {
-	return `
-server:
-  addr: ":8080"
-  max_body_bytes: 1048576
-destinations:
-  events:
-    type: rabbitmq
-    rabbitmq:
-      url: "amqp://x"
-      exchange: "e"
-      exchange_type: "direct"
-endpoints:
-  events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "events"
-        target: "billing-events"
-        temporal_options:
-          workflow_type: "OrderWorkflow"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-`
+func TestValidateAcceptsTemporalSharedTargetWithSameOptions(t *testing.T) {
+	if issues := validationIssues(temporalSharedTargetConfig("OrderWorkflow", "OrderWorkflow")); len(issues) != 0 {
+		t.Fatalf("shared temporal target with identical options rejected: %#v", issues)
+	}
+}
+
+func TestValidateAcceptsFullTemporalRouteOptions(t *testing.T) {
+	cfg := temporalRouteConfig("order-events", TemporalEndpointOptions{
+		WorkflowType:     "OrderWorkflow",
+		Input:            "body",
+		WorkflowID:       TemporalWorkflowIDConfig{Source: "body", Path: "order.id", Prefix: "order-"},
+		IDReusePolicy:    "reject_duplicate",
+		ExecutionTimeout: 24 * time.Hour, RunTimeout: time.Hour, TaskTimeout: 10 * time.Second,
+	})
+	if issues := validationIssues(cfg); len(issues) != 0 {
+		t.Fatalf("valid temporal_options rejected: %#v", issues)
+	}
 }
 
 func webhookWithTemporalDeadLetterBody() string {
@@ -273,52 +224,25 @@ destinations:
       dead_letter:
         destination: "orchestrator"
         target: "dlq"
-endpoints:
-  events:
-    enabled: true
-    path: "/webhooks/events"
-    destinations:
-      - destination: "downstream"
-        target: "hooks"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
 `
 }
 
-func temporalSharedTargetBody(typeA, typeB string) string {
-	return `
-server:
-  addr: ":8080"
-  max_body_bytes: 1048576
-destinations:
-  orchestrator:
-    type: temporal
-    temporal:
-      host_port: "localhost:7233"
-      namespace: "default"
-endpoints:
-  a:
-    enabled: true
-    path: "/webhooks/a"
-    destinations:
-      - destination: "orchestrator"
-        target: "order-events"
-        temporal_options:
-          workflow_type: "` + typeA + `"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-  b:
-    enabled: true
-    path: "/webhooks/b"
-    destinations:
-      - destination: "orchestrator"
-        target: "order-events"
-        temporal_options:
-          workflow_type: "` + typeB + `"
-    auth:
-      type: "no_auth"
-      scheme: "no_auth"
-`
+func temporalSharedTargetConfig(typeA, typeB string) Config {
+	route := func(workflowType string) []EndpointDestinationConfig {
+		return []EndpointDestinationConfig{{
+			Destination: "orchestrator", Target: "order-events",
+			TemporalOptions: TemporalEndpointOptions{WorkflowType: workflowType},
+		}}
+	}
+	return Config{
+		Server: ServerConfig{Addr: ":8080", MaxBodyBytes: 1024},
+		Destinations: map[string]DestinationConfig{"orchestrator": {Type: "temporal", Temporal: TemporalConfig{
+			HostPort: "localhost:7233", Namespace: "default",
+			ConnectTimeout: 10 * time.Second, StartTimeout: 5 * time.Second,
+		}}},
+		Endpoints: map[string]EndpointConfig{
+			"a": {Enabled: true, Path: "/webhooks/a", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"}, Destinations: route(typeA)},
+			"b": {Enabled: true, Path: "/webhooks/b", Auth: AuthConfig{Type: "no_auth", Scheme: "no_auth"}, Destinations: route(typeB)},
+		},
+	}
 }

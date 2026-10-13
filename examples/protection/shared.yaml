@@ -1,0 +1,39 @@
+# Shared production protection. Run the PostgreSQL migration before serve.
+# YAML/schema validation works offline with --json --no-env.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+state_stores:
+  cluster:
+    namespace: example-production
+    timeout: 250ms
+    startup_timeout: 5s
+    postgres:
+      url: "${PROTECTION_DATABASE_URL}"
+      max_conns: 10
+  redis_cluster:
+    namespace: example-production
+    redis:
+      url: "${PROTECTION_REDIS_URL}"
+      pool_size: 10
+flows:
+  guarded:
+    nodes:
+      - {id: in, type: http_trigger, path: /hooks/shared, methods: [POST]}
+      - {id: edge, type: rate_limit, store: cluster, rpm: 600, burst: 100, key_by: source_ip}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_hex
+        signature_header: X-Signature
+        secret_ref: {provider: env, name: WEBHOOK_SECRET}
+        credential_id: example-partner
+      - {id: quota, type: rate_limit, store: cluster, policy_id: partner-quota, stage: verified, key_by: credential_id, strategy: sliding_window_counter, limit: 100, window: 1m}
+      - {id: duplicates, type: replay_guard, store: cluster, ttl: 5m, key: "{header.X-Event-ID}", max_entries: 100000}
+      - {id: env, type: envelope, body_format: json}
+      - {id: accepted, type: respond, status: 202, body: accepted}
+    edges: [in>edge, edge>body, body>auth, auth>quota, quota>duplicates, duplicates>env, env>accepted]

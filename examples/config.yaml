@@ -13,19 +13,15 @@ destinations:
       publish_timeout: "5s"
       declare_queues: true
 
-endpoints:
+flows:
   github_events:
-    enabled: true
-    path: "/webhooks/github"
     # Defaults to stop_on_failure. Use skip_failed only when partial delivery is OK.
     # delivery_failure_policy: "stop_on_failure"
-    destinations:
-      - destination: "primary"
-        target: "github-webhooks"
-        create: true
-
-    auth:
-      type: "hmac_sha256"
-      scheme: "hmac_sha256_hex"
-      secret: "${GITHUB_WEBHOOK_SECRET}"
-      signature_header: "X-Hub-Signature-256"
+    nodes:
+      # description is optional on every node: an operator note, ignored at runtime.
+      - {id: in, type: http_trigger, description: "GitHub posts webhook deliveries here.", path: /webhooks/github, methods: [POST]}
+      - {id: body, type: read_body, description: "Reads the raw body, rejecting anything over 1 MiB.", max_bytes: 1048576}
+      - {id: auth, type: auth, description: "Verifies the GitHub HMAC signature over the raw body.", scheme: hmac_sha256_hex, secret: "${GITHUB_WEBHOOK_SECRET}", signature_header: X-Hub-Signature-256}
+      - {id: env, type: envelope, description: "Builds the JSON event envelope consumers receive.", body_format: json}
+      - {id: out, type: publish, description: "Publishes to the RabbitMQ exchange, declaring the queue.", destination: primary, target: github-webhooks, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]

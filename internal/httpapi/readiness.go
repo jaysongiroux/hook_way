@@ -10,8 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/metrics"
-	"github.com/jasongiroux/hookway/internal/queue"
+	"github.com/jaysongiroux/hook_way/internal/logging"
+	"github.com/jaysongiroux/hook_way/internal/metrics"
+	"github.com/jaysongiroux/hook_way/internal/queue"
 )
 
 // Default readiness prober cadence, applied when the configured interval or
@@ -26,20 +27,25 @@ const (
 // stalenessFactor multiplies the probe interval to decide when a cached
 // readiness result is too old to trust. A result older than
 // stalenessFactor×interval means the prober is wedged or has not run recently,
-// which is treated as not-ready so a stuck pod fails its readiness probe rather
+// which is treated as not-ready so a stuck instance fails its readiness probe rather
 // than serving a stale "ready".
 const stalenessFactor = 3
 
 // errNotProbed is the cached-readiness error before the prober's first probe
-// has completed. The initial state is deliberately not-ready: a pod must prove
+// has completed. The initial state is deliberately not-ready: an instance must prove
 // its destinations are reachable at least once before receiving traffic.
 var errNotProbed = errors.New("readiness not yet probed")
 
 // readinessResult is the cached outcome of the most recent readiness probe.
 type readinessResult struct {
 	err       error
+	dest      map[string]error
 	checkedAt time.Time
 }
+
+// destWildcard is stored when the publisher does not expose per-id readiness,
+// so every flow dest maps to the single aggregate Ready() result.
+const destWildcard = "*"
 
 // readinessByID is satisfied by *queue.RoutingPublisher. When the publisher
 // implements it, the prober collects per-destination readiness so it can drive
@@ -52,7 +58,7 @@ type readinessByID interface {
 // readinessProber periodically probes destination readiness in the background
 // and caches the aggregate result so per-request readiness checks (/ready,
 // /readyz) are served from memory rather than triggering a live destination
-// fan-out on every kubelet probe.
+// fan-out on every platform health check.
 type readinessProber struct {
 	publisher queue.Publisher
 	metrics   *metrics.Metrics
@@ -60,16 +66,12 @@ type readinessProber struct {
 	interval  time.Duration
 	timeout   time.Duration
 	result    atomic.Pointer[readinessResult]
-	// replayPing, when set, is included in every probe so a replay-store
-	// outage takes the pod out of rotation (AND-joined with destinations).
-	// Capture itself stays best-effort; this only affects /ready.
-	replayPing func(context.Context) error
 
 	// staleLoggedAt records the checkedAt of the cached result that most
 	// recently triggered the "reported unhealthy due to staleness" warning
 	// (see status). A stale result's checkedAt never changes until a new
 	// probe replaces it, so comparing against this lets status log once per
-	// staleness episode instead of once per /ready request while the pod
+	// staleness episode instead of once per /ready request while the instance
 	// stays stuck on the same wedged result.
 	staleLoggedAt atomic.Pointer[time.Time]
 }
@@ -90,9 +92,10 @@ func newReadinessProber(publisher queue.Publisher, appMetrics *metrics.Metrics, 
 	}
 }
 
-// status reports the cached readiness error and whether the pod should be
-// considered ready as of now. A missing (never-probed) or stale result is
-// not-ready even if the last recorded error was nil.
+// destinationSnapshot reports the cached per-destination readiness, whether
+// the result is fresh enough to trust, and the aggregate probe error. A
+// missing (never-probed) or stale result is not-ready even if the last
+// recorded error was nil.
 //
 // A stale result (the prober is wedged or has never completed a probe
 // recently enough) is logged as a distinct Warn, separate from a per-probe
@@ -100,22 +103,18 @@ func newReadinessProber(publisher queue.Publisher, appMetrics *metrics.Metrics, 
 // 503 can tell "the prober itself is stuck" apart from "a destination is
 // down." It's logged at most once per staleness episode (i.e. once per
 // distinct cached result's checkedAt) rather than once per /ready request,
-// since kubelet polls /ready frequently and the underlying cached result does
+// since health checks poll /ready frequently and the underlying cached result does
 // not change again until the next successful probe.
-func (p *readinessProber) setReplayPing(ping func(context.Context) error) {
-	p.replayPing = ping
-}
-
-func (p *readinessProber) status(now time.Time) (error, bool) {
+func (p *readinessProber) destinationSnapshot(now time.Time) (dest map[string]error, ready bool, err error) {
 	res := p.result.Load()
 	if res == nil {
-		return errNotProbed, false
+		return nil, false, errNotProbed
 	}
 	if age := now.Sub(res.checkedAt); age > stalenessFactor*p.interval {
 		p.logStaleOnce(res.checkedAt, age)
-		return fmt.Errorf("readiness result is stale (last probed %s ago)", age.Round(time.Second)), false
+		return res.dest, false, fmt.Errorf("readiness result is stale (last probed %s ago)", age.Round(time.Second))
 	}
-	return res.err, res.err == nil
+	return res.dest, true, res.err
 }
 
 // logStaleOnce logs the staleness warning the first time status observes a
@@ -139,6 +138,7 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 	defer cancel()
 
 	var aggErr error
+	dest := map[string]error{}
 	if byID, ok := p.publisher.(readinessByID); ok {
 		byIDResults := byID.ReadyByID(probeCtx)
 		ids := make([]string, 0, len(byIDResults))
@@ -149,6 +149,7 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 		var errs []error
 		for _, id := range ids {
 			err := byIDResults[id]
+			dest[id] = err
 			p.metrics.DestinationReady(id, err == nil)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", id, err))
@@ -157,21 +158,13 @@ func (p *readinessProber) probeOnce(ctx context.Context) {
 		aggErr = errors.Join(errs...)
 	} else {
 		aggErr = p.publisher.Ready(probeCtx)
-	}
-
-	if p.replayPing != nil {
-		if err := p.replayPing(probeCtx); err != nil {
-			p.metrics.ReplayStoreUp(false)
-			aggErr = errors.Join(aggErr, fmt.Errorf("replay_store: %w", err))
-		} else {
-			p.metrics.ReplayStoreUp(true)
-		}
+		dest[destWildcard] = aggErr
 	}
 
 	if aggErr != nil {
-		p.logger.Error("readiness probe failed", "error", aggErr.Error())
+		p.logger.Error("readiness probe failed", "error", logging.ErrorText(aggErr))
 	}
-	p.result.Store(&readinessResult{err: aggErr, checkedAt: time.Now()})
+	p.result.Store(&readinessResult{err: aggErr, dest: dest, checkedAt: time.Now()})
 }
 
 // run kicks an immediate probe, then re-probes every interval until ctx is
@@ -205,7 +198,7 @@ func (p *readinessProber) safeProbe(ctx context.Context) {
 		if rec := recover(); rec != nil {
 			p.logger.Error("panic recovered in readiness prober",
 				"location", "readiness_prober",
-				"panic", fmt.Sprint(rec),
+				"panic_type", fmt.Sprintf("%T", rec),
 				"stack", string(debug.Stack()),
 			)
 			p.metrics.Panic("readiness_prober")

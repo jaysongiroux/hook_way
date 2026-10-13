@@ -1,15 +1,14 @@
 import { expect, test } from "vitest";
-import { FLOW_EDGES, FLOW_NODES, LAYOUT, edgePath, nodeBox } from "./flowGraph";
+import { FLOW_EDGES, FLOW_NODES, LAYOUT, edgePath, nodeBox, nodeChrome } from "./flowGraph";
 
 const byId = (id: string) => FLOW_NODES.find((n) => n.id === id)!;
 
-test("the diagram shows one endpoint fanning out to three destination types", () => {
+test("the diagram shows one flow fanning out to three destinations", () => {
   expect(FLOW_NODES.filter((n) => n.kind === "endpoint")).toHaveLength(1);
   const dests = FLOW_NODES.filter((n) => n.kind === "destination");
   expect(dests).toHaveLength(3);
-  // Three visibly different backends is the whole point of the section.
-  expect(dests.map((d) => d.label)).toEqual(["Amazon SQS", "RabbitMQ", "Amazon S3"]);
-  expect(new Set(dests.map((d) => d.accent)).size).toBe(3);
+  expect(dests.every((d) => d.nodeType === "publish")).toBe(true);
+  expect(new Set(dests.map((d) => d.summary)).size).toBe(3);
 });
 
 test("two branches are gated by a filter and one is not", () => {
@@ -20,7 +19,14 @@ test("two branches are gated by a filter and one is not", () => {
   // deliver, so an unfiltered branch alongside filtered ones is the honest
   // picture of route-level filtering.
   expect(direct).toHaveLength(1);
-  expect(byId(direct[0].to).label).toBe("RabbitMQ");
+  expect(byId(direct[0].to).yamlId).toBe("stream");
+});
+
+test("node chrome matches the builder catalog", () => {
+  expect(nodeChrome(byId("ep"))).toMatchObject({ showIn: false, showOut: true, showError: false });
+  expect(nodeChrome(byId("f1"))).toMatchObject({ showIn: true, showOut: true, showError: true });
+  // publish declares Envelope so a success continuation can attach an out handle.
+  expect(nodeChrome(byId("sqs"))).toMatchObject({ showIn: true, showOut: true, showError: true });
 });
 
 test("every edge connects nodes that exist and moves left to right", () => {

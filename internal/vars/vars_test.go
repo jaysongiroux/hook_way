@@ -1,13 +1,11 @@
 package vars
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/url"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -116,86 +114,52 @@ func mustSpec(t *testing.T, name, source, path, pattern string, values []string,
 	return Spec{Name: name, Source: Source(source), Path: path, Values: values, Pattern: re, Default: def}
 }
 
-func TestResolve(t *testing.T) {
-	var body any
-	if err := json.Unmarshal([]byte(`{"env":"qa-gm3","n":{"count":3,"ok":true},"list":[1]}`), &body); err != nil {
-		t.Fatal(err)
-	}
-	in := Input{
-		Headers:  http.Header{"X-Env": {"  staging-portal "}},
-		Body:     body,
-		Query:    url.Values{"env": {"portal", "ignored"}},
-		PathVars: map[string]string{"envName": "qa-gm4"},
-	}
-	envs := []string{"qa-gm3", "staging-portal", "portal"}
+func TestSpecAccepts(t *testing.T) {
+	envs := []string{"tenant-a", "staging", "prod"}
+	long := strings.Repeat("a", MaxValueLen+1)
 	cases := []struct {
-		name       string
-		spec       Spec
-		want       string
-		unresolved bool
+		name string
+		spec Spec
+		in   string
+		want bool
 	}{
-		{"header trimmed", mustSpec(t, "e", "header", "X-Env", "", envs, ""), "staging-portal", false},
-		{"header missing", mustSpec(t, "e", "header", "X-Nope", "", envs, ""), "", true},
-		{"body string", mustSpec(t, "e", "body", "env", "", envs, ""), "qa-gm3", false},
-		{"body number", mustSpec(t, "e", "body", "n.count", "^[0-9]+$", nil, ""), "3", false},
-		{"body bool", mustSpec(t, "e", "body", "n.ok", "^(true|false)$", nil, ""), "true", false},
-		{"body array unsupported", mustSpec(t, "e", "body", "list", "^.+$", nil, ""), "", true},
-		{"body missing", mustSpec(t, "e", "body", "nope", "^.+$", nil, ""), "", true},
-		{"query first value", mustSpec(t, "e", "query", "env", "", envs, ""), "portal", false},
-		{"query missing", mustSpec(t, "e", "query", "zzz", "", envs, ""), "", true},
-		{"path", mustSpec(t, "envName", "path", "", "^qa-gm[0-9]+$", nil, ""), "qa-gm4", false},
-		{"path not accepted by values", mustSpec(t, "envName", "path", "", "", envs, ""), "", true},
-		{"default on missing", mustSpec(t, "e", "header", "X-Nope", "", envs, "portal"), "portal", false},
-		{"default on mismatch", mustSpec(t, "e", "query", "env", "^qa-.*$", nil, "qa-gm1"), "qa-gm1", false},
-		{"enumerated is case sensitive", mustSpec(t, "e", "header", "X-Env", "", []string{"Staging-Portal"}, ""), "", true},
+		{"enumerated hit", mustSpec(t, "e", "header", "X-Env", "", envs, ""), "staging", true},
+		{"enumerated miss", mustSpec(t, "e", "header", "X-Env", "", envs, ""), "other", false},
+		{"enumerated is case sensitive", mustSpec(t, "e", "header", "X-Env", "", []string{"Staging"}, ""), "staging", false},
+		{"pattern hit", mustSpec(t, "e", "body", "n.count", "^[0-9]+$", nil, ""), "3", true},
+		{"pattern miss", mustSpec(t, "e", "body", "n.count", "^[0-9]+$", nil, ""), "three", false},
+		{"empty value never accepted", mustSpec(t, "e", "header", "X-Env", "^.*$", nil, ""), "", false},
+		{"over-long value rejected even when the pattern matches", mustSpec(t, "l", "header", "X-L", "^a+$", nil, ""), long, false},
+		{"open-set lookup accepts any value", Spec{Name: "e", Source: SourceLookup}, "anything", true},
+		{"closed spec accepts nothing", Spec{Name: "e", Source: SourceHeader}, "anything", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := Resolve(context.Background(), []Spec{tc.spec}, in)
-			if tc.unresolved {
-				if !reflect.DeepEqual(res.Unresolved, []string{tc.spec.Name}) || res.Values[tc.spec.Name] != "" {
-					t.Fatalf("expected unresolved, got %#v", res)
-				}
-				return
-			}
-			if len(res.Unresolved) != 0 || res.Values[tc.spec.Name] != tc.want {
-				t.Fatalf("got %#v want %q", res, tc.want)
+			if got := tc.spec.Accepts(tc.in); got != tc.want {
+				t.Fatalf("Accepts(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
 	}
-	// Non-JSON body: body source is unresolved, others still work.
-	res := Resolve(context.Background(), []Spec{mustSpec(t, "b", "body", "env", "^.+$", nil, ""), mustSpec(t, "q", "query", "env", "", envs, "")}, Input{Body: nil, Query: in.Query})
-	if !reflect.DeepEqual(res.Unresolved, []string{"b"}) || res.Values["q"] != "portal" {
-		t.Fatalf("nil body: %#v", res)
+	if !mustSpec(t, "e", "header", "X-Env", "", envs, "").Enumerated() {
+		t.Fatal("a spec with values is enumerated")
 	}
-	// Unresolved list is sorted.
-	res = Resolve(context.Background(), []Spec{mustSpec(t, "zeta", "header", "X-1", "^.+$", nil, ""), mustSpec(t, "alpha", "header", "X-2", "^.+$", nil, "")}, Input{})
-	if !reflect.DeepEqual(res.Unresolved, []string{"alpha", "zeta"}) {
-		t.Fatalf("sorted: %v", res.Unresolved)
-	}
-	// Over-long values are rejected even if the pattern matches.
-	long := make([]byte, 129)
-	for i := range long {
-		long[i] = 'a'
-	}
-	res = Resolve(context.Background(), []Spec{mustSpec(t, "l", "header", "X-L", "^a+$", nil, "")}, Input{Headers: http.Header{"X-L": {string(long)}}})
-	if len(res.Unresolved) != 1 {
-		t.Fatalf("expected length cap rejection, got %#v", res)
+	if mustSpec(t, "e", "header", "X-Env", "^.+$", nil, "").Enumerated() {
+		t.Fatal("a pattern spec is not enumerated")
 	}
 }
 
 func TestPathPattern(t *testing.T) {
-	p, err := ParsePath("/webhooks/{envName}/digifi")
+	p, err := ParsePath("/webhooks/{envName}/vendor")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.IsLiteral() || !reflect.DeepEqual(p.Names(), []string{"envName"}) {
 		t.Fatalf("names: %v literal=%v", p.Names(), p.IsLiteral())
 	}
-	if vars, ok := p.Match("/webhooks/qa-gm3/digifi"); !ok || vars["envName"] != "qa-gm3" {
+	if vars, ok := p.Match("/webhooks/tenant-a/vendor"); !ok || vars["envName"] != "tenant-a" {
 		t.Fatalf("match: %v %v", vars, ok)
 	}
-	for _, bad := range []string{"/webhooks/qa-gm3/digifi/", "/webhooks//digifi", "/webhooks/qa-gm3/other", "/webhooks/qa-gm3", "/webhooks/a/b/digifi"} {
+	for _, bad := range []string{"/webhooks/tenant-a/vendor/", "/webhooks//vendor", "/webhooks/tenant-a/other", "/webhooks/tenant-a", "/webhooks/a/b/vendor"} {
 		if _, ok := p.Match(bad); ok {
 			t.Fatalf("%q should not match", bad)
 		}
@@ -211,6 +175,26 @@ func TestPathPattern(t *testing.T) {
 		if _, err := ParsePath(bad); err == nil {
 			t.Fatalf("%q should fail to parse", bad)
 		}
+	}
+}
+
+func TestPathPatternGreedyRest(t *testing.T) {
+	p, err := ParsePath("/proxy/{rest...}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IsLiteral() || !reflect.DeepEqual(p.Names(), []string{"rest"}) {
+		t.Fatalf("names: %v literal=%v", p.Names(), p.IsLiteral())
+	}
+	vars, ok := p.Match("/proxy/v1/orders/123")
+	if !ok || vars["rest"] != "v1/orders/123" {
+		t.Fatalf("greedy match: %v %v", vars, ok)
+	}
+	if _, ok := p.Match("/proxy"); ok {
+		t.Fatal("/proxy should not match a greedy remainder that requires a capture")
+	}
+	if _, err := ParsePath("/proxy/{rest...}/tail"); err == nil {
+		t.Fatal("greedy placeholder must be the final segment")
 	}
 }
 
@@ -247,19 +231,19 @@ func TestPathOverlap(t *testing.T) {
 }
 
 func TestMatcher(t *testing.T) {
-	m, err := CompileMatcher("{env}-orders-{tenant}.fifo", map[string]string{"env": "^qa-gm[0-9]+$", "tenant": "^[a-z]+$"})
+	m, err := CompileMatcher("{env}-orders-{tenant}.fifo", map[string]string{"env": "^tenant-[a-z0-9]+$", "tenant": "^[a-z]+$"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !m.IsTemplate() || m.Raw() != "{env}-orders-{tenant}.fifo" {
 		t.Fatalf("matcher meta: %v %q", m.IsTemplate(), m.Raw())
 	}
-	for _, ok := range []string{"qa-gm3-orders-acme.fifo", "qa-gm12-orders-z.fifo"} {
+	for _, ok := range []string{"tenant-a-orders-acme.fifo", "tenant-12-orders-z.fifo"} {
 		if !m.Match(ok) {
 			t.Errorf("%q should match", ok)
 		}
 	}
-	for _, bad := range []string{"qa-gm3-orders-acme", "qa-gmX-orders-acme.fifo", "qa-gm3-orders-ACME.fifo", "xqa-gm3-orders-acme.fifo", "qa-gm3-orders-acme.fifox"} {
+	for _, bad := range []string{"tenant-a-orders-acme", "tenant-A-orders-acme.fifo", "tenant-a-orders-ACME.fifo", "xtenant-a-orders-acme.fifo", "tenant-a-orders-acme.fifox"} {
 		if m.Match(bad) {
 			t.Errorf("%q should not match", bad)
 		}
@@ -302,78 +286,5 @@ func TestBodyString(t *testing.T) {
 	}
 	if _, ok := BodyString("string body", "a"); ok {
 		t.Fatal("non-object body must not resolve")
-	}
-}
-
-type fakeLookup struct {
-	values map[string]string
-	err    error
-	calls  int
-	last   string
-}
-
-func (f *fakeLookup) Lookup(_ context.Context, key string) (string, bool, error) {
-	f.calls++
-	f.last = key
-	if f.err != nil {
-		return "", false, f.err
-	}
-	v, ok := f.values[key]
-	return v, ok, nil
-}
-
-func TestResolveLookupSource(t *testing.T) {
-	var body any
-	_ = json.Unmarshal([]byte(`{"data":{"object":{"applicationId":"abc123"}}}`), &body)
-	in := Input{Body: body, Headers: http.Header{"X-Id": {"  hdr-9 "}}}
-	provider := &fakeLookup{values: map[string]string{"abc123": " qa-gm3 ", "hdr-9": "portal"}}
-	spec := Spec{Name: "env", Source: SourceLookup, KeySource: SourceBody, KeyPath: "data.object.applicationId", Lookup: provider}
-
-	res := Resolve(context.Background(), []Spec{spec}, in)
-	if res.Values["env"] != "qa-gm3" || len(res.Unresolved) != 0 || len(res.Errors) != 0 || provider.last != "abc123" {
-		t.Fatalf("hit: %#v last=%q", res, provider.last)
-	}
-	// Header-sourced key is trimmed before the call.
-	hdr := spec
-	hdr.KeySource, hdr.KeyPath = SourceHeader, "X-Id"
-	if res := Resolve(context.Background(), []Spec{hdr}, in); res.Values["env"] != "portal" || provider.last != "hdr-9" {
-		t.Fatalf("header key: %#v last=%q", res, provider.last)
-	}
-	// Miss -> unresolved, no error recorded.
-	miss := &fakeLookup{values: map[string]string{}}
-	m := spec
-	m.Lookup = miss
-	if res := Resolve(context.Background(), []Spec{m}, in); len(res.Unresolved) != 1 || len(res.Errors) != 0 {
-		t.Fatalf("miss: %#v", res)
-	}
-	// Miss with default -> default.
-	m.Default = "portal"
-	if res := Resolve(context.Background(), []Spec{m}, in); res.Values["env"] != "portal" || len(res.Unresolved) != 0 {
-		t.Fatalf("miss default: %#v", res)
-	}
-	// Provider error -> unresolved plus Errors entry.
-	e := spec
-	e.Lookup = &fakeLookup{err: errors.New("throttled")}
-	if res := Resolve(context.Background(), []Spec{e}, in); len(res.Unresolved) != 1 || res.Errors["env"] == nil {
-		t.Fatalf("error: %#v", res)
-	}
-	// Empty key skips the provider entirely.
-	calls := provider.calls
-	empty := spec
-	empty.KeyPath = "data.missing"
-	if res := Resolve(context.Background(), []Spec{empty}, in); len(res.Unresolved) != 1 || provider.calls != calls {
-		t.Fatalf("empty key must not call provider: %#v calls=%d", res, provider.calls)
-	}
-	// Looked-up value must still pass values/pattern.
-	strict := spec
-	strict.Values = []string{"portal"}
-	if res := Resolve(context.Background(), []Spec{strict}, in); len(res.Unresolved) != 1 {
-		t.Fatalf("value rejected by values: %#v", res)
-	}
-	// No provider wired is an error, not a panic.
-	np := spec
-	np.Lookup = nil
-	if res := Resolve(context.Background(), []Spec{np}, in); res.Errors["env"] == nil {
-		t.Fatalf("nil provider: %#v", res)
 	}
 }

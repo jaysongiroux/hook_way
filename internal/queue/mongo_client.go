@@ -3,15 +3,13 @@ package queue
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
-	"os"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
 )
 
 // errMongoDuplicateKey is the sentinel goMongoOps.InsertOne returns when Mongo
@@ -81,35 +79,8 @@ func mongoTLSSet(c config.MongoTLSConfig) bool {
 }
 
 // buildMongoTLSConfig assembles a *tls.Config from the Mongo TLS options.
-// It mirrors buildPostgresTLSConfig so the two stay consistent.
+// Certificate loading is shared through tlsfiles.Files.Build.
 func buildMongoTLSConfig(c config.MongoTLSConfig) (*tls.Config, error) {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.ServerName != "" {
-		cfg.ServerName = c.ServerName
-	}
-	if c.InsecureSkipVerify {
-		cfg.InsecureSkipVerify = true //nolint:gosec // intentional, user-opted in
-	}
-	if c.CACert != "" {
-		pem, err := os.ReadFile(c.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("read mongodb tls ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("mongodb tls ca_cert %q contained no valid certificates", c.CACert)
-		}
-		cfg.RootCAs = pool
-	}
-	if c.ClientCert != "" || c.ClientKey != "" {
-		if c.ClientCert == "" || c.ClientKey == "" {
-			return nil, errors.New("mongodb tls client_cert and client_key must both be set for mutual TLS")
-		}
-		cert, err := tls.LoadX509KeyPair(c.ClientCert, c.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("load mongodb tls client cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	return cfg, nil
+	m := tlsMaterial{CACert: c.CACert, ClientCert: c.ClientCert, ClientKey: c.ClientKey, ServerName: c.ServerName, InsecureSkipVerify: c.InsecureSkipVerify}
+	return newTLSConfig("mongodb", m)
 }

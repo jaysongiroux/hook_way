@@ -1,117 +1,80 @@
 # examples/variables.yaml
 #
 # Reference config for routing VARIABLES: per-request values derived from the
-# request (URL path segment, header, query string, or JSON body) that fill
-# {name} placeholders in route targets and in a webhook destination url.
+# request path, a filtered header, and the JSON body fill {name} placeholders
+# in publish targets and in a webhook destination url.
 #
 # The scenario: one Hookway instance in front of several environments
-# (qa-gm3, staging-portal, portal, ...). DigiFi is given one webhook URL per
-# environment, e.g. https://hooks.example.com/webhooks/qa-gm3/digifi, and each
-# event lands in that environment's queue and Hub.
+# (qa-1, staging, prod, ...). The vendor is given one webhook URL per
+# environment, e.g. https://hooks.example.com/webhooks/qa-1/vendor, and each
+# event lands in that environment's pre-provisioned SQS queue and downstream
+# API.
 #
-# Two kinds of variables:
-#   values:  [..]   enumerated. Routes are EXPANDED at startup into one concrete
-#                   route per value, so queue/topic provisioning, validation, and
-#                   replay work exactly as for static targets.
-#   pattern: "^..$" open set constrained by an anchored regex. Targets are
-#                   rendered per request and resolved by the destination on
-#                   first sight: sqs/sns/kafka/redis_stream look the resource
-#                   up (and create it when the route has create: true); the
-#                   other types need no remote work. rabbitmq passes the
-#                   routing key through but cannot create: true such routes.
+# Path placeholders on http_trigger (e.g. {envName}) are copied onto
+# envelope.Vars automatically. Body fields can be copied with a transform
+# field_map node. A code node can derive variables from filtered headers.
+# Unresolved templates and unsafe variable values fail closed at publish.
 
 server:
   addr: ":8080"
   max_body_bytes: 1048576
 
+security:
+  # The code node below can inspect this routing header, but not the inbound
+  # authentication token or any other unlisted header.
+  forwarded_header_allowlist: [Content-Type, X-Hookway-Environment]
+
 destinations:
-  archive:
-    type: s3
-    s3:
+  environment_queues:
+    type: sqs
+    sqs:
       region: "us-east-1"
-      bucket: "${ARCHIVE_BUCKET}"
-  hub:
+  downstream_api:
     type: webhook
     webhook:
       # The host is templated. A placeholder in the host must be followed by a
       # literal domain suffix so a request can never choose an arbitrary host.
       # The route target is appended as the final path segment.
-      url: "https://{envName}-api.htap.sh/api/v3/digifi/webhook"
+      url: "https://{envName}-api.example.com/v1/events/webhook"
       timeout: "10s"
       auth:
         type: "api_key"
         header: "Authorization"
-        value: "${HUB_API_KEY}"
+        value: "${DOWNSTREAM_API_KEY}"
   audit:
     type: mongodb
     mongodb:
       uri: "${MONGODB_URI}"
       database: "webhooks"
 
-endpoints:
-  digifi:
-    enabled: true
-    # {envName} must be a whole path segment. Endpoint paths that could match
-    # the same request (literal vs placeholder, parent/child) are rejected.
-    path: "/webhooks/{envName}/digifi"
-    variables:
-      envName:
-        source: path            # header | body | query | path
-        # path: envName         # defaults to the variable name: the header name,
-                                # dotted body path, query key, or path segment
-        values: [qa-gm3, staging-portal, portal]
-        # default: "portal"     # used when the value is missing or not accepted
-      tenant:
-        source: body
-        path: "data.object.organizationId"
-        pattern: "^[a-z0-9]{1,24}$"   # anchored; the rendered target must also be a
-                                      # valid name (letters, digits, . _ -; max 128)
-      # Lookup source: the environment is not in the payload, so resolve it
-      # from the routing table the ephemeral proxy writes. One variable per id
-      # type; route filters on eventType pick which one an event needs.
-      envByApp:
-        source: lookup
-        lookup:
-          key: { source: body, path: "data.object.applicationId" }
-          provider: dynamodb            # dynamodb | http | postgres
-          dynamodb:
-            table: "${ROUTING_TABLE}"
-            index: "CreatedAtIndex"
-            filter: { attribute: "id_type", value: "application" }
-            value_attribute: "env_name"
-            region: "us-east-1"
-          timeout: "2s"
-          cache: { ttl: "5m" }
-        pattern: "^[a-z0-9-]{1,32}$"
-        # Alternatives:
-        # provider: http
-        # http: { url: "https://resolver.internal/env?id={key}", value_path: "env_name" }
-        # provider: postgres
-        # postgres: { url: "${ROUTING_DB_URL}", query: "SELECT env_name FROM routing WHERE id = {key}" }
-    # Where an event goes when a variable an active route needs cannot be
-    # resolved (missing, empty, not in values, pattern mismatch, no default).
-    # Without this block the sender receives 400 {"error":"unresolved_variable"}.
-    on_unresolved_variable:
-      destination: "archive"
-      target: "unrouted"
-    destinations:
-      # Enumerated variable: expands to qa-gm3-events, staging-portal-events,
-      # portal-events at startup.
-      - destination: "archive"
-        target: "{envName}-events"
-      # Templated webhook url + static target -> https://qa-gm3-api.htap.sh/api/v3/digifi/webhook/event
-      - destination: "hub"
-        target: "event"
-      # Pattern variable: one collection per tenant, created on first insert.
-      - destination: "audit"
-        target: "{envName}-{tenant}"
-      # Lookup variable, needed only by events this filter admits.
-      - destination: "archive"
-        target: "{envByApp}-applicationEvents"
-        filters:
-          - { source: body, path: "eventType", operator: "regex", value: "^(application|task|document)\\." }
-    auth:
-      type: "header_exact"
-      scheme: "exact"
-      signature_header: "X-DigiFi-Token"
-      secret: "${DIGIFI_WEBHOOK_TOKEN}"
+flows:
+  vendor:
+    nodes:
+      - {id: in, type: http_trigger, path: "/webhooks/{envName}/vendor", methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: "${VENDOR_WEBHOOK_TOKEN}", signature_header: X-Vendor-Token}
+      - {id: env, type: envelope, body_format: json}
+      - id: route
+        type: code
+        timeout: 50ms
+        description: "Use a filtered header when present; otherwise keep the environment from the URL path."
+        script: |
+          const allowed = ['qa-1', 'staging', 'prod'];
+          const requested = input.headers['X-Hookway-Environment'] || input.vars.envName;
+          if (allowed.indexOf(requested) === -1) throw new Error('unknown environment');
+          return { body: input.body, vars: { envName: requested } };
+      - id: map
+        type: transform
+        kind: field_map
+        mappings:
+          - from: body.data.object.organizationId
+            to: vars.tenant
+      # envName comes from the allowlisted header or path; tenant is filled by
+      # field_map. The queue must already exist, so an unknown environment does
+      # not create infrastructure. Unresolved templates fail closed at publish.
+      # DynamoDB lookup variable envByApp is omitted until the lookup node grows
+      # those fields (index, filter, value_attribute, region).
+      - {id: out_queue, type: publish, destination: environment_queues, target: "{envName}-events"}
+      - {id: out_api, type: publish, destination: downstream_api, target: event}
+      - {id: out_audit, type: publish, destination: audit, target: "{envName}-{tenant}"}
+    edges: [in>body, body>auth, auth>env, env>route, route>map, map>out_queue, map>out_api, map>out_audit]

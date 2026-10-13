@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { DARK } from "../tokens";
 
 // BORDER is the sidebar's hairline, shared by section frames and route cards.
-export const BORDER = DARK.border;
+const BORDER = DARK.border;
 
 export interface SectionSpec {
   /** Stable identity for the open/closed state. */
@@ -21,8 +21,13 @@ export interface SectionSpec {
 // group's fields at a time without hiding what the others hold. Panels mount
 // only while open; every field writes straight to the graph store, so there is
 // no local form state to lose on collapse.
-export function Sections({ sections }: { sections: SectionSpec[] }) {
-  const [open, setOpen] = useState<string[]>(sections.length > 0 ? [sections[0].value] : []);
+//
+// defaultOpen overrides which sections start expanded. The destination editor
+// passes [] so its nested blocks (TLS, retry, dead letter) are all folded away
+// until asked for -- there the sections are the rarely-touched tail of a form,
+// not the form itself.
+export function Sections({ sections, defaultOpen }: { sections: SectionSpec[]; defaultOpen?: string[] }) {
+  const [open, setOpen] = useState<string[]>(defaultOpen ?? (sections.length > 0 ? [sections[0].value] : []));
   return (
     <Accordion
       multiple
@@ -36,9 +41,9 @@ export function Sections({ sections }: { sections: SectionSpec[] }) {
       // leaves a freshly opened section clipped to a stale height.
       transitionDuration={0}
       styles={{
-        item: { border: `1px solid ${BORDER}`, marginBottom: 8 },
-        control: { paddingInline: 10, minHeight: 42 },
-        content: { paddingInline: 10, paddingTop: 10, paddingBottom: 10 },
+        item: { border: `1px solid ${BORDER}` },
+        control: { paddingInline: 8 },
+        content: { paddingInline: 8, paddingBottom: 8 },
       }}
     >
       {sections.map((s) => (

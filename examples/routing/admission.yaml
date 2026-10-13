@@ -1,0 +1,34 @@
+# Environment selection without a store. A sandbox profile admits only listed
+# environments. The dedicated flow ignores all request environment overrides.
+server: {addr: ":8080", max_body_bytes: 1048576}
+routing:
+  profiles: {sandbox: {account_id: "000000000000", credential_mode: sandbox}}
+  environments:
+    preview: {aliases: [staging], profiles: [sandbox], accounts: ["000000000000"], destination_prefix: preview, backend_host: preview.example.test}
+destinations:
+  events: {type: sqs, sqs: {region: us-east-1}}
+flows:
+  shared:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/shared, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: "${SAMPLE_WEBHOOK_SECRET}", signature_header: Authorization}
+      - {id: env, type: envelope, body_format: json}
+      - id: routing
+        type: route
+        profile: sandbox
+        candidates:
+          - {source: body, path: x_env_name}
+          - {source: query, path: x_env_name}
+          - {source: header, path: X-Env-Name}
+      - {id: out, type: publish, destination: events, target: '{route_prefix}-events', create: false}
+    edges: [in>body, body>auth, auth>env, env>routing, routing>out]
+  dedicated:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/dedicated, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret: "${SAMPLE_WEBHOOK_SECRET}", signature_header: Authorization}
+      - {id: env, type: envelope, body_format: json}
+      - {id: routing, type: route, profile: sandbox, fixed: preview}
+      - {id: out, type: publish, destination: events, target: '{route_prefix}-events', create: false}
+    edges: [in>body, body>auth, auth>env, env>routing, routing>out]

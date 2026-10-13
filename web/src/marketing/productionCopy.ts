@@ -1,12 +1,5 @@
-import { DARK } from "../tokens";
-
-// Copy for the production bento. Each tile headlines one verifiable number and
-// one line; the long form stays in docs/ so there is a single source of truth.
-//
-// Nothing here is aspirational. Items listed as gaps in
-// docs/production-readiness.md are deliberately absent: no readiness drain, no
-// durable ingest spool, no automatic re-drive, no config hot reload, no scoped
-// admin tokens, no OpenTelemetry export, and no throughput claim.
+// Operational defaults; Go tests check the quoted counts against their sources.
+// Performance measurements describe a dated workload, not a capacity guarantee.
 
 export interface ProductionCard {
   id: string;
@@ -17,56 +10,52 @@ export interface ProductionCard {
   valueLabel: string;
   /** One supporting sentence. */
   line: string;
-  accent: string;
 }
+
+export const PERFORMANCE_SUMMARY =
+  "Measured: 5,000 requests/s in three 20-second bursts on two replicas, each with 2 vCPU and 4 GiB, against a synthetic destination (2026-10-01 ingress benchmark; shared protection and replay require separate sizing).";
 
 export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "load",
-    title: "Handles load predictably",
+    title: "Limit simultaneous requests",
     value: "256",
-    valueLabel: "default in-flight ceiling",
-    line: "Excess requests get a 503 and Retry-After before the body is ever buffered.",
-    accent: DARK.accent,
+    valueLabel: "active requests per replica by default",
+    line: "At capacity, new requests get 503 and Retry-After before their bodies are read. You can enable a short wait for capacity.",
   },
   {
     id: "retries",
-    title: "Retries, then dead-letters",
+    title: "Retry failed deliveries",
     value: "3",
-    valueLabel: "webhook attempts, 500ms to 30s",
-    line: "Webhook, Kafka and RabbitMQ back off, honour a 429, then dead-letter.",
-    accent: "#7070FF",
+    valueLabel: "webhook attempts; waits from 500ms to 30s",
+    line: "Webhook, Kafka and RabbitMQ retry with increasing waits. Only webhook handles 429 Retry-After or sends failures to an optional dead-letter destination.",
   },
   {
     id: "metrics",
-    title: "Metrics on day one",
-    value: "41",
-    valueLabel: "Prometheus metrics exported",
-    line: "With a Grafana dashboard in the repo that a test keeps matching the metric names.",
-    accent: "#25BE8A",
+    title: "Exports Prometheus metrics",
+    value: "70",
+    valueLabel: "core Prometheus metrics exported",
+    line: "Enable Prometheus metrics to track requests, failures, and delivery latency. Grafana dashboards are included.",
   },
   {
     id: "controls",
-    title: "Controls per endpoint",
-    value: "11",
-    valueLabel: "signature schemes",
-    line: "Verification fails closed, and rate limits and replay protection are set per endpoint.",
-    accent: DARK.highlight,
-  },
-  {
-    id: "replay",
-    title: "Replay what happened",
-    value: "4",
-    valueLabel: "replay API routes",
-    line: "Accepted events land in Postgres and re-deliver one at a time or in bulk.",
-    accent: "#35B2AD",
+    title: "Set access rules for each flow",
+    value: "14",
+    valueLabel: "authentication formats",
+    line: "Reject invalid senders and duplicates. Use memory for one replica, or Redis/PostgreSQL for shared protection.",
   },
   {
     id: "packaging",
-    title: "Ships as one binary",
+    title: "Core runs as one binary",
     value: "1",
     valueLabel: "static binary, non-root",
-    line: "A scratch image with a TLS 1.2 floor wherever a destination speaks TLS.",
-    accent: "#A3B4D3",
+    line: "A scratch image with outbound TLS 1.2 or newer. Add Redis or PostgreSQL for shared protection. No replay service is required unless you add replay.",
+  },
+  {
+    id: "replay",
+    title: "Recover failures and inspect webhooks",
+    value: "7",
+    valueLabel: "days of replay retention by default",
+    line: "Use the optional replay console to retry failed deliveries after a sender’s 2xx, or spot-check webhooks with view-only inspections.",
   },
 ];

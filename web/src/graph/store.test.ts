@@ -1,103 +1,212 @@
 import { beforeEach, expect, test } from "vitest";
 import { useGraphStore } from "./store";
-import { createNode, resetIdCounters } from "./model";
+import { createNode, emptyDocument, resetIdCounters } from "./model";
+import { templateSubgraph } from "./templates";
 
 beforeEach(() => {
   resetIdCounters();
-  useGraphStore.setState({ nodes: [], edges: [], selectedId: null, selectedEdgeId: null });
+  useGraphStore.getState().clear();
 });
 
 test("addNode appends a node", () => {
-  useGraphStore.getState().addNode(createNode("endpoint", { x: 0, y: 0 }));
+  useGraphStore.getState().addNode(createNode("http_trigger", { x: 0, y: 0 }));
   expect(useGraphStore.getState().nodes).toHaveLength(1);
 });
 
-test("updateNodeData patches the node's data immutably", () => {
-  const n = createNode("filter", { x: 0, y: 0 });
+test("updateNodeData patches options", () => {
+  const n = createNode("http_trigger", { x: 0, y: 0 });
   useGraphStore.getState().addNode(n);
-  useGraphStore.getState().updateNodeData(n.id, { path: "action", value: "opened" });
-  const updated = useGraphStore.getState().nodes[0];
-  expect(updated.data).toMatchObject({ path: "action", value: "opened", kind: "filter" });
+  useGraphStore.getState().updateNodeData(n.id, { options: { ...n.data.options, path: "/webhooks/github" } });
+  expect(useGraphStore.getState().nodes[0].data.options.path).toBe("/webhooks/github");
 });
 
-test("onConnect adds a valid endpoint->destination edge and rejects invalid", () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  const d = createNode("destination", { x: 100, y: 0 });
+test("onConnect adds a valid trigger->read_body edge and rejects a gate after read_body", () => {
+  const trigger = createNode("http_trigger", { x: 0, y: 0 });
+  const body = createNode("read_body", { x: 100, y: 0 });
+  const rl = createNode("rate_limit", { x: 200, y: 0 });
   const s = useGraphStore.getState();
-  s.addNode(ep);
-  s.addNode(d);
-  s.onConnect({ source: ep.id, target: d.id, sourceHandle: null, targetHandle: null });
+  s.addNode(trigger);
+  s.addNode(body);
+  s.addNode(rl);
+  s.onConnect({ source: trigger.id, target: body.id, sourceHandle: "out", targetHandle: "in" });
   expect(useGraphStore.getState().edges).toHaveLength(1);
-  // invalid: destination -> endpoint
-  s.onConnect({ source: d.id, target: ep.id, sourceHandle: null, targetHandle: null });
+  s.onConnect({ source: body.id, target: rl.id, sourceHandle: "out", targetHandle: "in" });
   expect(useGraphStore.getState().edges).toHaveLength(1);
 });
 
-test("setSelected tracks selection", () => {
-  useGraphStore.getState().setSelected("endpoint_1");
-  expect(useGraphStore.getState().selectedId).toBe("endpoint_1");
-  useGraphStore.getState().setSelected(null);
-  expect(useGraphStore.getState().selectedId).toBeNull();
+test("addFlow returns false for an empty or duplicate name", () => {
+  expect(useGraphStore.getState().addFlow("")).toBe(false);
+  expect(useGraphStore.getState().addFlow("main")).toBe(false);
+  expect(useGraphStore.getState().addFlow("billing")).toBe(true);
+  expect(useGraphStore.getState().activeFlow).toBe("billing");
 });
 
-test("onConnect defaults edge target to the destination name and create=true", () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  const d = createNode("destination", { x: 100, y: 0 });
-  const s = useGraphStore.getState();
-  s.addNode(ep); s.addNode(d);
-  s.onConnect({ source: ep.id, target: d.id, sourceHandle: null, targetHandle: null });
-  const edge = useGraphStore.getState().edges[0];
-  expect(edge.data).toMatchObject({ target: d.data.name, create: true });
+test("renameFlow ignores empty, whitespace, and colliding names", () => {
+  useGraphStore.getState().addFlow("billing");
+  useGraphStore.getState().renameFlow("");
+  useGraphStore.getState().renameFlow("   ");
+  expect(useGraphStore.getState().activeFlow).toBe("billing");
+  useGraphStore.getState().renameFlow("main");
+  expect(useGraphStore.getState().activeFlow).toBe("billing");
+  useGraphStore.getState().renameFlow("payments");
+  expect(useGraphStore.getState().activeFlow).toBe("payments");
 });
 
-test("onConnect creates parallel routes with distinct default targets and ids", () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  const d = createNode("destination", { x: 100, y: 0 });
-  const s = useGraphStore.getState();
-  s.addNode(ep);
-  s.addNode(d);
-  s.onConnect({ source: ep.id, target: d.id, sourceHandle: null, targetHandle: null });
-  s.onConnect({ source: ep.id, target: d.id, sourceHandle: null, targetHandle: null });
-  const edges = useGraphStore.getState().edges;
-  expect(edges).toHaveLength(2);
-  const targets = edges.map((e) => (e.data as { target: string }).target);
-  expect(targets[0]).toBe(d.data.name); // first defaults to the destination name
-  expect(targets[1]).toBe(`${d.data.name}-2`); // second avoids a duplicate route
-  expect(edges[0].id).not.toBe(edges[1].id); // unique ids
-});
-
-test("updateEdgeData patches edge data immutably", () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  const d = createNode("destination", { x: 100, y: 0 });
-  const s = useGraphStore.getState();
-  s.addNode(ep); s.addNode(d);
-  s.onConnect({ source: ep.id, target: d.id, sourceHandle: null, targetHandle: null });
-  const id = useGraphStore.getState().edges[0].id;
-  useGraphStore.getState().updateEdgeData(id, { target: "github-webhooks" });
-  expect((useGraphStore.getState().edges[0].data as { target: string }).target).toBe("github-webhooks");
-});
-
-test("selecting a node clears edge selection and vice versa", () => {
-  const s = useGraphStore.getState();
-  s.setSelected("endpoint_1");
-  expect(useGraphStore.getState().selectedEdgeId).toBeNull();
-  s.setSelectedEdge("e1");
-  expect(useGraphStore.getState().selectedId).toBeNull();
-  expect(useGraphStore.getState().selectedEdgeId).toBe("e1");
-});
-
-test("setGraph replaces the graph, clears selection, and seeds counters", () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
+test("setGraph replaces the document and clears selection", () => {
+  const n = createNode("filter", { x: 0, y: 0 });
   useGraphStore.getState().setSelected("x");
-  useGraphStore.getState().setGraph([ep], []);
+  useGraphStore.getState().setGraph({
+    nodes: [n],
+    edges: [],
+    serverConfig: { addr: ":8080" },
+    coreReplayConfig: null,
+    replayServiceConfig: null,
+    configExtra: {},
+    connections: {},
+    destinations: {},
+    activeFlow: "github",
+    otherFlows: {},
+  });
   expect(useGraphStore.getState().nodes).toHaveLength(1);
+  expect(useGraphStore.getState().activeFlow).toBe("github");
   expect(useGraphStore.getState().selectedId).toBeNull();
 });
 
-test("clear empties the graph and selection", () => {
-  const ep = createNode("endpoint", { x: 0, y: 0 });
-  useGraphStore.setState({ nodes: [ep], edges: [], selectedId: ep.id, selectedEdgeId: null });
+test("arrangeNodes spreads overlapping nodes", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 0, y: 0 });
+  useGraphStore.setState({
+    nodes: [a, b],
+    edges: [{ id: "e1", source: a.id, target: b.id, sourceHandle: "out", targetHandle: "in" }],
+  });
+  useGraphStore.getState().arrangeNodes();
+  const [left, right] = useGraphStore.getState().nodes;
+  expect(left.position).not.toEqual(right.position);
+});
+
+test("setGraph lays out stacked nodes on inactive flows", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 0, y: 0 });
+  useGraphStore.getState().setGraph({
+    ...emptyDocument(),
+    nodes: [createNode("filter", { x: 40, y: 40 })],
+    otherFlows: {
+      billing: {
+        nodes: [a, b],
+        edges: [{ id: "e1", source: a.id, target: b.id, sourceHandle: "out", targetHandle: "in" }],
+      },
+    },
+  });
+  const billing = useGraphStore.getState().otherFlows.billing.nodes;
+  expect(billing[0].position).not.toEqual(billing[1].position);
+});
+
+test("setActiveFlow lays out a stacked snapshot", () => {
+  const a = createNode("http_trigger", { x: 0, y: 0 });
+  const b = createNode("publish", { x: 0, y: 0 });
+  useGraphStore.setState({
+    ...emptyDocument(),
+    nodes: [createNode("filter", { x: 40, y: 40 })],
+    otherFlows: {
+      billing: {
+        nodes: [a, b],
+        edges: [{ id: "e1", source: a.id, target: b.id, sourceHandle: "out", targetHandle: "in" }],
+      },
+    },
+    selectedId: null,
+    selectedEdgeId: null,
+  });
+  useGraphStore.getState().setActiveFlow("billing");
+  const nodes = useGraphStore.getState().nodes;
+  expect(nodes).toHaveLength(2);
+  expect(nodes[0].position).not.toEqual(nodes[1].position);
+});
+
+test("insertSubgraph adds a template's nodes and edges at the drop point", () => {
   useGraphStore.getState().clear();
-  expect(useGraphStore.getState().nodes).toHaveLength(0);
-  expect(useGraphStore.getState().selectedId).toBeNull();
+  const sub = templateSubgraph("slack-notify")!;
+  useGraphStore.getState().insertSubgraph(sub, { x: 400, y: 120 });
+  const s = useGraphStore.getState();
+  expect(s.nodes.map((n) => n.id).sort()).toEqual(["fmt", "post"]);
+  expect(s.edges).toHaveLength(1);
+  expect(Math.min(...s.nodes.map((n) => n.position.x))).toBe(400);
+  expect(Math.min(...s.nodes.map((n) => n.position.y))).toBe(120);
+});
+
+test("inserting the same template twice produces unique node and edge ids", () => {
+  useGraphStore.getState().clear();
+  const sub = templateSubgraph("slack-notify")!;
+  useGraphStore.getState().insertSubgraph(sub, { x: 0, y: 0 });
+  useGraphStore.getState().insertSubgraph(sub, { x: 0, y: 200 });
+  const s = useGraphStore.getState();
+  expect(s.nodes).toHaveLength(4);
+  const nodeIds = s.nodes.map((n) => n.id);
+  expect(new Set(nodeIds).size).toBe(4);
+  const yamlIds = s.nodes.map((n) => n.data.yamlId);
+  expect(new Set(yamlIds).size).toBe(4);
+  const edgeIds = s.edges.map((e) => e.id);
+  expect(new Set(edgeIds).size).toBe(edgeIds.length);
+  expect(s.edges).toHaveLength(2);
+});
+
+test("insertSubgraph does not collide with a hand-added node of the same id", () => {
+  useGraphStore.getState().clear();
+  // A node the operator added by hand that happens to use a template id. This
+  // is the case that silently exports a duplicate `id:` if renaming is skipped.
+  useGraphStore.getState().addNode({
+    id: "fmt",
+    type: "flow",
+    position: { x: 0, y: 0 },
+    data: { nodeType: "code", yamlId: "fmt", options: { script: "return {};" } },
+  });
+  const sub = templateSubgraph("slack-notify")!;
+  useGraphStore.getState().insertSubgraph(sub, { x: 0, y: 0 });
+  const s = useGraphStore.getState();
+  const ids = s.nodes.map((n) => n.id);
+  expect(ids).toEqual(["fmt", "fmt_2", "post"]);
+  expect(new Set(s.nodes.map((n) => n.data.yamlId)).size).toBe(3);
+  expect(s.edges[0].source).toBe("fmt_2");
+});
+
+test("switching flows keeps each flow's unmodelled fields", () => {
+  const s = useGraphStore.getState();
+  s.setGraph({ ...emptyDocument(), activeFlow: "a", flowExtra: { capture_failures: false } });
+  s.addFlow("b");
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+  useGraphStore.getState().setActiveFlow("a");
+  expect(useGraphStore.getState().flowExtra).toEqual({ capture_failures: false });
+  expect(useGraphStore.getState().document().flowExtra).toEqual({ capture_failures: false });
+});
+
+test("loading or clearing a document drops the previous flow's unmodelled fields", () => {
+  const s = useGraphStore.getState();
+  s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false }, deliveryFailurePolicy: "skip_failed" });
+  s.setGraph(emptyDocument());
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+  expect(useGraphStore.getState().deliveryFailurePolicy).toBeUndefined();
+  s.setGraph({ ...emptyDocument(), flowExtra: { capture_failures: false } });
+  s.clear();
+  expect(useGraphStore.getState().flowExtra).toBeUndefined();
+});
+
+test("replay setup, partial clear, and removal keep document boundaries explicit", () => {
+  useGraphStore.getState().clear();
+  useGraphStore.getState().addReplayConfiguration();
+  expect(useGraphStore.getState().coreReplayConfig).toMatchObject({ url: "http://replay:8080" });
+  expect(useGraphStore.getState().replayServiceConfig).toMatchObject({ retention: { ttl: "168h" } });
+
+  useGraphStore.getState().clearCore();
+  expect(useGraphStore.getState().coreReplayConfig).toBeNull();
+  expect(useGraphStore.getState().replayServiceConfig).not.toBeNull();
+
+  useGraphStore.getState().removeReplayConfiguration();
+  expect(useGraphStore.getState().replayServiceConfig).toBeNull();
+});
+
+test("replacing an invalid imported replay block removes its raw value", () => {
+  useGraphStore.getState().setGraph({ ...emptyDocument(), configExtra: { replay: "invalid" } });
+  expect(useGraphStore.getState().configExtra.replay).toBe("invalid");
+  useGraphStore.getState().addReplayConfiguration();
+  expect(useGraphStore.getState().configExtra).not.toHaveProperty("replay");
+  expect(useGraphStore.getState().coreReplayConfig).toMatchObject({ url: "http://replay:8080" });
 });

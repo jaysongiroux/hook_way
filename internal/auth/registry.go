@@ -33,14 +33,16 @@ const (
 
 // Spec carries the per-endpoint inputs a scheme needs to build a verifier.
 type Spec struct {
-	AuthType           string
-	Scheme             string
-	Secret             string
-	TimestampTolerance time.Duration // reused as JWT leeway for jwt_* schemes
-	RemoveBearer       bool
-	ExpectedIssuer     string
-	ExpectedAudience   string
-	BodyHashClaim      string
+	TimestampUnit, TimestampPolicy, BodyRepresentation, SignatureLabel string
+	AuthType                                                           string
+	Scheme                                                             string
+	Secret                                                             string
+	TimestampTolerance                                                 time.Duration // reused as JWT leeway for jwt_* schemes
+	RemovePrefix                                                       string
+	RemoveBearer                                                       bool
+	ExpectedIssuer                                                     string
+	ExpectedAudience                                                   string
+	BodyHashClaim                                                      string
 }
 
 type schemeDef struct {
@@ -73,7 +75,9 @@ func init() {
 		return hmacVerifier{secret: s.Secret, scheme: hmacSHA1HexScheme()}, nil
 	})
 	Register(AuthTypeHeaderExact, SchemeExact, false, func(s Spec) (Verifier, error) {
-		return newExactVerifier(s.Secret, s.RemoveBearer), nil
+		v := newExactVerifier(s.Secret, s.RemoveBearer)
+		v.removePrefix = s.RemovePrefix
+		return v, nil
 	})
 	Register(AuthTypeHeaderExact, SchemeBasic, false, func(s Spec) (Verifier, error) {
 		return newBasicVerifier(s.Secret), nil
@@ -92,12 +96,6 @@ func init() {
 	})
 }
 
-// RejectAll is a fail-closed verifier used when an endpoint's scheme cannot be
-// built, so a misconfiguration rejects traffic rather than accepting it blindly.
-type RejectAll struct{}
-
-func (RejectAll) Verify(string, []byte, time.Time) error { return ErrUnauthorized }
-
 func authTypeOrDefault(authType string) string {
 	if authType == "" {
 		return AuthTypeHMACSHA256
@@ -105,22 +103,20 @@ func authTypeOrDefault(authType string) string {
 	return authType
 }
 
-// NewVerifier builds the verifier for a registered scheme.
+// NewVerifier builds the verifier for a registered scheme. An empty AuthType
+// is inferred from the scheme so auth nodes can name only the scheme.
 func NewVerifier(spec Spec) (Verifier, error) {
+	if err := ValidateSpec(spec); err != nil {
+		return nil, err
+	}
 	def, ok := registry[spec.Scheme]
 	if !ok {
 		return nil, fmt.Errorf("unknown signature scheme %q (known: %v)", spec.Scheme, Schemes())
 	}
-	if def.authType != authTypeOrDefault(spec.AuthType) {
-		return nil, fmt.Errorf("scheme %q is not valid for auth type %q", spec.Scheme, authTypeOrDefault(spec.AuthType))
+	if spec.AuthType != "" && def.authType != spec.AuthType {
+		return nil, fmt.Errorf("scheme %q is not valid for auth type %q", spec.Scheme, spec.AuthType)
 	}
 	return def.build(spec)
-}
-
-// SchemeRegistered reports whether a scheme is known.
-func SchemeRegistered(scheme string) bool {
-	_, ok := registry[scheme]
-	return ok
 }
 
 // SchemeAllowedForAuthType reports whether scheme is registered for authType.

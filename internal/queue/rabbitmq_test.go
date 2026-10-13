@@ -4,26 +4,195 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/jasongiroux/hookway/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/testenv"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/testcontainers/testcontainers-go"
 	tcrabbitmq "github.com/testcontainers/testcontainers-go/modules/rabbitmq"
 )
 
-func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
+func TestRabbitMQStalledHandshakeAndConnectionWaitRespectContext(t *testing.T) {
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	defer func() { _ = listener.Close() }()
+	accepted := make(chan net.Conn, 2)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- conn
+		}
+	}()
+	p := &RabbitMQPublisher{cfg: RabbitMQConfig{URL: "amqp://guest:guest@" + listener.Addr().String() + "/", PublishTimeout: 2 * time.Second}, logger: testLogger(), closed: make(chan struct{}), connectGate: make(chan struct{}, 1)}
+	defer func() { _ = p.Close() }()
+	leaderCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	leader := make(chan error, 1)
+	go func() { _, err := p.connection(leaderCtx); leader <- err }()
+	conn := <-accepted
+	defer func() { _ = conn.Close() }()
+	ctx, stop := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer stop()
+	waiter := make(chan error, 1)
+	go func() { _, err := p.connection(ctx); waiter <- err }()
+	select {
+	case err := <-waiter:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("waiter: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connection gate ignored waiter deadline")
+	}
+	select {
+	case err := <-leader:
+		if err == nil {
+			t.Fatal("stalled handshake succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AMQP handshake ignored context")
+	}
+}
+
+func TestRabbitMQStalledBrokerRPCAndUncertainConfirmReleaseDeadline(t *testing.T) {
+	ctx, container := startRabbitMQ(t)
+	brokerURL, err := container.AmqpURL(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(brokerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer func() { _ = listener.Close() }()
+	var paused atomic.Bool
+	resume := make(chan struct{}, 1)
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			upstream, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(proxyCtx, "tcp", u.Host)
+			if err != nil {
+				_ = client.Close()
+				continue
+			}
+			go func() { <-proxyCtx.Done(); _ = client.Close(); _ = upstream.Close() }()
+			go func() { _, _ = io.Copy(upstream, client); _ = upstream.Close() }()
+			go func() {
+				defer func() { _ = client.Close() }()
+				defer func() { _ = upstream.Close() }()
+				buf := make([]byte, 32<<10)
+				for {
+					n, err := upstream.Read(buf)
+					if n > 0 {
+						if paused.Load() {
+							select {
+							case <-resume:
+							case <-proxyCtx.Done():
+								return
+							}
+						}
+						if _, writeErr := client.Write(buf[:n]); writeErr != nil {
+							return
+						}
+					}
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	proxied := *u
+	proxied.Host = listener.Addr().String()
+	p, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{URL: proxied.String(), Exchange: "hookway.deadline", ExchangeType: "direct", DeclareQueues: true, Queues: []string{"bounded"}, PublisherChannels: 1, PublishTimeout: 2 * time.Second, Retry: RetryPolicy{MaxAttempts: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+	// Channel open is a synchronous RPC. Withhold the broker's response while
+	// keeping the TCP connection live: the caller must not hang on that RPC.
+	paused.Store(true)
+	short, stop := context.WithTimeout(ctx, 100*time.Millisecond)
+	err = p.Publish(short, "bounded", "bounded", Message{ID: "never-written"})
+	stop()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled channel open: %v", err)
+	}
+	paused.Store(false)
+	resume <- struct{}{}
+	if err := p.Publish(ctx, "bounded", "bounded", Message{ID: "warmup"}); err != nil {
+		t.Fatalf("recover after stalled RPC: %v", err)
+	}
+	// The warm pooled channel can write before its confirmation is withheld.
+	// An error is NOT proof that the broker did not receive the message.
+	paused.Store(true)
+	short, stop = context.WithTimeout(ctx, 100*time.Millisecond)
+	err = p.Publish(short, "bounded", "bounded", Message{ID: "uncertain"})
+	stop()
+	if err == nil {
+		t.Fatal("missing confirmation reported success")
+	}
+	paused.Store(false)
+	resume <- struct{}{}
+	direct, err := amqp.Dial(brokerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = direct.Close() }()
+	ch, err := direct.Channel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ch.Close() }()
+	ids := map[string]int{}
+	for {
+		delivery, ok, err := ch.Get("bounded", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		var msg Message
+		if err := json.Unmarshal(delivery.Body, &msg); err != nil {
+			t.Fatal(err)
+		}
+		ids[msg.ID]++
+	}
+	if ids["never-written"] != 0 || ids["warmup"] != 1 || ids["uncertain"] != 1 {
+		t.Fatalf("delivery evidence (no speculative resend): %v", ids)
+	}
+	if err := p.Publish(ctx, "bounded", "bounded", Message{ID: "recovered"}); err != nil {
+		t.Fatalf("recovery after uncertain confirmation: %v", err)
+	}
+}
+
+func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -70,12 +239,7 @@ func TestRabbitMQPublisherPublishesConsumableEnvelope(t *testing.T) {
 }
 
 func TestRabbitMQPublisherPublishesConcurrentlyAcrossChannelPool(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -130,12 +294,7 @@ func TestRabbitMQPublisherPublishesConcurrentlyAcrossChannelPool(t *testing.T) {
 }
 
 func TestRabbitMQPublisherDeclaresDeadLetterQueue(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -170,12 +329,7 @@ func TestRabbitMQPublisherDeclaresDeadLetterQueue(t *testing.T) {
 }
 
 func TestRabbitMQPublisherDeclaresQueueOptions(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +369,7 @@ func TestRabbitMQPublisherDeclaresQueueOptions(t *testing.T) {
 	// Re-declaring with mismatched args fails. Success proves Hookway declared
 	// RabbitMQ queue args in milliseconds and integers as expected.
 	_, err = ch.QueueDeclare("billing-events", true, false, false, false, amqp.Table{
-		"x-message-ttl":             int32((72 * time.Hour).Milliseconds()),
+		"x-message-ttl":             int32(259200000), // 72h in milliseconds
 		"x-max-length":              int32(500000),
 		"x-overflow":                "reject-publish",
 		"x-dead-letter-exchange":    "hookway.options.dlx",
@@ -227,17 +381,8 @@ func TestRabbitMQPublisherDeclaresQueueOptions(t *testing.T) {
 }
 
 func TestRabbitMQFactoryRoutesToMultipleBrokers(t *testing.T) {
-	ctx := context.Background()
-	billingContainer, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(billingContainer) })
-	activityContainer, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(activityContainer) })
+	ctx, billingContainer := startRabbitMQ(t)
+	_, activityContainer := startRabbitMQ(t)
 	billingURL, err := billingContainer.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -329,11 +474,10 @@ func assertRabbitMQMessage(t *testing.T, ctx context.Context, url, queueName, wa
 }
 
 func TestRabbitMQPublisherConnectsAfterUnavailableStartup(t *testing.T) {
+	testenv.SkipIfShort(t)
 	ctx := context.Background()
 	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "rabbitmq")
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -357,9 +501,7 @@ func TestRabbitMQPublisherConnectsAfterUnavailableStartup(t *testing.T) {
 	t.Cleanup(func() { _ = pub.Close() })
 
 	container, err = tcrabbitmq.Run(ctx, "rabbitmq:3-management")
-	if err != nil {
-		t.Skipf("rabbitmq restart testcontainer unavailable: %v", err)
-	}
+	testenv.RequireContainer(t, err, "rabbitmq")
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
 	restartedURL, err := container.AmqpURL(ctx)
 	if err != nil {
@@ -377,12 +519,7 @@ func TestRabbitMQPublisherConnectsAfterUnavailableStartup(t *testing.T) {
 }
 
 func TestRabbitMQPublisherReconnectsAfterDisconnectBeforePublish(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -421,7 +558,10 @@ func TestRabbitMQPublisherRetriesPublishFailures(t *testing.T) {
 	ctx := context.Background()
 	metrics := &rabbitMQMetricsRecorder{}
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry", ExchangeType: "direct", Durable: true,
+		URL:            "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
+		Exchange:       "hookway.retry",
+		ExchangeType:   "direct",
+		Durable:        true,
 		PublishTimeout: 2 * time.Second,
 		Retry:          RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		Metrics:        metrics,
@@ -447,7 +587,10 @@ func TestRabbitMQPublisherDefaultsToThreeRetryAttempts(t *testing.T) {
 	ctx := context.Background()
 	metrics := &rabbitMQMetricsRecorder{}
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry.default", ExchangeType: "direct", Durable: true,
+		URL:            "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
+		Exchange:       "hookway.retry.default",
+		ExchangeType:   "direct",
+		Durable:        true,
 		PublishTimeout: 2 * time.Second,
 		Metrics:        metrics,
 	})
@@ -471,7 +614,10 @@ func TestRabbitMQPublisherHonorsConfiguredMaxAttempts(t *testing.T) {
 	ctx := context.Background()
 	metrics := &rabbitMQMetricsRecorder{}
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL: "amqp://guest:guest@127.0.0.1:1/", Exchange: "hookway.retry.configured", ExchangeType: "direct", Durable: true,
+		URL:            "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
+		Exchange:       "hookway.retry.configured",
+		ExchangeType:   "direct",
+		Durable:        true,
 		PublishTimeout: 2 * time.Second,
 		Retry:          RetryPolicy{MaxAttempts: 5, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		Metrics:        metrics,
@@ -498,12 +644,7 @@ func TestRabbitMQPublisherHonorsConfiguredMaxAttempts(t *testing.T) {
 // not burn the configured retry budget, since "no binding for this routing
 // key" is a terminal config error, not a transient one.
 func TestRabbitMQPublisherMandatoryUnroutableFailsWithoutRetryStorm(t *testing.T) {
-	ctx := context.Background()
-	container, err := runRabbitMQ(ctx)
-	if err != nil {
-		t.Skipf("rabbitmq testcontainer unavailable: %v", err)
-	}
-	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	ctx, container := startRabbitMQ(t)
 	url, err := container.AmqpURL(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -554,6 +695,16 @@ func (r *rabbitMQMetricsRecorder) RabbitMQUnroutable(destinationQueueID, queue s
 	r.unroutable++
 }
 
+func startRabbitMQ(t *testing.T) (context.Context, *tcrabbitmq.RabbitMQContainer) {
+	t.Helper()
+	testenv.SkipIfShort(t)
+	ctx := context.Background()
+	container, err := runRabbitMQ(ctx)
+	testenv.RequireContainer(t, err, "rabbitmq")
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(container) })
+	return ctx, container
+}
+
 func runRabbitMQ(ctx context.Context) (container *tcrabbitmq.RabbitMQContainer, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -570,7 +721,7 @@ func TestRabbitMQEagerConnectFailureLogs(t *testing.T) {
 	defer cancel()
 	// Port 1 is not a valid AMQP broker — dial will fail immediately.
 	pub, err := NewRabbitMQPublisher(ctx, RabbitMQConfig{
-		URL:           "amqp://guest:guest@127.0.0.1:1/",
+		URL:           "amqp://guest:guest@127.0.0.1:1/", // #nosec G101 -- unreachable test broker
 		Exchange:      "hookway.test",
 		ExchangeType:  "direct",
 		DestinationID: "test-dest",
@@ -584,43 +735,5 @@ func TestRabbitMQEagerConnectFailureLogs(t *testing.T) {
 	line := lastQueueLogLine(t, &buf, "rabbitmq initial connect failed; will retry on publish")
 	if line == nil || line["level"] != "WARN" || line["destination"] == nil {
 		t.Fatalf("missing eager-connect warn: %v", line)
-	}
-}
-
-// TestNextBackoffAppliesJitterWithinBand guards the D8 fix: nextBackoff must
-// apply +/-20% jitter to the doubled delay so many callers backing off at
-// once (e.g. every publisher reconnecting after a shared broker outage)
-// don't retry in lockstep. Doubling 100ms with no jitter would always yield
-// exactly 200ms; with jitter every sample should land in [160ms, 240ms] and,
-// across enough samples, actually vary.
-func TestNextBackoffAppliesJitterWithinBand(t *testing.T) {
-	base := 100 * time.Millisecond
-	want := 2 * base
-	lower := time.Duration(float64(want) * 0.8)
-	upper := time.Duration(float64(want) * 1.2)
-	seen := map[time.Duration]bool{}
-	for i := 0; i < 200; i++ {
-		got := nextBackoff(base, 0)
-		if got < lower || got > upper {
-			t.Fatalf("nextBackoff(%v, 0) = %v, want within [%v, %v]", base, got, lower, upper)
-		}
-		seen[got] = true
-	}
-	if len(seen) < 2 {
-		t.Fatalf("expected jittered delays to vary across samples, got only %v", seen)
-	}
-}
-
-// TestNextBackoffJitterNeverExceedsMax guards the "cap applied after jitter"
-// requirement: even when jitter pushes the doubled delay above maxDelay, the
-// cap must still be hard.
-func TestNextBackoffJitterNeverExceedsMax(t *testing.T) {
-	base := time.Second
-	max := 1500 * time.Millisecond
-	for i := 0; i < 200; i++ {
-		got := nextBackoff(base, max)
-		if got > max {
-			t.Fatalf("nextBackoff(%v, %v) = %v, exceeds hard cap", base, max, got)
-		}
 	}
 }

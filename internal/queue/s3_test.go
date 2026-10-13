@@ -20,15 +20,28 @@ func TestS3ObjectKey(t *testing.T) {
 	cases := []struct {
 		name   string
 		folder string
+		msg    Message
 		want   string
 	}{
-		{"with folder", "orders", "orders/2026/06/29/20260629T143000.123456789Z-evt_1.json"},
-		{"trailing slash trimmed", "orders/", "orders/2026/06/29/20260629T143000.123456789Z-evt_1.json"},
-		{"empty folder writes to root", "", "2026/06/29/20260629T143000.123456789Z-evt_1.json"},
+		{"with folder", "orders", msg, "orders/2026/06/29/20260629T143000.123456789Z-evt_1.json"},
+		{"trailing slash trimmed", "orders/", msg, "orders/2026/06/29/20260629T143000.123456789Z-evt_1.json"},
+		{"empty folder writes to root", "", msg, "2026/06/29/20260629T143000.123456789Z-evt_1.json"},
+		{
+			"object mode uses filename without .json",
+			"uploads",
+			Message{ID: "evt_1", ReceivedAt: received, PayloadMode: "object", ObjectFilename: "report.pdf"},
+			"uploads/2026/06/29/20260629T143000.123456789Z-evt_1-report.pdf",
+		},
+		{
+			"object mode without filename omits suffix",
+			"uploads",
+			Message{ID: "evt_1", ReceivedAt: received, PayloadMode: "object"},
+			"uploads/2026/06/29/20260629T143000.123456789Z-evt_1",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := s3ObjectKey(tc.folder, msg); got != tc.want {
+			if got := s3ObjectKey(tc.folder, tc.msg); got != tc.want {
 				t.Fatalf("s3ObjectKey(%q) = %q, want %q", tc.folder, got, tc.want)
 			}
 		})
@@ -153,6 +166,84 @@ func TestS3PublisherPublishesObject(t *testing.T) {
 	}
 	if decoded.ID != "evt_1" {
 		t.Fatalf("decoded id = %q", decoded.ID)
+	}
+}
+
+func TestS3PublisherPublishesRawObjectPayload(t *testing.T) {
+	fake := newFakeS3()
+	fake.seedBucket("events")
+	pub, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "events", Targets: []S3Target{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatalf("NewS3Publisher: %v", err)
+	}
+	msg := Message{
+		ID:                "evt_1",
+		ReceivedAt:        time.Date(2026, 6, 29, 14, 30, 0, 0, time.UTC),
+		PayloadMode:       "object",
+		ObjectBytes:       []byte("%PDF-1.4"),
+		ObjectContentType: "application/pdf",
+		ObjectFilename:    "report.pdf",
+	}
+	if err := pub.Publish(context.Background(), "archive", "uploads", msg); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	put := fake.puts[0]
+	wantKey := "uploads/2026/06/29/20260629T143000.000000000Z-evt_1-report.pdf"
+	if aws.ToString(put.Key) != wantKey {
+		t.Fatalf("key = %q, want %q", aws.ToString(put.Key), wantKey)
+	}
+	if aws.ToString(put.ContentType) != "application/pdf" {
+		t.Fatalf("content-type = %q", aws.ToString(put.ContentType))
+	}
+	if got := string(readAll(t, put)); got != "%PDF-1.4" {
+		t.Fatalf("body = %q, want raw PDF bytes", got)
+	}
+	if put.Metadata["hookway-event-id"] != "evt_1" || put.Metadata["hookway-filename"] != "report.pdf" {
+		t.Fatalf("metadata = %#v", put.Metadata)
+	}
+}
+
+func TestS3PublisherPublishesEmptyObjectPayload(t *testing.T) {
+	fake := newFakeS3()
+	fake.seedBucket("events")
+	pub, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "events", Targets: []S3Target{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := Message{
+		ID: "evt_empty", ReceivedAt: time.Date(2026, 6, 29, 14, 30, 0, 0, time.UTC),
+		PayloadMode: "object", ObjectBytes: []byte{}, ObjectContentType: "application/octet-stream",
+	}
+	if err := pub.Publish(context.Background(), "archive", "uploads", msg); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(readAll(t, fake.puts[0])); got != 0 {
+		t.Fatalf("stored bytes = %d, want empty object", got)
+	}
+}
+
+func TestS3PublisherRejectsInvalidObjectContentType(t *testing.T) {
+	fake := newFakeS3()
+	fake.seedBucket("events")
+	pub, err := NewS3Publisher(context.Background(), fake, S3Config{
+		Bucket: "events", Targets: []S3Target{{Name: "uploads"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = pub.Publish(context.Background(), "archive", "uploads", Message{
+		ID: "evt_bad", ReceivedAt: time.Now(), PayloadMode: "object",
+		ObjectBytes: []byte("x"), ObjectContentType: "text/plain\r\nX-Evil: yes",
+	})
+	if err == nil {
+		t.Fatal("Publish accepted an invalid object Content-Type")
+	}
+	if len(fake.puts) != 0 {
+		t.Fatalf("PutObject calls = %d, want 0", len(fake.puts))
 	}
 }
 

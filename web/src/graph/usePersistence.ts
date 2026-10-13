@@ -1,35 +1,77 @@
 import { useEffect } from "react";
 import { useGraphStore } from "./store";
 import { loadGraph, saveGraph } from "./persistence";
+import { starterDocument } from "./starter";
+import type { GraphDocument } from "./model";
 
 const DEBOUNCE_MS = 400;
+// Route changes reuse the live graph; rehydrating an older debounced snapshot
+// would overwrite edits made just before leaving the builder.
+let hydratedInMemory = false;
+const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
+  "yamlMode", "entryFilename", "flowFiles", "replayFilename",
+  "formDrafts",
+  "nodes",
+  "edges",
+  "serverConfig",
+  "coreReplayConfig",
+  "replayServiceConfig",
+  "configExtra",
+  "connections",
+  "destinations",
+  "activeFlow",
+  "otherFlows",
+  "deliveryFailurePolicy",
+  "flowExtra",
+];
 
-export function usePersistence(): void {
+export function usePersistence(preserveLive = false): void {
   const setGraph = useGraphStore((s) => s.setGraph);
 
-  // Rehydrate once on mount.
   useEffect(() => {
     let cancelled = false;
-    loadGraph().then((g) => {
-      if (!cancelled && g && (g.nodes.length > 0 || g.edges.length > 0)) {
-        setGraph(g.nodes, g.edges, g.serverConfig, g.configExtra);
+    let hydrated = preserveLive && hydratedInMemory;
+    let changedDuringLoad = false;
+    let previousDocument = useGraphStore.getState().document();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const scheduleSave = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        () => void saveGraph(useGraphStore.getState().document()),
+        DEBOUNCE_MS,
+      );
+    };
+
+    const unsub = useGraphStore.subscribe((state) => {
+      const document = state.document();
+      const changed = DOCUMENT_FIELDS.some(
+        (field) => document[field] !== previousDocument[field],
+      );
+      previousDocument = document;
+      if (!changed) return;
+      if (!hydrated) changedDuringLoad = true;
+      else scheduleSave();
+    });
+
+    if (!hydrated) void loadGraph().then((graph) => {
+      if (cancelled) return;
+      hydrated = true;
+      if (preserveLive) hydratedInMemory = true;
+      if (changedDuringLoad) {
+        scheduleSave();
+      } else {
+        setGraph(graph ?? starterDocument());
       }
     });
+
     return () => {
       cancelled = true;
-    };
-  }, [setGraph]);
-
-  // Debounced autosave on graph changes.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsub = useGraphStore.subscribe((state) => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void saveGraph(state.nodes, state.edges, state.serverConfig, state.configExtra), DEBOUNCE_MS);
-    });
-    return () => {
-      if (timer) clearTimeout(timer);
+      if (timer) {
+        clearTimeout(timer);
+        void saveGraph(useGraphStore.getState().document());
+      }
       unsub();
     };
-  }, []);
+  }, [setGraph, preserveLive]);
 }
