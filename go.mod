@@ -38,8 +38,8 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.7.0
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/trace v1.46.0
-	go.temporal.io/api v1.63.4
-	go.temporal.io/sdk v1.48.0
+	go.temporal.io/api v1.63.5
+	go.temporal.io/sdk v1.49.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sync v0.23.0
 	gopkg.in/yaml.v3 v3.0.1
