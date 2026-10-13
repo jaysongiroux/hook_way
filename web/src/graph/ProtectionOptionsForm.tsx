@@ -9,7 +9,8 @@ import { record } from "./WorkspaceEntries";
 export function ProtectionOptionsForm(props: OptionsProps) {
   const { nodeType, value, onChange, scope } = props;
   const open = useContext(WorkspaceActions);
-  const stores = useGraphStore((s) => record(s.configExtra.state_stores));
+  const stateStores = useGraphStore((s) => s.configExtra.state_stores);
+  const stores = record(stateStores);
   const selected = record(stores[String(value.store ?? "")]);
   const rate = nodeType === "rate_limit";
   const strategy = String(value.strategy ?? "token_bucket");

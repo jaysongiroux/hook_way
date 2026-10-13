@@ -168,9 +168,8 @@ function Selector({
 
 export function LaunchDarklyForm(props: OptionsProps) {
   const { value, onChange, scope } = props;
-  const connections = useGraphStore((s) =>
-    Object.keys(record(s.configExtra.launchdarkly)),
-  );
+  const launchdarkly = useGraphStore((s) => s.configExtra.launchdarkly);
+  const connections = Object.keys(record(launchdarkly));
   const context = record(value.context);
   const set = (key: string, v: unknown) => onChange({ ...value, [key]: v });
   const setContext = (key: string, v: unknown) =>
