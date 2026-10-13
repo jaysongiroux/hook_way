@@ -100,15 +100,38 @@ func binaries(t *testing.T) (core, replay string) {
 	return filepath.Join(binDir, "hookway"), filepath.Join(binDir, "hookway-replay")
 }
 
+var fixtureAddrs = struct {
+	sync.Mutex
+	used map[string]bool
+}{used: make(map[string]bool)}
+
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for {
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := l.Addr().String()
+		fixtureAddrs.Lock()
+		used := fixtureAddrs.used[addr]
+		if !used {
+			fixtureAddrs.used[addr] = true
+		}
+		fixtureAddrs.Unlock()
+		_ = l.Close()
+		if used {
+			continue
+		}
+		// Linux may immediately reuse a closed probe's port. Keep its assignment
+		// until fixture cleanup so replicas cannot choose it before binding.
+		t.Cleanup(func() {
+			fixtureAddrs.Lock()
+			delete(fixtureAddrs.used, addr)
+			fixtureAddrs.Unlock()
+		})
+		return addr
 	}
-	addr := l.Addr().String()
-	_ = l.Close()
-	return addr
 }
 
 // output is a goroutine-safe copy of a child process's output.
