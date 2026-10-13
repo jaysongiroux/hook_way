@@ -27,7 +27,7 @@
     "@mantine/core": "^7.13.0",
     "@mantine/hooks": "^7.13.0",
     "@xyflow/react": "^12.3.0",
-    "dexie": "^4.0.8",
+    "dexie": "^4.4.6",
     "fflate": "^0.8.3",
     "mermaid": "12.1.0",
     "openapi-fetch": "0.17.0",
