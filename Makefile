@@ -26,11 +26,12 @@ docs-check:
 wasm:
 	mkdir -p internal/editor/assets web/public
 	GOOS=js GOARCH=wasm $(GO) build -o internal/editor/assets/hookway.wasm ./cmd/hookway-wasm
-	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" internal/editor/assets/wasm_exec.js
-	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js web/public/
+	# Downloaded Go toolchains ship a read-only shim; replace generated copies on rebuild.
+	cp -f "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" internal/editor/assets/wasm_exec.js
+	cp -f internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js web/public/
 
 wasm-harness: wasm
-	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js cmd/hookway-wasm/harness/
+	cp -f internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js cmd/hookway-wasm/harness/
 	@command -v python3 >/dev/null 2>&1 || { \
 		echo "wasm-harness needs python3 to serve the harness over http://."; \
 		echo "Opening index.html as a file:// URL will not work: the WASM fetch is blocked by CORS."; \
@@ -121,7 +122,7 @@ ui: wasm web-build
 	mkdir -p internal/editor/webui
 	find internal/editor/webui -mindepth 1 ! -name .gitkeep -delete
 	cp -R web/dist/. internal/editor/webui/
-	cp internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js internal/editor/webui/
+	cp -f internal/editor/assets/hookway.wasm internal/editor/assets/wasm_exec.js internal/editor/webui/
 
 # ui-check verifies an opt-in local editor bundle before building a binary
 # that serves it; runtime Docker images intentionally omit this bundle.
