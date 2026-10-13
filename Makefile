@@ -183,7 +183,7 @@ observability-check: $(PROMTOOL)
 	$(GO) test ./metrics/... ./internal/ci
 	$(PROMTOOL) check rules metrics/prometheus/alerts.yaml
 
-GOLANGCI_LINT_VERSION ?= v2.13.2
+GOLANGCI_LINT_VERSION ?= v2.14.0
 golangci-lint:
 	$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
