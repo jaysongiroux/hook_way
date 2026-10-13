@@ -3,7 +3,7 @@ module github.com/jaysongiroux/hook_way
 go 1.26.9
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.47.0
+	github.com/aws/aws-sdk-go-v2 v1.47.3
 	github.com/aws/aws-sdk-go-v2/config v1.31.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.29
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.66.0
@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.49.0
 	github.com/aws/aws-sdk-go-v2/service/sns v1.34.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.0
-	github.com/aws/smithy-go v1.28.1
+	github.com/aws/smithy-go v1.28.5
 	github.com/dop251/goja v0.0.0-20260911104922-fabc3b8078ad
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
