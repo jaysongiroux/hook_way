@@ -41,7 +41,7 @@ require (
 	go.temporal.io/api v1.63.4
 	go.temporal.io/sdk v1.48.0
 	golang.org/x/net v0.60.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
