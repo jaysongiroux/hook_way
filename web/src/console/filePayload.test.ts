@@ -1,9 +1,11 @@
-import { Blob as NodeBlob } from "node:buffer";
+import { Blob as NodeBlob, File as NodeFile } from "node:buffer";
 import { afterAll, expect, test, vi } from "vitest";
 import { capturedFiles, safeFilename } from "./filePayload";
 
 // jsdom lacks Blob.text/arrayBuffer; browsers and Node's Blob implement both.
 vi.stubGlobal("Blob", NodeBlob);
+// Node 26 fetch requires its own File brand when decoding multipart data.
+vi.stubGlobal("File", NodeFile);
 afterAll(() => vi.unstubAllGlobals());
 
 const binary = [0, 1, 2, 255];

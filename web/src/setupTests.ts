@@ -24,3 +24,7 @@ class ResizeObserverStub {
   disconnect() {}
 }
 window.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+
+// Mantine 9 listens for font loading to resize autosizing textareas.
+// jsdom has no FontFaceSet; keep real event registration in the test DOM.
+Object.defineProperty(document, "fonts", { value: new EventTarget() });

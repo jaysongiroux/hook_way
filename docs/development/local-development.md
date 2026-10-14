@@ -429,7 +429,10 @@ data. The next `make dev-up` starts empty.
 
 The public website serves documentation at `/docs/` within the existing React
 marketing application, using its shared header, footer, and Mantine components.
-Use Node 22.12 or newer and the existing `web/` package:
+Use Node 26.11.1 or a newer Node 26 release and the existing `web/` package.
+CI and the pinned Docker build stage use Node 26.11.1. The package also supports
+Node 24.21.0 or newer in the Node 24 line for Vercel, which currently offers
+Node 24 and 22 build runtimes:
 
 ```sh
 make web-install

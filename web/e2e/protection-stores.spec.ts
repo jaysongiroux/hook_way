@@ -24,8 +24,8 @@ for(const width of [1440,390]){
   const errors:string[]=[];page.on("pageerror",e=>errors.push(e.message));
   const builder=new BuilderPage(page);await builder.gotoReady();await builder.importYaml(config);
   await builder.selectNode("quota");const inspector=builder.inspector();
-  await expect(inspector.getByRole("textbox",{name:"Protection store"})).toHaveValue("cluster");
-  await inspector.getByRole("textbox",{name:"Rate-limiting strategy"}).click();
+  await expect(inspector.getByRole("combobox",{name:"Protection store"})).toHaveValue("cluster");
+  await inspector.getByRole("combobox",{name:"Rate-limiting strategy"}).click();
   await page.getByRole("option",{name:/Sliding-window counter/}).click();
   await inspector.getByLabel("Requests per window",{exact:true}).fill("25");
   await inspector.getByLabel("Window duration",{exact:true}).fill("1m");

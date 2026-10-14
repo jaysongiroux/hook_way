@@ -15,7 +15,7 @@ test("strategy change clears inactive settings while retaining store and shared 
  function Form(){const [value,setValue]=useState<Record<string,unknown>>({store:"cluster",policy_id:"customers",strategy:"token_bucket",rpm:60,burst:5,key_by:"source_ip"});return <MantineProvider><ProtectionOptionsForm nodeType="rate_limit" value={value} onChange={(next)=>{setValue(next);changed(next);}} scope="test" /></MantineProvider>;}
  render(<Form/>);
  expect(changed).not.toHaveBeenCalled();
- fireEvent.click(screen.getByRole("textbox",{name:"Rate-limiting strategy"}));
+ fireEvent.click(screen.getByRole("combobox",{name:"Rate-limiting strategy"}));
  fireEvent.click(screen.getByRole("option",{name:/Sliding-window counter/}));
  expect(changed).toHaveBeenLastCalledWith({store:"cluster",policy_id:"customers",strategy:"sliding_window_counter",key_by:"source_ip",limit:100,window:"1m"});
  expect(screen.queryByLabelText(/Burst allowance/)).not.toBeInTheDocument();
@@ -25,7 +25,7 @@ test("strategy change clears inactive settings while retaining store and shared 
 test("store backend changes preserve namespace and unrelated imported settings", () => {
  useGraphStore.getState().setConfigExtra({state_stores:{cluster:{namespace:"prod",redis:{url:"${REDIS_URL}"},timeout:"300ms",future:true}}});
  render(<MantineProvider><StateStoresPanel opened onClose={()=>{}}/></MantineProvider>);
- fireEvent.click(screen.getByRole("textbox",{name:"Protection backend"}));
+ fireEvent.click(screen.getByRole("combobox",{name:"Protection backend"}));
  fireEvent.click(screen.getByRole("option",{name:"PostgreSQL · shared"}));
  expect(useGraphStore.getState().configExtra.state_stores).toEqual({cluster:{namespace:"prod",postgres:{},timeout:"300ms",future:true}});
  expect(screen.getByText(/state-store migrate/)).toBeInTheDocument();

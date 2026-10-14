@@ -39,7 +39,7 @@ test("lookup providers preserve unrelated settings, reject name collisions, and 
   });
   fireEvent.click(screen.getByRole("button", { name: "Add lookup provider" }));
   expect(screen.getByText("That name already exists.")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("textbox", { name: "Lookup backend" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "Lookup backend" }));
   fireEvent.click(screen.getByRole("option", { name: "PostgreSQL" }));
   expect(entries().customer).toEqual({
     timeout: "3s",

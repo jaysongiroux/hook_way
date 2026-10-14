@@ -46,7 +46,7 @@ for (const width of [1440, 390]) {
       .click();
     const inspector = builder.inspector();
     await inspector
-      .getByRole("textbox", { name: "Selected flag alias", exact: true })
+      .getByRole("combobox", { name: "Selected flag alias", exact: true })
       .click();
     await page.getByRole("option", { name: "settings", exact: true }).click();
     await expect(
@@ -56,7 +56,7 @@ for (const width of [1440, 390]) {
       .getByLabel("Fallback value", { exact: true })
       .fill('{"limit":2.5,"enabled":true}');
     await inspector
-      .getByRole("textbox", { name: "Selected flag alias", exact: true })
+      .getByRole("combobox", { name: "Selected flag alias", exact: true })
       .click();
     await page.getByRole("option", { name: "limit", exact: true }).click();
     await inspector.getByLabel("Fallback value", { exact: true }).fill("0.001");
@@ -87,7 +87,7 @@ for (const width of [1440, 390]) {
     await builder.selectNode("evaluate");
     await builder
       .inspector()
-      .getByRole("textbox", { name: "Selected flag alias", exact: true })
+      .getByRole("combobox", { name: "Selected flag alias", exact: true })
       .click();
     await page.getByRole("option", { name: "limit", exact: true }).click();
     await expect(

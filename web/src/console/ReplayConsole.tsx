@@ -138,10 +138,10 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
   const [credential, setCredential] = React.useState("");
   const [identity, setIdentity] = React.useState<Identity>();
   const [session, setSession] = React.useState<Session>();
-  const activeSession = React.useRef<Session>();
+  const activeSession = React.useRef<Session | undefined>(undefined);
   const [loginBusy, setLoginBusy] = React.useState(false);
   const [loginError, setLoginError] = React.useState("");
-  const idleTimer = React.useRef<ReturnType<typeof setTimeout>>();
+  const idleTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const logout = React.useCallback(() => {
     if (idleTimer.current) clearTimeout(idleTimer.current);
     clearStoredSession(storageKey);
@@ -454,8 +454,8 @@ function Records({ session, identity, active }: { session: Session; identity: Id
       {active && hasInspections && (
         <Tabs id="record-kind" value={kind} onChange={(value) => setKind(value || "failures")} className="record-navigation">
           <Tabs.List aria-label="Record kind">
-            <Tabs.Tab value="failures">Failures</Tabs.Tab>
-            <Tabs.Tab value="inspections">Inspections</Tabs.Tab>
+            <Tabs.Tab value="failures" aria-controls="record-kind-panel-failures">Failures</Tabs.Tab>
+            <Tabs.Tab value="inspections" aria-controls="record-kind-panel-inspections">Inspections</Tabs.Tab>
           </Tabs.List>
         </Tabs>
       )}
