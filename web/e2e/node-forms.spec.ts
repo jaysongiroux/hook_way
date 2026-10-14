@@ -20,7 +20,7 @@ flows:
     edges: [in>limit, limit>body, body>verify, verify>decode, decode>send]
 `;
 async function choose(page: Page, label: string, name: string) {
-  await page.getByRole("textbox", { name: label, exact: true }).click();
+  await page.getByRole("combobox", { name: label, exact: true }).click();
   await page.getByRole("option", { name, exact: true }).click();
 }
 for (const viewport of [

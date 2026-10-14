@@ -127,7 +127,7 @@ test("switching type starts the new type empty", () => {
   setConnections({ c: { type: "postgres", url: "postgres://db/x", max_conns: 10 } });
   wrap();
 
-  fireEvent.change(within(editor("c")).getByLabelText("Type"), { target: { value: "redis" } });
+  fireEvent.click(within(editor("c")).getByRole("combobox", { name: "Type" }));
   fireEvent.click(screen.getByRole("option", { name: "redis" }));
 
   expect(useGraphStore.getState().connections).toEqual({ c: { type: "redis" } });

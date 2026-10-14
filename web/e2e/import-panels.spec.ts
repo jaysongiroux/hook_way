@@ -113,7 +113,7 @@ for (const fixture of exampleFixtures()) {
         );
         const conn = connEntry(fixture.config, name);
         await expect(
-          card.getByRole("textbox", { name: "Type", exact: true }),
+          card.getByRole("combobox", { name: "Type", exact: true }),
         ).toHaveValue(conn.type);
         for (const [key, value] of Object.entries(conn.fields)) {
           if (!isRecord(value)) continue;

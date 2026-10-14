@@ -9,7 +9,7 @@ export function FlowResponseEditor() {
   const [text, setText] = useState("");
   const [error, setError] = useState<string | undefined>();
   const lastWrite = useRef<unknown>(responses);
-  const lastFlow = useRef<string | undefined>();
+  const lastFlow = useRef<string | undefined>(undefined);
   const write = (value: unknown) => {
     lastWrite.current = value;
     setFlowResponses(value);

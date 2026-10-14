@@ -14,6 +14,9 @@ test.afterEach(({ page }) => expect(browserErrors.get(page)).toEqual([]));
 
 async function openSearch(page: Page) {
   const browse = page.getByRole('button', { name: 'Documentation menu', exact: true });
+  // Direct documentation loads initially contain the static article only.
+  // Wait for the app navigation before deciding whether to open its mobile menu.
+  await expect(browse).toBeAttached();
   if (await browse.isVisible()) await browse.click();
   await page.getByRole('navigation', { name: 'Documentation', exact: true })
     .getByRole('button', { name: 'Search', exact: true }).click();

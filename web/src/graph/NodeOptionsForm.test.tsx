@@ -61,7 +61,7 @@ function choose(label: string, option: string, container?: HTMLElement) {
   const query = container ? within(container) : screen;
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   fireEvent.click(
-    query.getByRole("textbox", { name: new RegExp(`^${escaped}\\s*\\*?$`) }),
+    query.getByRole("combobox", { name: new RegExp(`^${escaped}\\s*\\*?$`) }),
   );
   fireEvent.click(screen.getByRole("option", { name: option }));
 }
@@ -108,7 +108,7 @@ for (const [scheme, capability] of Object.entries(
     const { change } = setup("auth", { ...auth, scheme });
     expect(change).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("textbox", { name: /Authentication strategy/ }),
+      screen.getByRole("combobox", { name: /Authentication strategy/ }),
     ).toBeInTheDocument();
     if (capability.jwt)
       expect(screen.getByLabelText("Raw body SHA-256 claim")).toBeRequired();
@@ -118,11 +118,11 @@ for (const [scheme, capability] of Object.entries(
       ).not.toBeInTheDocument();
     if (capability.request_signature)
       expect(
-        screen.getByRole("textbox", { name: "timestamp unit" }),
+        screen.getByRole("combobox", { name: "timestamp unit" }),
       ).toBeRequired();
     else
       expect(
-        screen.queryByRole("textbox", { name: "timestamp unit" }),
+        screen.queryByRole("combobox", { name: "timestamp unit" }),
       ).not.toBeInTheDocument();
     if (
       capability.jwt ||
@@ -453,7 +453,7 @@ for (const type of NODE_TYPES) {
 test("auth strategy picker exposes the entire generated registry and excludes the separate no-auth node", () => {
   setup("auth", auth);
   fireEvent.click(
-    screen.getByRole("textbox", { name: "Authentication strategy" }),
+    screen.getByRole("combobox", { name: "Authentication strategy" }),
   );
   const options = screen.getAllByRole("option");
   expect(options.map((option) => option.getAttribute("value")).sort()).toEqual(
@@ -532,7 +532,7 @@ test("unknown imported auth strategies show an error and are never replaced mere
   ).toBeInTheDocument();
   expect(change).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("textbox", { name: "Authentication strategy" }),
+    screen.getByRole("combobox", { name: "Authentication strategy" }),
   ).toHaveAttribute("aria-invalid", "true");
 });
 
@@ -575,13 +575,13 @@ test("HTTP credential environment mappings use canonical names and allow partial
     },
   });
   expect(
-    screen.getByRole("textbox", { name: "Credential for preview" }),
+    screen.getByRole("combobox", { name: "Credential for preview" }),
   ).not.toBeRequired();
   expect(
-    screen.getByRole("textbox", { name: "Credential for live" }),
+    screen.getByRole("combobox", { name: "Credential for live" }),
   ).not.toBeRequired();
   expect(
-    screen.queryByRole("textbox", { name: "Credential for pre" }),
+    screen.queryByRole("combobox", { name: "Credential for pre" }),
   ).not.toBeInTheDocument();
   expect(change).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Remove mapping pre" }));
@@ -624,7 +624,7 @@ test("Temporal settings are editable and switching destinations removes only inc
   expect(change.mock.calls.at(-1)?.[0].temporal.workflow_type).toBe(
     "InvoiceWorkflow",
   );
-  fireEvent.click(screen.getByRole("textbox", { name: "Workflow ID source" }));
+  fireEvent.click(screen.getByRole("combobox", { name: "Workflow ID source" }));
   fireEvent.click(screen.getByRole("option", { name: "Request header" }));
   expect(change.mock.calls.at(-1)?.[0].temporal.workflow_id).toEqual({
     source: "header",

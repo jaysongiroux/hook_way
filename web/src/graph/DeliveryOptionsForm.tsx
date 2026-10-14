@@ -366,7 +366,7 @@ function TemporalOptions(props: OptionsProps) {
               run_timeout: "Maximum duration of one workflow run, such as 1h.",
               task_timeout:
                 "Maximum duration of a workflow task, up to 2m. Omitted uses Temporal's default.",
-            })[path.split(".").at(-1) ?? path]
+            } as Record<string, string>)[path.split(".").at(-1) ?? path]
           }
         />
         <Select

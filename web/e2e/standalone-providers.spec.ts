@@ -42,7 +42,7 @@ for (const width of [1440, 390]) {
     await expect(
       builder
         .inspector()
-        .getByRole("textbox", { name: "Lookup provider", exact: true }),
+        .getByRole("combobox", { name: "Lookup provider", exact: true }),
     ).toHaveValue("customer");
     await builder
       .inspector()

@@ -16,7 +16,7 @@ import { saveGraph, clearGraph } from "./graph/persistence";
 
 function renderApp() {
   return render(
-    <MantineProvider theme={theme}>
+    <MantineProvider theme={theme} env="test">
       <MemoryRouter>
         <App />
       </MemoryRouter>

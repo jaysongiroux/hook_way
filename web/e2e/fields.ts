@@ -626,7 +626,7 @@ export async function expectNodeOptions(
       await scalar(key, label);
     if (type === "http_trigger") {
       await expect(
-        root.getByRole("textbox", {
+        root.getByRole("combobox", {
           name: "Accepted HTTP methods",
           exact: true,
         }),
