@@ -98,11 +98,14 @@ func (r *goRedisOps) Close() error {
 }
 
 // newRedisClient keeps the publisher's historical socket/pool defaults and
-// go-redis retry defaults; consumers of redisconn choose their own policy.
+// retry settings; consumers of redisconn choose their own policy.
 func newRedisClient(cfg config.RedisConfig) (redisOps, error) {
 	client, err := redisconn.New(cfg, redisconn.Policy{
 		DialTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
 		WriteTimeout: 5 * time.Second, PoolSize: 10,
+		MaxRetries: 3, MinRetryBackoff: 8 * time.Millisecond,
+		MaxRetryBackoff: 512 * time.Millisecond, DialerRetries: 5,
+		DialerRetryTimeout: 100 * time.Millisecond,
 	})
 	if err != nil {
 		return nil, err
