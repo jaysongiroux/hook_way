@@ -8,10 +8,10 @@ It is designed for production webhook ingress where the receiving service should
 
 Signature verification, typed routing/transforms, bounded request protection,
 destination fan-out and optional failure recovery are configured in YAML.
-See the [project overview](https://github.com/jaysongiroux/hook_way/blob/v2/README.md)
-and [configuration reference](https://github.com/jaysongiroux/hook_way/blob/v2/docs/reference/configuration.md)
+See the [project overview](https://github.com/jaysongiroux/hook_way/blob/main/README.md)
+and [configuration reference](https://github.com/jaysongiroux/hook_way/blob/main/docs/reference/configuration.md)
 for supported backends, fields and limits. A successful acknowledgement follows
-the configured [delivery contract](https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/delivery-guarantees.md).
+the configured [delivery contract](https://github.com/jaysongiroux/hook_way/blob/main/docs/operations/delivery-guarantees.md).
 
 ## Image Tags
 
@@ -28,12 +28,12 @@ only the deployable runtime and do not require Node.js or the optional config
 builder. The image includes a built-in healthcheck command, so the runtime image
 does not need shell utilities.
 
-The matching `<image>-replay` image runs the optional `hookway-replay` service. It uses PostgreSQL for captured failed deliveries; run `hookway-replay migrate --config replay.yaml` before starting or upgrading it. See the [replay service guide](https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/replay-service.md).
+The matching `<image>-replay` image runs the optional `hookway-replay` service. It uses PostgreSQL for captured failed deliveries; run `hookway-replay migrate --config replay.yaml` before starting or upgrading it. See the [replay service guide](https://github.com/jaysongiroux/hook_way/blob/main/docs/operations/replay-service.md).
 
 ## Links
 
 - Source: https://github.com/jaysongiroux/hook_way
-- Docs: https://github.com/jaysongiroux/hook_way/blob/v2/docs/README.md
+- Docs: https://github.com/jaysongiroux/hook_way/blob/main/docs/README.md
 
 ## Standalone operations frontend
 
@@ -46,4 +46,4 @@ public build identity at `/build-info.json`. Set replay
 calls the API directly; this container never proxies API requests or needs keys.
 Pin all three images to verified immutable release digests and scale frontend
 and replay services independently. TLS, ALBs/ingress, WAF and access policies are
-deployer-owned. See [console deployment](https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/replay-console.md).
+deployer-owned. See [console deployment](https://github.com/jaysongiroux/hook_way/blob/main/docs/operations/replay-console.md).

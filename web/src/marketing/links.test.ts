@@ -8,9 +8,9 @@ const repoRoot = resolve(__dirname, "../../..");
 
 test("links point at the configured GitHub repo", () => {
   expect(GITHUB_REPO).toBe("https://github.com/jaysongiroux/hook_way");
-  expect(GITHUB_REF).toBe("v2");
-  expect(repoBlob("README.md")).toBe("https://github.com/jaysongiroux/hook_way/blob/v2/README.md");
-  expect(repoTree("examples")).toBe("https://github.com/jaysongiroux/hook_way/tree/v2/examples");
+  expect(GITHUB_REF).toBe("main");
+  expect(repoBlob("README.md")).toBe("https://github.com/jaysongiroux/hook_way/blob/main/README.md");
+  expect(repoTree("examples")).toBe("https://github.com/jaysongiroux/hook_way/tree/main/examples");
 });
 
 // Every curated link must resolve to a source and a published page.

@@ -8,7 +8,7 @@ exclude:
 trackedOnlyRoots: [docs]
 respectGitignore: true
 repository: https://github.com/jaysongiroux/hook_way
-ref: v2
+ref: main
 labels:
   reference: Configuration
   guides: Guides

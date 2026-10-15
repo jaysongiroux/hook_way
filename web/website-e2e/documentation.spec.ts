@@ -75,7 +75,7 @@ test('excluded paths and unknown docs return 404; excluded references retain Git
     expect((await request.get(url)).status(), url).toBe(404);
   }
   await page.goto('/docs/');
-  await expect(page.getByRole('main').getByRole('link', { name: 'Docker images', exact: true })).toHaveAttribute('href', 'https://github.com/jaysongiroux/hook_way/blob/v2/docs/dockerhub/README.md');
+  await expect(page.getByRole('main').getByRole('link', { name: 'Docker images', exact: true })).toHaveAttribute('href', 'https://github.com/jaysongiroux/hook_way/blob/main/docs/dockerhub/README.md');
   await page.goto('/docs/missing/');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('404');
 });
