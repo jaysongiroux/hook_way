@@ -2,8 +2,8 @@ import publishedLinks from "virtual:hookway-docs";
 
 // Source links stay on GitHub; published docs use the build's filtered inventory.
 export const GITHUB_REPO = "https://github.com/jaysongiroux/hook_way";
-// The current feature set and documentation live on v2. Update when it merges.
-export const GITHUB_REF = "v2";
+// Source links track the default branch now that v2 has merged.
+export const GITHUB_REF = "main";
 
 /** Repository slug for visible attribution. */
 export const GITHUB_REPO_SLUG = GITHUB_REPO.replace(

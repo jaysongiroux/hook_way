@@ -107,11 +107,11 @@ test("generation rewrites reference links and preserves code, original sources a
   );
   assert.match(
     index,
-    /github\.com\/jaysongiroux\/hook_way\/blob\/v2\/docs\/api\/editor.json/,
+    /github\.com\/jaysongiroux\/hook_way\/blob\/main\/docs\/api\/editor.json/,
   );
   assert.match(
     index,
-    /github\.com\/jaysongiroux\/hook_way\/blob\/v2\/docs\/dockerhub\/README.md/,
+    /github\.com\/jaysongiroux\/hook_way\/blob\/main\/docs\/dockerhub\/README.md/,
   );
   assert.deepEqual(
     await readFile(

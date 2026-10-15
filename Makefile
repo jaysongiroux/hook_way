@@ -281,14 +281,23 @@ lint:
 # false positives are filtered: cmd/hookway-wasm/bridge is reachable only from
 # the js/wasm-tagged main, which a host-platform analysis excludes, and
 # targetResolver.dynamicLen is documented as test-only.
+#
+# v0.52.0's SSA builder resolves promoted fields used as struct-literal
+# keys. v0.38.0 panics on that Go 1.27 syntax with
+# "unexpected expr: *ast.KeyValueExpr" (for example splicePipe{rfd, wfd}
+# in the standard library). The tool's own go.mod still says go 1.26.0, so
+# build it with this module's toolchain; otherwise go run switches to Go
+# 1.26 and rejects the Go 1.27 standard library.
 DEADCODE_ALLOW := cmd/hookway-wasm/bridge/|internal/queue/target_resolver.go.*dynamicLen
+DEADCODE := golang.org/x/tools/cmd/deadcode@v0.52.0
+MODULE_GO := $(shell awk '/^go / { print $$2; exit }' go.mod)
 
 deadcode:
 	@echo "deadcode: checking tests and entrypoints"
-	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 -test ./...)" || exit $$?; \
+	@out="$$(GOTOOLCHAIN=go$(MODULE_GO) $(GO) run $(DEADCODE) -test ./...)" || exit $$?; \
 	if [ -n "$$out" ]; then echo "dead code found (reachable from no test or entrypoint):"; echo "$$out"; exit 1; fi
 	@echo "deadcode: checking production entrypoints"
-	@out="$$($(GO) run golang.org/x/tools/cmd/deadcode@v0.38.0 ./cmd/...)" || exit $$?; \
+	@out="$$(GOTOOLCHAIN=go$(MODULE_GO) $(GO) run $(DEADCODE) ./cmd/...)" || exit $$?; \
 	out="$$(printf '%s\n' "$$out" | grep -Ev '$(DEADCODE_ALLOW)' || true)"; \
 	if [ -n "$$out" ]; then echo "dead code found (unreachable from any entrypoint; tests keep it alive):"; echo "$$out"; exit 1; fi
 	@echo "no dead code"

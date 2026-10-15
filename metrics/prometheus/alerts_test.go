@@ -59,7 +59,7 @@ func TestAlertsArePrometheusRulesWithRequiredExprs(t *testing.T) {
 	for _, g := range rule.Groups {
 		for _, r := range g.Rules {
 			found[r.Alert] = r.Expr
-			if !strings.HasPrefix(r.Annotations["runbook_url"], "https://github.com/jaysongiroux/hook_way/blob/v2/docs/operations/observability.md#") || r.Annotations["summary"] == "" || r.Annotations["description"] == "" {
+			if !strings.HasPrefix(r.Annotations["runbook_url"], "https://github.com/jaysongiroux/hook_way/blob/main/docs/operations/observability.md#") || r.Annotations["summary"] == "" || r.Annotations["description"] == "" {
 				t.Errorf("alert %s lacks actionable runbook annotations", r.Alert)
 			}
 			if wantDur, ok := wantFor[r.Alert]; ok && r.For != wantDur {

@@ -9,7 +9,7 @@ documentation and verification scripts. OpenSSL generates local credentials
 and signs webhook examples.
 
 ```bash
-git clone --branch v2 https://github.com/jaysongiroux/hook_way.git
+git clone --branch main https://github.com/jaysongiroux/hook_way.git
 cd hook_way
 make web-install  # npm ci restores the checked-in lockfile for web changes
 ```
