@@ -2,7 +2,7 @@ import publishedLinks from "virtual:hookway-docs";
 
 // Source links stay on GitHub; published docs use the build's filtered inventory.
 export const GITHUB_REPO = "https://github.com/jaysongiroux/hook_way";
-// Source links track the default branch now that v2 has merged.
+// Public source links follow the repository's published branch.
 export const GITHUB_REF = "main";
 
 /** Repository slug for visible attribution. */
@@ -103,6 +103,6 @@ export const EXAMPLES = {
   path: "examples",
   title: "Example configs",
   description:
-    "Ready-to-run YAML for XML, multipart, conditional routing, and every destination.",
+    "YAML templates for authenticated MCP tools, XML, multipart, routing, and every destination.",
   href: docsHref("examples"),
 };

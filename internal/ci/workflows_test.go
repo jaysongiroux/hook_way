@@ -195,3 +195,24 @@ func TestReleasePublishesOnlyAfterChecks(t *testing.T) {
 		t.Fatalf("release publish needs %v, want checks", jobs["publish"].Needs)
 	}
 }
+
+func TestCIIncludesMCPRuntimeAndBrowserTests(t *testing.T) {
+	w := loadWorkflow(t, "reusable-ci.yml")
+	for job, command := range map[string]string{"go": "make unit", "go-race": "make race", "web": "make web-test", "web-e2e": "make web-e2e"} {
+		found := false
+		for _, step := range w.Jobs[job].Steps {
+			found = found || step.Run == command
+		}
+		if !found {
+			t.Errorf("%s no longer runs the complete suite containing MCP tests: %s", job, command)
+		}
+	}
+	hasGo, discoversMCP := false, false
+	for _, step := range w.Jobs["web-e2e"].Steps {
+		hasGo = hasGo || strings.HasPrefix(step.Uses, "actions/setup-go@")
+		discoversMCP = discoversMCP || strings.Contains(step.Run, "--list e2e/mcp-gateway.spec.ts")
+	}
+	if !hasGo || !discoversMCP {
+		t.Fatal("MCP browser tests require Go for the real gateway fixture and explicit test discovery")
+	}
+}

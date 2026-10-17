@@ -95,6 +95,7 @@ test('overview renders its diagram and narrow-screen navigation works', async ({
 
 test('leaving a directly loaded doc restores marketing metadata and canonical URLs', async ({ page }) => {
   await page.goto('/');
+  const heading = await page.getByRole('heading', { level: 1 }).innerText();
   const description = await page.locator('meta[name="description"]').getAttribute('content');
   const origin = new URL((await page.locator('link[rel="canonical"]').getAttribute('href'))!).origin;
   for (const [name, pathname, title] of [['Use cases', '/use-cases', 'Use cases — Hookway'], ['Compare', '/compare', 'Compare — Hookway']] as const) {
@@ -108,7 +109,7 @@ test('leaving a directly loaded doc restores marketing metadata and canonical UR
   }
   await page.goto('/docs/');
   await page.getByRole('link', { name: 'Hookway home', exact: true }).click();
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Receive, verify, and route webhooks');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(heading);
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', origin + '/');
   await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', description!);
 });

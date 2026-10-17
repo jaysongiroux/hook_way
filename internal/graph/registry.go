@@ -134,3 +134,6 @@ func (r *Registry) Types() []string {
 	sort.Strings(out)
 	return out
 }
+
+// FlowValidator adds trigger-specific topology constraints.
+type FlowValidator interface{ ValidateFlow(FlowConfig) error }

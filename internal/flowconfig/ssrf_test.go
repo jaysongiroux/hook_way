@@ -201,13 +201,12 @@ func TestValidateHTTPRequestRequiresLiteralHostSuffix(t *testing.T) {
 	}
 }
 
-// TestAllowPrivateTargetsRequiresATemplatedHost keeps the opt-out honest: on
-// a literal host the egress policy never applies, so the option would read
-// like a security decision while doing nothing.
-func TestAllowPrivateTargetsRequiresATemplatedHost(t *testing.T) {
+// MCP enforces egress even for literal operations, so the explicit opt-in must
+// be accepted for both literal and templated HTTP configurations.
+func TestAllowPrivateTargetsSupportsLiteralAndTemplatedHosts(t *testing.T) {
 	err := validateHTTPRequest(HTTPRequestOptions{URL: "http://10.0.0.5/x", AllowPrivateTargets: true})
-	if err == nil {
-		t.Fatal("allow_private_targets on a literal host was accepted; it has no effect there")
+	if err != nil {
+		t.Fatalf("explicit literal private target was rejected: %v", err)
 	}
 	if err := validateHTTPRequest(HTTPRequestOptions{
 		URL:                 "https://{tenant}.internal.example.com/x",

@@ -8,6 +8,8 @@ import { Features } from "./Features";
 import { FlowDiagram } from "./FlowDiagram";
 import { Hero } from "./Hero";
 import { MarketingShell } from "./MarketingShell";
+import { MCPGateway } from "./MCPGateway";
+import { HTTPGateway } from "./HTTPGateway";
 import { Production } from "./Production";
 import { ReplayOperations } from "./ReplayOperations";
 
@@ -16,11 +18,13 @@ import { ReplayOperations } from "./ReplayOperations";
 // them. Bands alternate between the canvas and the recessed surface so the
 // page has a rhythm rather than one repeated card grid.
 export function Marketing() {
-  useDocumentTitle("Hookway — Receive, verify, and route webhooks.");
+  useDocumentTitle("Hookway — Webhooks, reverse proxy, and MCP tools.");
   return (
-    <MarketingShell>
+    <MarketingShell animated>
       <Hero />
       <DestinationMarquee />
+      <HTTPGateway />
+      <MCPGateway />
       <Features />
       <CodeBand />
       <FlowDiagram />

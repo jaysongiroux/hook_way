@@ -135,6 +135,7 @@ type Terminal struct {
 	// DropReason is finite metadata identifying an intentional filter or sample drop.
 	DropReason string
 	Response   *Response
+	Result     *Result
 	Deliveries []Delivery
 	// Compensations lists nodes that reserved something and ran
 	// successfully, in reverse execution order. Run does not invoke them:
@@ -169,3 +170,6 @@ type Delivery struct {
 	// successful publish. Err can be nil in either case.
 	Unattempted bool
 }
+
+// Result is a transport-independent structured invocation result.
+type Result struct{ JSON []byte }

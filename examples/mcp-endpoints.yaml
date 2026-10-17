@@ -1,0 +1,42 @@
+# Independent MCP endpoints. Configure each path, catalogue and caller key.
+# Each endpoint advertises a static demonstration tool and uses its own caller key.
+server: {addr: ':8080', max_body_bytes: 1048576}
+flows:
+  services:
+    capture_failures: false
+    nodes:
+      - id: mcp
+        type: mcp_trigger
+        path: /services/mcp
+        public_url: https://hookway.example.com/services/mcp
+        auth:
+          api_keys:
+            reader: {secret_ref: {provider: env, name: SERVICES_MCP_TOKEN}}
+        tools:
+          - name: get_gateway_info
+            description: Describe this configured endpoint.
+            read_only: true
+            access: {api_keys: [reader]}
+            input_schema: {type: object, additionalProperties: false}
+            output_schema: {type: object, required: [endpoint], properties: {endpoint: {type: string}}}
+      - {id: result, type: mcp_result, source: constant, value: {endpoint: services}}
+    edges: ['mcp:get_gateway_info>result']
+  utilities:
+    capture_failures: false
+    nodes:
+      - id: mcp
+        type: mcp_trigger
+        path: /utilities/mcp
+        public_url: https://hookway.example.com/utilities/mcp
+        auth:
+          api_keys:
+            reader: {secret_ref: {provider: env, name: UTILITIES_MCP_TOKEN}}
+        tools:
+          - name: get_gateway_info
+            description: Describe this configured endpoint.
+            read_only: true
+            access: {api_keys: [reader]}
+            input_schema: {type: object, additionalProperties: false}
+            output_schema: {type: object, required: [endpoint], properties: {endpoint: {type: string}}}
+      - {id: result, type: mcp_result, source: constant, value: {endpoint: utilities}}
+    edges: ['mcp:get_gateway_info>result']

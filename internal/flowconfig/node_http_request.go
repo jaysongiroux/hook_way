@@ -34,6 +34,16 @@ var errProxyRedirect = errors.New("upstream redirect denied")
 // reuse a connection opened without validating the resolved address.
 var proxyHTTPClient = newProxyHTTPClient(false)
 var guardedProxyHTTPClient = newProxyHTTPClient(true)
+var mcpMutationHTTPClient = newMCPMutationHTTPClient(false)
+var guardedMCPMutationHTTPClient = newMCPMutationHTTPClient(true)
+
+func newMCPMutationHTTPClient(enforce bool) *http.Client {
+	client := newProxyHTTPClient(enforce)
+	// net/http can replay idempotency-marked requests on reused connections.
+	// Fresh connections prevent that hidden retry for mutating MCP operations.
+	client.Transport.(*http.Transport).DisableKeepAlives = true
+	return client
+}
 
 func newProxyHTTPClient(enforce bool) *http.Client {
 	t := http.DefaultTransport.(*http.Transport).Clone()
@@ -189,11 +199,12 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 			return nil, graph.NodeError{NodeID: n.id, Status: 400, Err: errors.New("missing required request field")}
 		}
 	}
-	target, err := n.target(env)
+	target, err := n.requestTarget(ctx, env)
 	if err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: proxyBoundaryError{message: "upstream target invalid", cause: err}}
 	}
-	if err := validateEgressURL(target, n.enforceEgressPolicy()); err != nil {
+	_, isMCPRequest := MCPInvocationFrom(ctx)
+	if err := validateEgressURL(target, n.enforceEgressPolicy() || (isMCPRequest && !n.opts.AllowPrivateTargets)); err != nil {
 		return nil, graph.NodeError{NodeID: n.id, Status: http.StatusBadRequest, Err: proxyBoundaryError{message: "upstream target denied", cause: err}}
 	}
 	target = cleanOutboundPath(target)
@@ -218,7 +229,11 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 		ctx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()
 	}
+	invocation, isMCP := MCPInvocationFrom(ctx)
 	attempts := n.retry.Attempts()
+	if isMCP && !invocation.AllowRetries {
+		attempts = 1
+	}
 	if len(n.opts.Retry.Methods) > 0 && !slices.Contains(n.opts.Retry.Methods, method) {
 		attempts = 1
 	}
@@ -249,13 +264,14 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	sessionRetried := false
 	for attempt := 1; ; attempt++ {
 		res = n.send(ctx, method, target, body, contentType, env, credential)
-		if provider != nil && !sessionRetried && res.err == nil && provider.Reject(credential, res.status, res.body) {
+		sessionRejected := provider != nil && !sessionRetried && res.err == nil && provider.Reject(credential, res.status, res.body)
+		if sessionRejected && (!isMCP || invocation.AllowRetries) {
 			sessionRetried = true
 			credential, err = provider.Acquire(ctx)
 			if err != nil {
 				return nil, graph.NodeError{NodeID: n.id, Status: 502, Err: errors.New("outbound credential refresh failed")}
 			}
-			original, e := n.target(env)
+			original, e := n.requestTarget(ctx, env)
 			if e != nil {
 				return nil, graph.NodeError{NodeID: n.id, Status: 403, Err: errors.New("credential target denied")}
 			}
@@ -289,7 +305,7 @@ func (n httpRequestNode) Run(ctx context.Context, in graph.Payload) (graph.Paylo
 	if res.err != nil {
 		return nil, *res.err
 	}
-	if matchErrorOnStatus(res.status, n.opts.ErrorOnStatus) {
+	if (isMCP && (res.status < 200 || res.status >= 300) && n.opts.ResponseBindings == nil) || matchErrorOnStatus(res.status, n.opts.ErrorOnStatus) {
 		return nil, graph.NodeError{
 			NodeID: n.id, Status: http.StatusBadGateway,
 			Err: fmt.Errorf("http_request %q: upstream status %d", n.id, res.status),
@@ -315,6 +331,9 @@ type attemptResult struct {
 // body is an io.Reader, so reusing a request across attempts would send an
 // empty body on the second one.
 func (n httpRequestNode) send(ctx context.Context, method, target string, body []byte, contentType string, env graph.Envelope, credentials ...CredentialMaterial) attemptResult {
+	for _, material := range credentials {
+		recordMCPCredentials(ctx, material)
+	}
 	nctx, cancel := context.WithTimeout(ctx, n.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(nctx, method, target, bytes.NewReader(body))
@@ -359,8 +378,15 @@ func (n httpRequestNode) send(ctx context.Context, method, target string, body [
 	}
 
 	client := proxyHTTPClient
-	if n.enforceEgressPolicy() || (len(credentials) > 0 && credentials[0].Guard) {
+	if n.enforceEgressPolicy() || (isMCPContext(ctx) && !n.opts.AllowPrivateTargets) || (len(credentials) > 0 && credentials[0].Guard) {
 		client = guardedProxyHTTPClient
+	}
+	if inv, ok := MCPInvocationFrom(ctx); ok && !inv.ReadOnly {
+		if client == guardedProxyHTTPClient {
+			client = guardedMCPMutationHTTPClient
+		} else {
+			client = mcpMutationHTTPClient
+		}
 	}
 	if n.opts.Redirects != nil {
 		cloned := *client
@@ -408,6 +434,9 @@ func (n httpRequestNode) send(ctx context.Context, method, target string, body [
 	limit := n.opts.MaxResponseBytes
 	if limit == 0 {
 		limit = maxUpstreamBodyBytes
+	}
+	if isMCPContext(ctx) && limit > MCPMaxBytes {
+		limit = MCPMaxBytes
 	}
 	limited := io.LimitReader(resp.Body, limit+1)
 	respBody, err := io.ReadAll(limited)
@@ -610,3 +639,25 @@ func isTimeout(ctx context.Context, err error) bool {
 }
 
 func (httpRequestNode) TracksSideEffects() {}
+
+func isMCPContext(ctx context.Context) bool { _, ok := MCPInvocationFrom(ctx); return ok }
+
+// MCP arguments and native variables remain typed/plain inside the graph.
+// Escape path substitutions at the HTTP boundary, including values produced
+// by transformations and response bindings. Query values use request.query.
+func (n httpRequestNode) requestTarget(ctx context.Context, env graph.Envelope) (string, error) {
+	if !isMCPContext(ctx) {
+		return n.target(env)
+	}
+	values := make(map[string]string, len(env.Vars))
+	for key, value := range env.Vars {
+		for _, segment := range strings.Split(strings.ReplaceAll(value, "\\", "/"), "/") {
+			if segment == "." || segment == ".." {
+				return "", errors.New("unsafe MCP path segment")
+			}
+		}
+		values[key] = url.PathEscape(value)
+	}
+	env.Vars = values
+	return n.target(env)
+}

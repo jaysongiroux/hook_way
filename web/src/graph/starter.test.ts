@@ -32,7 +32,7 @@ test("every node without native store dependencies appears in the starter", () =
     allNodes(starterDocument()).map((n) => n.data.nodeType),
   );
   for (const type of NODE_TYPES.filter(
-    (t) => !["lookup", "register_route", "batch", "inspect", "launchdarkly"].includes(t),
+    (t) => !["lookup", "register_route", "batch", "inspect", "launchdarkly", "mcp_trigger", "mcp_result"].includes(t),
   )) {
     expect(types.has(type), type).toBe(true);
   }

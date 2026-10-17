@@ -117,6 +117,11 @@
 .docs-content ol {
   margin: 0 0 18px;
 }
+.docs-content > p,
+.docs-content > ul,
+.docs-content > ol {
+  max-width: 75ch;
+}
 .docs-content li > p {
   margin-bottom: 8px;
 }
@@ -214,6 +219,14 @@
   padding-left: 18px;
   margin-bottom: 4px;
   line-height: 1.8;
+}
+.docs-outline ul ul {
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+.docs-outline li {
+  padding: 3px 0;
+  overflow-wrap: anywhere;
 }
 .docs-search-results {
   padding-top: 16px;

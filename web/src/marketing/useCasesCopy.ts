@@ -15,15 +15,28 @@ export interface UseCase {
 
 export const USE_CASES_INTRO = {
   title: "Patterns that stay in your infrastructure",
-  lead: "Connect webhook senders to the systems your team already runs. These examples show how to verify requests, prepare their data, and send events or files to the right service.",
+  lead: "Connect webhook senders and AI clients to the systems your team already runs. Verify and route events, deliver files, or expose selected APIs as authenticated MCP tools.",
 } as const;
 
 export const USE_CASES: UseCase[] = [
   {
+    id: "mcp-gateway",
+    title: "Give AI clients controlled access to your APIs",
+    summary:
+      "Create MCP endpoints with distinct paths, tool catalogues and caller permissions.",
+    detail:
+      "Choose paths such as /services/mcp and /utilities/mcp. Start each catalogue from the authenticated template: get_service_status calls an HTTP API, while format_greeting uses a native transform. Each call runs only its selected branch. Configure API keys or external-provider OAuth; upstream credentials stay separate.",
+    examplePath: "examples/templates/mcp-gateway.yaml",
+    exampleHref: docsHref("examples/templates/mcp-gateway.yaml"),
+    exampleLabel: "mcp-gateway.yaml",
+  },
+  {
     id: "sampled-inspection",
     title: "Spot-check webhooks while delivering every event",
-    summary: "Capture a sample of incoming webhook bodies and context for your team to inspect.",
-    detail: "Sample → Inspect runs on a separate observation branch while Publish receives every event. The example samples about 5%. Inspections are view only; uploads are best effort and share replay retention and storage limits.",
+    summary:
+      "Capture a sample of incoming webhook bodies and context for your team to inspect.",
+    detail:
+      "Sample → Inspect runs on a separate observation branch while Publish receives every event. The example samples about 5%. Inspections are view only; uploads are best effort and share replay retention and storage limits.",
     examplePath: "examples/inspect.yaml",
     exampleHref: docsHref("examples/inspect.yaml"),
     exampleLabel: "inspect.yaml",
@@ -96,7 +109,7 @@ export const USE_CASES: UseCase[] = [
   },
   {
     id: "sync-proxy",
-    title: "Reverse-proxy a request synchronously",
+    title: "Handle HTTP requests as a synchronous reverse proxy",
     summary:
       "Call an API and return its HTTP status and response body to the original caller on the same connection.",
     detail:

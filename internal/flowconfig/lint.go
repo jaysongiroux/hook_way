@@ -39,6 +39,10 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 			}
 		case "inspect":
 			hasInspect = true
+		case "mcp_trigger":
+			hasRateLimit = true
+			o, _ := decodeOptions[MCPTriggerOptions](nc)
+			hasNoAuth = o.Auth.NoAuth
 		case "rate_limit":
 			hasRateLimit = true
 		case "no_auth":
@@ -56,7 +60,7 @@ func lintFlow(name string, cfg Config) []config.ValidationIssue {
 					))
 				}
 			}
-		case "batch", "respond":
+		case "batch", "respond", "mcp_result":
 			hasRespond = true
 		case "code":
 			opts, err := decodeOptions[CodeOptions](nc)

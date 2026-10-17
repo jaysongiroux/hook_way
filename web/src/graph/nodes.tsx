@@ -78,7 +78,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const summary = nodeSummary(data.nodeType, data.options);
   const description = data.description?.trim() ?? "";
   const labelled = labelledPorts(data.nodeType, data.options);
-  const showDefaultOut = output !== "Terminal" && labelled.length === 0;
+  const showDefaultOut = output !== "Terminal" && labelled.length === 0 && data.nodeType !== "mcp_trigger";
   const showError = nodeHasOnError(data.nodeType);
   const destinations = useGraphStore((s) => s.destinations);
   const destinationType =

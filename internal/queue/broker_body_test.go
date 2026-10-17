@@ -112,6 +112,25 @@ func TestBrokerRetriesAreBoundedAndClassified(t *testing.T) {
 	}
 }
 
+func TestSingleAttemptPublicationDisablesBrokerAndSDKRetries(t *testing.T) {
+	transient := &smithy.GenericAPIError{Code: "ThrottlingException", Fault: smithy.FaultClient}
+	msg := Message{Publish: &deliverymeta.Publish{Retry: &deliverymeta.Retry{MaxAttempts: 3}}}
+	attempts := 0
+	err := brokerRetry(WithSingleAttempt(context.Background()), msg, func(disableSDKRetry bool) error {
+		attempts++
+		if !disableSDKRetry {
+			t.Error("SDK retries remain enabled")
+		}
+		return transient
+	})
+	if !errors.Is(err, transient) || attempts != 1 {
+		t.Fatalf("attempts=%d: %v", attempts, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_ = brokerRetry(WithSingleAttempt(ctx), msg, func(bool) error { t.Fatal("published after cancellation"); return nil })
+}
+
 func TestSQSRawBodyCharacterConstraints(t *testing.T) {
 	if err := validateSQSBody([]byte("tab\tnewline\nCR\rUnicode é 😀")); err != nil {
 		t.Fatal(err)

@@ -30,17 +30,17 @@ function levelLabel(level: SupportLevel): string {
     case "no":
       return "No";
     case "n/a":
-      return "n/a";
+      return "Not documented";
   }
 }
 
 export function Compare() {
   useDocumentTitle("Compare — Hookway");
   return (
-    <MarketingShell>
+    <MarketingShell animated>
       <Box component="section" className={PAGE_HERO_CLASS} pt={56} pb={64} style={{ background: DARK.bg }}>
         <Container size="lg">
-          <Stack gap="md" maw={720}>
+          <Stack gap="md" maw={720} data-marketing-motion="intro">
             <Title
               order={1}
               c={DARK.text}
@@ -71,13 +71,14 @@ export function Compare() {
 
       <Section
         title="Products in this comparison"
-        lead="Three inbound-oriented offerings. This page covers features and integrations only."
+        lead="Hookway, Hookdeck Event Gateway and Convoy overlap on webhooks, but serve different workflows. Outpost is covered separately below."
       >
         <Box className="hookway-compare-products">
           {COMPETITORS.map((c) => (
             <Box
               key={c.id}
               className="hookway-compare-product"
+              data-marketing-motion="card"
               data-product={c.id}
               style={{
                 background: DARK.surface,
@@ -105,7 +106,7 @@ export function Compare() {
 
       <Section
         title="Feature and integration matrix"
-        lead={`Checked ${COMPARE_CHECKED_ON}. Each cell links to its supporting documentation. Different delivery and storage boundaries are explained where they matter.`}
+        lead={`Baseline checked ${COMPARE_CHECKED_ON}; newer checks are dated on their rows. Each cell links to its supporting documentation. Delivery, storage and MCP tool boundaries are explained where they matter.`}
         background={DARK.recessed}
       >
         <Box component="aside" className="hookway-compare-differs" aria-labelledby="where-hookway-differs">
@@ -222,6 +223,9 @@ export function Compare() {
             {COMPARE_OUTPOST_NOTE.label}
           </Anchor>
           .
+        </Text>
+        <Text size="sm" c={DARK.muted} mt={16} maw={720}>
+          MCP also appears in event delivery: <Anchor href="https://hookdeck.com/docs/guides/how-to-use-event-gateway-as-mcp-events-forward-proxy" target="_blank" rel="noopener noreferrer">Event Gateway forwards MCP Events</Anchor>, while <Anchor href="https://hookdeck.com/docs/outpost/guides/send-mcp-events-webhooks-with-outpost" target="_blank" rel="noopener noreferrer">Outpost delivers event webhooks from your MCP server</Anchor>. Those workflows are separate from publishing your REST operations as callable tools. Hookway currently exposes tools, not MCP event subscriptions. MCP sources checked October 16, 2026.
         </Text>
         <Box mt={28}>
           <Text size="sm" fw={650} c={DARK.text} mb={8}>

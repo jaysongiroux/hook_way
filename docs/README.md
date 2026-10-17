@@ -18,6 +18,9 @@ Start with the [project overview](../README.md), then choose the task you need.
   Report vulnerabilities through [SECURITY.md](../SECURITY.md).
 - [Ingress adapters](guides/ingress-adapters.md): routing, credentials, HTTP relays,
   SQS/SNS formats, batches and file handling.
+- [MCP gateway](guides/mcp-gateway.md): configurable endpoints, tools and
+  [OAuth configuration](guides/mcp-gateway.md#oauth-configuration), including
+  identity-provider setup and per-tool permissions.
 - [Provider recipes](guides/provider-compatibility.md): GitHub, Stripe, Paddle and Slack.
 - [Validate JSON](guides/json-validation.md): schemas, conversions and sample checks.
 - [Lookups](guides/lookups.md): HTTP, PostgreSQL and DynamoDB routing values.

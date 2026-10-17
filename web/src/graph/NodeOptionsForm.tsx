@@ -1,3 +1,4 @@
+import { MCPOptionsForm } from "./MCPOptionsForm";
 import { Alert, Button, Stack, Text } from "@mantine/core";
 import { AuthOptionsForm } from "./AuthOptionsForm";
 import { PublishOptionsForm, RespondOptionsForm } from "./DeliveryOptionsForm";
@@ -56,6 +57,7 @@ function NodeOptionsFields(props: OptionsProps) {
   const { nodeType } = props;
  if (nodeType === "launchdarkly") return <LaunchDarklyForm {...props} />;
   const editor = nodeDescriptor(nodeType)?.editor ?? "schema";
+  if (editor === "mcp") return <MCPOptionsForm {...props} />;
   if (editor === "auth") return <AuthOptionsForm {...props} />;
   if (editor === "protection") return <ProtectionOptionsForm {...props} />;
   if (editor === "json-validation")

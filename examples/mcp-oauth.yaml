@@ -1,0 +1,33 @@
+# Client -> Hookway OAuth resource-server configuration.
+# Setup, introspection and troubleshooting: docs/guides/mcp-gateway.md#oauth-configuration
+# Register the MCP client with your IdP; these values are deployment placeholders.
+server: {addr: ":8080", max_body_bytes: 1048576}
+flows:
+  mcp_gateway:
+    capture_failures: false
+    nodes:
+      - id: mcp
+        type: mcp_trigger
+        path: /services/mcp
+        public_url: https://hookway.example.com/services/mcp
+        auth:
+          oauth:
+            issuer: https://identity.example.com
+            audience: https://hookway.example.com/services/mcp
+            discovery_scopes: [service:read]
+            # Omit jwks_url to discover it from the issuer's OIDC metadata.
+            # A JWT access token must carry this issuer, audience, expiry and subject.
+            # No client secret is needed for JWT validation at Hookway.
+        tools:
+          - name: get_service_status
+            description: Return the status of the native Hookway example.
+            read_only: true
+            access: {scopes: [service:read]}
+            input_schema: {type: object, additionalProperties: false}
+            output_schema:
+              type: object
+              properties: {status: {type: string}}
+              required: [status]
+              additionalProperties: false
+      - {id: result, type: mcp_result, source: constant, value: {status: ok}}
+    edges: ["mcp:get_service_status>result"]

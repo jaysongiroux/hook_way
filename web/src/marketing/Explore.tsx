@@ -16,7 +16,7 @@ export function Explore() {
   return (
     <Section
       title="See Hookway in context"
-      lead="Explore working examples or compare Hookway with other webhook gateways."
+      lead="Explore working examples or compare Hookway with other webhook and API tools."
     >
       <Box className={EXPLORE_GRID_CLASS}>
         <Stack className={EXPLORE_PRIMARY_CLASS} gap="sm">
@@ -37,11 +37,10 @@ export function Explore() {
 
         <Stack className={EXPLORE_SECONDARY_CLASS} gap="sm">
           <Text component="h3" fw={650} c={DARK.text} style={{ fontSize: 18, lineHeight: 1.3, margin: 0 }}>
-            Compare how the gateways work
+            Compare Hookway with other products
           </Text>
           <Text size="sm" c={DARK.muted} style={{ lineHeight: 1.6 }}>
-            Deployment, verification, payload formats, destinations, replay, and observability beside Hookdeck Event
-            Gateway, Convoy, and Outpost.
+            Compare deployment, delivery and MCP tools with Hookdeck Event Gateway and Convoy. Includes source links and a separate look at Outpost.
           </Text>
           <Anchor component={Link} to="/compare" fw={650} c={DARK.accent} underline="always">
             View the comparison

@@ -85,6 +85,12 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 		t.Fatal(err)
 	}
 	return map[string]nodeInputCase{
+		"mcp_trigger": {typ: "mcp_trigger", options: "path: /mcp\npublic_url: http://localhost/mcp\nauth: {no_auth: true}\ntools: [{name: test_tool, description: Test tool, read_only: true, access: {anonymous: true}, input_schema: {type: object}, output_schema: {type: object}}]\n", ctx: func() context.Context {
+			return flowconfig.WithMCPInvocation(context.Background(), "test_tool", false, true)
+		}, input: func() graph.Payload { return inputEnvelope() }},
+		"mcp_result": {typ: "mcp_result", options: "source: body\n", ctx: func() context.Context {
+			return flowconfig.WithMCPInvocation(context.Background(), "test_tool", false, true)
+		}, input: func() graph.Payload { return inputEnvelope() }},
 		"launchdarkly": {typ: "launchdarkly", options: "connection: production\nname: rollout\ncontext: {key: {value: tenant}}\nflags: {gate: {key: gate, type: boolean, fallback: false, variable: gate}}\n", input: func() graph.Payload { return inputEnvelope() }},
 		"batch":        {typ: "batch", options: "mode: shared\nprofile: sample\nenvironment_path: environment\nevent_id_path: event_id\nchild:\n  entry: node.send\n  nodes: [{id: node.send, type: publish, destination: primary, target: sample}]\n  edges: []\n", opts: flowconfig.RegistryOptions{RoutingRegistry: registry}, input: func() graph.Payload { e := inputEnvelope(); e.Body = []any{}; return e }},
 		"register_route": {typ: "register_route", options: "mode: after_create\nstore: primary\nprofile: sample\nenvironment_variable: route\nid_source: upstream\nid_path: created_id\nid_type: record_a\n", opts: flowconfig.RegistryOptions{ValidateOnly: true, RoutingRegistry: registry}, input: func() graph.Payload {

@@ -9,7 +9,7 @@ import {
   Text,
 } from "@mantine/core";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { useDocumentTitle } from "@mantine/hooks";
+import { useDocumentTitle, useReducedMotion } from "@mantine/hooks";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import publication from "virtual:hookway-docs-data";
 import { MarketingShell } from "../MarketingShell";
@@ -30,7 +30,39 @@ interface DocPage {
   html: string;
   headings: Heading[];
   rawUrl: string | null;
-  editUrl: string | null;
+  sourceUrl: string | null;
+}
+interface OutlineHeading extends Heading {
+  children: OutlineHeading[];
+}
+
+function headingTree(headings: Heading[]): OutlineHeading[] {
+  const roots: OutlineHeading[] = [];
+  const parents: OutlineHeading[] = [];
+  for (const heading of headings) {
+    if (heading.depth === 1) continue;
+    const item = { ...heading, children: [] };
+    while (parents.length && parents[parents.length - 1].depth >= item.depth)
+      parents.pop();
+    (parents.length ? parents[parents.length - 1].children : roots).push(item);
+    parents.push(item);
+  }
+  return roots;
+}
+
+function OutlineList({ items }: { items: OutlineHeading[] }) {
+  return (
+    <ul>
+      {items.map((heading) => (
+        <li key={heading.id}>
+          <a href={`#${heading.id}`}>{heading.title}</a>
+          {heading.children.length > 0 && (
+            <OutlineList items={heading.children} />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
 interface NavItem {
   label: string;
@@ -107,17 +139,17 @@ function Search({ opened, close }: { opened: boolean; close: () => void }) {
   const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   const matches = terms.length
     ? index
-      .filter((page) =>
-        terms.every((term) =>
-          `${page.title} ${page.text}`.toLowerCase().includes(term),
-        ),
-      )
-      .sort(
-        (a, b) =>
-          Number(b.title.toLowerCase().includes(query.toLowerCase())) -
-          Number(a.title.toLowerCase().includes(query.toLowerCase())),
-      )
-      .slice(0, 15)
+        .filter((page) =>
+          terms.every((term) =>
+            `${page.title} ${page.text}`.toLowerCase().includes(term),
+          ),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.title.toLowerCase().includes(query.toLowerCase())) -
+            Number(a.title.toLowerCase().includes(query.toLowerCase())),
+        )
+        .slice(0, 15)
     : [];
   return (
     <Modal
@@ -167,6 +199,10 @@ export default function Documentation() {
   const [search, setSearch] = useState(false);
   const [copyStatus, setCopyStatus] = useState("Copy YAML");
   const article = useRef<HTMLDivElement>(null);
+  const smoothHashScroll = useRef(false);
+  const reducedMotion = useReducedMotion(undefined, {
+    getInitialValueInEffect: false,
+  });
   const page = loaded?.route === route ? loaded : undefined;
   useDocumentTitle(
     `${page?.title || metadata?.title || "404 — Page not found"} | Hookway`,
@@ -192,9 +228,9 @@ export default function Documentation() {
     description?.setAttribute(
       "content",
       page?.description ||
-      (metadata
-        ? "Documentation for Hookway."
-        : "Documentation page not found."),
+        (metadata
+          ? "Documentation for Hookway."
+          : "Documentation page not found."),
     );
     let canonical = document.querySelector<HTMLLinkElement>(
       'link[rel="canonical"]',
@@ -247,8 +283,13 @@ export default function Documentation() {
     } catch {
       /* Malformed URL fragments have no matching heading. */
     }
-    document.getElementById(id)?.scrollIntoView();
-  }, [page, location.hash]);
+    document.getElementById(id)?.scrollIntoView({
+      behavior:
+        smoothHashScroll.current && !reducedMotion ? "smooth" : "instant",
+      block: "start",
+    });
+    smoothHashScroll.current = false;
+  }, [page, location.hash, location.key, reducedMotion]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -259,7 +300,7 @@ export default function Documentation() {
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
-  function followLink(event: MouseEvent<HTMLDivElement>) {
+  function followLink(event: MouseEvent<HTMLElement>, smooth = false) {
     const anchor = (event.target as Element).closest<HTMLAnchorElement>(
       "a[href]",
     );
@@ -281,6 +322,7 @@ export default function Documentation() {
     )
       return;
     event.preventDefault();
+    smoothHashScroll.current = smooth;
     navigate(url.pathname + url.search + url.hash);
   }
   async function copyYaml() {
@@ -361,22 +403,23 @@ export default function Documentation() {
               <Loader aria-label="Loading documentation" />
             ) : (
               <>
-                <div className="docs-breadcrumb">
-                  <Link to="/docs/">Docs</Link>
-                  {route !== "/docs/" && <> / {page.title}</>}
-                </div>
+                {route !== "/docs/" && (
+                  <div className="docs-breadcrumb">
+                    <Link to="/docs/">Docs</Link> / {page.title}
+                  </div>
+                )}
                 <h1>{page.title}</h1>
                 {page.source && (
                   <div className="docs-source">
                     <code>{page.source}</code>
-                    {page.editUrl && (
+                    {page.sourceUrl && (
                       <Anchor
-                        href={page.editUrl}
+                        href={page.sourceUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         size="xs"
                       >
-                        Edit on GitHub ↗
+                        View on GitHub ↗
                       </Anchor>
                     )}
                   </div>
@@ -404,15 +447,12 @@ export default function Documentation() {
                 {page.headings.length > 3 && (
                   <details className="docs-outline">
                     <summary>On this page</summary>
-                    <ul>
-                      {page.headings
-                        .filter((heading) => heading.depth <= 3)
-                        .map((heading) => (
-                          <li key={heading.id}>
-                            <a href={`#${heading.id}`}>{heading.title}</a>
-                          </li>
-                        ))}
-                    </ul>
+                    <nav
+                      aria-label="On this page"
+                      onClick={(event) => followLink(event, true)}
+                    >
+                      <OutlineList items={headingTree(page.headings)} />
+                    </nav>
                   </details>
                 )}
                 <div

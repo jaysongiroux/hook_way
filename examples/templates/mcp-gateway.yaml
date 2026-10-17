@@ -1,0 +1,66 @@
+# Supply independent gateway and upstream credentials through your secret provider.
+server:
+  addr: ":8080"
+  max_body_bytes: 1048576
+credentials:
+  service_status:
+    kind: static
+    allowed_origins: ["https://status.example.com"]
+    headers:
+      Authorization:
+        prefix: "Bearer "
+        secret_ref: {provider: env, name: STATUS_API_TOKEN}
+flows:
+  mcp_gateway:
+    capture_failures: false
+    nodes:
+      - id: mcp
+        type: mcp_trigger
+        path: /mcp
+        public_url: https://hookway.example.com/mcp
+        auth:
+          api_keys:
+            reader:
+              secret_ref: {provider: env, name: MCP_READER_TOKEN}
+        tools:
+          - name: get_service_status
+            description: Get the current status of the configured service.
+            read_only: true
+            access: {api_keys: [reader]}
+            input_schema: {type: object, additionalProperties: false}
+            output_schema:
+              type: object
+              properties: {status: {type: string}}
+              required: [status]
+              additionalProperties: false
+          - name: format_greeting
+            description: Format a greeting using native Hookway transformation.
+            read_only: true
+            access: {api_keys: [reader]}
+            input_schema:
+              type: object
+              properties: {name: {type: string, minLength: 1, maxLength: 100}}
+              required: [name]
+              additionalProperties: false
+            output_schema:
+              type: object
+              properties: {name: {type: string}}
+              required: [name]
+              additionalProperties: false
+      - id: status
+        type: http_request
+        method: GET
+        url: https://status.example.com/status
+        credential: {profile: service_status}
+        max_response_bytes: 1048576
+      - {id: status_result, type: mcp_result, source: upstream}
+      - id: greeting
+        type: transform
+        kind: field_map
+        mappings: [{from: body.name, to: body.greeting.name}]
+      - {id: greeting_result, type: mcp_result, source: body, field: greeting}
+    edges:
+      - mcp:get_service_status>status
+      - status>status_result
+      - mcp:format_greeting>greeting
+      - greeting>greeting_result

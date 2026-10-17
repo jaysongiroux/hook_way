@@ -2,6 +2,8 @@ import type { IconType } from "react-icons";
 import type nodeCatalog from "./nodeSchema.json";
 import {
   TbArrowBackUp,
+  TbPlugConnected,
+  TbBraces,
   TbStack2,
   TbArrowsSplit,
   TbCode,
@@ -32,6 +34,7 @@ import { humanLabel } from "../shared/ui/text";
 // Presentation stays independent of form components and runtime validation.
 // Go owns schemas and capabilities; this record owns each node's authoring UI.
 type NodeEditor =
+  | "mcp"
   | "schema"
   | "simple"
   | "auth"
@@ -63,6 +66,30 @@ export interface NodeDescriptor {
 
 // The generated catalog makes a missing or misspelled descriptor a type error.
 export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> = {
+  mcp_trigger: {
+    label: "MCP trigger", icon: TbPlugConnected, editor: "mcp",
+    help: "Expose an authenticated MCP endpoint at a path you choose. Add endpoints as separate flows, each with its own tools, authentication and permissions.",
+    fieldLabels: { path: "Endpoint path", public_url: "Public URL", allowed_origins: "Allowed browser origins", max_inflight: "Concurrent calls" },
+    fieldHelp: {
+      path: "Choose a distinct URL path, such as /services/mcp or /utilities/mcp.",
+      public_url: "The public HTTPS URL for this endpoint. Its path must match Endpoint path. HTTP is allowed for localhost development.",
+      allowed_origins: "Exact browser origins allowed to connect, including the builder origin when using Test & connect.",
+      max_inflight: "Maximum active tool calls for this endpoint. Defaults to 32; all endpoints also share process admission limits.",
+    },
+    initialOptions: () => ({ path: "/mcp", public_url: "https://hookway.example.com/mcp", auth: { api_keys: { reader: { secret_ref: { provider: "env", name: "MCP_READER_TOKEN" } } } }, tools: [] }),
+    summary: (o) => `${String(o.path ?? "/mcp")} · ${Array.isArray(o.tools) ? o.tools.length : 0} tools`,
+    labelledPorts: (o) => Array.isArray(o.tools) ? o.tools.flatMap((tool) => {
+      if (!tool || typeof tool !== "object" || Array.isArray(tool)) return [];
+      const name = (tool as Options).name;
+      return typeof name === "string" && name ? [name] : [];
+    }) : [],
+  },
+  mcp_result: {
+    label: "MCP result", icon: TbBraces, editor: "schema",
+    help: "Return schema-validated JSON from the selected tool branch. Choose the native body, upstream JSON, or a constant, with optional field projection.",
+    initialOptions: () => ({source:"body"}),
+    summary: (o) => `Return ${String(o.source ?? "body")}`,
+  },
   launchdarkly: {
  label: "LaunchDarkly flags", icon: TbFlag, editor: "schema",
  help: "Evaluate named feature flags for a tenant or user. Route using typed results without changing the webhook body.",

@@ -62,6 +62,9 @@ type recoveringResponseWriter struct {
 	wroteHeader bool
 }
 
+// Preserve ResponseController support for MCP request deadlines and flushing.
+func (w *recoveringResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *recoveringResponseWriter) WriteHeader(status int) {
 	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(status)

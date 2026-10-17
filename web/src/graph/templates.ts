@@ -1,3 +1,4 @@
+import mcpYaml from "../../../examples/templates/mcp-gateway.yaml?raw";
 import slackYaml from "../../../examples/templates/slack-notify.yaml?raw";
 import discordYaml from "../../../examples/templates/discord-notify.yaml?raw";
 import stripeYaml from "../../../examples/templates/stripe-ingest.yaml?raw";
@@ -13,6 +14,8 @@ import type { HookwayNode } from "./model";
  * normalizes them to the drop point.
  */
 export interface TemplateSubgraph {
+  configExtra?: Record<string, unknown>;
+  flowExtra?: Record<string, unknown>;
   nodes: HookwayNode[];
   edges: Edge[];
 }
@@ -32,6 +35,13 @@ export interface TemplateDef {
 
 export const TEMPLATES: TemplateDef[] = [
   {
+    id: "mcp-gateway",
+    label: "Authenticated MCP gateway",
+    help: "One MCP endpoint with a private HTTP status tool and a native greeting tool. Gateway and upstream credentials use separate secret references. Creates a new flow.",
+    nodeIds: ["mcp", "status", "status_result", "greeting", "greeting_result"],
+    yaml: mcpYaml,
+  },
+  {
     id: "stripe-ingest",
     label: "Stripe webhook",
     help: "Receive Stripe webhooks, verify Stripe-Signature, limit requests, reject duplicates, and parse JSON. Choose a protection store and connect a destination to deliver the events.",
@@ -49,7 +59,19 @@ export const TEMPLATES: TemplateDef[] = [
     id: "xml-ingest",
     label: "XML webhook",
     help: "Verify an XML webhook signature, parse and filter the document, remove empty elements, and forward it to an HTTP API. Adds the complete XML flow.",
-    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env", "only_orders", "tag", "prune", "post"],
+    nodeIds: [
+      "in",
+      "hops",
+      "rl",
+      "body",
+      "auth",
+      "replay",
+      "env",
+      "only_orders",
+      "tag",
+      "prune",
+      "post",
+    ],
     yaml: xmlYaml,
   },
   {
@@ -87,16 +109,34 @@ export function templateSubgraph(id: string): TemplateSubgraph | undefined {
   // is the flow every template file declares.
   const doc = fromYaml(def.yaml);
   const wanted = new Set(def.nodeIds);
-  const nodes = doc.nodes.filter((n) => wanted.has(n.id)).map((node) => {
-    // A subgraph does not import workspace stores. Require an explicit choice
-    // rather than accidentally binding an existing store with the same name.
-    if (!["rate_limit", "replay_guard"].includes(node.data.nodeType)) return node;
-    return { ...node, data: { ...node.data, options: { ...node.data.options, store: "" } } };
-  });
-  const missing = def.nodeIds.filter((want) => !nodes.some((n) => n.id === want));
+  const nodes = doc.nodes
+    .filter((n) => wanted.has(n.id))
+    .map((node) => {
+      // A subgraph does not import workspace stores. Require an explicit choice
+      // rather than accidentally binding an existing store with the same name.
+      if (!["rate_limit", "replay_guard"].includes(node.data.nodeType))
+        return node;
+      return {
+        ...node,
+        data: { ...node.data, options: { ...node.data.options, store: "" } },
+      };
+    });
+  const missing = def.nodeIds.filter(
+    (want) => !nodes.some((n) => n.id === want),
+  );
   if (missing.length > 0) {
-    throw new Error(`template ${def.id} names nodes missing from its config: ${missing.join(", ")}`);
+    throw new Error(
+      `template ${def.id} names nodes missing from its config: ${missing.join(", ")}`,
+    );
   }
-  const edges = doc.edges.filter((e) => wanted.has(e.source) && wanted.has(e.target));
-  return { nodes, edges };
+  const edges = doc.edges.filter(
+    (e) => wanted.has(e.source) && wanted.has(e.target),
+  );
+  return {
+    nodes,
+    edges,
+    ...(id === "mcp-gateway"
+      ? { configExtra: doc.configExtra, flowExtra: doc.flowExtra }
+      : {}),
+  };
 }

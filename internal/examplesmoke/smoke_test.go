@@ -110,6 +110,18 @@ func TestExampleSmoke(t *testing.T) {
 			if blocking := blocking(issues); len(blocking) > 0 {
 				t.Fatalf("serve-path issues: %v", blocking)
 			}
+			mcpFlows := 0
+			for _, flow := range cfg.Flows {
+				if _, ok := flowconfig.MCPOptions(flow); ok {
+					mcpFlows++
+				}
+			}
+			if mcpFlows > 0 {
+				smokeMCP(t, cfg, jwtPriv)
+				if mcpFlows == len(cfg.Flows) {
+					return
+				}
+			}
 			for _, store := range cfg.StateStores {
 				if store.Memory == nil {
 					t.Skip("shared Redis/PostgreSQL protection stores have adapter conformance and integration coverage; offline validation already passed")
@@ -168,6 +180,9 @@ func TestExampleSmoke(t *testing.T) {
 			}
 
 			for _, name := range flowNames(cfg) {
+				if _, ok := flowconfig.MCPOptions(cfg.Flows[name]); ok {
+					continue
+				}
 				t.Run(name, func(t *testing.T) {
 					pub.reset()
 					req := requestForFlow(t, cfg.Flows[name], jwtPriv, ecPriv)
