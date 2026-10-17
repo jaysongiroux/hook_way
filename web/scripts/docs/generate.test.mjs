@@ -206,6 +206,11 @@ test("compiled HTML preserves duplicate heading anchors and strips active source
   assert.match(page.html, /id="repeat-1"/);
   assert.doesNotMatch(page.html, /<script|javascript:/);
   assert.equal(page.headings[1].id, "repeat-1");
+  assert.equal(
+    page.sourceUrl,
+    "https://github.com/jaysongiroux/hook_way/blob/main/docs/guides/test.md",
+  );
+  assert.equal(page.editUrl, undefined);
   assert.doesNotMatch(page.description, /<[^>]+>/);
   assert.doesNotMatch(page.searchText, /data-source-title|<script/);
 });

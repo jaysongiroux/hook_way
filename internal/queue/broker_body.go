@@ -95,6 +95,12 @@ func validateBrokerSize(body []byte, attrs map[string]MessageAttribute, max int)
 }
 
 func brokerRetry(ctx context.Context, msg Message, send func(bool) error) error {
+	if singleAttempt(ctx) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return send(true)
+	}
 	if msg.Publish == nil || msg.Publish.Retry == nil {
 		return send(false)
 	}

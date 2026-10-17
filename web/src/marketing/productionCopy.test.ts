@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import { PRODUCTION_CARDS } from "./productionCopy";
 import { COMPARE_ROWS } from "./compareCopy";
 
-// Six two-column tiles fill the six-column bento exactly: two full rows.
-test("the section covers six themes as compact tiles", () => {
+// Keep operational details available behind the benchmark summary.
+test("operational details cover the six configuration themes", () => {
   expect(PRODUCTION_CARDS).toHaveLength(6);
   for (const c of PRODUCTION_CARDS) {
     expect(c.title.length).toBeGreaterThan(0);
@@ -14,10 +14,10 @@ test("the section covers six themes as compact tiles", () => {
   }
 });
 
-// Each headline value is a count a reader could verify in the repo.
-test("every tile headlines a real number", () => {
+// Each operational default is a value a reader can verify in the repo.
+test("operational defaults retain their source-checked values", () => {
   const values = PRODUCTION_CARDS.map((c) => c.value);
-  expect(values).toEqual(["256", "3", "70", "14", "1", "7"]);
+  expect(values).toEqual(["256", "3", "72", "14", "1", "7"]);
 });
 
 // Retry blocks exist for rabbitmq, kafka, and webhook only.

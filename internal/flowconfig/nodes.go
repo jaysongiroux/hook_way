@@ -467,6 +467,8 @@ type SecretsFunc func(ctx context.Context) ([][]byte, error)
 
 func catalog(opts RegistryOptions) []nodeDefinition {
 	return []nodeDefinition{
+		define("mcp_trigger", graph.PortNone, graph.PortEnvelope, false, validateMCPTrigger, newMCPTrigger),
+		defineErr("mcp_result", graph.PortEnvelope, graph.PortTerminal, false, nil, newMCPResult).withMetadata(nodeMetadata{noErrorEdge: true}),
 		define("http_trigger", graph.PortNone, graph.PortRequestHead, false, func(o HTTPTriggerOptions) error { return require("path", o.Path) }, newHTTPTrigger),
 		define("loop_guard", graph.PortRequestHead, graph.PortRequestHead, false, func(o LoopGuardOptions) error {
 			if o.MaxHops < 0 {
@@ -1083,9 +1085,8 @@ func validateHTTPRequest(o HTTPRequestOptions) error {
 		if err := validateURLHostTemplate(o.URL); err != nil {
 			return fmt.Errorf("url: %w", err)
 		}
-		if o.AllowPrivateTargets && o.Credential == nil && !urlAuthorityIsTemplated(o.URL) {
-			return errors.New("allow_private_targets has no effect unless the url host contains a {variable} or an admitted upstream is used")
-		}
+		// Literal MCP operations also require explicit private-target permission.
+		// Ordinary webhook execution keeps its existing literal-origin policy.
 	}
 	if err := validateHTTPCredential(o.Credential); err != nil {
 		return err

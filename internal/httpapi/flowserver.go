@@ -27,6 +27,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/graph"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
+	"github.com/jaysongiroux/hook_way/internal/mcpgateway"
 	"github.com/jaysongiroux/hook_way/internal/metrics"
 	"github.com/jaysongiroux/hook_way/internal/outboundcred"
 	"github.com/jaysongiroux/hook_way/internal/publishmsg"
@@ -114,6 +115,9 @@ func (a queuePublisherAdapter) Publish(ctx context.Context, destinationID, rende
 		// destination cannot fix malformed object metadata or base64 content.
 		return graph.NodeError{Status: http.StatusBadRequest, Err: fmt.Errorf("prepare publish payload: %w", err)}
 	}
+	if _, ok := flowconfig.MCPInvocationFrom(ctx); ok {
+		ctx = queue.WithSingleAttempt(ctx)
+	}
 	return a.pub.Publish(ctx, destinationID, renderedTarget, msg)
 }
 
@@ -133,6 +137,9 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	}
 	if issues := flowconfig.RoutingIssues(cfg); len(issues) > 0 {
 		return nil, fmt.Errorf("invalid flow routing: %s", issues[0].Message)
+	}
+	if issues := flowconfig.MCPConfigurationIssues(cfg); len(issues) > 0 {
+		return nil, fmt.Errorf("invalid MCP configuration: %s", issues[0].Message)
 	}
 	if issues := flowconfig.RoutingConfigurationIssues(cfg); len(issues) > 0 {
 		return nil, fmt.Errorf("invalid routing configuration: %s", issues[0].Message)
@@ -284,6 +291,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	sort.Strings(names)
 	for _, name := range names {
 		fc := cfg.Flows[name]
+		mcpOptions, isMCP := flowconfig.MCPOptions(fc)
 		path, methods, destByNode, err := triggerRouting(fc)
 		if err != nil {
 			closeAll()
@@ -324,6 +332,54 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 			flow: compiled, destByNode: destByNode, destIDs: uniqueDestIDs(destByNode),
 			broken: compileErr != nil || compiled == nil,
 		}
+
+		if isMCP {
+			if compileErr != nil {
+				closeAll()
+				return nil, compileErr
+			}
+			gateway, err := mcpgateway.New(mcpgateway.Options{Config: mcpOptions, Logger: logger.With("flow", name),
+				Observe: func(tool, outcome string, duration time.Duration) { m.MCP(name, tool, outcome, duration) },
+				Run: func(ctx context.Context, env graph.Envelope) (graph.Terminal, error) {
+					if s.lifecycle.Load() >= 2 {
+						return graph.Terminal{}, errors.New("server draining")
+					}
+					if s.gate.acquire(ctx, nil) != gateAdmitted {
+						return graph.Terminal{}, errors.New("server busy")
+					}
+					defer s.gate.release()
+					if !s.admission.Enter() {
+						return graph.Terminal{}, errors.New("server closing")
+					}
+					defer s.admission.Leave()
+					inv, _ := flowconfig.MCPInvocationFrom(ctx)
+					ctx, span := nodeTracer.Start(ctx, "hookway.mcp."+inv.Tool, trace.WithAttributes(attribute.String("hookway.flow", name), attribute.String("hookway.tool", inv.Tool)))
+					defer span.End()
+					term, err := compiled.Run(ctx, env, graph.RunOptions{Cancellable: true, PublishTimeout: cfg.Server.PublishTimeout, FanoutConcurrency: cfg.Server.FanoutConcurrencyLimit(), OnNode: func(ev graph.NodeEvent) {
+						result := "ok"
+						if ev.Err != nil {
+							result = "error"
+						}
+						m.Node(name, ev.NodeID, ev.NodeType, result, ev.Duration)
+					}})
+					if graph.NeedsCompensation(term, err) {
+						_ = graph.RunCompensations(ctx, term, err, cfg.Server.PublishTimeout)
+					}
+					return term, err
+				},
+			})
+			if err != nil {
+				closeAll()
+				return nil, err
+			}
+			closers = append(closers, gateway)
+			s.mux.Handle(path, gateway)
+			s.mux.Handle(gateway.MetadataPath(), http.HandlerFunc(gateway.Metadata))
+			if mcpOptions.Auth.NoAuth {
+				logger.Warn("MCP endpoint accepts anonymous calls", "flow", name)
+			}
+			continue
+		}
 		pattern, err := vars.ParsePath(path)
 		if err != nil {
 			closeAll()
@@ -353,6 +409,10 @@ func triggerRouting(fc graph.FlowConfig) (path string, methods []string, destByN
 	destByNode = map[string]string{}
 	for _, nc := range flowconfig.ExpandedNodes(fc) {
 		switch nc.Type {
+		case "mcp_trigger":
+			opts, _ := flowconfig.MCPOptions(fc)
+			path = opts.Path
+			methods = []string{http.MethodPost}
 		case "http_trigger":
 			opts, decErr := flowconfig.TriggerOptions(nc)
 			if decErr != nil {

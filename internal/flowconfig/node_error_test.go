@@ -50,6 +50,14 @@ func TestCatalogNodeRuntimeErrors(t *testing.T) {
 func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 	t.Helper()
 	return map[string]func(*testing.T) error{
+		"mcp_trigger": func(t *testing.T) error {
+			_, err := mustCatalogNode(t, "mcp_trigger", nodeFixtures["mcp_trigger"].yaml, RegistryOptions{}).Run(context.Background(), graph.Envelope{})
+			return err
+		},
+		"mcp_result": func(t *testing.T) error {
+			_, err := mustCatalogNode(t, "mcp_result", nodeFixtures["mcp_result"].yaml, RegistryOptions{}).Run(context.Background(), graph.Envelope{})
+			return err
+		},
 		"launchdarkly": func(t *testing.T) error {
 			n := mustCatalogNode(t, "launchdarkly", nodeFixtures["launchdarkly"].yaml, RegistryOptions{})
 			_, err := n.Run(context.Background(), graph.RequestHead{})

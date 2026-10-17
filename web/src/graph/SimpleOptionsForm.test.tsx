@@ -34,6 +34,7 @@ function setup(nodeType: string, initial: Record<string, unknown>) {
 
 test("simple forms cover precisely the remaining runtime catalog types", () => {
   const dedicated = [
+    "mcp_trigger", "mcp_result",
  "launchdarkly",
     "auth",
     "rate_limit",

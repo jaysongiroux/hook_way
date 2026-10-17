@@ -154,13 +154,66 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     };
     set({ edges: [...edges, edge] });
   },
-  addNode: (n) => set({ nodes: [...get().nodes, n] }),
+  addNode: (n) => {
+    if (n.data.nodeType === "mcp_trigger" && get().nodes.length > 0)
+      get().addFlow(nextMCPFlowName(get()));
+    set({ nodes: [...get().nodes, availableMCPEndpoint(n, get())] });
+  },
   // insertSubgraph drops a palette template onto the canvas. Ids are renamed
   // against everything already in this flow (a second insert of the same
   // template would otherwise export duplicate `id:` keys), and positions are
   // translated so the template lands where it was dropped instead of on top
   // of the existing graph.
   insertSubgraph: (sub, position) => {
+    if (
+      sub.nodes.some((n) => n.data.nodeType === "mcp_trigger") &&
+      get().nodes.length > 0
+    ) {
+      get().addFlow(nextMCPFlowName(get()));
+    }
+    sub = {
+      ...sub,
+      nodes: sub.nodes.map((node) => availableMCPEndpoint(node, get())),
+    };
+    if (sub.configExtra) {
+      const extra = { ...get().configExtra };
+      const names = new Map<string, string>();
+      const credentials = { ...objectRecord(extra.credentials) };
+      for (const [original, entry] of Object.entries(
+        objectRecord(sub.configExtra.credentials),
+      )) {
+        let name = original;
+        let suffix = 2;
+        while (name in credentials) name = `${original}_${suffix++}`;
+        names.set(original, name);
+        credentials[name] = entry;
+      }
+      extra.credentials = credentials;
+      sub = {
+        ...sub,
+        nodes: sub.nodes.map((n) => {
+          const credential = objectRecord(n.data.options.credential);
+          return credential.profile
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  options: {
+                    ...n.data.options,
+                    credential: {
+                      ...credential,
+                      profile:
+                        names.get(String(credential.profile)) ??
+                        credential.profile,
+                    },
+                  },
+                },
+              }
+            : n;
+        }),
+      };
+      set({ configExtra: extra, flowExtra: sub.flowExtra });
+    }
     const { nodes, edges } = get();
     const taken = new Set(
       nodes.flatMap((n) => [n.id, String(n.data.yamlId ?? n.id)]),
@@ -623,4 +676,54 @@ function reconcileConfigExtraDrafts(
     }
   }
   return result;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function nextMCPFlowName(state: Pick<GraphState, "activeFlow" | "otherFlows">) {
+  let name = "mcp_gateway";
+  let suffix = 2;
+  while (name === state.activeFlow || state.otherFlows[name])
+    name = `mcp_gateway_${suffix++}`;
+  return name;
+}
+
+function availableMCPEndpoint(
+  node: HookwayNode,
+  state: Pick<GraphState, "nodes" | "otherFlows">,
+): HookwayNode {
+  if (node.data.nodeType !== "mcp_trigger") return node;
+  const paths = new Set(
+    [state, ...Object.values(state.otherFlows)].flatMap((flow) =>
+      flow.nodes
+        .filter((node) =>
+          ["mcp_trigger", "http_trigger"].includes(node.data.nodeType),
+        )
+        .map((node) => node.data.options.path),
+    ),
+  );
+  const original = String(node.data.options.path ?? "/mcp");
+  let path = original;
+  let suffix = 2;
+  while (paths.has(path)) path = `${original}-${suffix++}`;
+  if (path === original) return node;
+  let publicURL = node.data.options.public_url;
+  try {
+    const url = new URL(String(publicURL));
+    url.pathname = path;
+    publicURL = url.toString();
+  } catch {
+    /* Preserve invalid drafts for validation instead of guessing an origin. */
+  }
+  return {
+    ...node,
+    data: {
+      ...node.data,
+      options: { ...node.data.options, path, public_url: publicURL },
+    },
+  };
 }

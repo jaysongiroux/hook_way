@@ -386,6 +386,7 @@ func compileFlows(cfg Config) []config.ValidationIssue {
 
 func crossFlowIssues(cfg Config) []config.ValidationIssue {
 	issues := RoutingIssues(cfg)
+	issues = append(issues, MCPConfigurationIssues(cfg)...)
 	issues = append(issues, temporalPublishIssues(cfg)...)
 	brokerDedup := map[string]bool{}
 	brokerResources := map[string]map[string]string{}
@@ -534,15 +535,24 @@ func RoutingIssues(cfg Config) []config.ValidationIssue {
 	var routes []route
 	var issues []config.ValidationIssue
 	reserved := []string{"/health", "/healthz", "/ready", "/readyz"}
+	for _, fc := range cfg.Flows {
+		if o, ok := MCPOptions(fc); ok {
+			reserved = append(reserved, "/.well-known/oauth-protected-resource"+o.Path)
+		}
+	}
 	if cfg.Metrics.Enabled && cfg.Metrics.Addr == "" {
 		reserved = append(reserved, cfg.Metrics.Path)
 	}
 	for _, name := range sortedKeys(cfg.Flows) {
 		for _, nc := range cfg.Flows[name].Nodes {
-			if nc.Type != "http_trigger" {
+			if nc.Type != "http_trigger" && nc.Type != "mcp_trigger" {
 				continue
 			}
 			opts, err := TriggerOptions(nc)
+			if nc.Type == "mcp_trigger" {
+				o, e := decodeOptions[MCPTriggerOptions](nc)
+				opts.Path, err = o.Path, e
+			}
 			if err != nil {
 				continue
 			}

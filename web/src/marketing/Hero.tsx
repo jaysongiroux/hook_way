@@ -1,4 +1,13 @@
-import { Box, Button, Container, Group, Stack, Text, Title } from "@mantine/core";
+import {
+  Anchor,
+  Box,
+  Button,
+  Container,
+  Group,
+  Stack,
+  Text,
+  Title,
+} from "@mantine/core";
 import { Link } from "react-router-dom";
 import { BuilderFrame } from "./BuilderFrame";
 import { GITHUB_REPO } from "./links";
@@ -6,17 +15,26 @@ import { DARK } from "../tokens";
 
 export function Hero() {
   return (
-    <Box component="section" className="hookway-overview-hero" style={{ background: DARK.bg }}>
+    <Box
+      component="section"
+      className="hookway-overview-hero"
+      style={{ background: DARK.bg }}
+    >
       <Container size="lg">
-        <Box className="hookway-hero-intro">
+        <Box className="hookway-hero-intro" data-marketing-motion="intro">
           <Title order={1} c={DARK.text} className="hookway-hero-title">
-            Receive, verify,<br />{" "}
-            and route webhooks.
+            Route webhooks.
+            <br /> Serve HTTP routes.
+            <br /> Expose MCP tools.
           </Title>
           <Stack className="hookway-hero-copy" gap={24}>
             <Text c={DARK.muted} className="hookway-hero-lead">
-              Check who sent each request, prepare its data, and send it straight
-              to the queues, databases, or APIs your team already uses.
+              Verify and route webhooks. Handle synchronous HTTP requests as a
+              reverse proxy or native flow. Expose selected APIs through{" "}
+              <Anchor href="#mcp-gateway" inherit c={DARK.accent}>
+                authenticated MCP endpoints
+              </Anchor>{" "}
+              that AI clients can discover and call.
             </Text>
             <Group gap="sm">
               <Button component={Link} to="/builder" size="md" color="brand">
@@ -29,7 +47,13 @@ export function Hero() {
                 rel="noopener noreferrer"
                 size="md"
                 variant="default"
-                styles={{ root: { background: DARK.surface, borderColor: DARK.border, color: DARK.text } }}
+                styles={{
+                  root: {
+                    background: DARK.surface,
+                    borderColor: DARK.border,
+                    color: DARK.text,
+                  },
+                }}
               >
                 View on GitHub
               </Button>
@@ -39,10 +63,13 @@ export function Hero() {
             </Text>
           </Stack>
         </Box>
-        <BuilderFrame />
+        <Box data-marketing-motion="visual">
+          <BuilderFrame />
+        </Box>
         <Text size="sm" c={DARK.muted} className="hookway-hero-caption">
           Design a flow, export the YAML, and deploy it in your infrastructure.
-          The builder does not connect to or manage your running server.
+          Test deployed MCP tools from the builder; apply configuration changes
+          through your deployment process.
         </Text>
       </Container>
     </Box>

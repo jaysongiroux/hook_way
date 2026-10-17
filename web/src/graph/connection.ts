@@ -35,7 +35,7 @@ export function isValidConnection(c: Connection | Edge, nodes: HookwayNode[], ed
     return portAccepts(to.input, from.input);
   }
   const ports = labelledPorts(src.data.nodeType, src.data.options);
-  if (ports.length > 0) {
+  if (ports.length > 0 || src.data.nodeType === "mcp_trigger") {
     if (!ports.includes(sourceHandle)) return false;
     if (existing.some((e) => e.source === c.source && e.sourceHandle === sourceHandle)) return false;
   } else if (sourceHandle !== HANDLE_OUT) return false;

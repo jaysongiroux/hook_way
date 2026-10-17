@@ -53,6 +53,18 @@ Each file showcases one destination type with all available options documented v
 | [destinations/temporal.yaml](destinations/temporal.yaml) | Temporal destination: one workflow execution per event; `target` is the task queue. `temporal_options` are not publish-node fields. |
 | [destinations/webhook.yaml](destinations/webhook.yaml) | Webhook destination: explicitly loss-tolerant async delivery (202 means bounded volatile-queue admission), or synchronous HTTP delivery; envelope vs proxy payload modes; outbound auth and bounded retries. Neither mode provides exactly-once business processing. |
 
+## MCP gateways
+
+See the [MCP gateway guide](../docs/guides/mcp-gateway.md) for deployment and
+[OAuth setup](../docs/guides/mcp-gateway.md#oauth-configuration).
+Gateway caller authentication is separate from outbound API credentials.
+
+| File | Description |
+| --- | --- |
+| [templates/mcp-gateway.yaml](templates/mcp-gateway.yaml) | API-key-authenticated HTTP status tool and native greeting tool with independent upstream credentials. |
+| [mcp-oauth.yaml](mcp-oauth.yaml) | External-provider OAuth with a dedicated resource audience, discovery scopes and an explicit tool permission. |
+| [mcp-endpoints.yaml](mcp-endpoints.yaml) | Independent `/services/mcp` and `/utilities/mcp` endpoints with separate caller keys and catalogues. |
+
 ## Auth strategy reference configs
 
 Each file demonstrates one auth type with the exact fields required by that type.

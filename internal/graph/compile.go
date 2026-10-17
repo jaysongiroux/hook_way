@@ -417,6 +417,18 @@ func compile(name string, fc FlowConfig, reg *Registry, entry string) (*Flow, er
 		ce.Problems = append(ce.Problems, fmt.Sprintf("cycle: %s", strings.Join(cycle, " -> ")))
 	}
 
+	if len(ce.Problems) == 0 {
+		for _, b := range f.nodes {
+			if b.spec.Type == "mcp_result" && f.nodes[f.root].spec.Type != "mcp_trigger" {
+				ce.Problems = append(ce.Problems, "mcp_result requires an MCP trigger")
+			}
+		}
+		if v, ok := f.nodes[f.root].node.(FlowValidator); ok {
+			if err := v.ValidateFlow(fc); err != nil {
+				ce.Problems = append(ce.Problems, err.Error())
+			}
+		}
+	}
 	if len(ce.Problems) > 0 {
 		return nil, ce
 	}

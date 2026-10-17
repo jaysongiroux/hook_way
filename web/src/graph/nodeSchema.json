@@ -1184,6 +1184,354 @@
       "type": "object"
     }
   },
+  "mcp_result": {
+    "input": "Envelope",
+    "output": "Terminal",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "body",
+            "upstream",
+            "constant"
+          ]
+        },
+        "field": {
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "value": true
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source"
+      ]
+    }
+  },
+  "mcp_trigger": {
+    "input": "None",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": false,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "public_url": {
+          "type": "string"
+        },
+        "allowed_origins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "auth": {
+          "properties": {
+            "no_auth": {
+              "type": "boolean"
+            },
+            "api_keys": {
+              "additionalProperties": {
+                "properties": {
+                  "secret_ref": {
+                    "properties": {
+                      "selection": {
+                        "type": "string",
+                        "enum": [
+                          "exact",
+                          "newest_matching"
+                        ]
+                      },
+                      "json_field": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "enum": [
+                          "env",
+                          "file",
+                          "aws_secrets_manager"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "refresh": {
+                        "type": "string"
+                      },
+                      "overlap": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "provider",
+                      "name"
+                    ]
+                  },
+                  "expires_at": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "secret_ref"
+                ]
+              },
+              "type": "object"
+            },
+            "oauth": {
+              "properties": {
+                "discovery_scopes": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "issuer": {
+                  "type": "string"
+                },
+                "audience": {
+                  "type": "string"
+                },
+                "jwks_url": {
+                  "type": "string"
+                },
+                "roles_claim": {
+                  "type": "string"
+                },
+                "introspection_url": {
+                  "type": "string"
+                },
+                "client_id": {
+                  "properties": {
+                    "selection": {
+                      "type": "string",
+                      "enum": [
+                        "exact",
+                        "newest_matching"
+                      ]
+                    },
+                    "json_field": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "env",
+                        "file",
+                        "aws_secrets_manager"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "refresh": {
+                      "type": "string"
+                    },
+                    "overlap": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "provider",
+                    "name"
+                  ]
+                },
+                "client_secret": {
+                  "properties": {
+                    "selection": {
+                      "type": "string",
+                      "enum": [
+                        "exact",
+                        "newest_matching"
+                      ]
+                    },
+                    "json_field": {
+                      "type": "string"
+                    },
+                    "provider": {
+                      "type": "string",
+                      "enum": [
+                        "env",
+                        "file",
+                        "aws_secrets_manager"
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "refresh": {
+                      "type": "string"
+                    },
+                    "overlap": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "provider",
+                    "name"
+                  ]
+                },
+                "allow_private_targets": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "issuer",
+                "audience"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "tools": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "output_schema": {
+                "type": "object"
+              },
+              "access": {
+                "properties": {
+                  "api_keys": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "anonymous": {
+                    "type": "boolean"
+                  },
+                  "allow_mutation": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "read_only": {
+                "type": "boolean"
+              },
+              "timeout": {
+                "type": "string"
+              },
+              "max_inflight": {
+                "type": "integer",
+                "maximum": 256,
+                "minimum": 1
+              },
+              "requests_per_minute": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "allow_retries": {
+                "type": "boolean"
+              },
+              "request": {
+                "properties": {
+                  "variables": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "query": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "headers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "body": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name",
+              "description",
+              "input_schema",
+              "output_schema",
+              "access",
+              "read_only"
+            ]
+          },
+          "type": "array",
+          "maxItems": 64,
+          "minItems": 1
+        },
+        "max_inflight": {
+          "type": "integer",
+          "maximum": 256,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "public_url",
+        "auth",
+        "tools"
+      ]
+    }
+  },
   "no_auth": {
     "input": "RawRequest",
     "output": "Verified",

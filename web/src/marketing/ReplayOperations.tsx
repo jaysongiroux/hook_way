@@ -1,13 +1,4 @@
-import {
-  Anchor,
-  Box,
-  Group,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from "@mantine/core";
-import { Link } from "react-router-dom";
+import { Anchor, Box, Group, Text, Title } from "@mantine/core";
 import { DARK } from "../tokens";
 import { docsHref } from "./links";
 import { Section } from "./Section";
@@ -55,44 +46,38 @@ export function ReplayOperations() {
           your data stays in your deployment.
         </Text>
       </Box>
-      <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="xl" mt={32}>
+      <Box component="ol" className="hookway-replay-steps">
         {WORKFLOW.map(({ title, body }) => (
-          <Stack key={title} gap={8}>
+          <li key={title}>
             <Title order={3} size="h5" c={DARK.text}>
               {title}
             </Title>
-            <Text size="sm" c={DARK.muted}>
+            <Text size="sm" c={DARK.muted} mt={8}>
               {body}
             </Text>
-          </Stack>
+          </li>
         ))}
-      </SimpleGrid>
-      <Text size="sm" c={DARK.muted} mt={32} maw={760}>
-        For spot checks, put Sample → Inspect on a separate branch while Publish
-        receives every event. Inspections are view only: see the current body and
-        context, or download captured files. Uploads are best effort and share
-        replay storage and retention limits. {" "}
-        <Anchor href={docsHref("examples/inspect.yaml")}>
-          See the sampled inspection example
-        </Anchor>.
-      </Text>
-      <Group justify="space-between" align="center" gap="md" mt={32}>
-        <Text size="sm" c={DARK.muted} maw={620}>
-          The same application includes the public visual builder: create a
-          flow, import existing YAML, or export a configuration without signing
-          in.
-        </Text>
-        <Group gap="lg">
-          <Anchor
-            href={docsHref("docs/operations/replay-console.md")}
-          >
-            Deploy the replay console
-          </Anchor>
-          <Anchor component={Link} to="/builder">
-            Open the public builder
-          </Anchor>
-        </Group>
+      </Box>
+      <Group mt={24}>
+        <Anchor href={docsHref("docs/operations/replay-console.md")}>
+          Deploy the replay console
+        </Anchor>
       </Group>
+      <Box className="hookway-section-note">
+        <Title order={3} size="h5">
+          Just need to inspect a sample?
+        </Title>
+        <Text size="sm" c={DARK.muted} mt={8} maw={760}>
+          For spot checks, put Sample → Inspect on a separate branch while
+          Publish receives every event. Inspections are view only: see the
+          current body and context, or download captured files. Uploads are best
+          effort and share replay storage and retention limits.{" "}
+          <Anchor href={docsHref("examples/inspect.yaml")}>
+            See the sampled inspection example
+          </Anchor>
+          .
+        </Text>
+      </Box>
     </Section>
   );
 }

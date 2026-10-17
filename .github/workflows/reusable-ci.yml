@@ -173,7 +173,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Unit tests
+      - name: Unit tests (including MCP gateway, HTTP runtime and configuration)
         run: make unit
 
       - name: Invariant conformance
@@ -240,7 +240,7 @@ jobs:
       - name: Install web deps
         run: make web-install
 
-      - name: Web unit tests
+      - name: Web unit tests (including MCP authoring and endpoint configuration)
         run: make web-test
 
   coverage:
@@ -327,7 +327,10 @@ jobs:
       - name: Install Playwright browsers
         run: cd web && npx playwright install --with-deps chromium
 
-      - name: Playwright builder tests
+      - name: Verify MCP browser test discovery
+        run: cd web && npm run test:e2e -- --list e2e/mcp-gateway.spec.ts
+
+      - name: Playwright builder and authenticated MCP client tests
         run: make web-e2e
 
       - name: Marketing documentation browser tests

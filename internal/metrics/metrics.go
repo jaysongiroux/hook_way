@@ -11,6 +11,8 @@ import (
 )
 
 type Metrics struct {
+	mcpCalls                  *prometheus.CounterVec
+	mcpDuration               *prometheus.HistogramVec
 	flagEvaluations           *prometheus.CounterVec
 	flagConnections           *prometheus.GaugeVec
 	protectionOperations      *prometheus.CounterVec
@@ -87,6 +89,9 @@ type Metrics struct {
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.mcpCalls = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_mcp_calls_total", Help: "MCP calls and rejections."}, []string{"flow", "tool", "outcome"})
+	m.mcpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "hookway_mcp_duration_seconds", Help: "MCP invocation duration."}, []string{"flow", "tool", "outcome"})
+	m.registry.MustRegister(m.mcpCalls, m.mcpDuration)
 	m.flagEvaluations = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_flag_evaluations_total", Help: "Named flag evaluations and fallbacks."}, []string{"node", "result"})
 	m.flagConnections = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "hookway_flag_connection_status", Help: "LaunchDarkly data source state (one active state per configured connection)."}, []string{"connection", "state"})
 	m.registry.MustRegister(m.flagEvaluations, m.flagConnections)
@@ -632,4 +637,10 @@ func (m *Metrics) FlagConnection(connection, state string) {
 		}
 		m.flagConnections.WithLabelValues(connection, s).Set(value)
 	}
+}
+
+// MCP records configuration-bounded tool identities and finite outcomes only.
+func (m *Metrics) MCP(flow, tool, outcome string, d time.Duration) {
+	m.mcpCalls.WithLabelValues(flow, tool, outcome).Inc()
+	m.mcpDuration.WithLabelValues(flow, tool, outcome).Observe(d.Seconds())
 }

@@ -184,3 +184,16 @@ type WebhookMetrics interface {
 	// location is always "webhook_worker" for this interface's callers.
 	Panic(location string)
 }
+
+// WithSingleAttempt suppresses publisher and SDK resend loops for bounded calls
+// whose side effects must not be repeated after an uncertain acknowledgement.
+func WithSingleAttempt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, singleAttemptKey{}, true)
+}
+
+type singleAttemptKey struct{}
+
+func singleAttempt(ctx context.Context) bool {
+	value, _ := ctx.Value(singleAttemptKey{}).(bool)
+	return value
+}

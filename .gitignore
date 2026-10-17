@@ -134,3 +134,4 @@ __pycache__/
 
 # Documentation publication output is generated inside the web project.
 /web/.generated/
+.scratch/

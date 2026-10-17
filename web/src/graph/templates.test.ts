@@ -184,6 +184,12 @@ test("every template config authenticates inbound traffic and keeps secrets out 
     expect(def.yaml, def.id).not.toMatch(/\btype:\s*no_auth\b/);
     expect(def.yaml, def.id).not.toMatch(/insecure_skip_verify:\s*true/);
     expect(def.yaml, def.id).toContain("secret_ref:");
+    if (def.id === "mcp-gateway") {
+      expect(def.yaml).toContain("type: mcp_trigger");
+      expect(def.yaml).toContain("api_keys:");
+      expect(def.yaml).toContain("capture_failures: false");
+      continue;
+    }
     expect(def.yaml, def.id).toContain("type: loop_guard");
     expect(def.yaml, def.id).toContain("type: rate_limit");
     expect(def.yaml, def.id).toContain("type: replay_guard");

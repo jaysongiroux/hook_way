@@ -11,5 +11,8 @@
   ],
   "ignoreDependencies": [
     "openapi-typescript"
+  ],
+  "ignoreBinaries": [
+    "go"
   ]
 }

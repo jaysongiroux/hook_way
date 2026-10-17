@@ -4,16 +4,13 @@
 export interface ProductionCard {
   id: string;
   title: string;
-  /** The large figure on the tile. */
+  /** The default shown in the expandable operational details. */
   value: string;
-  /** What the figure counts. */
+  /** What the default measures. */
   valueLabel: string;
   /** One supporting sentence. */
   line: string;
 }
-
-export const PERFORMANCE_SUMMARY =
-  "Measured: 5,000 requests/s in three 20-second bursts on two replicas, each with 2 vCPU and 4 GiB, against a synthetic destination (2026-10-01 ingress benchmark; shared protection and replay require separate sizing).";
 
 export const PRODUCTION_CARDS: ProductionCard[] = [
   {
@@ -33,7 +30,7 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "metrics",
     title: "Exports Prometheus metrics",
-    value: "70",
+    value: "72",
     valueLabel: "core Prometheus metrics exported",
     line: "Enable Prometheus metrics to track requests, failures, and delivery latency. Grafana dashboards are included.",
   },
@@ -57,5 +54,27 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
     value: "7",
     valueLabel: "days of replay retention by default",
     line: "Use the optional replay console to retry failed deliveries after a sender’s 2xx, or spot-check webhooks with view-only inspections.",
+  },
+];
+
+// Recorded ingress measurements, not live counters or MCP throughput claims.
+export const BENCHMARK_RESULTS = [
+  {
+    value: "5,000 requests/s",
+    label: "Burst traffic",
+    detail:
+      "Three 20-second bursts; 300,000 of 300,000 requests completed within five seconds.",
+  },
+  {
+    value: "900,000 requests",
+    label: "Sustained workload",
+    detail:
+      "500 requests/s for 30 minutes; every planned request completed with its expected response.",
+  },
+  {
+    value: "25–50 ms",
+    label: "Sustained p99 latency",
+    detail:
+      "Histogram upper bounds across fixed, signed and lookup routes in the 500 requests/s run.",
   },
 ];

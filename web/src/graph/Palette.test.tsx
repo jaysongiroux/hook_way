@@ -1,4 +1,4 @@
-import { expect, test, vi } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
@@ -10,7 +10,11 @@ import {
   type PaletteTab,
 } from "./Palette";
 import { NODE_TYPES, nodeLabel } from "./nodeSchema";
-import { TEMPLATES } from "./templates";
+import { TEMPLATES, templateSubgraph } from "./templates";
+import { useGraphStore } from "./store";
+import { emptyDocument } from "./model";
+
+beforeEach(() => useGraphStore.setState(emptyDocument()));
 
 function wrap(tab: PaletteTab = "nodes") {
   return render(
@@ -90,6 +94,40 @@ test("template entries expose an accessible Add action", () => {
     screen.getByRole("button", { name: "Add Slack notification" }),
   );
   expect(onAddTemplate).toHaveBeenCalledWith("slack-notify");
+});
+
+test("existing MCP endpoints do not disable creating another endpoint", () => {
+  const sub = templateSubgraph("mcp-gateway")!;
+  useGraphStore.setState({
+    ...emptyDocument(),
+    otherFlows: { gateway: { nodes: sub.nodes, edges: sub.edges } },
+  });
+  const onAddTemplate = vi.fn();
+  const onAddNode = vi.fn();
+  const { rerender } = render(
+    <MantineProvider theme={theme}>
+      <Palette tab="templates" onAddTemplate={onAddTemplate} />
+    </MantineProvider>,
+  );
+  const add = screen.getByRole("button", {
+    name: "Add Authenticated MCP gateway",
+  });
+  expect(add).toBeEnabled();
+  fireEvent.click(add);
+  expect(onAddTemplate).toHaveBeenCalledWith("mcp-gateway");
+  expect(add.closest("[draggable]")).toHaveAttribute("draggable", "true");
+  rerender(
+    <MantineProvider theme={theme}>
+      <Palette tab="nodes" onAddNode={onAddNode} />
+    </MantineProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: `Add ${nodeLabel("mcp_trigger")}` }),
+  ).toBeEnabled();
+  fireEvent.click(
+    screen.getByRole("button", { name: `Add ${nodeLabel("mcp_trigger")}` }),
+  );
+  expect(onAddNode).toHaveBeenCalledWith("mcp_trigger");
 });
 
 test("the nodes tab shows no template entries", () => {

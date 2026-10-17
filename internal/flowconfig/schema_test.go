@@ -17,7 +17,7 @@ func TestNodeSchemasMatchCatalogAndRoundTrip(t *testing.T) {
 	}
 	for name, want := range nodeFixtures {
 		got, ok := schemas[name]
-		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != (name != "http_trigger" && name != "read_body" && name != "no_auth" && name != "if_else" && name != "sample" && name != "inspect" && name != "launchdarkly") || got.Schema == nil {
+		if !ok || got.Input != want.in.String() || got.Output != want.out.String() || got.Detached != want.detached || got.OnError != (name != "http_trigger" && name != "mcp_trigger" && name != "mcp_result" && name != "read_body" && name != "no_auth" && name != "if_else" && name != "sample" && name != "inspect" && name != "launchdarkly") || got.Schema == nil {
 			t.Errorf("%s schema metadata = %+v, found=%v", name, got, ok)
 		}
 		if got.Schema != nil && got.Schema.Type != "object" {

@@ -1,4 +1,5 @@
 // Feature comparison, checked against linked vendor documentation on 2026-10-05.
+// The MCP row was checked separately on 2026-10-15.
 // Compare Event Gateway separately from the outbound Outpost product.
 
 import { GITHUB_REPO, docsHref } from "./links";
@@ -28,12 +29,17 @@ export interface CompareRow {
 
 export const COMPARE_INTRO = {
   title: "How Hookway compares",
-  lead: "Compare how these gateways receive, verify, and deliver webhooks. Hookway runs in your infrastructure and sends events directly to queues, streams, databases, and object storage. Its optional replay service lets you inspect and retry missed deliveries through a scoped operations console or API. The table explains different delivery boundaries and links to the docs behind each claim.",
+  lead: "Compare Hookway, Hookdeck Event Gateway and Convoy across webhook delivery, API routing and MCP tools. Hookway runs in your infrastructure and sends events directly to queues, streams, databases, and object storage. It also handles synchronous HTTP requests, reverse proxies to APIs, and exposes configurable MCP endpoints. Its optional replay service lets you inspect and retry missed deliveries through a scoped operations console or API. Each claim links to its supporting docs.",
 } as const;
 
 export const COMPARE_DIFFERS = {
   title: "Where Hookway differs",
   points: [
+    {
+      title: "MCP for APIs you choose",
+      detail:
+        "Create MCP endpoints at paths you choose, with independent catalogues and authentication. Connect named tools to REST APIs or native branches; configure schemas and per-tool permissions in the builder.",
+    },
     {
       title: "Native destinations",
       detail:
@@ -56,7 +62,7 @@ export const COMPETITORS: Competitor[] = [
   {
     id: "hookway",
     name: "Hookway",
-    role: "Self-hosted inbound gateway. Core is one binary configured in YAML; replay and the frontend are optional separate services.",
+    role: "Self-hosted webhook and MCP gateway. Core is one binary configured in YAML; replay and the frontend are optional separate services.",
     sourceHref: GITHUB_REPO,
     sourceLabel: "hook_way repository",
     mark: "This product",
@@ -105,6 +111,33 @@ export const COMPARE_ROWS: CompareRow[] = [
       },
       hookdeck: { level: "yes", detail: "Dashboard, API, Terraform" },
       convoy: { level: "yes", detail: "Dashboard and API" },
+    },
+  },
+  {
+    id: "mcp",
+    capability: "MCP tools",
+    note: "Hookway exposes selected APIs as tools; Hookdeck provides gateway administration tools. Checked October 16, 2026. Not documented means the reviewed docs do not establish this capability.",
+    sources: {
+      hookway: docsHref("docs/guides/mcp-gateway.md"),
+      hookdeck: "https://hookdeck.com/docs/cli#mcp",
+      convoy: "https://www.getconvoy.io/docs/home/introduction",
+    },
+    values: {
+      hookway: {
+        level: "yes",
+        detail:
+          "Multiple configurable HTTP endpoints with independent catalogues, authentication and grants. REST or native branches, input/output schemas, API keys and external-provider OAuth; upstream credentials stay separate",
+      },
+      hookdeck: {
+        level: "yes",
+        detail:
+          "CLI MCP server over stdio manages Event Gateway resources, with optional write tools. This is gateway administration; the reviewed docs do not establish custom API-to-tool hosting",
+      },
+      convoy: {
+        level: "n/a",
+        detail:
+          "The reviewed product docs and documentation index describe webhook ingestion and delivery; they do not establish MCP tool hosting for your own APIs",
+      },
     },
   },
   {
@@ -309,12 +342,23 @@ export const COMPARE_ROWS: CompareRow[] = [
 
 export const COMPARE_OUTPOST_NOTE = {
   title: "About Hookdeck Outpost",
-  body: "Hookdeck Outpost is a separate outbound delivery service with 11 destination types, including SQS, S3, EventBridge, Kinesis, RabbitMQ, Kafka, and webhooks. It sends your application’s events to customer destinations. Hookway receives third-party webhooks into your infrastructure. This table compares Hookway with Event Gateway; it does not attribute Outpost’s features to Event Gateway.",
+  body: "Hookdeck Outpost is a separate outbound delivery service with 11 destination types, including SQS, S3, EventBridge, Kinesis, RabbitMQ, Kafka, and webhooks. It sends your application’s events to customer destinations. Hookway receives third-party webhooks into your infrastructure. Outpost also documents webhook delivery for MCP Events, with subscription handling in your MCP server. This table compares Hookway with Event Gateway; it does not attribute Outpost’s features to Event Gateway.",
   href: "https://hookdeck.com/docs/outpost/overview",
   label: "Hookdeck Outpost overview",
 } as const;
 
 export const COMPARE_SOURCES = [
+  { href: "https://hookdeck.com/docs/outpost/guides/send-mcp-events-webhooks-with-outpost", label: "Outpost MCP Events delivery" },
+  { href: "https://hookdeck.com/docs/guides/how-to-use-event-gateway-as-mcp-events-forward-proxy", label: "Event Gateway MCP Events forwarding" },
+  { href: "https://www.getconvoy.io/docs/llms.txt", label: "Convoy documentation index" },
+  {
+    href: docsHref("docs/guides/mcp-gateway.md"),
+    label: "Hookway MCP gateway",
+  },
+  {
+    href: "https://hookdeck.com/docs/cli#mcp",
+    label: "Hookdeck CLI MCP server",
+  },
   {
     href: "https://hookdeck.com/docs/destinations",
     label: "Hookdeck Destinations",

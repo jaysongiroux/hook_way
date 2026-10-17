@@ -12,11 +12,25 @@ import (
 
 // Keep expected ports independent of the production catalog. Each node also owns
 // its valid options fixture, shared by the contract, schema, and runtime tests.
+const mcpNodeFixture = `path: /mcp
+public_url: http://localhost/mcp
+auth: {no_auth: true}
+tools:
+  - name: test_tool
+    description: Test native tool.
+    read_only: true
+    access: {anonymous: true}
+    input_schema: {type: object}
+    output_schema: {type: object}
+`
+
 var nodeFixtures = map[string]struct {
 	in, out  graph.PortType
 	detached bool
 	yaml     string
 }{
+	"mcp_trigger":    {graph.PortNone, graph.PortEnvelope, false, mcpNodeFixture},
+	"mcp_result":     {graph.PortEnvelope, graph.PortTerminal, false, "source: body\n"},
 	"http_trigger":   {graph.PortNone, graph.PortRequestHead, false, "path: /webhooks/{id}\nmethods: [POST]\n"},
 	"loop_guard":     {graph.PortRequestHead, graph.PortRequestHead, false, "max_hops: 3\n"},
 	"ip_allowlist":   {graph.PortRequestHead, graph.PortRequestHead, false, "cidrs: [10.0.0.0/8]\n"},

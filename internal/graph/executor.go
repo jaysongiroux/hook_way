@@ -32,6 +32,8 @@ type FailureEvent struct {
 }
 
 type RunOptions struct {
+	// Cancellable keeps invocation work on its caller deadline. Webhooks default to detached delivery.
+	Cancellable    bool
 	PublishTimeout time.Duration
 	// FanoutConcurrency bounds concurrent destination publishes for
 	// skip_failed fan-out, matching the publishRoutesSkipFailed worker pool.
@@ -272,10 +274,13 @@ func (e *execution) node(ctx context.Context, id string, in Payload, path string
 		}
 	}
 	e.markVisited(path)
+	if e.opts.Cancellable && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	nctx := ctx
 	cancel := func() {}
 	ownsBudget := false
-	if b.spec.Detached {
+	if b.spec.Detached && !e.opts.Cancellable {
 		if ctx.Value(publishBudgetKey{}) != nil {
 			// Already inside a publish success chain: reuse the shared budget.
 			nctx = ctx
@@ -317,6 +322,15 @@ func (e *execution) node(ctx context.Context, id string, in Payload, path string
 		}
 	}
 	if isTerminal {
+		if terminal.Result != nil {
+			e.mu.Lock()
+			if e.term.Result != nil {
+				err = errors.Join(err, errors.New("more than one invocation result produced"))
+			} else {
+				e.term.Result = &Result{JSON: append([]byte(nil), terminal.Result.JSON...)}
+			}
+			e.mu.Unlock()
+		}
 		if terminal.SideEffects {
 			MarkSideEffect(nctx)
 		}

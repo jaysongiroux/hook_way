@@ -18,6 +18,11 @@ for (const [label, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 8
     await replay.screenshot({ path: testInfo.outputPath(`records-marketing-replay-${label}.png`), animations: "disabled", style: "header { visibility: hidden !important; }" });
     await page.goto("/use-cases");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    if (label === "mobile") {
+      await page.getByRole("combobox", { name: "Choose a use case" }).selectOption("sampled-inspection");
+    } else {
+      await page.getByRole("tab", { name: "Sample traffic for inspection" }).click();
+    }
     await expect(page.getByRole("link", { name: "inspect.yaml", exact: true })).toBeVisible();
     await expect(page.getByText("Spot-check webhooks while delivering every event", { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`records-marketing-usecases-${label}.png`), fullPage: true, animations: "disabled" });

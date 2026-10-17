@@ -93,6 +93,9 @@ func ExpandConfigEnv(raw string, expand func(string) (string, []string)) (string
 				fields[node.Content[i].Value] = node.Content[i+1]
 			}
 			typ := fields["type"]
+			if typ != nil && typ.Value == "mcp_trigger" {
+				protectSchema(fields["tools"])
+			}
 			if typ != nil && typ.Value == "json_validate" {
 				protectSchema(fields["schema"])
 			}

@@ -122,6 +122,9 @@ func (p *RabbitMQPublisher) Publish(ctx context.Context, destinationQueueID, que
 
 	var last error
 	attempts := p.retryAttempts()
+	if singleAttempt(ctx) {
+		attempts = 1
+	}
 	delay := p.initialBackoff()
 	for attempt := 1; attempt <= attempts; attempt++ {
 		if attempt > 1 {

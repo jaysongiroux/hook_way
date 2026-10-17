@@ -193,8 +193,9 @@ export function Palette({
     ...group,
     types: group.types.filter((type) => {
       if (!query) return true;
-      return [type, nodeLabel(type), nodeHelp(type)]
-        .some((value) => value.toLowerCase().includes(query));
+      return [type, nodeLabel(type), nodeHelp(type)].some((value) =>
+        value.toLowerCase().includes(query),
+      );
     }),
   })).filter((group) => group.types.length > 0);
 

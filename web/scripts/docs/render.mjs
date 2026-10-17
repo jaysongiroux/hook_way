@@ -135,8 +135,8 @@ export async function compilePage(entry, body, config) {
     headings,
     dataUrl: `/docs/data/${slug}.json`,
     rawUrl: yaml ? `/docs/raw/${entry.source}` : null,
-    editUrl: entry.source
-      ? `${config.repository}/edit/${config.ref}/${entry.source}`
+    sourceUrl: entry.source
+      ? `${config.repository}/blob/${config.ref}/${entry.source}`
       : null,
     searchText:
       `${entry.source || ""} ${yaml ? entry.text : plainText}`.replace(

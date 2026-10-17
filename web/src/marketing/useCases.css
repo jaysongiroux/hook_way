@@ -1,0 +1,237 @@
+.hookway-scenarios-intro {
+  padding: 56px 0 40px;
+}
+.hookway-scenarios-heading {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 80px;
+  align-items: start;
+}
+.hookway-scenarios-heading h1 {
+  max-width: 18ch;
+  font-size: clamp(32px, 3.4vw, 48px);
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  font-weight: 650;
+}
+.hookway-scenarios-heading p {
+  line-height: 1.65;
+}
+.hookway-scenario-library {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.hookway-scenarios-container {
+  padding-bottom: 72px;
+}
+.hookway-scenario-explorer {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 48px;
+  padding-top: 32px;
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+.hookway-scenario-rail {
+  display: block;
+  border: 0;
+  padding-right: 24px;
+}
+.hookway-scenario-rail::before {
+  display: none;
+}
+.hookway-scenario-group + .hookway-scenario-group {
+  margin-top: 28px;
+}
+.hookway-scenario-group-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mantine-color-dimmed);
+}
+.hookway-scenario-rail .mantine-Tabs-tab {
+  width: 100%;
+  justify-content: start;
+  padding: 12px;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--mantine-color-text);
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.hookway-scenario-rail .mantine-Tabs-tabLabel {
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+}
+.hookway-scenario-rail .mantine-Tabs-tab[data-active] {
+  background: var(--mantine-color-brand-light);
+  border-color: var(--mantine-color-brand-outline);
+  color: var(--mantine-color-brand-text);
+  font-weight: 600;
+}
+.hookway-scenario-rail .mantine-Tabs-tab:hover {
+  background: var(--mantine-color-default-hover);
+}
+.hookway-scenario-panel {
+  min-width: 0;
+  padding: 0;
+}
+.hookway-scenario-narrative {
+  max-width: 72ch;
+  min-height: 140px;
+}
+.hookway-scenario-narrative h2 {
+  font-size: 28px;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+.hookway-scenario-summary {
+  margin-top: 12px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+.hookway-scenario-figure {
+  margin: 24px 0 0;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.hookway-scenario-canvas {
+  padding: 32px 12px;
+}
+.hookway-scenario-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.hookway-scenario-svg[data-orientation="vertical"] {
+  max-width: 400px;
+  margin-inline: auto;
+}
+.hookway-scenario-figure figcaption {
+  padding: 16px 24px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  color: var(--mantine-color-dimmed);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.hookway-scenario-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+}
+.hookway-scenario-source a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 13px;
+  font-weight: 600;
+}
+.hookway-scenario-detail {
+  border-top: 1px solid var(--mantine-color-default-border);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.hookway-scenario-detail summary {
+  min-height: 48px;
+  padding: 16px 0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.hookway-scenario-detail p {
+  max-width: 75ch;
+  padding-bottom: 20px;
+  line-height: 1.7;
+}
+.hookway-scenario-footnote {
+  margin-top: 16px;
+  line-height: 1.6;
+}
+.hookway-scenario-mobile-choice {
+  display: none;
+}
+.hookway-scenario-explorer :is(select, summary, a):focus-visible {
+  outline: 2px solid var(--mantine-color-brand-filled);
+  outline-offset: 4px;
+}
+@media (max-width: 62em) {
+  .hookway-scenarios-heading {
+    gap: 40px;
+  }
+  .hookway-scenario-explorer {
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 24px;
+  }
+  .hookway-scenario-rail {
+    padding-right: 0;
+  }
+}
+@media (max-width: 48em) {
+  .hookway-scenarios-intro {
+    padding: 40px 0 32px;
+  }
+  .hookway-scenarios-heading {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .hookway-scenarios-heading h1 {
+    max-width: 20ch;
+  }
+  .hookway-scenarios-heading p {
+    font-size: 16px;
+  }
+  .hookway-scenario-explorer {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+    padding-top: 24px;
+  }
+  .hookway-scenario-rail {
+    display: none;
+  }
+  .hookway-scenario-mobile-choice {
+    display: grid;
+    gap: 8px;
+  }
+  .hookway-scenario-mobile-choice label {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .hookway-scenario-mobile-choice select {
+    width: 100%;
+    min-height: 48px;
+    border: 1px solid var(--mantine-color-default-border);
+    border-radius: 4px;
+    background: var(--mantine-color-body);
+    color: var(--mantine-color-text);
+    padding: 10px 32px 10px 12px;
+    font: inherit;
+    font-size: 14px;
+  }
+  .hookway-scenario-narrative {
+    min-height: 0;
+  }
+  .hookway-scenario-narrative h2 {
+    font-size: 25px;
+  }
+  .hookway-scenario-canvas {
+    padding: 16px 0;
+  }
+  .hookway-scenario-figure figcaption {
+    padding: 16px;
+  }
+  .hookway-scenarios-container {
+    padding-bottom: 48px;
+  }
+}
