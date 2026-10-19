@@ -26,7 +26,9 @@ USER root
 # Python is used only at startup for strict URL validation/JSON serialization,
 # and by the local health check. Nginx serves all HTTP requests.
 # Upgrade the inherited TIFF library to include the CVE-2026-4775 fix.
-RUN apk add --no-cache python3 'tiff>=4.7.2-r0'
+# Require patched Expat (CVE-2026-77214) and X11 (CVE-2026-88806) libraries.
+RUN apk add --no-cache python3 'tiff>=4.7.2-r0' \
+    'libexpat>=2.9.0-r0' 'libx11>=1.8.14-r0'
 COPY --from=ui /web/dist-console/ /usr/share/nginx/html/
 COPY web/runtime_config.py /opt/hookway/runtime_config.py
 USER 101:101
