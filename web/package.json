@@ -23,7 +23,7 @@
     "docs:inventory": "node scripts/docs/generate.mjs --dry-run"
   },
   "dependencies": {
-    "@dagrejs/dagre": "^1.1.4",
+    "@dagrejs/dagre": "^3.1.1",
     "@mantine/core": "^9.7.2",
     "@mantine/hooks": "^9.7.2",
     "@modelcontextprotocol/client": "^2.3.1",
