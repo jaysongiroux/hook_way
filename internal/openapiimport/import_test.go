@@ -255,3 +255,37 @@ func TestUnsupportedSchemaAndProtocolFeatures(t *testing.T) {
 		})
 	}
 }
+
+func TestImportedLiteralsCannotReadDeploymentEnvironment(t *testing.T) {
+	const literal = "${IMPORT_UNRELATED_SECRET} $IMPORT_UNRELATED_SECRET $$"
+	t.Setenv("IMPORT_UNRELATED_SECRET", "deployment-secret-must-not-appear")
+	var source map[string]any
+	if e := yaml.Unmarshal(fixture(t), &source); e != nil {
+		t.Fatal(e)
+	}
+	op := object(object(object(source["paths"])["/customers/{id}"])["get"])
+	op["summary"] = literal
+	op["parameters"] = []any{map[string]any{"name": "details", "in": "query", "schema": map[string]any{"type": "string", "enum": []any{literal}}}}
+	raw, _ := json.Marshal(source)
+	generated := requireGenerated(t, raw, settings())
+	for _, expand := range []bool{false, true} {
+		cfg, issues := flowconfig.LoadBytes(generated.YAML, "", expand)
+		if len(issues) > 0 {
+			t.Fatal(issues)
+		}
+		opts, _ := flowconfig.MCPOptions(cfg.Flows["imported_api"])
+		if opts.Tools[0].Description != literal {
+			t.Fatalf("description changed: %q", opts.Tools[0].Description)
+		}
+		schema, e := flowconfig.CompileMCPSchema(opts.Tools[0].InputSchema)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if e = schema.Validate(map[string]any{"path": map[string]any{"id": "customer"}, "query": map[string]any{"details": literal}}); e != nil {
+			t.Fatal(e)
+		}
+		if bytes.Contains(generated.YAML, []byte("deployment-secret-must-not-appear")) {
+			t.Fatal("deployment secret leaked")
+		}
+	}
+}

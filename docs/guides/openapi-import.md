@@ -82,7 +82,9 @@ Arguments are grouped by location:
 
 A write adds a separate `body` argument. Omitted optional parameters are omitted
 upstream; empty strings, zero, and false are preserved. Schema defaults are not
-inserted. An omitted optional body sends no bytes; an explicit JSON null sends
+inserted. Imported dollar signs use YAML Unicode escapes so server startup cannot
+reinterpret literal descriptions or schema values as environment references.
+An omitted optional body sends no bytes; an explicit JSON null sends
 `null`. Bodyless operations use `http_request.body: none`.
 
 All generated results are objects: `{"data": ...}`. `data` preserves the API's

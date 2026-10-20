@@ -427,7 +427,7 @@ func Generate(data []byte, s Settings) Result {
 	if len(s.Credentials) > 0 {
 		document["credentials"] = s.Credentials
 	}
-	raw, err := yaml.Marshal(document)
+	raw, err := marshalLiteralYAML(document)
 	if err != nil {
 		fail("$", "unable to serialize configuration")
 		return out
@@ -510,4 +510,29 @@ func profileSatisfies(root map[string]any, security any, p flowconfig.Credential
 		}
 	}
 	return false
+}
+
+// Encode dollars as YAML Unicode escapes so normal raw-text config environment
+// expansion cannot reinterpret imported descriptions, schemas or other literals.
+// Both expanding and non-expanding loaders decode exactly the same values.
+func marshalLiteralYAML(document any) ([]byte, error) {
+	var root yaml.Node
+	if err := root.Encode(document); err != nil {
+		return nil, err
+	}
+	var quote func(*yaml.Node)
+	quote = func(n *yaml.Node) {
+		if n.Kind == yaml.ScalarNode && n.Tag == "!!str" && strings.Contains(n.Value, "$") {
+			n.Style = yaml.DoubleQuotedStyle
+		}
+		for _, child := range n.Content {
+			quote(child)
+		}
+	}
+	quote(&root)
+	raw, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.ReplaceAll(raw, []byte("$"), []byte(`\u0024`)), nil
 }

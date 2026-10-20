@@ -48,7 +48,7 @@ flows:
                     type: object
                   name: get_customer
                   output_schema:
-                    $defs:
+                    "\u0024defs":
                         ref_a5d2462ffe3aeccfbd95:
                             properties:
                                 id:
@@ -62,7 +62,7 @@ flows:
                     additionalProperties: false
                     properties:
                         data:
-                            $ref: '#/$defs/ref_a5d2462ffe3aeccfbd95'
+                            "\u0024ref": "#/\u0024defs/ref_a5d2462ffe3aeccfbd95"
                     required:
                         - data
                     type: object
@@ -103,7 +103,7 @@ flows:
                     type: object
                   name: update_customer
                   output_schema:
-                    $defs:
+                    "\u0024defs":
                         ref_a5d2462ffe3aeccfbd95:
                             properties:
                                 id:
@@ -117,7 +117,7 @@ flows:
                     additionalProperties: false
                     properties:
                         data:
-                            $ref: '#/$defs/ref_a5d2462ffe3aeccfbd95'
+                            "\u0024ref": "#/\u0024defs/ref_a5d2462ffe3aeccfbd95"
                     required:
                         - data
                     type: object
