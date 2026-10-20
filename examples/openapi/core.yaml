@@ -1,0 +1,162 @@
+flows:
+    imported_api:
+        capture_failures: false
+        edges:
+            - mcp:get_customer>request_1
+            - request_1>result_1
+            - mcp:update_customer>request_2
+            - request_2>result_2
+        nodes:
+            - auth:
+                api_keys:
+                    reader:
+                        secret_ref:
+                            name: MCP_READER_TOKEN
+                            provider: env
+                    writer:
+                        secret_ref:
+                            name: MCP_WRITER_TOKEN
+                            provider: env
+              id: mcp
+              path: /customers/mcp
+              public_url: https://hookway.example.com/customers/mcp
+              tools:
+                - access:
+                    api_keys:
+                        - reader
+                        - writer
+                  description: Get a customer.
+                  input_schema:
+                    additionalProperties: false
+                    properties:
+                        path:
+                            additionalProperties: false
+                            properties:
+                                id:
+                                    type: string
+                            required:
+                                - id
+                            type: object
+                        query:
+                            additionalProperties: false
+                            properties:
+                                details:
+                                    type: boolean
+                            type: object
+                    required:
+                        - path
+                    type: object
+                  name: get_customer
+                  output_schema:
+                    $defs:
+                        ref_a5d2462ffe3aeccfbd95:
+                            properties:
+                                id:
+                                    type: string
+                                name:
+                                    type: string
+                            required:
+                                - id
+                                - name
+                            type: object
+                    additionalProperties: false
+                    properties:
+                        data:
+                            $ref: '#/$defs/ref_a5d2462ffe3aeccfbd95'
+                    required:
+                        - data
+                    type: object
+                  read_only: true
+                  request:
+                    optional_query:
+                        details: query.details
+                    variables:
+                        path_1: path.id
+                - access:
+                    allow_mutation: true
+                    api_keys:
+                        - writer
+                  description: Update a customer name.
+                  input_schema:
+                    additionalProperties: false
+                    properties:
+                        body:
+                            additionalProperties: false
+                            properties:
+                                name:
+                                    minLength: 1
+                                    type: string
+                            required:
+                                - name
+                            type: object
+                        path:
+                            additionalProperties: false
+                            properties:
+                                id:
+                                    type: string
+                            required:
+                                - id
+                            type: object
+                    required:
+                        - path
+                        - body
+                    type: object
+                  name: update_customer
+                  output_schema:
+                    $defs:
+                        ref_a5d2462ffe3aeccfbd95:
+                            properties:
+                                id:
+                                    type: string
+                                name:
+                                    type: string
+                            required:
+                                - id
+                                - name
+                            type: object
+                    additionalProperties: false
+                    properties:
+                        data:
+                            $ref: '#/$defs/ref_a5d2462ffe3aeccfbd95'
+                    required:
+                        - data
+                    type: object
+                  read_only: false
+                  request:
+                    body_source: body
+                    variables:
+                        path_1: path.id
+              type: mcp_trigger
+            - body: none
+              forward_query: true
+              header_mode: replace
+              headers:
+                Accept: application/json
+              id: request_1
+              max_response_bytes: 1048576
+              method: GET
+              type: http_request
+              url: https://api.example.com/v1/customers/{path_1}
+            - id: result_1
+              source: upstream
+              type: mcp_result
+              wrap: data
+            - body: raw
+              body_methods:
+                - PATCH
+              header_mode: replace
+              headers:
+                Accept: application/json
+                Content-Type: application/json
+              id: request_2
+              max_response_bytes: 1048576
+              method: PATCH
+              type: http_request
+              url: https://api.example.com/v1/customers/{path_1}
+            - id: result_2
+              source: upstream
+              type: mcp_result
+              wrap: data
+server:
+    addr: 127.0.0.1:8080
+    max_body_bytes: 1048576

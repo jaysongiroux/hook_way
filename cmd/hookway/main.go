@@ -56,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runHelp(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "import-openapi":
+		return runImportOpenAPI(args[1:], stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "healthcheck":

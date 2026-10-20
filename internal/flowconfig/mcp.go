@@ -63,10 +63,14 @@ type MCPAccessOptions struct {
 	AllowMutation bool     `yaml:"allow_mutation,omitempty" json:"allow_mutation,omitempty"`
 }
 type MCPRequestMapping struct {
-	Variables map[string]string `yaml:"variables,omitempty" json:"variables,omitempty"`
-	Query     map[string]string `yaml:"query,omitempty" json:"query,omitempty"`
-	Headers   map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
-	Body      map[string]string `yaml:"body,omitempty" json:"body,omitempty"`
+	OptionalQuery   map[string]string `yaml:"optional_query,omitempty" json:"optional_query,omitempty"`
+	OptionalHeaders map[string]string `yaml:"optional_headers,omitempty" json:"optional_headers,omitempty"`
+	BodySource      string            `yaml:"body_source,omitempty" json:"body_source,omitempty"`
+	BodyOptional    bool              `yaml:"body_optional,omitempty" json:"body_optional,omitempty"`
+	Variables       map[string]string `yaml:"variables,omitempty" json:"variables,omitempty"`
+	Query           map[string]string `yaml:"query,omitempty" json:"query,omitempty"`
+	Headers         map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Body            map[string]string `yaml:"body,omitempty" json:"body,omitempty"`
 }
 type MCPToolOptions struct {
 	Name              string            `yaml:"name" json:"name" jsonschema:"required"`
@@ -82,10 +86,12 @@ type MCPToolOptions struct {
 	Request           MCPRequestMapping `yaml:"request,omitempty" json:"request,omitempty"`
 }
 type MCPResultOptions struct {
-	Source string            `yaml:"source" json:"source" jsonschema:"required,enum=body,enum=upstream,enum=constant"`
-	Field  string            `yaml:"field,omitempty" json:"field,omitempty"`
-	Fields map[string]string `yaml:"fields,omitempty" json:"fields,omitempty"`
-	Value  any               `yaml:"value,omitempty" json:"value,omitempty"`
+	Wrap          string            `yaml:"wrap,omitempty" json:"wrap,omitempty"`
+	EmptyStatuses []int             `yaml:"empty_statuses,omitempty" json:"empty_statuses,omitempty"`
+	Source        string            `yaml:"source" json:"source" jsonschema:"required,enum=body,enum=upstream,enum=constant"`
+	Field         string            `yaml:"field,omitempty" json:"field,omitempty"`
+	Fields        map[string]string `yaml:"fields,omitempty" json:"fields,omitempty"`
+	Value         any               `yaml:"value,omitempty" json:"value,omitempty"`
 }
 
 func MCPOptions(fc graph.FlowConfig) (MCPTriggerOptions, bool) {
@@ -221,7 +227,25 @@ func validateMCPTrigger(o MCPTriggerOptions) error {
 		if (len(a.Scopes) > 0 || len(a.Roles) > 0) && o.Auth.OAuth == nil {
 			return errors.New("scope/role grants require OAuth")
 		}
-		for kind, m := range map[string]map[string]string{"variables": t.Request.Variables, "query": t.Request.Query, "headers": t.Request.Headers, "body": t.Request.Body} {
+		if (t.Request.BodySource != "" && (!validSelectionPath(t.Request.BodySource) || len(t.Request.Body) > 0)) || (t.Request.BodyOptional && t.Request.BodySource == "") {
+			return errors.New("body_source requires a valid selector, excludes body mappings, and is required by body_optional")
+		}
+		for key := range t.Request.OptionalQuery {
+			if _, exists := t.Request.Query[key]; exists {
+				return errors.New("duplicate MCP query mapping")
+			}
+		}
+		seenHeaders := map[string]bool{}
+		for _, mappings := range []map[string]string{t.Request.Headers, t.Request.OptionalHeaders} {
+			for key := range mappings {
+				key = http.CanonicalHeaderKey(key)
+				if seenHeaders[key] {
+					return errors.New("duplicate MCP header mapping")
+				}
+				seenHeaders[key] = true
+			}
+		}
+		for kind, m := range map[string]map[string]string{"variables": t.Request.Variables, "query": t.Request.Query, "headers": t.Request.Headers, "body": t.Request.Body, "optional_query": t.Request.OptionalQuery, "optional_headers": t.Request.OptionalHeaders} {
 			if len(m) > 64 {
 				return errors.New("too many MCP request mappings")
 			}
@@ -232,7 +256,7 @@ func validateMCPTrigger(o MCPTriggerOptions) error {
 				if kind == "variables" && !vars.ValidName(key) {
 					return errors.New("invalid MCP variable")
 				}
-				if kind == "headers" && (!validAuthHeader(key) || mcpCredentialHeader(key) || isHopByHop(key) || strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Cookie") || strings.HasPrefix(strings.ToLower(key), "mcp-") || strings.HasPrefix(strings.ToLower(key), "x-hookway-") || strings.EqualFold(key, "Host") || strings.EqualFold(key, "Content-Length")) {
+				if (kind == "headers" || kind == "optional_headers") && (!validAuthHeader(key) || mcpCredentialHeader(key) || isHopByHop(key) || strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Cookie") || strings.HasPrefix(strings.ToLower(key), "mcp-") || strings.HasPrefix(strings.ToLower(key), "x-hookway-") || strings.EqualFold(key, "Host") || strings.EqualFold(key, "Content-Length")) {
 					return errors.New("reserved MCP request header")
 				}
 			}
@@ -530,6 +554,19 @@ func newMCPResult(id string, o MCPResultOptions) (graph.Node, error) {
 	if !slices.Contains([]string{"body", "upstream", "constant"}, o.Source) || (o.Field != "" && len(o.Fields) > 0) {
 		return nil, errors.New("MCP result requires source and either field or fields")
 	}
+	if o.Wrap != "" && (!vars.ValidName(o.Wrap) || len(o.Wrap) > 128) {
+		return nil, errors.New("invalid result wrap field")
+	}
+	if len(o.EmptyStatuses) > 100 || (len(o.EmptyStatuses) > 0 && o.Source != "upstream") {
+		return nil, errors.New("empty_statuses requires upstream source")
+	}
+	seen := map[int]bool{}
+	for _, status := range o.EmptyStatuses {
+		if status < 200 || status > 299 || seen[status] {
+			return nil, errors.New("empty_statuses requires distinct successful statuses")
+		}
+		seen[status] = true
+	}
 	return mcpResultNode{id, o}, nil
 }
 
@@ -561,7 +598,9 @@ func (n mcpResultNode) Run(ctx context.Context, p graph.Payload) (out graph.Payl
 		if env.Upstream == nil || env.Upstream.Status < 200 || env.Upstream.Status >= 300 {
 			return nil, errors.New("upstream operation failed")
 		}
-		if e := DecodeMCPJSON(env.Upstream.Body, &value); e != nil {
+		if len(bytes.TrimSpace(env.Upstream.Body)) == 0 && slices.Contains(n.opts.EmptyStatuses, env.Upstream.Status) {
+			value = nil
+		} else if e := DecodeMCPJSON(env.Upstream.Body, &value); e != nil {
 			return nil, errors.New("invalid upstream JSON")
 		}
 	}
@@ -582,6 +621,9 @@ func (n mcpResultNode) Run(ctx context.Context, p graph.Payload) (out graph.Payl
 			m[key] = v
 		}
 		value = m
+	}
+	if n.opts.Wrap != "" {
+		value = map[string]any{n.opts.Wrap: value}
 	}
 	raw, e := json.Marshal(value)
 	if e != nil || len(raw) > MCPMaxBytes {
@@ -614,10 +656,13 @@ func MCPEnvelope(t MCPToolOptions, args any, head graph.RequestHead) (graph.Enve
 	head.Query = url.Values{}
 	head.PathVars = map[string]string{}
 	env := graph.Envelope{Body: args, BodyFormat: "json", Vars: map[string]string{}, V: graph.Verified{Identity: "mcp"}}
-	for kind, m := range map[string]map[string]string{"variables": t.Request.Variables, "query": t.Request.Query, "headers": t.Request.Headers} {
+	for kind, m := range map[string]map[string]string{"variables": t.Request.Variables, "query": t.Request.Query, "headers": t.Request.Headers, "optional_query": t.Request.OptionalQuery, "optional_headers": t.Request.OptionalHeaders} {
 		for key, path := range m {
 			v, ok := dotted(args, path)
 			if !ok {
+				if strings.HasPrefix(kind, "optional_") {
+					continue
+				}
 				return env, errors.New("request mapping field missing")
 			}
 			var s string
@@ -639,9 +684,9 @@ func MCPEnvelope(t MCPToolOptions, args any, head graph.RequestHead) (graph.Enve
 					}
 				}
 				env.Vars[key] = s
-			case "query":
+			case "query", "optional_query":
 				head.Query.Set(key, s)
-			case "headers":
+			case "headers", "optional_headers":
 				if strings.ContainsAny(s, "\r\n\x00") {
 					return env, errors.New("invalid mapped header")
 				}
@@ -659,6 +704,17 @@ func MCPEnvelope(t MCPToolOptions, args any, head graph.RequestHead) (graph.Enve
 			body[key] = v
 		}
 		env.Body = body
+	}
+	if t.Request.BodySource != "" {
+		value, found := dotted(args, t.Request.BodySource)
+		if !found && !t.Request.BodyOptional {
+			return env, errors.New("request body source missing")
+		}
+		env.Body = value
+		if !found {
+			env.V.Raw = graph.RawRequest{Head: head}
+			return env, nil
+		}
 	}
 	raw, e := json.Marshal(env.Body)
 	env.V.Raw = graph.RawRequest{Head: head, Body: raw}

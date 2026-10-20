@@ -1,0 +1,41 @@
+openapi: 3.1.0
+info: {title: Customer API, version: '1'}
+paths:
+  /customers/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: get_customer
+      summary: Get a customer.
+      parameters:
+        - {name: details, in: query, schema: {type: boolean}}
+      responses:
+        '200':
+          description: Customer record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Customer'}
+    patch:
+      operationId: update_customer
+      summary: Update a customer name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties: {name: {type: string, minLength: 1}}
+      responses:
+        '200':
+          description: Updated record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Customer'}
+components:
+  schemas:
+    Customer:
+      type: object
+      required: [id, name]
+      properties: {id: {type: string}, name: {type: string}}

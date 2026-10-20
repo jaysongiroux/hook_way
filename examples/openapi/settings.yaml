@@ -1,0 +1,17 @@
+# References only: supply MCP_READER_TOKEN and MCP_WRITER_TOKEN when serving.
+endpoint:
+  path: /customers/mcp
+  public_url: https://hookway.example.com/customers/mcp
+  auth:
+    api_keys:
+      reader: {secret_ref: {provider: env, name: MCP_READER_TOKEN}}
+      writer: {secret_ref: {provider: env, name: MCP_WRITER_TOKEN}}
+upstream:
+  base_url: https://api.example.com/v1
+operations:
+  - method: GET
+    path: /customers/{id}
+    access: {api_keys: [reader, writer]}
+  - method: PATCH
+    path: /customers/{id}
+    access: {api_keys: [writer], allow_mutation: true}

@@ -70,6 +70,7 @@ not a terminal program. Its source entrypoint is `cmd/hookway-wasm`.
 | Command | What it does |
 |---|---|
 | [`serve`](#hookway-serve) | Serve webhooks. The default: `hookway` alone runs it. |
+| [`import-openapi`](#hookway-import-openapi) | Generate MCP tools from selected OpenAPI operations. |
 | [`validate`](#hookway-validate) | Check a config without starting anything. |
 | [`schema`](#hookway-schema) | Print the config JSON Schema, or the builder's per-type catalogs. |
 | [`editor`](#hookway-editor) | Serve the config builder and the config API. |
@@ -121,6 +122,21 @@ HOOKWAY_CONFIG=examples/config.yaml go run ./cmd/hookway
 go run ./cmd/hookway --config examples/config.yaml
 make run                                              # the same, with examples/config.yaml
 ```
+
+### hookway import-openapi
+
+```sh
+hookway import-openapi --spec FILE --list [--json]
+hookway import-openapi --spec FILE --settings FILE [--out FILE]
+```
+
+Inspect local OpenAPI 3.0/3.1 JSON/YAML or generate a new standalone configuration.
+`--settings` selects operations and supplies endpoint authentication, upstream
+credentials and access grants. `--out` creates a new file without overwriting;
+omitted output goes to stdout. `--json` is available only with `--list`.
+No network requests, environment expansion or secret reads occur. Unsupported
+selections fail without partial YAML. See [OpenAPI import](../guides/openapi-import.md)
+for supported constructs, settings, examples and result envelopes.
 
 ### hookway validate
 

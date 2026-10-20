@@ -227,3 +227,8 @@ for (const file of readdirSync(
     expect(normalize(config)).toEqual(normalize(parsed));
   });
 }
+
+test("round-trips imported OpenAPI tools with optional sources and wrapped results", () => {
+  const source = parse(readFileSync(join(examplesDir, "../openapi/core.yaml"), "utf8")) as Record<string, unknown>;
+  expect(normalize(toConfig(fromConfig(source)).config)).toEqual(normalize(source));
+});

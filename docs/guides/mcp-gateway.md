@@ -328,3 +328,19 @@ Sources: [MCP tools](https://modelcontextprotocol.io/specification/2026-07-28/se
 [MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization),
 [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
 [Zitadel DCR](https://zitadel.com/docs/guides/integrate/dynamic-client-registration).
+
+## Import API tools from OpenAPI
+
+The [OpenAPI importer](openapi-import.md) generates native tool workflows with
+explicit grants. `request.optional_query` and `request.optional_headers` omit
+missing arguments while preserving supplied scalar values. Required and optional
+mappings must not name the same destination (header names are case-insensitive).
+`request.body_source` selects a complete JSON value instead of field mappings;
+`body_optional: true` permits absence without sending a body. It requires
+`body_source`, which excludes the existing `request.body` field-map form.
+
+`http_request.body: none` explicitly suppresses request bytes. On `mcp_result`,
+`wrap` places the selected value under a named object field; `empty_statuses`
+permits an empty response only for listed 2xx statuses with `source: upstream`.
+An accepted empty response becomes JSON null before wrapping. Without these
+options, existing mapping and result behavior is unchanged.

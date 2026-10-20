@@ -63,6 +63,7 @@ Gateway caller authentication is separate from outbound API credentials.
 | --- | --- |
 | [templates/mcp-gateway.yaml](templates/mcp-gateway.yaml) | API-key-authenticated HTTP status tool and native greeting tool with independent upstream credentials. |
 | [mcp-oauth.yaml](mcp-oauth.yaml) | External-provider OAuth with a dedicated resource audience, discovery scopes and an explicit tool permission. |
+| [openapi/api.yaml](openapi/api.yaml), [settings](openapi/settings.yaml), [generated core](openapi/core.yaml) | Import a JSON API as authenticated read/write tools. See [OpenAPI import](../docs/guides/openapi-import.md). |
 | [mcp-endpoints.yaml](mcp-endpoints.yaml) | Independent `/services/mcp` and `/utilities/mcp` endpoints with separate caller keys and catalogues. |
 
 ## Auth strategy reference configs

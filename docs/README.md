@@ -21,6 +21,7 @@ Start with the [project overview](../README.md), then choose the task you need.
 - [MCP gateway](guides/mcp-gateway.md): configurable endpoints, tools and
   [OAuth configuration](guides/mcp-gateway.md#oauth-configuration), including
   identity-provider setup and per-tool permissions.
+- [OpenAPI importer](guides/openapi-import.md): generate MCP tools from explicitly selected API operations.
 - [Provider recipes](guides/provider-compatibility.md): GitHub, Stripe, Paddle and Slack.
 - [Validate JSON](guides/json-validation.md): schemas, conversions and sample checks.
 - [Lookups](guides/lookups.md): HTTP, PostgreSQL and DynamoDB routing values.
