@@ -58,7 +58,12 @@ function EventPane({ kind, active, session, identity, link, navigate }: { kind: 
   const refreshNow = () => setRefresh((v) => v + 1);
   React.useEffect(() => {
     if (link?.kind !== kind) return;
-    if (link.subscription !== undefined) { const f = { ...emptyFilters, subscription: link.subscription }; setFilters(f); setDraft(f); setCursor(""); setPages([]); }
+    if (link.subscription !== undefined) {
+      setFilters((current) => ({ ...current, subscription: link.subscription! }));
+      setDraft((current) => ({ ...current, subscription: link.subscription! }));
+      setCursor(""); setPages([]);
+      if (!detail || !delivery(detail) || detail.subscription_id !== link.subscription) { setDetail(undefined); setSelected(""); }
+    }
     if (link.id) { setDetail(undefined); setSelected(link.id); }
   }, [link, kind]);
   React.useEffect(() => { setPayload(""); setDetailError(""); }, [selected]);

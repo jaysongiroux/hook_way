@@ -110,3 +110,16 @@ test("leaving delivery evidence cancels a late payload response", async ({ page 
   await expect(evidence.getByText("console-issue", { exact: true })).toBeVisible();
   await expect(evidence.locator("pre")).toHaveCount(0);
 });
+
+test("linked investigation preserves applied delivery filters and selection", async ({ page }) => {
+  await signIn(page); await page.getByRole("tab", { name: "Deliveries", exact: true }).click();
+  await page.getByRole("textbox", { name: "Event", exact: true }).fill("issue.opened");
+  await page.getByRole("button", { name: "Apply filters", exact: true }).click();
+  await page.getByRole("button", { name: /issue.opened.*failed/ }).click();
+  const evidence = page.getByRole("region", { name: "Event evidence" });
+  await evidence.getByRole("button", { name: "sub_console", exact: true }).click();
+  await evidence.getByRole("button", { name: "View related deliveries" }).click();
+  await expect(page.getByRole("textbox", { name: "Event", exact: true })).toHaveValue("issue.opened");
+  await expect(evidence.getByText("console-issue", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /issue.opened.*failed/ })).toHaveAttribute("aria-pressed", "true");
+});
