@@ -163,9 +163,6 @@ export default function App({ product = false, headerActions }: { product?: bool
             onEnv={openEnv}
             onServer={openServer}
             onReplay={openReplay}
-            onLoadExample={() =>
-              useGraphStore.getState().setGraph(starterDocument())
-            }
             onClear={openClear}
           />
 
@@ -220,6 +217,10 @@ export default function App({ product = false, headerActions }: { product?: bool
                   if (compact) setPaletteOpen(false);
                   openInspector();
                 }}
+                onLoadProductionTemplate={() => {
+                  useGraphStore.getState().setGraph(starterDocument());
+                  if (compact) setPaletteOpen(false);
+                }}
                 onAddTemplate={(id) => {
                   const sub = templateSubgraph(id);
                   if (sub) {
@@ -235,7 +236,7 @@ export default function App({ product = false, headerActions }: { product?: bool
               />
             </SidePanel>
             <Box style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-              <Canvas onNodeActivate={openInspector} onOpenAPI={openOpenAPI} />
+              <Canvas onNodeActivate={openInspector} />
             </Box>
           </Box>
 

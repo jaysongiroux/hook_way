@@ -19,7 +19,7 @@ import { createNode, isNodeKind } from "./model";
 import { DND_MIME, DND_TEMPLATE_MIME } from "./Palette";
 import { isTemplateId, templateSubgraph } from "./templates";
 import { useGraphStore } from "./store";
-import { Button, Text } from "@mantine/core";
+import { Button } from "@mantine/core";
 import { DARK, EDGE } from "../tokens";
 
 /** React Flow stops at 0.5 by default, which cuts off zoom-out on a wide flow. */
@@ -40,7 +40,7 @@ function parallelGroups(edges: Edge[]): Map<string, { index: number; count: numb
   return out;
 }
 
-function CanvasInner({ onNodeActivate, onOpenAPI }: { onNodeActivate?: () => void; onOpenAPI?: () => void }) {
+function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const arrangeSeq = useGraphStore((s) => s.arrangeSeq);
@@ -170,33 +170,15 @@ function CanvasInner({ onNodeActivate, onOpenAPI }: { onNodeActivate?: () => voi
             Arrange
           </Button>
         </Panel>
-        {nodes.length === 0 && (
-          <Panel position="top-center">
-            <Text
-              size="sm"
-              c={DARK.muted}
-              px="md"
-              py={8}
-              style={{
-                background: DARK.surface,
-                border: `1px solid ${DARK.border}`,
-                borderRadius: 4,
-              }}
-            >
-              Open Nodes to add a node, or start with a template.
-              {onOpenAPI && <Button display="block" variant="light" size="xs" mt="sm" onClick={onOpenAPI}>Create MCP tools from OpenAPI</Button>}
-            </Text>
-          </Panel>
-        )}
       </ReactFlow>
     </div>
   );
 }
 
-export function Canvas({ onNodeActivate, onOpenAPI }: { onNodeActivate?: () => void; onOpenAPI?: () => void }) {
+export function Canvas({ onNodeActivate }: { onNodeActivate?: () => void }) {
   return (
     <ReactFlowProvider>
-      <CanvasInner onNodeActivate={onNodeActivate} onOpenAPI={onOpenAPI} />
+      <CanvasInner onNodeActivate={onNodeActivate} />
     </ReactFlowProvider>
   );
 }

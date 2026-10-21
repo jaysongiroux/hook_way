@@ -25,7 +25,6 @@ export function BuilderHeader({
   onEnv,
   onServer,
   onReplay,
-  onLoadExample,
   onClear,
 }: {
   actions?: ReactNode;
@@ -46,7 +45,6 @@ export function BuilderHeader({
   onEnv: () => void;
   onServer: () => void;
   onReplay: () => void;
-  onLoadExample: () => void;
   onClear: () => void;
 }) {
   return (
@@ -104,10 +102,6 @@ export function BuilderHeader({
               <Menu.Item onClick={onOpenAPI}>Create MCP tools from OpenAPI</Menu.Item>
               <Menu.Item onClick={onExport}>Export YAML</Menu.Item>
               <Menu.Divider />
-              <Menu.Item onClick={onLoadExample}>
-                Load production example
-              </Menu.Item>
-              <Menu.Divider />
               <Menu.Label>Workspace</Menu.Label>
               <Menu.Item onClick={onConnections}>Connections</Menu.Item>
               <Menu.Item onClick={onDestinations}>Destinations</Menu.Item>
@@ -119,11 +113,10 @@ export function BuilderHeader({
               <Menu.Item onClick={onEnv}>Environment</Menu.Item>
               <Menu.Item onClick={onServer}>Core server</Menu.Item>
               <Menu.Item onClick={onReplay}>Replay service</Menu.Item>
+              <Menu.Divider />
+              <Menu.Item color="red" onClick={onClear}>Clear</Menu.Item>
             </Menu.Dropdown>
           </Menu>
-          <Button size="xs" variant="subtle" color="red" onClick={onClear}>
-            Clear
-          </Button>
           {actions && <>
             <Box aria-hidden visibleFrom="sm" style={TOOLBAR_DIVIDER} />
             {actions}

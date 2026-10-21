@@ -42,8 +42,9 @@ test("renders the shell header and palette node items", async () => {
     await screen.findByRole("menuitem", { name: "Import YAML" }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("menuitem", { name: "Load production example" }),
-  ).toBeInTheDocument();
+    screen.queryByRole("menuitem", { name: "Load production example" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Clear" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Routing" })).toBeInTheDocument();
   expect(
     screen.getByRole("menuitem", { name: "Credentials" }),
@@ -64,7 +65,8 @@ test("Clear asks for confirmation before wiping the graph", async () => {
   await saveGraph(doc);
   useGraphStore.setState({ ...doc, selectedId: null, selectedEdgeId: null });
   renderApp();
-  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+  fireEvent.click(screen.getByRole("button", { name: "Config" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Clear" }));
   expect(
     await screen.findByRole("heading", { name: /clear configuration/i }),
   ).toBeInTheDocument();

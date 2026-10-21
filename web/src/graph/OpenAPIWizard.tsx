@@ -126,7 +126,6 @@ function Wizard({
   const [editOperations, setEditOperations] = useState<string[]>([]);
   const [advancedOpened, setAdvancedOpened] = useState<string[]>([]);
   const [endpointOpened, setEndpointOpened] = useState<string | null>(null);
-  const [serverOpened, setServerOpened] = useState<string | null>(null);
   const importer = useRef<OpenAPIImporter | null>(null);
   const revision = useRef(0);
   const body = useRef<HTMLDivElement>(null);
@@ -273,7 +272,6 @@ function Wizard({
       )
         setEndpointOpened("advanced");
     }
-    if (group === "server") setServerOpened("server");
     if (nextStep === 2) setConfigured(true);
     setQuery("");
     setMethod(null);
@@ -393,6 +391,7 @@ function Wizard({
         onClose={close}
         title="Create MCP tools from OpenAPI"
         size="min(960px, 100vw - 24px)"
+        styles={{ body: { padding: 0 } }}
         classNames={{ body: classes.modalBody, header: classes.modalHeader }}
         closeButtonProps={{ "aria-label": "Close OpenAPI wizard" }}
       >
@@ -835,31 +834,6 @@ function Wizard({
                                 onChange={(credentials) =>
                                   changeSettings({ credentials })
                                 }
-                              />
-                            </Accordion.Panel>
-                          </Accordion.Item>
-                        </Accordion>
-                        <Accordion
-                          value={serverOpened}
-                          onChange={setServerOpened}
-                          transitionDuration={0}
-                          data-import-section="server"
-                        >
-                          <Accordion.Item value="server">
-                            <Accordion.Control>
-                              Advanced server settings
-                            </Accordion.Control>
-                            <Accordion.Panel>
-                              <Text size="sm" c="dimmed" mb="md">
-                                The server listens on 127.0.0.1:8080 by default.
-                              </Text>
-                              <SchemaForm
-                                schema={properties.server}
-                                value={settings.server}
-                                onChange={(server) =>
-                                  changeSettings({ server: record(server) })
-                                }
-                                scope="wizard/server"
                               />
                             </Accordion.Panel>
                           </Accordion.Item>

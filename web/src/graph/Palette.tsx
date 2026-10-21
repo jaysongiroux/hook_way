@@ -115,18 +115,23 @@ function PaletteItem({
   help,
   onDragStart,
   onAdd,
+  actionLabel = "Add",
+  actionName,
 }: {
   label: string;
   help: string;
-  onDragStart: (e: React.DragEvent) => void;
+  onDragStart?: (e: React.DragEvent) => void;
+  actionLabel?: string;
+  actionName?: string;
   onAdd?: () => void;
 }) {
   return (
     <Box
       className={PALETTE_ITEM_CLASS}
       p={10}
-      draggable
+      draggable={!!onDragStart}
       onDragStart={onDragStart}
+      style={{ cursor: onDragStart ? "grab" : "default" }}
     >
       <Group align="flex-start" justify="space-between" wrap="nowrap" gap="sm">
         <Text size="sm" fw={600} c={DARK.text} style={{ minWidth: 0, flex: 1 }}>
@@ -137,11 +142,11 @@ function PaletteItem({
             size="compact-xs"
             variant="subtle"
             color="brand"
-            aria-label={`Add ${label}`}
+            aria-label={actionName ?? `Add ${label}`}
             style={{ flexShrink: 0, minWidth: 40 }}
             onClick={onAdd}
           >
-            Add
+            {actionLabel}
           </Button>
         )}
       </Group>
@@ -160,10 +165,12 @@ export function Palette({
   tab,
   onAddNode,
   onAddTemplate,
+  onLoadProductionTemplate,
 }: {
   tab: PaletteTab;
   onAddNode?: (type: string) => void;
   onAddTemplate?: (id: string) => void;
+  onLoadProductionTemplate?: () => void;
 }) {
   const [search, setSearch] = useState("");
 
@@ -173,6 +180,13 @@ export function Palette({
         <Text size="xs" c={DARK.muted} lh={1.4}>
           {PALETTE_GROUP_HELP.Templates}
         </Text>
+        <PaletteItem
+          label="Production example"
+          help="A complete GitHub webhook workspace with delivery branches and example destinations. Replaces the current workspace."
+          onAdd={onLoadProductionTemplate}
+          actionLabel="Load"
+          actionName="Load production example"
+        />
         {TEMPLATES.map((def) => (
           <PaletteItem
             key={def.id}

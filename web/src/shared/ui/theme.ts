@@ -87,6 +87,7 @@ export const theme = createTheme({
       },
       styles: {
         header: { borderBottom: `1px solid ${DARK.border}` },
+        body: { paddingTop: "var(--mantine-spacing-md)" },
         title: { fontWeight: 600 },
       },
     },

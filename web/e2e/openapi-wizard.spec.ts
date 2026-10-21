@@ -63,6 +63,9 @@ test("real WASM imports a standalone configuration without touching the current 
     await wizard
       .getByRole("button", { name: "Configure access", exact: true })
       .click();
+    await expect(
+      wizard.getByRole("button", { name: "Advanced server settings" }),
+    ).toHaveCount(0);
     await wizard
       .getByLabel("Upstream base URL", { exact: true })
       .fill(`${runtime.origin}/v1`);
@@ -412,4 +415,70 @@ test("mobile upload, unsupported diagnostics and worker retry keep the canvas va
   await expect(
     exported.getByRole("button", { name: /^Download / }),
   ).toBeEnabled();
+});
+
+test("builder actions live in Config and Templates with spaced modal content", async ({
+  page,
+}, testInfo) => {
+  const builder = new BuilderPage(page);
+  await builder.gotoReady();
+  await expect(
+    page.getByText("Open Nodes to add a node, or start with a template.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Clear", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Config", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", {
+      name: "Load production example",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "Clear", exact: true }).click();
+  const clear = page.getByRole("dialog", {
+    name: "Clear configuration?",
+    exact: true,
+  });
+  await expect(clear).toBeVisible();
+  expect(
+    await clear
+      .locator(".mantine-Modal-body")
+      .evaluate((element) => parseFloat(getComputedStyle(element).paddingTop)),
+  ).toBeGreaterThanOrEqual(16);
+  await page.screenshot({
+    path: testInfo.outputPath("clear-dialog-spacing.png"),
+  });
+  await clear
+    .getByRole("button", { name: "Clear entire workspace", exact: true })
+    .click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(0);
+  await expect(
+    page.getByText("Open Nodes to add a node, or start with a template.", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Templates", exact: true }).click();
+  await expect(
+    page.getByText("Production example", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("production-template.png"),
+  });
+  await page
+    .getByRole("button", { name: "Load production example", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Active flow", exact: true }),
+  ).toHaveText("github");
+  await expect(page.locator(".react-flow__node").first()).toBeVisible();
+  const exported = await builder.openConfigItem("Export YAML");
+  await expect(exported.getByTestId("export-core.yaml")).toContainText(
+    "destinations:",
+  );
+  await expect(exported.getByTestId("export-core.yaml")).toContainText(
+    "state_stores:",
+  );
 });

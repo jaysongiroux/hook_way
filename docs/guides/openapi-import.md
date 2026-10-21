@@ -100,16 +100,18 @@ and `Generate` entry points shared by the CLI and browser wizard.
 
 ## Builder wizard
 
-In the builder, choose **Config → Create MCP tools from OpenAPI**, or use the
-same action on an empty canvas. Upload one JSON/YAML file or paste its contents.
+In the builder, choose **Config → Create MCP tools from OpenAPI**.
+Upload one JSON/YAML file or paste its contents.
 Inspection and generation run locally in a dedicated Go WASM worker. The wizard
 does not upload the document, fetch remote specifications, or resolve secrets.
 
 Select up to 64 supported operations. Expand **Edit tool details** to change a
 tool's name or description. Access setup separates **Your API**, **Agent access**,
 and **Tool permissions**. Add named callers using secret references, then grant
-each caller the tools it needs. API credentials, server settings, browser origins,
-and request limits are available in expandable sections.
+each caller the tools it needs. API credentials, browser origins, and request
+limits are available in expandable sections. The generated configuration uses the importer’s default server settings;
+edit runtime settings separately in **Config → Core server** after opening it in
+the builder, or in the downloaded YAML.
 Nothing is selected or granted automatically. Writes require a separate mutation
 permission. Unsupported operations remain visible with their diagnostics.
 
