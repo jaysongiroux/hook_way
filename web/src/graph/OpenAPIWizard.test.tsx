@@ -44,6 +44,7 @@ const operation = (
 });
 const initial = () => useGraphStore.getState().document();
 beforeEach(() => {
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   useGraphStore.getState().setGraph(emptyDocument());
   vi.clearAllMocks();
   mocks.inspect.mockResolvedValue({
@@ -205,4 +206,27 @@ test("precision failures preserve the workspace and retain the generated downloa
   expect(
     screen.getByRole("button", { name: "Download core.yaml" }),
   ).toBeEnabled();
+});
+
+test("review diagnostics return focus to the affected endpoint setting", async () => {
+  mocks.generate.mockResolvedValue({
+    diagnostics: [
+      {
+        severity: "error",
+        location: "endpoint.public_url",
+        message: "A public URL is required",
+      },
+    ],
+  });
+  mount();
+  await inspect();
+  fireEvent.click(screen.getByRole("checkbox", { name: "GET /items" }));
+  fireEvent.click(screen.getByRole("button", { name: "Configure access" }));
+  fireEvent.click(screen.getByRole("button", { name: "Generate review" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Review field" }));
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText("Public MCP URL", { exact: true }),
+    ).toHaveFocus(),
+  );
 });

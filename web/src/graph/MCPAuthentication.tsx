@@ -27,6 +27,7 @@ export function MCPAuthentication({
     <Stack gap="sm">
       {" "}
       <Select
+        data-field-path="auth"
         label="Client authentication"
         value={authMode}
         allowDeselect={false}

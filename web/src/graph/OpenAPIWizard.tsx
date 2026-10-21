@@ -117,6 +117,7 @@ function Wizard({
   const [replace, setReplace] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [serverOpened, setServerOpened] = useState<string | null>(null);
   const importer = useRef<OpenAPIImporter | null>(null);
   const revision = useRef(0);
   const body = useRef<HTMLDivElement>(null);
@@ -228,12 +229,20 @@ function Wizard({
   }
   function focusIssue(d: ImportDiagnostic) {
     const match = /^operations\[(\d+)\]/.exec(d.location);
+    const tool = selected.find((op) =>
+      d.message.includes(JSON.stringify(choices[operationKey(op)].name)),
+    );
     const key =
       d.operation ||
       (match && selected[Number(match[1])]
         ? operationKey(selected[Number(match[1])])
-        : "");
-    const nextStep = d.message.includes("tool name") ? 1 : 2;
+        : tool
+          ? operationKey(tool)
+          : "");
+    const nextStep = /tool name|description/i.test(d.message) ? 1 : 2;
+    const [group, ...parts] = d.location.split(".");
+    if (group === "server") setServerOpened("server");
+    if (nextStep === 2) setConfigured(true);
     setQuery("");
     setMethod(null);
     setStep(nextStep);
@@ -245,10 +254,30 @@ function Wizard({
         ? Array.from(
             section?.querySelectorAll<HTMLElement>("[data-operation]") ?? [],
           ).find((e) => e.dataset.operation === key)
-        : section;
-      const field = target?.querySelector<HTMLElement>(
-        "[aria-invalid=true], input, textarea, button",
-      );
+        : (Array.from(
+            section?.querySelectorAll<HTMLElement>("[data-import-section]") ??
+              [],
+          ).find((e) => e.dataset.importSection === group) ?? section);
+      const path = key
+        ? /allow_mutation/.test(d.message)
+          ? "access.allow_mutation"
+          : /credential/.test(d.message)
+            ? "credential"
+            : nextStep === 1
+              ? /description/.test(d.message)
+                ? "description"
+                : "name"
+              : "access"
+        : group === "credentials"
+          ? d.location
+          : parts.join(".");
+      const field =
+        Array.from(
+          target?.querySelectorAll<HTMLElement>("[data-field-path]") ?? [],
+        ).find((e) => e.dataset.fieldPath === path) ??
+        target?.querySelector<HTMLElement>(
+          "[aria-invalid=true], input, textarea, button",
+        );
       field?.focus();
       field?.scrollIntoView({ block: "center" });
     });
@@ -545,6 +574,7 @@ function Wizard({
                         {choice && (
                           <>
                             <TextInput
+                              data-field-path="name"
                               label={`Tool name for ${key}`}
                               value={choice.name}
                               error={nameError(choice.name)}
@@ -555,6 +585,7 @@ function Wizard({
                               }
                             />
                             <Textarea
+                              data-field-path="description"
                               label={`Description for ${key}`}
                               value={choice.description}
                               onChange={(e) =>
@@ -577,7 +608,7 @@ function Wizard({
                 <Title order={2} size="h3" tabIndex={-1}>
                   Configure upstream and caller access
                 </Title>
-                <Paper withBorder p="md">
+                <Paper withBorder p="md" data-import-section="upstream">
                   <Stack>
                     <Title order={3} size="h4">
                       Upstream API
@@ -598,15 +629,17 @@ function Wizard({
                       The base URL is supplied by you. Credentials below
                       authenticate Hookway to this API.
                     </Text>
-                    <CredentialsForm
-                      value={settings.credentials}
-                      onChange={(credentials) =>
-                        changeSettings({ credentials })
-                      }
-                    />
+                    <Box data-import-section="credentials">
+                      <CredentialsForm
+                        value={settings.credentials}
+                        onChange={(credentials) =>
+                          changeSettings({ credentials })
+                        }
+                      />
+                    </Box>
                   </Stack>
                 </Paper>
-                <Paper withBorder p="md">
+                <Paper withBorder p="md" data-import-section="endpoint">
                   <Stack>
                     <Title order={3} size="h4">
                       MCP endpoint and callers
@@ -659,6 +692,7 @@ function Wizard({
                         <Text size="sm">{key}</Text>
                         <Security op={op} />
                         <Select
+                          data-field-path="credential"
                           label={`Upstream credential for ${key}`}
                           placeholder={
                             op.requires_auth
@@ -676,6 +710,7 @@ function Wizard({
                         />
                         <MultiSelect
                           searchable
+                          data-field-path="access"
                           label={`API key grants for ${key}`}
                           description="Only these named callers can discover and invoke this tool."
                           data={keys}
@@ -703,6 +738,7 @@ function Wizard({
                         )}
                         {op.method !== "GET" && (
                           <Checkbox
+                            data-field-path="access.allow_mutation"
                             label={`Allow mutation for ${key}`}
                             checked={choice.access.allow_mutation === true}
                             onChange={(e) =>
@@ -719,7 +755,13 @@ function Wizard({
                     </Paper>
                   );
                 })}
-                <Accordion variant="contained">
+                <Accordion
+                  variant="contained"
+                  data-import-section="server"
+                  value={serverOpened}
+                  onChange={setServerOpened}
+                  transitionDuration={0}
+                >
                   <Accordion.Item value="server">
                     <Accordion.Control>
                       Advanced server settings
