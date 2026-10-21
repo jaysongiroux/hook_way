@@ -525,6 +525,8 @@ func (n httpRequestNode) shouldForward(name string) bool {
 func outboundBody(env graph.Envelope, mode string) ([]byte, string, error) {
 	rawType := env.V.Raw.Head.Header.Get("Content-Type")
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "none":
+		return nil, "", nil
 	case "", "raw":
 		return env.V.Raw.Body, rawType, nil
 	case "transformed":

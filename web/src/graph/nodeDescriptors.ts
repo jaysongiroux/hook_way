@@ -86,7 +86,7 @@ export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> 
   },
   mcp_result: {
     label: "MCP result", icon: TbBraces, editor: "schema",
-    help: "Return schema-validated JSON from the selected tool branch. Choose the native body, upstream JSON, or a constant, with optional field projection.",
+    help: "Return schema-validated JSON from the selected tool branch. Choose the native body, upstream JSON, or a constant, with optional field projection, result wrapping and declared empty statuses.",
     initialOptions: () => ({source:"body"}),
     summary: (o) => `Return ${String(o.source ?? "body")}`,
   },
@@ -523,7 +523,7 @@ export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> 
       "timeout": "Upstream deadline, e.g. 10s.",
       "headers": "Extra headers to send. Values may use ${vars}.",
       "error_on_status": "Status classes that fail this node, e.g. 5xx.",
-      "body": "raw sends the original bytes; transformed sends the current event body.",
+      "body": "raw sends the original bytes; transformed sends the current event body; none sends no body.",
       "retry": "Optional: re-attempt transport errors, timeouts, 429, and 5xx. Leave empty for a single attempt.",
     },
     fieldLabels: {

@@ -40,6 +40,8 @@ func smokeMCP(t *testing.T, cfg flowconfig.Config, key *rsa.PrivateKey) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/customers/smoke":
+			_, _ = io.WriteString(w, `{"id":"smoke","name":"Pat"}`)
 		case "/jwks":
 			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]any{"kty": "RSA", "kid": "smoke", "alg": "RS256", "use": "sig", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())}}})
 		default:
@@ -125,6 +127,12 @@ func smokeMCP(t *testing.T, cfg flowconfig.Config, key *rsa.PrivateKey) {
 			}
 			for _, tool := range listed.Tools {
 				args := map[string]any{}
+				if tool.Name == "get_customer" || tool.Name == "update_customer" {
+					args["path"] = map[string]any{"id": "smoke"}
+					if tool.Name == "update_customer" {
+						args["body"] = map[string]any{"name": "Pat"}
+					}
+				}
 				if tool.Name == "format_greeting" {
 					args["name"] = "Sam"
 				}

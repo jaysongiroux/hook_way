@@ -745,7 +745,8 @@
           "type": "string",
           "enum": [
             "raw",
-            "transformed"
+            "transformed",
+            "none"
           ]
         },
         "retry": {
@@ -1192,6 +1193,15 @@
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "wrap": {
+          "type": "string"
+        },
+        "empty_statuses": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
         "source": {
           "type": "string",
           "enum": [
@@ -1472,6 +1482,24 @@
               },
               "request": {
                 "properties": {
+                  "optional_query": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "optional_headers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "body_source": {
+                    "type": "string"
+                  },
+                  "body_optional": {
+                    "type": "boolean"
+                  },
                   "variables": {
                     "additionalProperties": {
                       "type": "string"

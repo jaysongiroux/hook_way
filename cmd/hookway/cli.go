@@ -10,6 +10,10 @@ var program = cli.Program{
 	Summary: "run the webhook ingress server and inspect flow configurations",
 	Default: "serve",
 	Commands: []cli.Command{
+		{Name: "import-openapi", Args: "--spec FILE (--list [--json] | --settings FILE [--out FILE])", Summary: "generate MCP tools from selected OpenAPI operations", Help: `Inspect a local OpenAPI 3.0/3.1 document or generate a new standalone Hookway configuration.
+Generation requires an import settings file with explicit operation selections and grants.
+No network requests, environment expansion or secret resolution occur. Output defaults to stdout;
+--out creates a new file and refuses to overwrite. Unsupported selections fail without partial output.`, Examples: []string{"hookway import-openapi --spec api.yaml --list", "hookway import-openapi --spec api.yaml --settings import.yaml --out core.yaml"}},
 		{
 			Name:    "state-store",
 			Args:    "migrate|status|gc|policy-update --config FILE --store NAME [--timeout DURATION] [--policy ID --expected-fingerprint HASH]",

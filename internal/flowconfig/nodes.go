@@ -261,7 +261,7 @@ type HTTPRequestOptions struct {
 	Timeout           string                 `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Headers           map[string]string      `yaml:"headers,omitempty" json:"headers,omitempty"`
 	ErrorOnStatus     []string               `yaml:"error_on_status,omitempty" json:"error_on_status,omitempty"`
-	Body              string                 `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed"`
+	Body              string                 `yaml:"body,omitempty" json:"body,omitempty" jsonschema:"enum=raw,enum=transformed,enum=none"`
 	Retry             HTTPRetryOptions       `yaml:"retry,omitempty" json:"retry,omitempty"`
 	// AllowPrivateTargets opts this node out of the SSRF egress policy that
 	// blocks loopback, link-local, private, and cloud-metadata destinations.
@@ -1111,9 +1111,9 @@ func validateHTTPRequest(o HTTPRequestOptions) error {
 		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(o.Body)) {
-	case "", "raw", "transformed":
+	case "", "raw", "transformed", "none":
 	default:
-		return fmt.Errorf("http_request.body %q must be raw or transformed", o.Body)
+		return fmt.Errorf("http_request.body %q must be raw, transformed or none", o.Body)
 	}
 	if err := validateHTTPRetry(o.Retry); err != nil {
 		return err

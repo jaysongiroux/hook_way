@@ -44,16 +44,16 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr            string
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	ShutdownTimeout time.Duration
+	Addr            string        `yaml:"addr,omitempty"`
+	ReadTimeout     time.Duration `yaml:"read_timeout,omitempty"`
+	WriteTimeout    time.Duration `yaml:"write_timeout,omitempty"`
+	IdleTimeout     time.Duration `yaml:"idle_timeout,omitempty"`
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout,omitempty"`
 	// ShutdownDelay withdraws readiness before stopping HTTP admission (default zero).
-	ShutdownDelay time.Duration
+	ShutdownDelay time.Duration `yaml:"shutdown_delay,omitempty"`
 	// ShutdownTotalTimeout bounds withdrawal, request/redrive draining and resource cleanup.
 	// Exceeding it terminates the process with an error; unfinished work may be lost.
-	ShutdownTotalTimeout time.Duration
+	ShutdownTotalTimeout time.Duration `yaml:"shutdown_total_timeout,omitempty"`
 	// PublishTimeout bounds how long a webhook request's fan-out publish is
 	// allowed to run once detached from the inbound request context (see
 	// FlowServer publish). Defaults to 10s when omitted,
@@ -63,28 +63,28 @@ type ServerConfig struct {
 	// validation also rejects a PublishTimeout greater than ShutdownTimeout or
 	// WriteTimeout (see ValidationIssues), since either would let a slow sync
 	// publish outlive its response write or a graceful shutdown deadline.
-	PublishTimeout      time.Duration
-	MaxBodyBytes        int64
-	MaxInflightRequests int
+	PublishTimeout      time.Duration `yaml:"publish_timeout,omitempty"`
+	MaxBodyBytes        int64         `yaml:"max_body_bytes,omitempty"`
+	MaxInflightRequests int           `yaml:"max_inflight_requests,omitempty"`
 	// MaxPendingRequests bounds HTTP handlers waiting for an execution slot.
 	// Both this and AdmissionWaitTimeout must be positive to enable waiting.
 	// Bodies are read only after admission; zero retains immediate overload rejection.
-	MaxPendingRequests   int
-	AdmissionWaitTimeout time.Duration
-	FanoutConcurrency    int
+	MaxPendingRequests   int           `yaml:"max_pending_requests,omitempty"`
+	AdmissionWaitTimeout time.Duration `yaml:"admission_wait_timeout,omitempty"`
+	FanoutConcurrency    int           `yaml:"fanout_concurrency,omitempty"`
 	// ReadinessInterval is how often the background readiness prober re-checks
 	// every destination. Defaults to 10s when omitted; an explicitly-set
 	// non-positive value is rejected at load time.
-	ReadinessInterval time.Duration
+	ReadinessInterval time.Duration `yaml:"readiness_interval,omitempty"`
 	// ReadinessTimeout bounds a single readiness probe's destination fan-out.
 	// Defaults to 5s when omitted; an explicitly-set non-positive value is
 	// rejected at load time.
-	ReadinessTimeout time.Duration
+	ReadinessTimeout time.Duration `yaml:"readiness_timeout,omitempty"`
 	// ReadinessRequireAll, when true, makes /ready return 503 if any flow is
 	// unready (AND-aggregation). The default is false: /ready stays 200
 	// when at least one flow is ready so one bad destination does not take
 	// unrelated flows out of rotation (D9).
-	ReadinessRequireAll bool
+	ReadinessRequireAll bool `yaml:"readiness_require_all,omitempty"`
 }
 
 type SecurityConfig struct {

@@ -232,7 +232,7 @@ func discoverExamples(t *testing.T) (valid, invalid []string) {
 			return nil
 		} // Flow bodies are exercised through their entry YAML.
 		switch filepath.ToSlash(rel) {
-		case "production-local/monitoring/compose.yaml", "production-local/monitoring/prometheus.yaml", "production-local/monitoring/alertmanager.yaml":
+		case "openapi/api.yaml", "openapi/settings.yaml", "production-local/monitoring/compose.yaml", "production-local/monitoring/prometheus.yaml", "production-local/monitoring/alertmanager.yaml":
 			return nil
 		}
 		// Every replay.yaml (examples/replay/, examples/dev/) configures
