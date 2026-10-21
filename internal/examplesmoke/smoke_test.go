@@ -69,6 +69,7 @@ func TestExampleSmoke(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	setExampleEnv(t, jwtPEM, upstream.URL)
+	t.Setenv("EVENT_DATABASE_URL", "postgres://example:example@127.0.0.1:5432/events?sslmode=disable")
 	t.Setenv("PROTECTION_DATABASE_URL", "postgres://example:example@127.0.0.1:5432/hookway?sslmode=disable")
 	t.Setenv("PROTECTION_REDIS_URL", "redis://127.0.0.1:6379/0")
 	for _, provider := range []string{"GITHUB", "STRIPE", "PADDLE", "SLACK"} {
@@ -109,6 +110,9 @@ func TestExampleSmoke(t *testing.T) {
 			issues = append(issues, flowconfig.StandaloneIssues(cfg)...)
 			if blocking := blocking(issues); len(blocking) > 0 {
 				t.Fatalf("serve-path issues: %v", blocking)
+			}
+			if cfg.EventDelivery != nil {
+				t.Skip("durable MCP event delivery has real PostgreSQL and authenticated webhook acceptance coverage in internal/eventdelivery; offline validation passed")
 			}
 			mcpFlows := 0
 			for _, flow := range cfg.Flows {

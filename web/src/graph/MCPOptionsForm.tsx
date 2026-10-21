@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
+import { MCPEventsForm } from "./MCPEventsForm";
 import { MCPTester } from "./MCPTester";
 import { Fields, object, type OptionsProps } from "./FormPresentation";
 import { NODE_SCHEMAS, schemaProperties } from "./nodeSchema";
@@ -141,6 +142,7 @@ export function MCPOptionsForm(props: OptionsProps) {
       <Tabs.List grow>
         <Tabs.Tab value="server">Endpoint</Tabs.Tab>
         <Tabs.Tab value="tools">Tools ({tools.length})</Tabs.Tab>
+        <Tabs.Tab value="events">Events ({Array.isArray(value.events) ? value.events.length : 0})</Tabs.Tab>
         <Tabs.Tab value="test">Test & connect</Tabs.Tab>
       </Tabs.List>
       <Tabs.Panel value="server" pt="md">
@@ -286,6 +288,7 @@ export function MCPOptionsForm(props: OptionsProps) {
           </Button>
         </Stack>
       </Tabs.Panel>
+      <Tabs.Panel value="events" pt="md"><MCPEventsForm value={value} onChange={onChange} scope={scope} /></Tabs.Panel>
       <Tabs.Panel value="test" pt="md">
         <MCPTester
           key={JSON.stringify([value.public_url, auth.no_auth === true])}

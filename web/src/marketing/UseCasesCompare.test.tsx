@@ -287,7 +287,7 @@ test("comparison leads with supported destination counts", () => {
   );
   expect(COMPARE_ROWS.some((r) => r.id === "automatic-recovery")).toBe(false);
   const destinations = COMPARE_ROWS.find((r) => r.id === "destinations")!;
-  expect(destinations.values.hookway.count).toBe(14);
+  expect(destinations.values.hookway.count).toBe(15);
   expect(destinations.values.hookdeck.count).toBe(3);
   expect(destinations.values.convoy.count).toBe(1);
   expect(destinations.values.hookdeck.detail).toMatch(
@@ -297,7 +297,7 @@ test("comparison leads with supported destination counts", () => {
   const row = screen
     .getByRole("rowheader", { name: /Native delivery destinations/ })
     .closest("tr")!;
-  expect(within(row).getByText("14 types")).toBeInTheDocument();
+  expect(within(row).getByText("15 types")).toBeInTheDocument();
   expect(within(row).getByText("3 types")).toBeInTheDocument();
   expect(within(row).getByText("1 type")).toBeInTheDocument();
   expect(within(row).queryByText("Yes")).not.toBeInTheDocument();

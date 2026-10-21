@@ -1,4 +1,4 @@
-import { Alert, Button, Modal, Stack, Text, Textarea } from "@mantine/core";
+import { Alert, Button, Modal, Stack, Text, Textarea, Switch, Divider } from "@mantine/core";
 import { useBuilderValidation } from "./BuilderValidation";
 import { useFieldDraft } from "./formDrafts";
 import { SchemaForm } from "./SchemaForm";
@@ -12,6 +12,7 @@ const definition = catalog.events.additionalProperties as JSONSchema;
 
 export function EventsPanel({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const value = useGraphStore((s) => s.configExtra.events);
+  const delivery = useGraphStore((s) => s.configExtra.event_delivery);
   const setConfigExtra = useGraphStore((s) => s.setConfigExtra);
   return (
     <Modal opened={opened} onClose={onClose} title="Events" size="xl"
@@ -21,6 +22,14 @@ export function EventsPanel({ opened, onClose }: { opened: boolean; onClose: () 
           Define the JSON payload your flows create. Use Create event to validate
           and wrap a payload, then Publish to send it to an existing destination.
         </Text>
+        <Switch aria-label="Enable durable MCP delivery" label="Enable durable MCP delivery" checked={Boolean(delivery)}
+          description="Requires PostgreSQL and a stable encryption key on your deployed server."
+          onChange={(event) => setConfigExtra({ event_delivery: event.currentTarget.checked ? { postgres_url: "${EVENT_DATABASE_URL}", namespace: "agent-events", encryption_key: { provider: "env", name: "EVENT_ENCRYPTION_KEY" } } : undefined })} />
+        {Boolean(delivery) && <SchemaForm schema={catalog.event_delivery as JSONSchema} value={delivery}
+          scope="event_delivery" path="event_delivery" groupObjects
+          labels={{ postgres_url: "PostgreSQL URL", namespace: "Deployment namespace", encryption_key: "Encryption key reference" }}
+          onChange={(next) => setConfigExtra({ event_delivery: next })} />}
+        <Divider />
         <WorkspaceEntries label="event" value={value} nameError={credentialNameError}
           initial={() => ({ description: "", payload_schema: { type: "object" } })}
           onChange={(events) => setConfigExtra({ events })}

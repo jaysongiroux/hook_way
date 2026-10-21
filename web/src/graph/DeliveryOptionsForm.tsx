@@ -40,7 +40,7 @@ export function PublishOptionsForm(props: OptionsProps) {
         ...(fifo ? ["group_id"] : ["fifo"]),
       ]
     : BROKER_FIELDS.filter((key) => type !== "webhook" || key !== "wire_body");
-  brokerInactive.push(...(type === "temporal" ? ["create"] : ["temporal"]));
+  brokerInactive.push(...((type === "temporal" || type === "mcp_events") ? ["create"] : ["temporal"]));
   const schema = schemaProperties(NODE_SCHEMAS.publish.schema);
   const set = (key: string, v: unknown) => onChange({ ...value, [key]: v });
   const changeDestination = (destination: string) => {
@@ -79,7 +79,7 @@ export function PublishOptionsForm(props: OptionsProps) {
       </Text>
       <Fields
         {...props}
-        fields={type === "temporal" ? ["target"] : ["target", "create"]}
+        fields={(type === "temporal" || type === "mcp_events") ? ["target"] : ["target", "create"]}
         required={["target"]}
         labels={{
           target:

@@ -113,6 +113,8 @@ An opened issue with a missing or invalid title receives 400 and is not publishe
 Other actions are filtered out without delivery. Destination acceptance is not
 exactly-once business processing; see [delivery guarantees](../operations/delivery-guarantees.md).
 
-This phase creates transport-independent event payloads. It does not advertise
+Create event produces transport-independent event payloads. Optional
+[MCP event delivery](mcp-events.md) adds durable subscriptions. By itself, event
+construction does not advertise
 MCP Events capabilities or implement discovery, subscriptions, subscriber access
 rules, cursors, retained event storage or agent wake-up.

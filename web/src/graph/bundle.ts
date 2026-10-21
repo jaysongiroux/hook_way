@@ -221,6 +221,7 @@ export function fromBundle(
       "credentials",
       "lookups",
       "events",
+      "event_delivery",
       "routing",
       "state_stores",
     ]) {

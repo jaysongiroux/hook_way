@@ -236,3 +236,6 @@ so remove unused stores. See [Protection stores](../docs/guides/protection-store
 [multi-yaml/core.yaml](multi-yaml/core.yaml) and references separate
 [orders](multi-yaml/flows/orders.yaml) and [billing](multi-yaml/flows/billing.yaml)
 flow bodies. Single-file configuration remains supported.
+
+- [MCP event subscriptions](mcp-events.yaml): PostgreSQL-backed subscriptions, authenticated issue webhooks, and signed callbacks.
+- [Signed HTTPS callback receiver](mcp-events/callback_receiver.py): standard-library test receiver using your TLS certificate.

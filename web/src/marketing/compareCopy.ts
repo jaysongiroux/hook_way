@@ -43,7 +43,7 @@ export const COMPARE_DIFFERS = {
     {
       title: "Native destinations",
       detail:
-        "Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — 14 catalog types. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.",
+        "Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — 15 catalog types. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.",
     },
     {
       title: "Object and file publish",
@@ -188,9 +188,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     values: {
       hookway: {
         level: "yes",
-        count: 14,
+        count: 15,
         detail:
-          "14 catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, and Temporal workflow starts with configurable input, IDs and timeouts",
+          "15 catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, MCP events, and Temporal workflow starts with configurable input, IDs and timeouts",
       },
       hookdeck: {
         level: "yes",

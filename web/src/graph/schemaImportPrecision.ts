@@ -38,6 +38,8 @@ export function assertSchemaImportPrecision(document: Document) {
     if (isAlias(node)) { walk(node.resolve(document)); return; }
     if (isMap(node)) {
       if (node.get("type") === "mcp_trigger") {
+        const events = node.get("events", true);
+        if (isSeq(events)) for (const event of events.items) if (isMap(event)) check(event.get("input_schema", true));
         const tools = node.get("tools", true);
         if (isSeq(tools)) for (const tool of tools.items) if (isMap(tool)) {
           check(tool.get("input_schema", true));

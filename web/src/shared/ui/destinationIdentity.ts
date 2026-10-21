@@ -34,6 +34,7 @@ export const DESTINATION_PRESENTATIONS: Record<string, DestinationPresentation> 
   sqs: { label: "Amazon SQS", icon: TbStackPush },
   lambda: { label: "AWS Lambda", icon: TbLambda },
   temporal: { label: "Temporal", icon: SiTemporal },
+  mcp_events: { label: "MCP events", icon: TbSpeakerphone },
   webhook: { label: "Webhook", icon: TbWebhook },
 };
 

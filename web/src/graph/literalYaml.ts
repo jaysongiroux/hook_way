@@ -38,6 +38,8 @@ export function literalRoots(doc: GraphDocument, flow?: string): LiteralRoots {
   for (const [name, snapshot] of Object.entries(flows)) {
     if (flow && name !== flow) continue;
     snapshot.nodes.forEach((node, index) => {
+      if (node.data.nodeType === "mcp_trigger" && Array.isArray(node.data.options.events))
+        node.data.options.events.forEach((_, eventIndex) => roots.push([...(flow ? ["nodes", index] : ["flows", name, "nodes", index]), "events", eventIndex, "input_schema"]));
       for (const path of node.data.literalDollarPaths ?? [])
         roots.push([
           ...(flow ? ["nodes", index] : ["flows", name, "nodes", index]),
@@ -52,7 +54,7 @@ export function quoteLiterals(document: Document, roots: LiteralRoots) {
     roots.some((root) => {
       const eventSchema = root[0] === "events" && root.length === 3 && root[2] === "payload_schema";
       const schema = eventSchema ||
-        root.at(-3) === "tools" &&
+        ["tools", "events"].includes(String(root.at(-3))) &&
         typeof root.at(-2) === "number" &&
         ["input_schema", "output_schema"].includes(String(root.at(-1)));
       return (
@@ -120,7 +122,7 @@ export function restoreLiteralProvenance(
         const relative = path.slice(4);
         // Imported JSON Schemas stay literal, including edited enum/default strings.
         const root =
-          relative[0] === "tools" &&
+          ["tools", "events"].includes(String(relative[0])) &&
           ["input_schema", "output_schema"].includes(String(relative[2]))
             ? relative.slice(0, 3)
             : relative;
@@ -128,7 +130,7 @@ export function restoreLiteralProvenance(
           target.data.literalDollarPaths,
           root,
         );
-        if (relative[0] === "tools" && typeof relative[1] === "number") {
+        if (["tools", "events"].includes(String(relative[0])) && typeof relative[1] === "number") {
           for (const field of ["input_schema", "output_schema"]) {
             target.data.literalDollarPaths = addRoot(
               target.data.literalDollarPaths,

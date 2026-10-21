@@ -1903,3 +1903,7 @@ Hookway emits structured `slog` JSON logs. Each log record carries a consistent 
 
 Frontend URL configuration, API CORS and scoped credentials belong to the
 [console deployment guide](../operations/replay-console.md#build-and-deploy).
+
+## MCP event delivery
+
+The optional `event_delivery` block enables PostgreSQL-backed subscriptions. MCP triggers select shared named events, and destinations of type `mcp_events` route Publish output to their active subscribers. See [configuration and limits](../guides/mcp-events.md).

@@ -56,3 +56,5 @@ Start with the [project overview](../README.md), then choose the task you need.
 API specifications: [editor OpenAPI](api/editor.openapi.json) and
 [replay OpenAPI](api/replay.openapi.json). Regenerate them using the
 [contributor instructions](development/extending-hookway.md#contracts-and-generation).
+
+- [Durable MCP event subscriptions](guides/mcp-events.md): authenticated subscriptions and signed callbacks.

@@ -362,6 +362,8 @@ jobs:
             target: aws-integration-test
           - name: Redis
             target: redis-integration-test
+          - name: MCP event delivery
+            target: event-integration-test
           - name: Postgres
             target: postgres-integration-test
           - name: MongoDB
