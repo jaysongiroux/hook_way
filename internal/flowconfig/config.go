@@ -20,6 +20,7 @@ import (
 
 // Config is a Hookway config document: shared process settings plus named flows.
 type Config struct {
+	Events       map[string]EventDefinition
 	StateStores  map[string]protection.Config
 	Routing      routing.Config
 	Credentials  map[string]CredentialProfile
@@ -71,7 +72,7 @@ func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []conf
 	// `flows` and `routing` are decoded separately below. Every other
 	// non-shared top-level key -- including
 	// `endpoints` -- is reported as unknown by the strict decoder.
-	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores", "launchdarkly")
+	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores", "launchdarkly", "events")
 	issues = append(issues, sharedIssues...)
 	issues = append(issues, shared.ValidationIssues()...)
 
@@ -134,6 +135,12 @@ func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []conf
 			issues = append(issues, cfgIssue("launchdarkly", "unknown or invalid LaunchDarkly configuration", ""))
 		}
 	}
+	if node, ok := root["events"]; ok {
+		var eventIssues []config.ValidationIssue
+		cfg.Events, eventIssues = decodeEvents(node)
+		issues = append(issues, eventIssues...)
+	}
+	issues = append(issues, eventReferenceIssues(cfg)...)
 	issues = append(issues, LaunchDarklyConfigurationIssues(cfg)...)
 	issues = append(issues, LookupConfigurationIssues(cfg)...)
 	cfg.Credentials = credentials
@@ -348,11 +355,12 @@ func decodeFlows(data []byte, source string) (map[string]graph.FlowConfig, []con
 }
 
 func compileFlows(cfg Config) []config.ValidationIssue {
-	reg, err := NewRegistryWithOptions(RegistryOptions{ValidateOnly: true})
+	events, eventIssues := CompileEventCatalog(cfg.Events)
+	reg, err := NewRegistryWithOptions(RegistryOptions{ValidateOnly: true, Events: events})
 	if err != nil {
 		return []config.ValidationIssue{cfgIssue("flows", err.Error(), "")}
 	}
-	var issues []config.ValidationIssue
+	issues := eventIssues
 	for _, name := range sortedKeys(cfg.Flows) {
 		_, err := graph.Compile(name, cfg.Flows[name], reg)
 		if err == nil {
@@ -409,8 +417,10 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 					continue
 				}
 				awsBroker := dest.Type == "sqs" || dest.Type == "sns"
-				if (opts.GroupID != nil || opts.SQS != nil || opts.SNS != nil || len(opts.ResourceAttributes) > 0 || opts.FIFO != nil || opts.Retry != nil || (opts.WireBody != "" && opts.WireBody != "envelope")) && !awsBroker {
-					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID, "fifo, retry and broker wire_body require an sqs or sns destination", ""))
+				webhookJSON := dest.Type == "webhook" && opts.WireBody == "json" && dest.Webhook.Auth.Type != "proxy"
+				customBody := opts.WireBody != "" && opts.WireBody != "envelope" && !webhookJSON
+				if (opts.GroupID != nil || opts.SQS != nil || opts.SNS != nil || len(opts.ResourceAttributes) > 0 || opts.FIFO != nil || opts.Retry != nil || customBody) && !awsBroker {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID, "fifo, retry and broker wire_body require an sqs or sns destination; webhook also supports wire_body: json outside proxy mode", ""))
 				}
 				if awsBroker {
 					field := "flows." + name + ".nodes." + nc.ID

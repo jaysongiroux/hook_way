@@ -651,7 +651,7 @@ export function reconcileConfigExtraDrafts(
     }
     result = pruneRemovedFieldDrafts(result, oldEntry, entry, scope, path);
   }
-  for (const category of ["lookups", "state_stores"]) {
+  for (const category of ["lookups", "state_stores", "events"]) {
     const oldEntries = asRecord(previous[category]),
       entries = asRecord(next[category]);
     result = reconcileNamedDrafts(result, oldEntries, entries, category, {

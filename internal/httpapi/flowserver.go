@@ -147,6 +147,11 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	if issues := flowconfig.CredentialConfigurationIssues(cfg); len(issues) > 0 {
 		return nil, fmt.Errorf("invalid credentials: %s", issues[0].Message)
 	}
+	events, eventIssues := flowconfig.CompileEventCatalog(cfg.Events)
+	if len(eventIssues) > 0 {
+		return nil, fmt.Errorf("invalid events: %s: %s", eventIssues[0].Field, eventIssues[0].Message)
+	}
+	extra.Events = events
 	headers, queries := flowconfig.AuthenticationRedactions(cfg)
 	cfg.Security.RedactedHeaderDenylist = append(append([]string(nil), cfg.Security.RedactedHeaderDenylist...), headers...)
 	extra.QueryDenylist = queries

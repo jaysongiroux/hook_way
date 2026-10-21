@@ -51,5 +51,11 @@ export function assertSchemaImportPrecision(document: Document) {
       for (const item of node.items) walk(item);
     }
   };
+  if (isMap(document.contents)) {
+    const events = document.contents.get("events", true);
+    if (isMap(events)) for (const pair of events.items) {
+      if (isMap(pair.value)) check(pair.value.get("payload_schema", true));
+    }
+  }
   walk(document.contents);
 }

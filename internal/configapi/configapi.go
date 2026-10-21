@@ -212,6 +212,7 @@ func Schema() ([]byte, error) {
 			map[string]any{"type": "object", "not": map[string]any{"required": []string{"file"}}, "properties": map[string]any{"nodes": map[string]any{"type": "array"}, "edges": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
 		}}}
 		properties["credentials"] = credentials
+		properties["events"] = reflector.Reflect(&map[string]flowconfig.EventDefinition{})
 		properties["lookups"] = reflector.Reflect(&map[string]flowconfig.LookupProviderConfig{})
 		properties["launchdarkly"] = reflector.Reflect(&map[string]flowconfig.LaunchDarklyConnection{})
 		properties["routing"] = routingSchema

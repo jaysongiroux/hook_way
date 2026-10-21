@@ -716,5 +716,25 @@
       ]
     },
     "type": "object"
+  },
+  "events": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "payload_schema": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "description",
+        "payload_schema"
+      ]
+    },
+    "type": "object"
   }
 }

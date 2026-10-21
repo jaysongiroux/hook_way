@@ -220,6 +220,7 @@ export function fromBundle(
       "destinations",
       "credentials",
       "lookups",
+      "events",
       "routing",
       "state_stores",
     ]) {

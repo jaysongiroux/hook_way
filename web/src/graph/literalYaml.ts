@@ -29,6 +29,11 @@ function walk(
 }
 export function literalRoots(doc: GraphDocument, flow?: string): LiteralRoots {
   const roots: LiteralRoots = flow ? [] : [...(doc.literalConfigPaths ?? [])];
+  if (!flow) {
+    const events = doc.configExtra.events;
+    if (events && typeof events === "object" && !Array.isArray(events))
+      for (const name of Object.keys(events)) roots.push(["events", name, "payload_schema"]);
+  }
   const flows = { ...doc.otherFlows, [doc.activeFlow]: { nodes: doc.nodes } };
   for (const [name, snapshot] of Object.entries(flows)) {
     if (flow && name !== flow) continue;
@@ -45,7 +50,8 @@ export function literalRoots(doc: GraphDocument, flow?: string): LiteralRoots {
 export function quoteLiterals(document: Document, roots: LiteralRoots) {
   const selected = (path: Path) =>
     roots.some((root) => {
-      const schema =
+      const eventSchema = root[0] === "events" && root.length === 3 && root[2] === "payload_schema";
+      const schema = eventSchema ||
         root.at(-3) === "tools" &&
         typeof root.at(-2) === "number" &&
         ["input_schema", "output_schema"].includes(String(root.at(-1)));

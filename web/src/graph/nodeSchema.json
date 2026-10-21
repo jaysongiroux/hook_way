@@ -477,6 +477,28 @@
       "type": "object"
     }
   },
+  "event": {
+    "input": "Envelope",
+    "output": "Envelope",
+    "detached": false,
+    "on_error": true,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "event": {
+          "type": "string"
+        },
+        "event_id_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event"
+      ]
+    }
+  },
   "filter": {
     "batch_child_order": 3,
     "input": "Envelope",

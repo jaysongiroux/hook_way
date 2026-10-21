@@ -39,7 +39,7 @@ export function PublishOptionsForm(props: OptionsProps) {
         ...(type === "sqs" ? ["sns"] : ["sqs"]),
         ...(fifo ? ["group_id"] : ["fifo"]),
       ]
-    : BROKER_FIELDS.slice();
+    : BROKER_FIELDS.filter((key) => type !== "webhook" || key !== "wire_body");
   brokerInactive.push(...(type === "temporal" ? ["create"] : ["temporal"]));
   const schema = schemaProperties(NODE_SCHEMAS.publish.schema);
   const set = (key: string, v: unknown) => onChange({ ...value, [key]: v });
@@ -102,6 +102,12 @@ export function PublishOptionsForm(props: OptionsProps) {
             This path is appended to the destination base URL. Configure the
             base URL in Destinations.
           </Text>
+          <Select label="Webhook payload"
+            description="JSON sends the current body, including a named event. Destination retry settings still apply. Proxy authentication forwards the original request instead."
+            value={String(value.wire_body ?? "envelope")} allowDeselect={false}
+            data={[{value: "envelope", label: "Hookway envelope"}, {value: "json", label: "Current JSON body"},
+              ...(!["envelope", "json", ""].includes(String(value.wire_body ?? "")) ? [{value: String(value.wire_body), label: `Imported: ${String(value.wire_body)}`}] : [])]}
+            onChange={(next) => set("wire_body", next || "envelope")} />
           <WebhookDeliveryNotice
             deliveryMode={
               object(

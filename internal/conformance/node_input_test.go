@@ -84,7 +84,14 @@ func nodeInputCases(t *testing.T) map[string]nodeInputCase {
 	if err != nil {
 		t.Fatal(err)
 	}
+	events, issues := flowconfig.CompileEventCatalog(map[string]flowconfig.EventDefinition{
+		"issue.opened": {Description: "Issue", PayloadSchema: transform.JSONSchema{"type": "object"}},
+	})
+	if len(issues) > 0 {
+		t.Fatal(issues)
+	}
 	return map[string]nodeInputCase{
+		"event": {typ: "event", options: "event: issue.opened\nevent_id_path: id\n", opts: flowconfig.RegistryOptions{Events: events}, input: func() graph.Payload { return inputEnvelope() }},
 		"mcp_trigger": {typ: "mcp_trigger", options: "path: /mcp\npublic_url: http://localhost/mcp\nauth: {no_auth: true}\ntools: [{name: test_tool, description: Test tool, read_only: true, access: {anonymous: true}, input_schema: {type: object}, output_schema: {type: object}}]\n", ctx: func() context.Context {
 			return flowconfig.WithMCPInvocation(context.Background(), "test_tool", false, true)
 		}, input: func() graph.Payload { return inputEnvelope() }},

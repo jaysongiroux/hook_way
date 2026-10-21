@@ -24,6 +24,7 @@ import { loadValidator } from "./graph/validate";
 import { starterDocument } from "./graph/starter";
 import { RoutingPanel } from "./graph/RoutingPanel";
 import { LaunchDarklyPanel } from "./graph/LaunchDarklyForm";
+import { EventsPanel } from "./graph/EventsPanel";
 import { LookupsPanel } from "./graph/LookupsPanel";
 import { StateStoresPanel } from "./graph/StateStoresPanel";
 import { CredentialsPanel } from "./graph/CredentialsPanel";
@@ -67,6 +68,7 @@ export default function App({ product = false, headerActions }: { product?: bool
     useDisclosure(false);
   const [credentialsOpen, { open: openCredentials, close: closeCredentials }] =
     useDisclosure(false);
+  const [eventsOpen, { open: openEvents, close: closeEvents }] = useDisclosure(false);
   const [lookupsOpen, { open: openLookups, close: closeLookups }] =
     useDisclosure(false);
   const [launchDarklyOpen, { open: openLaunchDarkly, close: closeLaunchDarkly }] = useDisclosure(false);
@@ -111,6 +113,7 @@ export default function App({ product = false, headerActions }: { product?: bool
     setReturnToInspector(true);
     closeInspector();
     ({
+      events: openEvents,
       lookups: openLookups,
  launchdarkly: openLaunchDarkly,
       state_stores: openStateStores,
@@ -157,6 +160,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             onConnections={openConn}
             onRouting={openRouting}
             onCredentials={openCredentials}
+            onEvents={openEvents}
             onLookups={openLookups}
  onLaunchDarkly={openLaunchDarkly}
             onStateStores={openStateStores}
@@ -244,6 +248,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             opened={routingOpen}
             onClose={() => closeWorkspace(closeRouting)}
           />
+          <EventsPanel opened={eventsOpen} onClose={() => closeWorkspace(closeEvents)} />
           <LookupsPanel
             opened={lookupsOpen}
             onClose={() => closeWorkspace(closeLookups)}

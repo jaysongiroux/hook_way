@@ -48,6 +48,7 @@ var nodeFixtures = map[string]struct {
 	"launchdarkly":   {graph.PortEnvelope, graph.PortEnvelope, false, "connection: production\nname: rollout\ncontext: {key: {value: tenant}}\nflags: {new_processor: {key: use-new-processor, type: boolean, fallback: false}}\n"},
 	"lookup":         {graph.PortEnvelope, graph.PortEnvelope, false, "provider: dynamodb\nkey: '{body.id}'\nname: route\ntable: routing\ncache: {ttl: 5m, max_entries: 10000}\nfallback: shared\nnegative_ttl: 30s\n"},
 	"batch":          {graph.PortEnvelope, graph.PortTerminal, false, "mode: shared\nprofile: sandbox\nenvironment_path: environment\nevent_id_path: event_id\nchild:\n  entry: node.send\n  nodes: [{id: node.send, type: publish, destination: primary, target: sample}]\n  edges: []\n"},
+	"event":          {graph.PortEnvelope, graph.PortEnvelope, false, "event: issue.opened\nevent_id_path: issue_id\n"},
 	"json_validate":  {graph.PortEnvelope, graph.PortEnvelope, false, "schema: {type: object}\n"},
 	"transform":      {graph.PortEnvelope, graph.PortEnvelope, false, "kind: changed_fields\nfrom: body.previous\nto: body.current\nname: changed_fields\n"},
 	"code":           {graph.PortEnvelope, graph.PortEnvelope, false, "script: 'return {body: input.body}'\ntimeout: 1s\nmax_input_bytes: 1048576\nmax_output_bytes: 1048576\nmax_call_stack: 1000\n"},

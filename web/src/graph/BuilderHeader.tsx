@@ -19,6 +19,7 @@ export function BuilderHeader({
   onConnections,
   onRouting,
   onCredentials,
+  onEvents,
   onLookups,
  onLaunchDarkly,
   onStateStores,
@@ -39,6 +40,7 @@ export function BuilderHeader({
   onConnections: () => void;
   onRouting?: () => void;
   onCredentials?: () => void;
+  onEvents?: () => void;
   onLookups?: () => void;
  onLaunchDarkly?: () => void;
   onStateStores?: () => void;
@@ -107,6 +109,7 @@ export function BuilderHeader({
               <Menu.Item onClick={onDestinations}>Destinations</Menu.Item>
               <Menu.Item onClick={onRouting}>Routing</Menu.Item>
               <Menu.Item onClick={onCredentials}>Credentials</Menu.Item>
+              <Menu.Item onClick={onEvents}>Events</Menu.Item>
               <Menu.Item onClick={onLookups}>Lookups</Menu.Item>
  <Menu.Item onClick={onLaunchDarkly}>LaunchDarkly</Menu.Item>
               <Menu.Item onClick={onStateStores}>Protection stores</Menu.Item>

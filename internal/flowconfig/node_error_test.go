@@ -158,6 +158,11 @@ func catalogRuntimeErrors(t *testing.T) map[string]func(*testing.T) error {
 			}).Run(context.Background(), graph.Envelope{Vars: map[string]string{"id": "missing"}})
 			return err
 		},
+		"event": func(t *testing.T) error {
+			n := mustCatalogNode(t, "event", nodeFixtures["event"].yaml, RegistryOptions{Events: testEventCatalog(t)})
+			_, err := n.Run(context.Background(), graph.Envelope{Body: map[string]any{}})
+			return err
+		},
 		"json_validate": func(t *testing.T) error {
 			_, err := mustCatalogNode(t, "json_validate", "schema: {type: object, required: [id]}\n", RegistryOptions{}).Run(context.Background(), graph.Envelope{Body: map[string]any{}})
 			return err
@@ -249,6 +254,10 @@ func TestOnErrorRecoversEveryFailingNode(t *testing.T) {
 func onErrorRecoveryCases(t *testing.T) map[string]func(*testing.T) {
 	t.Helper()
 	return map[string]func(*testing.T){
+		"event": func(t *testing.T) {
+			src := "events: {issue.opened: {description: Issue, payload_schema: {type: object, required: [issue_id, title]}}}\n" + envelopeFailYAML(`{id: fail, type: event, event: issue.opened}`, respondOKNode, "env>fail, fail>ok, fail:on_error>fb")
+			assertRecovered(t, mustCompileDemo(t, src, RegistryOptions{Events: testEventCatalog(t)}), []byte(`{}`), "10.0.0.1", "")
+		},
 		"batch": func(t *testing.T) {
 			src := `server: {addr: ":8080", max_body_bytes: 1024}
 routing:

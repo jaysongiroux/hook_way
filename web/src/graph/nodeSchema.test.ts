@@ -14,7 +14,7 @@ import {
 } from "./nodeSchema";
 
 test("every catalog node type has palette metadata", () => {
-  expect(NODE_TYPES).toHaveLength(27);
+  expect(NODE_TYPES).toHaveLength(28);
   for (const type of NODE_TYPES) {
     const meta = NODE_SCHEMAS[type];
     expect(meta.input, type).toBeTruthy();

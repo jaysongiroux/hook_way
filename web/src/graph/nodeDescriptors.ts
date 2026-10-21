@@ -4,6 +4,7 @@ import {
   TbArrowBackUp,
   TbPlugConnected,
   TbBraces,
+  TbTag,
   TbStack2,
   TbArrowsSplit,
   TbCode,
@@ -83,6 +84,18 @@ export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> 
       const name = (tool as Options).name;
       return typeof name === "string" && name ? [name] : [];
     }) : [],
+  },
+  event: {
+    label: "Create event", icon: TbTag, editor: "simple",
+    help: "Validate the current JSON object against a named event schema and wrap it with an ID and timestamp. Connect Publish to deliver it.",
+    initialOptions: () => ({ event: "" }),
+    summary: (o) => String(o.event || "Choose event"),
+    simple: {
+      primaryFields: ["event_id_path"],
+      summary: "Create a named event from the current JSON object. Transform fields before this node, then connect Publish to deliver the event.",
+      fieldHelp: { event_id_path: "Optional dotted path in the current body, such as issue_id. It must contain a nonempty string. Leave empty to generate a new UUID." },
+    },
+    fieldLabels: { event_id_path: "Event ID path" },
   },
   mcp_result: {
     label: "MCP result", icon: TbBraces, editor: "schema",

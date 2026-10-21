@@ -27,12 +27,12 @@ test("the production YAML is the builder starter", () => {
   expect(PRODUCTION_YAML).toContain("ack:on_error>dlq");
 });
 
-test("every node without native store dependencies appears in the starter", () => {
+test("baseline nodes without separate catalog or service configuration appear in the starter", () => {
   const types = new Set(
     allNodes(starterDocument()).map((n) => n.data.nodeType),
   );
   for (const type of NODE_TYPES.filter(
-    (t) => !["lookup", "register_route", "batch", "inspect", "launchdarkly", "mcp_trigger", "mcp_result"].includes(t),
+    (t) => !["lookup", "register_route", "batch", "inspect", "launchdarkly", "mcp_trigger", "mcp_result", "event"].includes(t),
   )) {
     expect(types.has(type), type).toBe(true);
   }

@@ -14,6 +14,7 @@ builder, then run core as a Go binary or Docker container.
 - **Read events and files:** JSON, ordered XML, multipart uploads, and raw bodies.
 - **Validate and transform:** JSON Schema checks, explicit type conversions, field
   mapping, JSON change detection, XML edits, and sandboxed JavaScript.
+- **Create named events:** share JSON payload contracts across flows and construct validated events with IDs and timestamps before delivery.
 - **Choose delivery paths:** filters, if/else, switches, dynamic environment
   routing, named HTTP/PostgreSQL/DynamoDB lookups, and bounded batch processing.
 - **Publish directly:** RabbitMQ, SQS, SNS, Kafka, Redis streams/lists/Pub/Sub/key-value,

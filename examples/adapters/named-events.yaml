@@ -1,0 +1,50 @@
+# Authenticated webhook -> filter -> project -> validate/create -> publish.
+# Set SAMPLE_WEBHOOK_SECRET and WEBHOOK_URL (the receiver's base URL).
+# The receiver gets POST /issue-events with the named event as its JSON body.
+server: {addr: ":8080", max_body_bytes: 1048576}
+state_stores: {local: {namespace: named-events, memory: {}}}
+
+events:
+  issue.opened:
+    description: A new issue was opened.
+    payload_schema:
+      type: object
+      required: [issue_id, title]
+      additionalProperties: false
+      properties:
+        issue_id: {type: string, minLength: 1}
+        title: {type: string, minLength: 1}
+
+destinations:
+  receiver:
+    type: webhook
+    webhook:
+      url: "${WEBHOOK_URL}"
+      delivery_mode: sync
+      retry: {max_attempts: 2, initial_backoff: 100ms, max_backoff: 100ms}
+
+flows:
+  issues:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/issues, methods: [POST]}
+      - {id: limit, type: rate_limit, store: local, rpm: 60, burst: 10}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_WEBHOOK_SECRET}, signature_header: X-Api-Key}
+      - {id: env, type: envelope, body_format: json}
+      - {id: json, type: json_validate, schema: {type: object}}
+      - id: opened
+        type: filter
+        conditions: [{source: body, path: action, operator: eq, value: opened}]
+        on_no_match: drop
+        drop_reason: dropped_unused_event_type
+      - id: project
+        type: code
+        timeout: 100ms
+        script: 'const issue = input.body.issue || {}; return {body: {issue_id: issue.id, title: issue.title}};'
+      - {id: issue_event, type: event, event: issue.opened, event_id_path: issue_id}
+      - id: send
+        type: publish
+        destination: receiver
+        target: issue-events
+        wire_body: json
+    edges: [in>limit, limit>body, body>auth, auth>env, env>json, json>opened, opened>project, project>issue_event, issue_event>send]

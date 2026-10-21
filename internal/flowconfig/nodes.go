@@ -437,6 +437,7 @@ func defineErr[T any](name string, in, out graph.PortType, detached bool, valida
 // RegistryOptions customizes runtime node constructors used when compiling
 // flows for serving. Validation uses the zero value.
 type RegistryOptions struct {
+	Events             *EventCatalog
 	Protection         func(string) protection.Store
 	StateStores        map[string]protection.Config
 	ProtectionPolicies map[string][]protection.Policy
@@ -564,6 +565,9 @@ func catalog(opts RegistryOptions) []nodeDefinition {
 			}
 			return launchDarklyNode{id: id, opts: o, evaluate: fn, observe: opts.FlagObservation}
 		}).withMetadata(nodeMetadata{noErrorEdge: true, configureSchema: configureLaunchDarklySchema}),
+		defineErr("event", graph.PortEnvelope, graph.PortEnvelope, false, validateEventOptions, func(id string, o EventOptions) (graph.Node, error) {
+			return newEventNode(id, o, opts.Events, opts.ValidateOnly)
+		}).withMetadata(nodeMetadata{checkBodyFormat: jsonBodyFormatIssue}),
 		defineErr("json_validate", graph.PortEnvelope, graph.PortEnvelope, false, nil, newJSONValidateNode).withMetadata(nodeMetadata{checkBodyFormat: jsonBodyFormatIssue}),
 		defineErr("transform", graph.PortEnvelope, graph.PortEnvelope, false, validateTransform, func(id string, o TransformOptions) (graph.Node, error) {
 			return newTransformNode(id, o, opts.Logger)
