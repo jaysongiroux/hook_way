@@ -53,11 +53,10 @@ the lookup result, not in the event summary.
    docker compose -f examples/mcp-events/demo/docker-compose.yaml up -d --force-recreate idp core front
    ```
 
-   The tunnel front permits only MCP, protected-resource discovery, demo OAuth
-   endpoints and optional portal domain verification. It does not expose the
+   The tunnel front permits only MCP, protected-resource discovery and the required
+   demo OAuth endpoints. It does not expose the
    replay operator API, private control listener, metrics, fixture API or webhook
-   ingress. Domain verification, if required by the portal, uses a local
-   `DEMO_DOMAIN_CHALLENGE` value followed by recreating `front`.
+   ingress or the identity provider's debugger.
 
 3. In [ChatGPT Plugins](https://chatgpt.com/plugins), select **Add → Add custom
    MCP server**. Enter the tunnel URL followed by `/agents/mcp`, choose OAuth,

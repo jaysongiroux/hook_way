@@ -7,12 +7,9 @@ PUBLIC = os.environ.get("DEMO_PUBLIC_URL", "http://localhost:18085")
 class Handler(BaseHTTPRequestHandler):
     def proxy(self):
         path = urlsplit(self.path).path
-        if path == "/.well-known/openai-apps-challenge" and os.environ.get("DEMO_DOMAIN_CHALLENGE"):
-            body = os.environ["DEMO_DOMAIN_CHALLENGE"].encode()
-            self.send_response(200); self.send_header("Content-Type", "text/plain"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body); return
-        if path == "/agents/mcp" or path.startswith("/.well-known/oauth-protected-resource/"):
+        if path in {"/agents/mcp", "/.well-known/oauth-protected-resource/agents/mcp"}:
             upstream = "core"
-        elif path.startswith("/demo/"):
+        elif path in {"/demo/authorize", "/demo/token", "/demo/jwks", "/demo/userinfo", "/demo/revoke", "/demo/.well-known/openid-configuration", "/demo/.well-known/oauth-authorization-server"}:
             upstream = "idp"
         else:
             self.send_error(404); return

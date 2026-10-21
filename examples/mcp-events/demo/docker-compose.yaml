@@ -28,7 +28,7 @@ services:
   front:
     image: python:3.13-alpine
     command: [python, /app/front.py]
-    environment: {DEMO_PUBLIC_URL: "${DEMO_PUBLIC_URL:-http://localhost:18085}", DEMO_DOMAIN_CHALLENGE: "${DEMO_DOMAIN_CHALLENGE:-}"}
+    environment: {DEMO_PUBLIC_URL: "${DEMO_PUBLIC_URL:-http://localhost:18085}"}
     volumes: [./front.py:/app/front.py:ro]
     ports: [127.0.0.1:18085:8080]
     depends_on: [idp, core]
