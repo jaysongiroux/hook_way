@@ -62,7 +62,7 @@ function mount() {
   const onClose = vi.fn();
   render(
     <MantineProvider theme={theme}>
-      <OpenAPIWizard onClose={onClose} onExportWorkspace={vi.fn()} />
+      <OpenAPIWizard onClose={onClose} />
     </MantineProvider>,
   );
   return onClose;
