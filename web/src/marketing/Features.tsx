@@ -14,7 +14,7 @@ const FEATURES: { title: string; body: string }[] = [
   },
   {
     title: "Expose APIs as MCP tools",
-    body: "Give assistants access to selected REST or native operations. Each MCP endpoint has its own tools, authentication, schemas and permissions.",
+    body: "Import an OpenAPI spec, select operations, and review the generated tools. Give each caller explicit permissions with API keys or OAuth.",
   },
   {
     title: "Verify who sent each request",

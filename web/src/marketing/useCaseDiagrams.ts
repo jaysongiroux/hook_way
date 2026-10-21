@@ -24,6 +24,7 @@ export const SCENARIO_GROUPS = [
     label: "Serve AI and API clients",
     items: [
       { id: "mcp-gateway", label: "APIs for AI assistants" },
+      { id: "mcp-events", label: "Events for agents" },
       { id: "sync-proxy", label: "Synchronous API proxy" },
     ],
   },
@@ -48,6 +49,23 @@ export const SCENARIO_GROUPS = [
 
 // Simplified paths explain the pattern; the linked YAML is the full configuration.
 export const SCENARIO_DIAGRAMS: Record<string, ScenarioDiagram> = {
+  "mcp-events": {
+    label:
+      "An issue webhook creates a named event, Hookway delivers a signed callback to a matching subscriber, and the agent calls get_issue through MCP.",
+    caption:
+      "The event starts the workflow; the tool retrieves the details. Requires a client that supports MCP Events.",
+    nodes: [
+      node("webhook", "Issue webhook", "Verify · create event", 0),
+      node("event", "Matching event", "Subscription filters", 1),
+      node("agent", "Subscribed agent", "Signed callback", 2),
+      node("tool", "get_issue", "Authenticated lookup", 3),
+    ],
+    edges: [
+      ["webhook", "event"],
+      ["event", "agent"],
+      ["agent", "tool"],
+    ],
+  },
   "mcp-gateway": {
     label:
       "An assistant calls an authenticated MCP endpoint, which runs its selected API or native tool branch and returns an MCP result.",
