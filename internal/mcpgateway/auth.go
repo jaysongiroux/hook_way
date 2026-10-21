@@ -26,6 +26,7 @@ import (
 )
 
 type principal struct {
+	Audience      string
 	Issuer        string
 	ExpiresAt     time.Time
 	ID, Key       string
@@ -177,7 +178,7 @@ func (a *authenticator) verify(ctx context.Context, r *http.Request) (principal,
 	}
 	// Tool grants are checked separately from the verified issuer and subject.
 	expiry, _ := claims.GetExpirationTime()
-	p := principal{Issuer: a.opts.OAuth.Issuer, ExpiresAt: expiry.Time, ID: fmt.Sprintf("oauth:%x", sha256.Sum256([]byte(a.opts.OAuth.Issuer+"\x00"+sub))), Scopes: stringList(claims["scope"])}
+	p := principal{Audience: a.opts.OAuth.Audience, Issuer: a.opts.OAuth.Issuer, ExpiresAt: expiry.Time, ID: fmt.Sprintf("oauth:%x", sha256.Sum256([]byte(a.opts.OAuth.Issuer+"\x00"+sub))), Scopes: stringList(claims["scope"])}
 	if len(p.Scopes) == 0 {
 		p.Scopes = stringList(claims["scp"])
 	}

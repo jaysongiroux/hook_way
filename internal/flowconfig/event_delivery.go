@@ -65,6 +65,7 @@ type MCPEventOptions struct {
 
 // EventPrincipal is a verified, expiring authorization snapshot; no bearer token.
 type EventPrincipal struct {
+	Audience      string
 	Issuer        string
 	ID            string
 	Key           string

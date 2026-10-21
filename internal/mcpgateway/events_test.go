@@ -103,3 +103,19 @@ func TestEventMethodsDiscoveryAndExpiringPrincipal(t *testing.T) {
 		t.Fatal("legacy tool capabilities changed", oldCaps)
 	}
 }
+
+func TestEventPrincipalRequiresCurrentOAuthTrust(t *testing.T) {
+	g := &Gateway{auth: &authenticator{opts: flowconfig.MCPAuthOptions{OAuth: &flowconfig.MCPOAuthOptions{Issuer: "https://issuer.example", Audience: "current"}}}}
+	p := flowconfig.EventPrincipal{ID: "oauth:alice", Issuer: "https://issuer.example", Audience: "old", ExpiresAt: time.Now().Add(time.Minute)}
+	if g.eventPrincipalValid(t.Context(), p) {
+		t.Fatal("old OAuth audience retained delivery authorization")
+	}
+	p.Audience = "current"
+	if !g.eventPrincipalValid(t.Context(), p) {
+		t.Fatal("current OAuth trust rejected")
+	}
+	p.Issuer = "https://other.example"
+	if g.eventPrincipalValid(t.Context(), p) {
+		t.Fatal("old OAuth issuer retained delivery authorization")
+	}
+}

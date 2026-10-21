@@ -105,7 +105,7 @@ func (g *Gateway) registerEvents(s *mcp.Server) error {
 	return nil
 }
 func toEventPrincipal(p principal) flowconfig.EventPrincipal {
-	return flowconfig.EventPrincipal{Issuer: p.Issuer, ID: p.ID, Key: p.Key, Scopes: p.Scopes, Roles: p.Roles, ExpiresAt: p.ExpiresAt}
+	return flowconfig.EventPrincipal{Audience: p.Audience, Issuer: p.Issuer, ID: p.ID, Key: p.Key, Scopes: p.Scopes, Roles: p.Roles, ExpiresAt: p.ExpiresAt}
 }
 func (g *Gateway) eventPrincipalValid(ctx context.Context, p flowconfig.EventPrincipal) bool {
 	if p.ID == "" || (!p.ExpiresAt.IsZero() && !time.Now().Before(p.ExpiresAt)) {
@@ -120,5 +120,5 @@ func (g *Gateway) eventPrincipalValid(ctx context.Context, p flowconfig.EventPri
 		}
 		return false
 	}
-	return g.auth.opts.OAuth != nil && p.Issuer == g.auth.opts.OAuth.Issuer && !p.ExpiresAt.IsZero()
+	return g.auth.opts.OAuth != nil && p.Issuer == g.auth.opts.OAuth.Issuer && p.Audience == g.auth.opts.OAuth.Audience && !p.ExpiresAt.IsZero()
 }
