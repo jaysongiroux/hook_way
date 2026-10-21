@@ -105,13 +105,17 @@ same action on an empty canvas. Upload one JSON/YAML file or paste its contents.
 Inspection and generation run locally in a dedicated Go WASM worker. The wizard
 does not upload the document, fetch remote specifications, or resolve secrets.
 
-Select up to 64 supported operations, then configure the upstream base URL,
-credential profiles, authenticated MCP endpoint, and explicit per-tool grants.
+Select up to 64 supported operations. Expand **Edit tool details** to change a
+tool's name or description. Access setup separates **Your API**, **Agent access**,
+and **Tool permissions**. Add named callers using secret references, then grant
+each caller the tools it needs. API credentials, server settings, browser origins,
+and request limits are available in expandable sections.
 Nothing is selected or granted automatically. Writes require a separate mutation
 permission. Unsupported operations remain visible with their diagnostics.
 
-**Generate review** validates the complete configuration. Review tool schemas,
-argument aliases, grants and branches, then download `core.yaml`. **Open in
+**Review configuration** validates the complete configuration. Expand a tool to
+review its description, schemas, aliases, and grants; **View core.yaml** shows the
+complete YAML. Download `core.yaml` to use it with Hookway. **Open in
 builder** offers export of your current workspace and requires confirmation before
 replacing all flows and settings, including replay. Imported strings retain their
 literal dollar signs through editing, browser persistence, and split YAML exports.

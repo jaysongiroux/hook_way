@@ -69,10 +69,11 @@ function mount() {
   return onClose;
 }
 async function inspect() {
+  fireEvent.click(screen.getByRole("tab", { name: "Paste document" }));
   fireEvent.change(screen.getByLabelText("OpenAPI document", { exact: true }), {
     target: { value: "raw: 9007199254740993" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Inspect operations" }));
+  fireEvent.click(screen.getByRole("button", { name: "Find operations" }));
   await screen.findByRole("checkbox", { name: /^GET \/items(?:\/0)?$/ });
 }
 test("empty selections, unsupported visibility, collisions and source replacement leave workspace intact", async () => {
@@ -85,6 +86,9 @@ test("empty selections, unsupported visibility, collisions and source replacemen
   expect(screen.getByRole("checkbox", { name: "HEAD /items" })).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: "GET /items" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "POST /items" }));
+  fireEvent.click(
+    screen.getAllByRole("button", { name: "Edit tool details" })[1],
+  );
   fireEvent.change(screen.getByLabelText("Tool name for POST /items"), {
     target: { value: "get_items" },
   });
@@ -100,25 +104,58 @@ test("empty selections, unsupported visibility, collisions and source replacemen
   ).not.toBeInTheDocument();
   expect(initial()).toEqual(before);
 });
-test("caller grants start empty and invalid form drafts never write to the graph", async () => {
+test("guided caller credentials stay in the wizard and never grant tools automatically", async () => {
   const before = initial();
   mount();
   await inspect();
   fireEvent.click(screen.getByRole("checkbox", { name: "POST /items" }));
   fireEvent.click(screen.getByRole("button", { name: "Configure access" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set agent access" }));
+  expect(
+    screen.queryByRole("switch", { name: "Use oauth" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Rename" }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("New caller name"), {
+    target: { value: "reader" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add caller" }));
+  fireEvent.change(screen.getByLabelText("Environment variable name"), {
+    target: { value: "MCP_READER_TOKEN" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Set tool permissions" }));
   expect(
     screen.getByRole("checkbox", { name: "Allow mutation for POST /items" }),
   ).not.toBeChecked();
-  const keys = screen.getByRole("textbox", { name: /api keys/i });
-  fireEvent.change(keys, { target: { value: "{" } });
-  expect(
-    screen.getByRole("button", { name: "Generate review" }),
-  ).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Back" }));
-  fireEvent.click(screen.getByRole("button", { name: "Configure access" }));
-  expect(keys).toHaveValue("{");
+  expect(screen.getByLabelText("API key grants for POST /items")).toHaveValue(
+    "",
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Agent access" }));
+  expect(screen.getByLabelText("Environment variable name")).toHaveValue(
+    "MCP_READER_TOKEN",
+  );
   expect(useGraphStore.getState().formDrafts).toEqual({});
   expect(initial()).toEqual(before);
+});
+
+test("OAuth setup exposes provider fields without a second enable switch", async () => {
+  mount();
+  await inspect();
+  fireEvent.click(screen.getByRole("checkbox", { name: "GET /items" }));
+  fireEvent.click(screen.getByRole("button", { name: "Configure access" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set agent access" }));
+  fireEvent.click(
+    screen.getByRole("combobox", { name: "Client authentication" }),
+  );
+  fireEvent.click(
+    screen.getByRole("option", { name: "OAuth identity provider" }),
+  );
+  expect(screen.getByLabelText("issuer", { exact: true })).toBeVisible();
+  expect(screen.queryByLabelText("New caller name")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("switch", { name: "Use oauth" }),
+  ).not.toBeInTheDocument();
 });
 test("canceling and discarding a populated import preserves the builder", async () => {
   const before = initial();
@@ -166,10 +203,11 @@ test("late inspection results cannot replace a newer source", async () => {
     }),
   );
   mount();
+  fireEvent.click(screen.getByRole("tab", { name: "Paste document" }));
   fireEvent.change(screen.getByLabelText("OpenAPI document", { exact: true }), {
     target: { value: "old: source" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Inspect operations" }));
+  fireEvent.click(screen.getByRole("button", { name: "Find operations" }));
   fireEvent.change(screen.getByLabelText("OpenAPI document", { exact: true }), {
     target: { value: "new: source" },
   });
@@ -179,9 +217,7 @@ test("late inspection results cannot replace a newer source", async () => {
   expect(
     screen.queryByRole("checkbox", { name: "GET /items" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "Inspect operations" }),
-  ).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Find operations" })).toBeEnabled();
 });
 
 test("precision failures preserve the workspace and retain the generated download", async () => {
@@ -194,7 +230,8 @@ test("precision failures preserve the workspace and retain the generated downloa
   await inspect();
   fireEvent.click(screen.getByRole("checkbox", { name: "GET /items" }));
   fireEvent.click(screen.getByRole("button", { name: "Configure access" }));
-  fireEvent.click(screen.getByRole("button", { name: "Generate review" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Tool permissions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "Open in builder" }),
   );
@@ -222,7 +259,8 @@ test("review diagnostics return focus to the affected endpoint setting", async (
   await inspect();
   fireEvent.click(screen.getByRole("checkbox", { name: "GET /items" }));
   fireEvent.click(screen.getByRole("button", { name: "Configure access" }));
-  fireEvent.click(screen.getByRole("button", { name: "Generate review" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Tool permissions" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Review field" }));
   await waitFor(() =>
     expect(

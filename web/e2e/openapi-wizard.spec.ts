@@ -28,8 +28,9 @@ test("real WASM imports a standalone configuration without touching the current 
     const wizard = await builder.openConfigItem(
       "Create MCP tools from OpenAPI",
     );
+    await wizard.getByRole("tab", { name: "Paste document" }).click();
     await wizard.getByLabel("OpenAPI document", { exact: true }).fill(source);
-    await wizard.getByRole("button", { name: "Inspect operations" }).click();
+    await wizard.getByRole("button", { name: "Find operations" }).click();
     await expect(
       wizard.getByRole("checkbox", {
         name: "GET /customers/{id}",
@@ -45,6 +46,14 @@ test("real WASM imports a standalone configuration without touching the current 
     await wizard
       .getByRole("checkbox", { name: "PATCH /customers/{id}", exact: true })
       .check();
+    await wizard
+      .getByRole("button", { name: "Edit tool details" })
+      .nth(0)
+      .click();
+    await wizard
+      .getByRole("button", { name: "Edit tool details" })
+      .nth(1)
+      .click();
     await wizard
       .getByLabel("Description for GET /customers/{id}", { exact: true })
       .fill("Literal ${UNRELATED_HOST_SECRET}");
@@ -63,18 +72,26 @@ test("real WASM imports a standalone configuration without touching the current 
         exact: true,
       })
       .check();
+    await wizard.getByRole("button", { name: "Set agent access" }).click();
     await wizard
       .getByLabel("Public MCP URL", { exact: true })
       .fill("http://localhost/mcp");
+    for (const caller of ["reader", "writer"]) {
+      await wizard.getByLabel("New caller name", { exact: true }).fill(caller);
+      await wizard
+        .getByRole("button", { name: "Add caller", exact: true })
+        .click();
+      await wizard
+        .getByLabel("Environment variable name", { exact: true })
+        .fill(`MCP_${caller.toUpperCase()}_TOKEN`);
+    }
     await wizard
-      .getByRole("textbox", { name: "allowed origins", exact: true })
+      .getByRole("button", { name: "Browser origins & request limits" })
+      .click();
+    await wizard
+      .getByRole("textbox", { name: "Allowed browser origins", exact: true })
       .fill(new URL(testInfo.project.use.baseURL as string).origin);
-    await wizard.getByRole("textbox", { name: /api keys/i, exact: true }).fill(
-      JSON.stringify({
-        reader: { secret_ref: { provider: "env", name: "MCP_READER_TOKEN" } },
-        writer: { secret_ref: { provider: "env", name: "MCP_WRITER_TOKEN" } },
-      }),
-    );
+    await wizard.getByRole("button", { name: "Set tool permissions" }).click();
     await pick(
       page,
       wizard,
@@ -95,8 +112,29 @@ test("real WASM imports a standalone configuration without touching the current 
       })
       .check();
     await wizard
-      .getByRole("button", { name: "Generate review", exact: true })
+      .getByRole("button", { name: "Review configuration", exact: true })
       .click();
+    await expect(
+      wizard.getByText("Configuration validated", { exact: true }),
+    ).toBeVisible({ timeout: 45000 });
+    await page.screenshot({
+      path: testInfo.outputPath("openapi-export-desktop.png"),
+    });
+    const viewport = page.viewportSize()!;
+    await page.setViewportSize({ width: 414, height: 896 });
+    await expect(
+      wizard.getByRole("button", { name: "Download core.yaml", exact: true }),
+    ).toBeInViewport();
+    expect(
+      await wizard.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath("openapi-export-mobile.png"),
+    });
+    await page.setViewportSize(viewport);
+    await wizard.getByRole("button", { name: "View core.yaml" }).click();
     await expect(wizard.getByLabel("Generated core.yaml")).toBeVisible({
       timeout: 45_000,
     });
@@ -155,9 +193,7 @@ test("real WASM imports a standalone configuration without touching the current 
     );
     expect(await page.locator(".react-flow__node").count()).toBe(before);
     const gateway = await runtime.start(generated);
-    await wizard
-      .getByRole("button", { name: "Connect & test", exact: true })
-      .click();
+    await wizard.getByRole("button", { name: /Connect & test/ }).click();
     await wizard.getByLabel("Deployed MCP URL").fill(`${gateway}/mcp`);
     await wizard
       .getByLabel("API key or OAuth access token")
@@ -261,6 +297,7 @@ test("real WASM imports a standalone configuration without touching the current 
       .getByRole("button", { name: "Cancel replacement", exact: true })
       .click();
     expect(await page.locator(".react-flow__node").count()).toBe(before);
+    await wizard.getByRole("button", { name: "View core.yaml" }).click();
     await page.screenshot({ path: testInfo.outputPath("openapi-review.png") });
     await wizard
       .getByRole("button", { name: "Open in builder", exact: true })
@@ -309,12 +346,13 @@ test("mobile upload, unsupported diagnostics and worker retry keep the canvas va
     buffer: Buffer.alloc(8 * 1024 * 1024 + 1, 97),
   });
   await expect(wizard.getByRole("alert")).toContainText("exceeds 8 MiB");
+  await wizard.getByRole("tab", { name: "Paste document" }).click();
   await wizard
     .getByLabel("OpenAPI document", { exact: true })
     .fill(
       "openapi: 3.1.0\ninfo: {title: Test, version: '1'}\npaths: {}\ncomponents: {schemas: {Secret: {$ref: 'https://untrusted.invalid/spec.yaml'}}}",
     );
-  await wizard.getByRole("button", { name: "Inspect operations" }).click();
+  await wizard.getByRole("button", { name: "Find operations" }).click();
   await expect(
     wizard
       .locator('[data-step="0"]')
@@ -335,12 +373,12 @@ test("mobile upload, unsupported diagnostics and worker retry keep the canvas va
   await page.route("**/hookway.wasm", (route) =>
     route.fulfill({ status: 503, body: "unavailable" }),
   );
-  await wizard.getByRole("button", { name: "Inspect operations" }).click();
+  await wizard.getByRole("button", { name: "Find operations" }).click();
   await expect(wizard.getByRole("alert")).toContainText(
     "WASM assets are unavailable",
   );
   await page.unroute("**/hookway.wasm");
-  await wizard.getByRole("button", { name: "Inspect operations" }).click();
+  await wizard.getByRole("button", { name: "Find operations" }).click();
   await expect(
     wizard.getByRole("checkbox", { name: "HEAD /customers/{id}", exact: true }),
   ).toBeDisabled({ timeout: 45000 });
@@ -350,6 +388,7 @@ test("mobile upload, unsupported diagnostics and worker retry keep the canvas va
   await wizard
     .getByRole("checkbox", { name: "GET /customers/{id}", exact: true })
     .check();
+  await wizard.getByRole("button", { name: "Edit tool details" }).click();
   await wizard
     .getByRole("textbox", { name: "Tool name for GET /customers/{id}" })
     .focus();

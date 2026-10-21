@@ -1,0 +1,154 @@
+.modalBody {
+  padding: 0;
+}
+.modalHeader {
+  padding: 18px 28px;
+}
+.wizard {
+  --wizard-gutter: 28px;
+}
+.progress {
+  padding: 22px var(--wizard-gutter);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.content {
+  padding: 28px var(--wizard-gutter) 32px;
+  min-height: 390px;
+}
+.heading:focus {
+  outline: none;
+}
+.upload {
+  border: 1px dashed var(--mantine-color-default-border);
+  background: var(--mantine-color-gray-0);
+  padding: 34px 20px;
+  text-align: center;
+  border-radius: var(--mantine-radius-sm);
+}
+.upload > svg {
+  color: var(--mantine-color-brand-6);
+}
+.footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: 16px var(--wizard-gutter);
+  border-top: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-body);
+}
+.codeInput textarea,
+.mono {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12px;
+}
+.search {
+  flex: 1;
+  min-width: 180px;
+}
+.methodFilter {
+  width: 160px;
+}
+.operationList {
+  border-top: 1px solid var(--mantine-color-default-border);
+}
+.operation {
+  padding: 18px 12px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.operation[data-selected="true"] {
+  background: var(--mantine-color-brand-0);
+}
+.operationInfo {
+  flex: 1;
+  min-width: 0;
+}
+.path {
+  overflow-wrap: anywhere;
+}
+.method {
+  min-width: 54px;
+}
+.disclosure {
+  padding: 8px 0;
+  font-size: 12px;
+}
+.permission {
+  padding: 22px 0;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.permission:first-of-type {
+  padding-top: 6px;
+}
+.validated {
+  color: #216e36;
+}
+.route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-block: 12px;
+  font-size: 13px;
+}
+.route svg {
+  flex-shrink: 0;
+  color: var(--mantine-color-dimmed);
+}
+.breakText {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.accessTabs {
+  flex-wrap: nowrap;
+}
+.accessTabs button {
+  flex: 1;
+}
+.wizard pre {
+  overflow: auto;
+  max-width: 100%;
+}
+@media (max-width: 48em) {
+  .wizard {
+    --wizard-gutter: 18px;
+  }
+  .modalHeader {
+    padding: 16px 18px;
+  }
+  .progress {
+    padding-block: 16px;
+  }
+  .content {
+    padding-block: 22px;
+    min-height: 360px;
+  }
+  .upload {
+    padding: 28px 16px;
+  }
+  .footer {
+    gap: 8px;
+    padding-block: 12px;
+  }
+  .footer > div {
+    gap: 8px;
+  }
+  .footer button {
+    padding-inline: 10px;
+  }
+  .methodFilter {
+    width: 130px;
+  }
+  .accessTabs button {
+    padding-inline: 6px;
+    font-size: 12px;
+  }
+  .accessTabs button svg {
+    display: none;
+  }
+  .operation {
+    padding-inline: 4px;
+  }
+  .route {
+    gap: 8px;
+  }
+}
