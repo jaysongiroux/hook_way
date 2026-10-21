@@ -20,6 +20,11 @@ export const MARKETING_CSS = `
 .hookway-site-shell { --hookway-content-width: 80rem; }
 .hookway-site-shell .mantine-Container-root { max-width: var(--hookway-content-width); }
 .hookway-marketing-page main a { text-underline-offset: 4px; transition: color 140ms ease; }
+.hookway-site-shell a:focus-visible,
+.hookway-site-shell summary:focus-visible {
+  outline: 2px solid ${DARK.accent};
+  outline-offset: 3px;
+}
 .hookway-marketing-page .mantine-Button-root { transition: background-color 140ms ease, border-color 140ms ease; }
 
 .hookway-overview-hero {
@@ -65,7 +70,7 @@ export const MARKETING_CSS = `
 .hookway-section-note > p { max-width: 80ch; }
 .hookway-feature-tabs .mantine-Tabs-tab { min-height: 48px; color: ${DARK.muted}; font-weight: 600; }
 .hookway-feature-tabs .mantine-Tabs-tab[data-active] { color: ${DARK.accent}; }
-.hookway-capability-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 32px; padding: 24px 0; border-bottom: 1px solid ${DARK.border}; }
+.hookway-capability-row { display: grid; grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr); gap: 28px; padding: 22px 0; align-items: start; border-bottom: 1px solid ${DARK.border}; }
 .hookway-yaml-example { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 32px; align-items: start; }
 .hookway-yaml-source { min-width: 0; }
 .hookway-yaml-flow { min-width: 0; padding: 16px 0; }
@@ -310,11 +315,14 @@ export const MARKETING_CSS = `
 @media (max-width: 62em) {
   .hookway-hero-intro { gap: 32px; }
   .hookway-compare-products {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .hookway-compare-differs-list {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+@media (max-width: 40em) {
+  .hookway-compare-products { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 48em) {
   .hookway-overview-hero { padding: 40px 0 32px; }

@@ -32,11 +32,11 @@ export function HTTPGateway() {
           </Text>
         </Stack>
       </SimpleGrid>
-      <Group mt="xl" gap="lg">
-        <Anchor href={docsHref("examples/showcase/proxy.yaml")}>
+      <Group className="hookway-section-note" gap="lg">
+        <Anchor href={docsHref("examples/showcase/proxy.yaml")} fw={600}>
           See the reverse proxy example
         </Anchor>
-        <Anchor href={docsHref("docs/guides/ingress-adapters.md")}>
+        <Anchor href={docsHref("docs/guides/ingress-adapters.md")} fw={600}>
           Configure HTTP request flows
         </Anchor>
       </Group>

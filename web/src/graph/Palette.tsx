@@ -13,16 +13,18 @@ import { nodeHelp, PALETTE_GROUP_HELP } from "./help";
 import { PALETTE_ITEM_CLASS } from "./builderStyles";
 import { DARK } from "../tokens";
 import { TEMPLATES } from "./templates";
+import { ExamplesPanel } from "./ExamplesPanel";
 
 export const DND_MIME = "application/hookway-node";
 export const DND_TEMPLATE_MIME = "application/hookway-template";
 
-/** Which half of the palette is showing. The panel owns the value. */
-export type PaletteTab = "nodes" | "templates";
+/** The panel owns the active palette section. */
+export type PaletteTab = "nodes" | "templates" | "examples";
 
 const TABS: { value: PaletteTab; label: string }[] = [
   { value: "nodes", label: "Nodes" },
   { value: "templates", label: "Templates" },
+  { value: "examples", label: "Examples" },
 ];
 
 const GROUPS: { title: string; types: string[] }[] = [
@@ -73,7 +75,7 @@ export function PaletteTabs({
   onChange: (tab: PaletteTab) => void;
 }) {
   return (
-    <Group role="tablist" aria-label="Palette sections" gap={4} wrap="nowrap">
+    <Group role="tablist" aria-label="Palette sections" gap={2} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
       {TABS.map((tab) => {
         const active = tab.value === value;
         return (
@@ -86,7 +88,7 @@ export function PaletteTabs({
               // every click of the tab already showing.
               if (!active) onChange(tab.value);
             }}
-            px={8}
+            px={3}
             py={4}
             style={{
               borderRadius: 4,
@@ -97,9 +99,7 @@ export function PaletteTabs({
             <Text
               fw={600}
               size="xs"
-              tt="uppercase"
               c={active ? DARK.text : DARK.muted}
-              style={{ letterSpacing: "0.08em" }}
             >
               {tab.label}
             </Text>
@@ -166,13 +166,17 @@ export function Palette({
   onAddNode,
   onAddTemplate,
   onLoadProductionTemplate,
+  onExampleImported,
 }: {
   tab: PaletteTab;
   onAddNode?: (type: string) => void;
   onAddTemplate?: (id: string) => void;
   onLoadProductionTemplate?: () => void;
+  onExampleImported?: () => void;
 }) {
   const [search, setSearch] = useState("");
+
+  if (tab === "examples") return <ExamplesPanel onImported={onExampleImported} />;
 
   if (tab === "templates") {
     return (

@@ -61,12 +61,11 @@ export function MarketingMotion({
           animate(
             node,
             {
-              opacity: [0, 1],
               transform: isVisual
-                ? ["translateY(24px) scale(0.985)", "translateY(0px) scale(1)"]
+                ? ["translateY(16px)", "translateY(0px)"]
                 : isSequence
-                  ? ["translateX(-16px)", "translateX(0px)"]
-                  : [`translateY(${isIntro ? 24 : 16}px)`, "translateY(0px)"],
+                  ? ["translateX(-12px)", "translateX(0px)"]
+                  : [`translateY(${isIntro ? 16 : 12}px)`, "translateY(0px)"],
             },
             {
               duration: isIntro || isVisual ? 0.8 : 0.6,

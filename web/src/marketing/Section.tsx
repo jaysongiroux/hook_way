@@ -1,4 +1,4 @@
-import { Box, Container, Title } from "@mantine/core";
+import { Box, Container, Text, Title } from "@mantine/core";
 import type { ReactNode } from "react";
 import { DARK } from "../tokens";
 
@@ -24,11 +24,11 @@ export function Section({
           {title}
         </Title>
         {lead && (
-          <Box mt={12} maw={620} c={DARK.muted} style={{ fontSize: 16, lineHeight: 1.5 }}>
+          <Text component="p" mt={14} maw="68ch" c={DARK.muted} style={{ fontSize: 17, lineHeight: 1.65 }}>
             {lead}
-          </Box>
+          </Text>
         )}
-        <Box mt={36}>{children}</Box>
+        <Box mt={40}>{children}</Box>
       </Container>
     </Box>
   );

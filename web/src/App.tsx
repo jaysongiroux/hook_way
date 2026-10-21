@@ -210,6 +210,9 @@ export default function App({ product = false, headerActions }: { product?: bool
             >
               <Palette
                 tab={paletteTab}
+                onExampleImported={() => {
+                  if (compact) setPaletteOpen(false);
+                }}
                 onAddNode={(type) => {
                   const store = useGraphStore.getState();
                   const node = createNode(type, {

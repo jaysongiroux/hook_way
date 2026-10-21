@@ -71,7 +71,7 @@ test("an edge path spans the gap between the two nodes it joins", () => {
   const from = nodeBox(byId("ep"));
   const to = nodeBox(byId("rabbit"));
   const d = edgePath(byId("ep"), byId("rabbit"));
-  // Starts at the source's right edge, ends at the target's left edge.
+  // Starts at the source port and stops short of the target port so the arrowhead is visible.
   expect(d.startsWith(`M ${from.x + from.w} ${from.y + from.h / 2}`)).toBe(true);
-  expect(d.trimEnd().endsWith(`${to.x} ${to.y + to.h / 2}`)).toBe(true);
+  expect(d.trimEnd().endsWith(`${to.x - LAYOUT.arrowGap} ${to.y + to.h / 2}`)).toBe(true);
 });

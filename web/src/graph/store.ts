@@ -41,6 +41,7 @@ interface GraphState extends GraphDocument {
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (c: Connection) => void;
   addNode: (n: HookwayNode) => void;
+  appendExampleGraph: (sub: Pick<TemplateSubgraph, "nodes" | "edges">) => void;
   insertSubgraph: (
     sub: TemplateSubgraph,
     position: { x: number; y: number },
@@ -159,6 +160,21 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     if (n.data.nodeType === "mcp_trigger" && get().nodes.length > 0)
       get().addFlow(nextMCPFlowName(get()));
     set({ nodes: [...get().nodes, availableMCPEndpoint(n, get())] });
+  },
+  // Examples append exactly one graph without the template's MCP/resource rules.
+  appendExampleGraph: (sub) => {
+    const { nodes, edges } = get();
+    const taken = new Set(nodes.flatMap((n) => [n.id, String(n.data.yamlId ?? n.id)]));
+    const bottom = nodes.reduce(
+      (max, node) => Math.max(max, node.position.y + (node.measured?.height ?? node.height ?? 160)),
+      0,
+    );
+    const placed = offsetSubgraph(renameSubgraph(structuredClone(sub), taken), {
+      x: 80,
+      y: nodes.length ? bottom + 80 : 80,
+    });
+    seedCounters([...nodes, ...placed.nodes]);
+    set({ nodes: [...nodes, ...placed.nodes], edges: [...edges, ...placed.edges] });
   },
   // insertSubgraph drops a palette template onto the canvas. Ids are renamed
   // against everything already in this flow (a second insert of the same

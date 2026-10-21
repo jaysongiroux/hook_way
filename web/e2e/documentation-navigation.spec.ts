@@ -23,7 +23,9 @@ for (const width of [1440, 390]) {
 
     await page.goto("/docs/guides/mcp-gateway/");
     await page.locator(".docs-content").waitFor();
-    await page.locator(".docs-outline summary").click();
+    const summary = page.locator(".docs-outline summary");
+    if ((await summary.getAttribute("aria-expanded")) !== "true")
+      await summary.click();
     const outline = page.getByRole("navigation", {
       name: "On this page",
       exact: true,
@@ -92,7 +94,9 @@ test("outline links respect reduced motion and can revisit the same heading", as
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/docs/guides/mcp-gateway/");
   await page.locator(".docs-content").waitFor();
-  await page.locator(".docs-outline summary").click();
+  const summary = page.locator(".docs-outline summary");
+  if ((await summary.getAttribute("aria-expanded")) !== "true")
+    await summary.click();
   const link = page
     .getByRole("navigation", { name: "On this page", exact: true })
     .getByRole("link", { name: "OAuth configuration", exact: true });

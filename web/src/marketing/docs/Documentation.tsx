@@ -373,6 +373,7 @@ export default function Documentation() {
               variant="default"
               fullWidth
               onClick={() => setSearch(true)}
+              rightSection={<kbd className="docs-search-kbd">⌘K</kbd>}
             >
               Search
             </Button>
@@ -445,8 +446,13 @@ export default function Documentation() {
                   </Group>
                 )}
                 {page.headings.length > 3 && (
-                  <details className="docs-outline">
-                    <summary>On this page</summary>
+                  <details className="docs-outline" open>
+                    <summary>
+                      On this page
+                      <span className="docs-outline-count">
+                        {page.headings.filter((heading) => heading.depth === 2).length} sections
+                      </span>
+                    </summary>
                     <nav
                       aria-label="On this page"
                       onClick={(event) => followLink(event, true)}

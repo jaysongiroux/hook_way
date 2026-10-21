@@ -13,7 +13,7 @@ import {
 } from "./flowGraph";
 import { Section } from "./Section";
 import { nodeLabel } from "../graph/nodeSchema";
-import { DARK, EDGE, PORT } from "../tokens";
+import { DARK, EDGE, NODE, PORT } from "../tokens";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -55,17 +55,21 @@ export function FlowGraphSvg({ selectedId, markerId = "hookway-edge", animate = 
   return (
     <>
       <defs>
-        <marker id={markerId} markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
-          <polygon points="0 0, 10 4, 0 8" fill={EDGE.line} />
+        <marker id={markerId} markerWidth="10" markerHeight="10" viewBox="0 0 10 10" refX="8" refY="5" markerUnits="userSpaceOnUse" orient="auto">
+          <polyline points="3 2, 8 5, 3 8" fill="none" stroke="#8998AA" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </marker>
+        <filter id={`${markerId}-lift`} x="-15%" y="-20%" width="130%" height="150%">
+          <feDropShadow dx="0" dy="1" stdDeviation="1.6" floodColor={DARK.text} floodOpacity="0.08" />
+        </filter>
       </defs>
       {FLOW_EDGES.map((e) => (
         <path
           key={`${e.from}-${e.to}`}
           d={edgePath(nodeById(e.from), nodeById(e.to))}
           fill="none"
-          stroke={EDGE.line}
+          stroke="#A5B2C2"
           strokeWidth={1.5}
+          strokeLinecap="round"
           markerEnd={`url(#${markerId})`}
         />
       ))}
@@ -85,57 +89,72 @@ export function FlowGraphSvg({ selectedId, markerId = "hookway-edge", animate = 
         />
       ))}
       {FLOW_NODES.map((n) => (
-        <DiagramNode key={n.id} node={n} selected={n.id === selectedId} />
+        <DiagramNode key={n.id} node={n} selected={n.id === selectedId} filterId={`${markerId}-lift`} />
       ))}
     </>
   );
 }
 
-function DiagramNode({ node, selected }: { node: FlowNode; selected?: boolean }) {
+function DiagramNode({ node, selected, filterId }: { node: FlowNode; selected?: boolean; filterId: string }) {
   const b = nodeBox(node);
   const chrome = nodeChrome(node);
   const r = LAYOUT.handle;
   const outColor = PORT[chrome.output] ?? EDGE.line;
+  const color = NODE.border[node.kind];
+  const tint = node.kind === "endpoint" ? "#EDF4FD" : node.kind === "filter" ? "#EDF6F0" : "#F0F2F6";
   return (
-    <g>
+    <g filter={`url(#${filterId})`}>
       {selected && (
-        <rect
-          x={b.x - 4}
-          y={b.y - 4}
-          width={b.w + 8}
-          height={b.h + 8}
-          rx={6}
-          fill="none"
-          stroke={outColor}
-          strokeWidth={2}
-        />
+        <rect x={b.x - 4} y={b.y - 4} width={b.w + 8} height={b.h + 8} rx={12} fill="#E6EFFB" />
       )}
-      <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={4} fill={DARK.surface} stroke={DARK.border} strokeWidth={1} />
-      <text x={b.x + 12} y={b.y + 22} fontSize={13} fontWeight={600} fill={DARK.text}>
+      <rect
+        x={b.x} y={b.y} width={b.w} height={b.h} rx={8}
+        fill={DARK.surface} stroke={selected ? DARK.accent : "#CFD7E2"}
+        strokeWidth={selected ? 1.4 : 1}
+      />
+      <rect x={b.x + 12} y={b.y + 12} width={28} height={28} rx={7} fill={tint} />
+      <svg x={b.x + 18} y={b.y + 18} width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {node.kind === "endpoint" ? (
+          <>
+            <polyline points="8 5, 2 12, 8 19" />
+            <polyline points="16 5, 22 12, 16 19" />
+            <line x1={14} y1={4} x2={10} y2={20} />
+          </>
+        ) : node.kind === "filter" ? (
+          <polygon points="3 4, 21 4, 14 12, 14 19, 10 21, 10 12" />
+        ) : (
+          <>
+            <rect x={3} y={4} width={18} height={6} rx={2} />
+            <rect x={3} y={14} width={18} height={6} rx={2} />
+            <line x1={7} y1={7} x2={7.01} y2={7} />
+            <line x1={7} y1={17} x2={7.01} y2={17} />
+          </>
+        )}
+      </svg>
+      <text x={b.x + 50} y={b.y + 23} fontSize={13} fontWeight={650} fill={DARK.text}>
         {node.yamlId}
       </text>
-      <text x={b.x + 12} y={b.y + 40} fontSize={11} fill={DARK.muted} fontFamily={MONO}>
+      <text x={b.x + 50} y={b.y + 38} fontSize={9.5} fill={DARK.muted}>
         {nodeLabel(node.nodeType)}
       </text>
-      <text x={b.x + 12} y={b.y + 56} fontSize={11} fill={DARK.muted}>
+      <rect x={b.x + 10} y={b.y + 50} width={b.w - 20} height={22} rx={4} fill="#F4F6F9" />
+      <text x={b.x + 17} y={b.y + 64} fontSize={9.3} fill={DARK.muted} fontFamily={MONO}>
         {node.summary}
       </text>
       {chrome.showError && (
-        <text
-          x={b.x + b.w / 2}
-          y={b.y + b.h - 12}
-          fontSize={10}
-          fontWeight={600}
-          fill={PORT.on_error}
-          textAnchor="middle"
-          letterSpacing="0.03em"
-        >
+        <text x={b.x + b.w / 2} y={b.y + b.h - 7} fontSize={8} fill={PORT.on_error} textAnchor="middle">
           on error
         </text>
       )}
-      {chrome.showIn && <circle cx={b.x} cy={b.y + b.h / 2} r={r} fill={PORT[chrome.input] ?? EDGE.line} />}
-      {chrome.showOut && <circle cx={b.x + b.w} cy={b.y + b.h / 2} r={r} fill={outColor} />}
-      {chrome.showError && <circle cx={b.x + b.w / 2} cy={b.y + b.h} r={r} fill={PORT.on_error} />}
+      {chrome.showIn && (
+        <circle cx={b.x} cy={b.y + b.h / 2} r={r - 1} fill={DARK.surface} stroke={PORT[chrome.input] ?? EDGE.line} strokeWidth={1.6} />
+      )}
+      {chrome.showOut && (
+        <circle cx={b.x + b.w} cy={b.y + b.h / 2} r={r - 1} fill={DARK.surface} stroke={outColor} strokeWidth={1.6} />
+      )}
+      {chrome.showError && (
+        <circle cx={b.x + b.w / 2} cy={b.y + b.h} r={2.5} fill={DARK.surface} stroke={PORT.on_error} strokeWidth={1.2} />
+      )}
     </g>
   );
 }

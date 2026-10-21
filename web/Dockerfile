@@ -13,8 +13,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 # Builder examples are imported as raw YAML from outside web/.
-COPY examples/templates/ /examples/templates/
-COPY examples/showcase/ /examples/showcase/
+COPY examples/ /examples/
 COPY --from=wasm /out/hookway.wasm /out/wasm_exec.js ./public/
 ARG VERSION=dev
 ARG COMMIT=none
