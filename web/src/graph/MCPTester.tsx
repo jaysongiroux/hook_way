@@ -12,6 +12,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import type { Client, Tool } from "@modelcontextprotocol/client";
+import { precisionRisk } from "../shared/ui/jsonPrecision";
 export function MCPTester({
   endpoint,
   anonymous,
@@ -34,6 +35,8 @@ export function MCPTester({
   } catch {
     argsError = "Enter a valid JSON object before calling the tool.";
   }
+  if (!argsError && precisionRisk(argsText))
+    argsError = "A numeric argument would lose precision in this browser. Use a native MCP client to send it exactly.";
   const [approved, setApproved] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -54,6 +57,8 @@ export function MCPTester({
     client.current = null;
     setTools([]);
     setToolName(null);
+    setApproved(false);
+    setArgsText("{}");
     setToken("");
     setResult("");
     setMessage("");
@@ -123,6 +128,7 @@ export function MCPTester({
               client.current = connection;
               setTools(listed.tools);
               setToolName(listed.tools[0]?.name ?? null);
+              setApproved(false);
               setMessage(`Connected. ${listed.tools.length} permitted tools.`);
             } catch {
               await connection?.close().catch(() => {});

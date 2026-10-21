@@ -133,6 +133,8 @@ secrets, use **Connect & test** against that running MCP endpoint. This executes
 live tools; mutation calls require acknowledgment. The discovered catalog comes
 from the deployment and may differ from the wizard draft. Caller tokens stay in
 memory and are cleared on disconnect; they are never added to the configuration.
+Live arguments that would lose numeric precision in the browser are rejected;
+use a native MCP client for those values. String IDs retain their exact text.
 Browser connections require a reachable URL and an allowed browser origin; native
 clients can connect where browser network policy prevents access.
 

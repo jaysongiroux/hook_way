@@ -65,6 +65,7 @@ events:
 Each argument must have one filter binding to a dotted path inside occurrence
 `data`. Arguments are scalar strings, booleans, or numbers; comparisons preserve
 numeric precision and do not coerce types. All supplied arguments must match.
+Exposed MCP event names use 1–128 letters, digits, dots, underscores or hyphens.
 Omitted optional arguments do not filter. Use explicit API-key/scope/role grants;
 anonymous subscriptions are unsupported. Grants use the same semantics as tools:
 all scopes, any configured role, or an explicitly named API key. Filters do not
