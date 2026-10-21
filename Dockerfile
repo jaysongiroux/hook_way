@@ -1,7 +1,7 @@
-# Keep the pinned Go toolchain aligned with go.mod. Go 1.27.2 includes
+# Keep the pinned Go toolchain aligned with go.mod. Go 1.27.3 includes
 # the standard library security fixes reported by govulncheck in October 2026.
 # Update both pins when newer patches ship.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS source
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS source
 WORKDIR /src
 # The pinned official Go image already includes the CA trust store.
 COPY go.mod go.sum* ./
