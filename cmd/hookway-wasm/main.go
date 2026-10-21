@@ -85,7 +85,21 @@ func replayActionValidate(_ js.Value, args []js.Value) any {
 	return out
 }
 
+func importer(fn func(string) (string, error)) js.Func {
+	return js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return errJSON("expected one JSON string")
+		}
+		out, err := fn(args[0].String())
+		if err != nil {
+			return errJSON(err.Error())
+		}
+		return out
+	})
+}
 func main() {
+	js.Global().Set("hookwayOpenAPIInspect", importer(bridge.OpenAPIInspect))
+	js.Global().Set("hookwayOpenAPIGenerate", importer(bridge.OpenAPIGenerate))
 	js.Global().Set("hookwayValidateBundle", js.FuncOf(validateBundle))
 	js.Global().Set("hookwayValidate", js.FuncOf(validate))
 	js.Global().Set("hookwaySchema", js.FuncOf(schema))

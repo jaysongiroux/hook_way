@@ -29,7 +29,7 @@ type InfoDTO struct {
 func Info() InfoDTO {
 	return InfoDTO{ContractVersion: ContractVersion, Capabilities: []string{
 		"core_yaml_validate", "core_yaml_bundle_validate", "core_schema", "node_schemas",
-		"replay_yaml_validate", "replay_schema", "replay_action_input", "replay_resolution_input", "json_sample_validate",
+		"replay_yaml_validate", "replay_schema", "replay_action_input", "replay_resolution_input", "json_sample_validate", "openapi_inspect", "openapi_generate",
 	}}
 }
 

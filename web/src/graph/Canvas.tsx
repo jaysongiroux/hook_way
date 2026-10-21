@@ -40,7 +40,7 @@ function parallelGroups(edges: Edge[]): Map<string, { index: number; count: numb
   return out;
 }
 
-function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
+function CanvasInner({ onNodeActivate, onOpenAPI }: { onNodeActivate?: () => void; onOpenAPI?: () => void }) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const activeFlow = useGraphStore((s) => s.activeFlow);
   const arrangeSeq = useGraphStore((s) => s.arrangeSeq);
@@ -184,6 +184,7 @@ function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
               }}
             >
               Open Nodes to add a node, or start with a template.
+              {onOpenAPI && <Button display="block" variant="light" size="xs" mt="sm" onClick={onOpenAPI}>Create MCP tools from OpenAPI</Button>}
             </Text>
           </Panel>
         )}
@@ -192,10 +193,10 @@ function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
   );
 }
 
-export function Canvas({ onNodeActivate }: { onNodeActivate?: () => void }) {
+export function Canvas({ onNodeActivate, onOpenAPI }: { onNodeActivate?: () => void; onOpenAPI?: () => void }) {
   return (
     <ReactFlowProvider>
-      <CanvasInner onNodeActivate={onNodeActivate} />
+      <CanvasInner onNodeActivate={onNodeActivate} onOpenAPI={onOpenAPI} />
     </ReactFlowProvider>
   );
 }

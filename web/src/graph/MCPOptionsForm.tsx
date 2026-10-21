@@ -1,21 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Alert,
   Button,
-  Checkbox,
-  Code,
   Group,
-  PasswordInput,
-  Select,
   Stack,
   Tabs,
   Text,
-  Textarea,
   TextInput,
 } from "@mantine/core";
-import type { Client, Tool } from "@modelcontextprotocol/client";
+import { MCPTester } from "./MCPTester";
 import { Fields, object, type OptionsProps } from "./FormPresentation";
 import { NODE_SCHEMAS, schemaProperties } from "./nodeSchema";
+import { MCPAuthentication } from "./MCPAuthentication";
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
 import { HTTPOptionsForm } from "./ProxyOptionsForm";
@@ -103,13 +99,6 @@ export function MCPOptionsForm(props: OptionsProps) {
   const schema = schemaProperties(NODE_SCHEMAS.mcp_trigger.schema);
   const toolSchema =
     typeof schema.tools === "object" ? schema.tools.items : undefined;
-  const authMode = auth.no_auth
-    ? "none"
-    : auth.oauth
-      ? auth.api_keys
-        ? "both"
-        : "oauth"
-      : "key";
   const changeTool = (index: number, patch: Record<string, unknown>) => {
     const previous = tools[index].name;
     if (
@@ -166,71 +155,7 @@ export function MCPOptionsForm(props: OptionsProps) {
             fields={["path", "public_url", "allowed_origins", "max_inflight"]}
             required={["path", "public_url"]}
           />
-          <Select
-            label="Client authentication"
-            value={authMode}
-            allowDeselect={false}
-            data={[
-              {
-                value: "key",
-                label: "API keys (recommended for a simple setup)",
-              },
-              { value: "oauth", label: "OAuth identity provider" },
-              { value: "both", label: "API keys and OAuth" },
-              { value: "none", label: "No authentication — public tools" },
-            ]}
-            onChange={(mode) => {
-              if (!mode) return;
-              onChange({
-                ...value,
-                auth:
-                  mode === "none"
-                    ? { no_auth: true }
-                    : {
-                        ...(mode === "key" || mode === "both"
-                          ? {
-                              api_keys: auth.api_keys ?? {
-                                reader: {
-                                  secret_ref: {
-                                    provider: "env",
-                                    name: "MCP_READER_TOKEN",
-                                  },
-                                },
-                              },
-                            }
-                          : {}),
-                        ...(mode === "oauth" || mode === "both"
-                          ? {
-                              oauth: auth.oauth ?? { issuer: "", audience: "" },
-                            }
-                          : {}),
-                      },
-              });
-            }}
-          />
-          {auth.no_auth === true ? (
-            <Alert color="orange" title="Public endpoint">
-              Anyone who can reach this URL can invoke tools granted anonymous
-              access. Configure each tool’s policy explicitly.
-            </Alert>
-          ) : (
-            <>
-              <Text size="xs" c="dimmed">
-                These settings contain secret references only. API keys identify
-                their named caller; shared keys grant shared access. OAuth uses
-                your provider’s dedicated Hookway audience.
-              </Text>
-              <SchemaForm
-                schema={schema.auth}
-                value={auth}
-                onChange={(next) => onChange({ ...value, auth: object(next) })}
-                hideFields={["no_auth"]}
-                scope={scope}
-                path="auth"
-                groupObjects
-              />
-            </>
-          )}
+          <MCPAuthentication value={auth} onChange={(auth) => onChange({ ...value, auth })} scope={scope} />
         </Stack>
       </Tabs.Panel>
       <Tabs.Panel value="tools" pt="md">
@@ -369,223 +294,5 @@ export function MCPOptionsForm(props: OptionsProps) {
         />
       </Tabs.Panel>
     </Tabs>
-  );
-}
-
-function MCPTester({
-  endpoint,
-  anonymous,
-}: {
-  endpoint: string;
-  anonymous: boolean;
-}) {
-  const [url, setURL] = useState(endpoint);
-  const [token, setToken] = useState("");
-  const [tools, setTools] = useState<Tool[]>([]);
-  const [toolName, setToolName] = useState<string | null>(null);
-  const [argsText, setArgsText] = useState("{}");
-  let args: Record<string, unknown> = {};
-  let argsError = "";
-  try {
-    const parsed: unknown = JSON.parse(argsText);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-      throw new Error();
-    args = parsed as Record<string, unknown>;
-  } catch {
-    argsError = "Enter a valid JSON object before calling the tool.";
-  }
-  const [approved, setApproved] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [result, setResult] = useState("");
-  const client = useRef<Client | null>(null);
-  const generation = useRef(0);
-  const selected = tools.find((t) => t.name === toolName);
-  useEffect(
-    () => () => {
-      generation.current++;
-      void client.current?.close().catch(() => {});
-    },
-    [],
-  );
-  const disconnect = async () => {
-    generation.current++;
-    const old = client.current;
-    client.current = null;
-    setTools([]);
-    setToolName(null);
-    setToken("");
-    setResult("");
-    setMessage("");
-    setBusy(false);
-    await old?.close().catch(() => {});
-  };
-  return (
-    <Stack gap="md">
-      <Text size="sm">
-        Test the deployed endpoint. This executes live tools; changes in this
-        draft are applied after you export and deploy.
-      </Text>
-      <TextInput
-        label="Deployed MCP URL"
-        value={url}
-        onChange={(e) => setURL(e.currentTarget.value)}
-        disabled={!!client.current}
-      />
-      {!anonymous && (
-        <PasswordInput
-          label="API key or OAuth access token"
-          description="Kept in memory for this connection. Never saved in the draft or export."
-          value={token}
-          onChange={(e) => setToken(e.currentTarget.value)}
-          disabled={!!client.current}
-        />
-      )}
-      <Group>
-        <Button
-          loading={busy && !client.current}
-          disabled={!!client.current || (!anonymous && !token)}
-          onClick={async () => {
-            setBusy(true);
-            setMessage("");
-            const current = ++generation.current;
-            let connection: Client | undefined;
-            try {
-              const { Client, StreamableHTTPClientTransport } =
-                await import("@modelcontextprotocol/client");
-              connection = new Client({
-                name: "Hookway builder",
-                version: "1",
-              });
-              const target = new URL(url);
-              if (
-                target.protocol !== "https:" &&
-                !(
-                  target.protocol === "http:" &&
-                  ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)
-                )
-              )
-                throw new Error("Use HTTPS, or localhost for development.");
-              await connection.connect(
-                new StreamableHTTPClientTransport(target, {
-                  authProvider: anonymous
-                    ? undefined
-                    : { token: async () => token },
-                  requestInit: { redirect: "error" },
-                }),
-              );
-              const listed = await connection.listTools();
-              if (current !== generation.current) {
-                await connection.close();
-                return;
-              }
-              client.current = connection;
-              setTools(listed.tools);
-              setToolName(listed.tools[0]?.name ?? null);
-              setMessage(`Connected. ${listed.tools.length} permitted tools.`);
-            } catch {
-              await connection?.close().catch(() => {});
-              if (current === generation.current)
-                setMessage(
-                  "Connection failed. Check the endpoint, credentials and allowed browser origin.",
-                );
-            } finally {
-              if (current === generation.current) setBusy(false);
-            }
-          }}
-        >
-          Connect and discover
-        </Button>
-        <Button variant="subtle" onClick={() => void disconnect()}>
-          Disconnect and clear
-        </Button>
-      </Group>
-      {message && (
-        <Text role="status" size="sm">
-          {message}
-        </Text>
-      )}
-      {client.current && (
-        <>
-          <Select
-            label="Deployed tool"
-            data={tools.map((t) => ({ value: t.name, label: t.name }))}
-            value={toolName}
-            onChange={(name) => {
-              setToolName(name);
-              setApproved(false);
-              setResult("");
-              setArgsText("{}");
-            }}
-          />
-          {selected && <Text size="sm">{selected.description}</Text>}
-          <Textarea
-            label="Live tool arguments"
-            description="JSON object sent to the deployed tool."
-            value={argsText}
-            error={argsError || undefined}
-            onChange={(e) => setArgsText(e.currentTarget.value)}
-            autosize
-            minRows={4}
-            maxRows={20}
-          />
-          {selected && selected.annotations?.readOnlyHint !== true && (
-            <Checkbox
-              label="I understand this live call can change upstream data"
-              checked={approved}
-              onChange={(e) => setApproved(e.currentTarget.checked)}
-            />
-          )}
-          <Button
-            loading={busy}
-            disabled={
-              !!argsError ||
-              !selected ||
-              (selected.annotations?.readOnlyHint !== true && !approved)
-            }
-            onClick={async () => {
-              if (!client.current || !toolName || argsError) return;
-              setBusy(true);
-              setResult("");
-              const current = generation.current;
-              try {
-                const response = await client.current.callTool(
-                  {
-                    name: toolName,
-                    arguments: args,
-                  },
-                  { timeout: 125_000 },
-                );
-                if (current === generation.current)
-                  setResult(JSON.stringify(response, null, 2));
-              } catch {
-                if (current === generation.current)
-                  setMessage(
-                    "Call failed. Check permissions, arguments and the gateway request logs.",
-                  );
-              } finally {
-                if (current === generation.current) setBusy(false);
-              }
-            }}
-          >
-            Run live tool
-          </Button>
-        </>
-      )}
-      {result && (
-        <Code
-          block
-          style={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}
-        >
-          {result}
-        </Code>
-      )}
-      <Text size="xs" c="dimmed">
-        Connection URL: {endpoint || "Set the public URL first."} API keys use
-        Authorization: Bearer. For OAuth, register this endpoint with your
-        client and use its OAuth login. Native clients can test endpoints that
-        your browser cannot reach.
-      </Text>
-    </Stack>
   );
 }

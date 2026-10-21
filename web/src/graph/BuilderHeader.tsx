@@ -13,6 +13,7 @@ export function BuilderHeader({
   onInspector,
   onFlowSettings,
   onImport,
+  onOpenAPI,
   onExport,
   onDestinations,
   onConnections,
@@ -33,6 +34,7 @@ export function BuilderHeader({
   onInspector: () => void;
   onFlowSettings: () => void;
   onImport: () => void;
+  onOpenAPI?: () => void;
   onExport: () => void;
   onDestinations: () => void;
   onConnections: () => void;
@@ -99,6 +101,7 @@ export function BuilderHeader({
               <Menu.Divider />
               <Menu.Label>YAML</Menu.Label>
               <Menu.Item onClick={onImport}>Import YAML</Menu.Item>
+              <Menu.Item onClick={onOpenAPI}>Create MCP tools from OpenAPI</Menu.Item>
               <Menu.Item onClick={onExport}>Export YAML</Menu.Item>
               <Menu.Divider />
               <Menu.Item onClick={onLoadExample}>

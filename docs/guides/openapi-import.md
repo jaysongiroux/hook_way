@@ -96,5 +96,39 @@ mean an unknown outcome; inspect the upstream before attempting another mutation
 The generated graph uses native `mcp_trigger → http_request → mcp_result`
 branches with capture disabled. It can be reviewed and edited in the existing
 builder. `internal/openapiimport` also exposes pure `Inspect`, `DecodeSettings`,
-and `Generate` entry points for future authoring interfaces; no import wizard is
-included in this release.
+and `Generate` entry points shared by the CLI and browser wizard.
+
+## Builder wizard
+
+In the builder, choose **Config → Create MCP tools from OpenAPI**, or use the
+same action on an empty canvas. Upload one JSON/YAML file or paste its contents.
+Inspection and generation run locally in a dedicated Go WASM worker. The wizard
+does not upload the document, fetch remote specifications, or resolve secrets.
+
+Select up to 64 supported operations, then configure the upstream base URL,
+credential profiles, authenticated MCP endpoint, and explicit per-tool grants.
+Nothing is selected or granted automatically. Writes require a separate mutation
+permission. Unsupported operations remain visible with their diagnostics.
+
+**Generate review** validates the complete configuration. Review tool schemas,
+argument aliases, grants and branches, then download `core.yaml`. **Open in
+builder** offers export of your current workspace and requires confirmation before
+replacing all flows and settings, including replay. Imported strings retain their
+literal dollar signs through editing, browser persistence, and split YAML exports.
+Ordinary authored environment references remain supported.
+
+The wizard draft is held in memory only and is discarded when you close it.
+Settings-file import/export and configuration merging are not available. If a
+schema contains numbers the builder cannot represent precisely, direct download
+remains available and the current workspace is preserved.
+
+After deploying the downloaded configuration and provisioning its referenced
+secrets, use **Connect & test** against that running MCP endpoint. This executes
+live tools; mutation calls require acknowledgment. The discovered catalog comes
+from the deployment and may differ from the wizard draft. Caller tokens stay in
+memory and are cleared on disconnect; they are never added to the configuration.
+Browser connections require a reachable URL and an allowed browser origin; native
+clients can connect where browser network policy prevents access.
+
+If matching WASM assets cannot load, retry inspection or use the CLI above. There
+is no server-side processing fallback.

@@ -10,6 +10,7 @@ import { ServerPanel } from "./graph/ServerPanel";
 import { ReplaySettingsPanel } from "./graph/ReplaySettingsPanel";
 import { DestinationsPanel } from "./graph/DestinationsPanel";
 import { ConnectionsPanel } from "./graph/ConnectionsPanel";
+import { OpenAPIWizard } from "./graph/OpenAPIWizard";
 import { ImportModal } from "./graph/ImportModal";
 import { BuilderHeader } from "./graph/BuilderHeader";
 import { SidePanel, usePanelWidths } from "./graph/BuilderShell";
@@ -51,6 +52,7 @@ export default function App({ product = false, headerActions }: { product?: bool
   useDocumentTitle("Hookway Config");
   usePersistence(product);
   useEffect(() => { void initializeValidator(); }, []);
+  const [openapiOpen, { open: openOpenAPI, close: closeOpenAPI }] = useDisclosure(false);
   const [importOpen, { open: openImport, close: closeImport }] =
     useDisclosure(false);
   const [exportOpen, { open: openExport, close: closeExport }] =
@@ -148,6 +150,7 @@ export default function App({ product = false, headerActions }: { product?: bool
               useGraphStore.getState().setSelected(null);
               openInspector();
             }}
+            onOpenAPI={openOpenAPI}
             onImport={openImport}
             onExport={openExport}
             onDestinations={openDest}
@@ -232,7 +235,7 @@ export default function App({ product = false, headerActions }: { product?: bool
               />
             </SidePanel>
             <Box style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-              <Canvas onNodeActivate={openInspector} />
+              <Canvas onNodeActivate={openInspector} onOpenAPI={openOpenAPI} />
             </Box>
           </Box>
 
@@ -258,6 +261,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             }}
             focusPath={focusPath}
           />
+          {openapiOpen && <OpenAPIWizard onClose={closeOpenAPI} onExportWorkspace={openExport} />}
           <ImportModal opened={importOpen} onClose={closeImport} />
           <ExportModal
             opened={exportOpen}

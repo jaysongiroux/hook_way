@@ -33,6 +33,7 @@ export async function loadGraph(): Promise<GraphDocument | null> {
     const base = emptyDocument();
     return {
       ...base,
+      literalConfigFields: rec.literalConfigFields ?? [],
       yamlMode: rec.yamlMode ?? "single",
       entryFilename: rec.entryFilename ?? "core.yaml",
       flowFiles: rec.flowFiles ?? {},

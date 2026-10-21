@@ -438,6 +438,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   document: () => {
     const s = get();
     return {
+      literalConfigFields: s.literalConfigFields,
       yamlMode: s.yamlMode,
       entryFilename: s.entryFilename,
       flowFiles: s.flowFiles,
@@ -606,7 +607,7 @@ function pruneRemovedFieldDrafts(
   return result;
 }
 
-function reconcileConfigExtraDrafts(
+export function reconcileConfigExtraDrafts(
   drafts: Record<string, EditorDraft>,
   previous: Record<string, unknown>,
   next: Record<string, unknown>,

@@ -4,6 +4,7 @@ import { fromConfig } from "./fromConfig";
 import { layoutAllFlows } from "./layout";
 import type { GraphDocument } from "./model";
 import { toConfig } from "./toConfig";
+import { literalRoots, restoreLiteralProvenance } from "./literalYaml";
 import { toYaml } from "./toYaml";
 import { fromReplayYaml, toReplayYaml } from "./replayYaml";
 
@@ -91,12 +92,12 @@ export function toBundle(doc: GraphDocument): YAMLBundle {
       const filename = directory(entry) + relative;
       if (filename === entry || own(files, filename))
         throw new Error(`Duplicate YAML filename: ${filename}`);
-      files[filename] = toYaml(body);
+      files[filename] = toYaml(body, literalRoots(doc, name));
       references[name] = { file: relative };
     }
     config.flows = references;
   }
-  files[entry] = toYaml(config);
+  files[entry] = toYaml(config, literalRoots(doc));
   if (doc.replayServiceConfig !== null) {
     const replay = yamlPath(doc.replayFilename ?? "replay.yaml");
     if (own(files, replay))
@@ -233,7 +234,10 @@ export function fromBundle(
   }
   if (inline && split)
     throw new Error("Inline flows and file references cannot be mixed.");
-  const doc = layoutAllFlows(fromConfig({ ...config, flows }));
+  const doc = restoreLiteralProvenance(layoutAllFlows(fromConfig({ ...config, flows })), files[entry]);
+  for (const [name, relative] of Object.entries(flowFiles)) {
+    restoreLiteralProvenance(doc, files[directory(entry) + relative], name);
+  }
   if (replayFilename === undefined) {
     const candidates = Object.keys(files).filter(
       (name) =>

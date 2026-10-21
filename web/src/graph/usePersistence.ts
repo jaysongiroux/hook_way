@@ -10,7 +10,7 @@ const DEBOUNCE_MS = 400;
 let hydratedInMemory = false;
 const DOCUMENT_FIELDS: (keyof GraphDocument)[] = [
   "yamlMode", "entryFilename", "flowFiles", "replayFilename",
-  "formDrafts",
+  "formDrafts", "literalConfigFields",
   "nodes",
   "edges",
   "serverConfig",

@@ -1,3 +1,4 @@
+import { useReconcileCredentialDrafts } from "./formDrafts";
 import { Alert, Button, Modal, Select, Stack, Text } from "@mantine/core";
 import { DARK } from "../tokens";
 import { SchemaForm } from "./SchemaForm";
@@ -184,19 +185,38 @@ export function CredentialsPanel({
           profile. This editor does not contact token services or verify live
           credentials.
         </Text>
-        <WorkspaceEntries
-          label="credential profile"
+        <CredentialsForm
           value={configExtra.credentials}
-          initial={() => ({ kind: "static", allowed_origins: [] })}
-          nameError={credentialNameError}
-          onChange={(entries) => setConfigExtra({ credentials: entries })}
-        >
-          {(name, entry, change) => (
-            <CredentialEditor name={name} entry={entry} change={change} />
-          )}
-        </WorkspaceEntries>
+          onChange={(credentials) => setConfigExtra({ credentials })}
+        />
       </Stack>
     </Modal>
+  );
+}
+
+export function CredentialsForm({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const reconcile = useReconcileCredentialDrafts();
+  return (
+    <WorkspaceEntries
+      label="credential profile"
+      value={value}
+      initial={() => ({ kind: "static", allowed_origins: [] })}
+      nameError={credentialNameError}
+      onChange={(next) => {
+        reconcile(value, next);
+        onChange(next);
+      }}
+    >
+      {(name, entry, change) => (
+        <CredentialEditor name={name} entry={entry} change={change} />
+      )}
+    </WorkspaceEntries>
   );
 }
 

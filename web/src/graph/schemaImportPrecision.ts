@@ -37,6 +37,13 @@ export function assertSchemaImportPrecision(document: Document) {
     visited.add(node);
     if (isAlias(node)) { walk(node.resolve(document)); return; }
     if (isMap(node)) {
+      if (node.get("type") === "mcp_trigger") {
+        const tools = node.get("tools", true);
+        if (isSeq(tools)) for (const tool of tools.items) if (isMap(tool)) {
+          check(tool.get("input_schema", true));
+          check(tool.get("output_schema", true));
+        }
+      }
       if (node.get("type") === "json_validate") check(node.get("schema", true));
       if (node.get("type") === "transform" && node.get("kind") === "json_schema") check(node.get("json_schema", true));
       for (const pair of node.items) walk(pair.value);

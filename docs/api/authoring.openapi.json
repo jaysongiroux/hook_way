@@ -1,0 +1,226 @@
+{
+  "components": {
+    "schemas": {
+      "Diagnostic": {
+        "additionalProperties": true,
+        "properties": {
+          "location": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "location",
+          "message"
+        ],
+        "type": "object"
+      },
+      "OpenAPIGenerateInput": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "type": "string"
+          },
+          "settings_yaml": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "settings_yaml"
+        ],
+        "type": "object"
+      },
+      "OpenAPIGenerateResult": {
+        "additionalProperties": true,
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "type": "array"
+          },
+          "yaml": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "OpenAPIInspectInput": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "document"
+        ],
+        "type": "object"
+      },
+      "OpenAPIReport": {
+        "additionalProperties": true,
+        "properties": {
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/Operation"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "operations",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "Operation": {
+        "additionalProperties": true,
+        "properties": {
+          "aliases": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "input_schema_json": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "output_schema_json": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "requires_auth": {
+            "type": "boolean"
+          },
+          "security": {},
+          "security_requirements": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/SecurityRequirement"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "path",
+          "name",
+          "summary",
+          "description",
+          "requires_auth",
+          "security_requirements",
+          "input_schema_json",
+          "output_schema_json",
+          "security",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "SecurityRequirement": {
+        "additionalProperties": true,
+        "properties": {
+          "header": {
+            "type": "string"
+          },
+          "in": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scheme": {
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "scopes"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {}
+  },
+  "info": {
+    "title": "Hookway browser authoring messages (WASM only)",
+    "version": "1"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "openapi": "3.1.0",
+  "paths": {}
+}

@@ -8,6 +8,8 @@ export const DEFAULT_SERVER: Record<string, unknown> = {
 export const DEFAULT_FLOW = "main";
 
 interface FlowNodeData extends Record<string, unknown> {
+  /** Imported strings are literals at deployment; never written as runtime options. */
+  literalDollars?: boolean;
   nodeType: string;
   options: Record<string, unknown>;
   yamlId: string;
@@ -33,6 +35,7 @@ export interface EditorDraft {
 }
 
 export interface GraphDocument {
+  literalConfigFields?: string[];
   yamlMode?: "single" | "split";
   entryFilename?: string;
   flowFiles?: Record<string, string>;
@@ -104,6 +107,7 @@ export function createNode(
 
 export function emptyDocument(): GraphDocument {
   return {
+    literalConfigFields: [],
     formDrafts: {},
     yamlMode: "single",
     entryFilename: "core.yaml",

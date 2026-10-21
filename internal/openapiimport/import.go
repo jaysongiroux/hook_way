@@ -33,13 +33,19 @@ type Diagnostic struct {
 }
 
 type Operation struct {
-	Method      string            `json:"method"`
-	Path        string            `json:"path"`
-	OperationID string            `json:"operation_id,omitempty"`
-	Name        string            `json:"name"`
-	Security    any               `json:"security"`
-	Aliases     map[string]string `json:"aliases,omitempty"`
-	Diagnostics []Diagnostic      `json:"diagnostics"`
+	Method               string                  `json:"method"`
+	Path                 string                  `json:"path"`
+	OperationID          string                  `json:"operation_id,omitempty"`
+	Name                 string                  `json:"name"`
+	Summary              string                  `json:"summary"`
+	Description          string                  `json:"description"`
+	RequiresAuth         bool                    `json:"requires_auth"`
+	SecurityRequirements [][]SecurityRequirement `json:"security_requirements"`
+	InputSchemaJSON      string                  `json:"input_schema_json"`
+	OutputSchemaJSON     string                  `json:"output_schema_json"`
+	Security             any                     `json:"security"`
+	Aliases              map[string]string       `json:"aliases,omitempty"`
+	Diagnostics          []Diagnostic            `json:"diagnostics"`
 }
 
 type Report struct {
@@ -287,7 +293,7 @@ func Inspect(data []byte) Report {
 			if !ok {
 				security = root["security"]
 			}
-			report.Operations = append(report.Operations, Operation{Method: sel.Method, Path: path, OperationID: text(op["operationId"]), Name: toolName(sel.Method, path, op), Security: security, Aliases: built.aliases, Diagnostics: built.diagnostics})
+			report.Operations = append(report.Operations, Operation{Method: sel.Method, Path: path, OperationID: text(op["operationId"]), Name: toolName(sel.Method, path, op), Summary: text(op["summary"]), Description: operationDescription(op, sel.Method+" "+path), RequiresAuth: requiresAuth(security), SecurityRequirements: securityRequirements(root, security), InputSchemaJSON: schemaText(built.input), OutputSchemaJSON: schemaText(built.output), Security: security, Aliases: built.aliases, Diagnostics: built.diagnostics})
 		}
 	}
 	if len(object(root["webhooks"])) > 0 {

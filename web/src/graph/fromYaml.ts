@@ -1,5 +1,6 @@
 import { parse, parseDocument } from "yaml";
 import { assertSchemaImportPrecision } from "./schemaImportPrecision";
+import { restoreLiteralProvenance } from "./literalYaml";
 import { fromConfig } from "./fromConfig";
 import { layoutAllFlows } from "./layout";
 import type { GraphDocument } from "./model";
@@ -9,7 +10,7 @@ export function fromYaml(text: string): GraphDocument {
   if (config.flows && typeof config.flows === "object" && Object.values(config.flows).some((flow) => flow && typeof flow === "object" && Object.prototype.hasOwnProperty.call(flow, "file"))) {
     throw new Error("This entry YAML references flow files. Import the ZIP or select the entry and its flow files together.");
   }
-  return layoutAllFlows(fromConfig(config));
+  return restoreLiteralProvenance(layoutAllFlows(fromConfig(config)), text);
 }
 
 export function parseYamlMapping(text: string, label: string): Record<string, unknown> {
