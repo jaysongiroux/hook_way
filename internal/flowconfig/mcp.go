@@ -28,12 +28,13 @@ const MCPMaxBytes = 1 << 20
 var mcpName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 
 type MCPTriggerOptions struct {
-	Path           string           `yaml:"path" json:"path" jsonschema:"required"`
-	PublicURL      string           `yaml:"public_url" json:"public_url" jsonschema:"required"`
-	AllowedOrigins []string         `yaml:"allowed_origins,omitempty" json:"allowed_origins,omitempty"`
-	Auth           MCPAuthOptions   `yaml:"auth" json:"auth" jsonschema:"required"`
-	Tools          []MCPToolOptions `yaml:"tools" json:"tools" jsonschema:"required,minItems=1,maxItems=64"`
-	MaxInflight    int              `yaml:"max_inflight,omitempty" json:"max_inflight,omitempty" jsonschema:"minimum=1,maximum=256"`
+	Events         []MCPEventOptions `yaml:"events,omitempty" json:"events,omitempty"`
+	Path           string            `yaml:"path" json:"path" jsonschema:"required"`
+	PublicURL      string            `yaml:"public_url" json:"public_url" jsonschema:"required"`
+	AllowedOrigins []string          `yaml:"allowed_origins,omitempty" json:"allowed_origins,omitempty"`
+	Auth           MCPAuthOptions    `yaml:"auth" json:"auth" jsonschema:"required"`
+	Tools          []MCPToolOptions  `yaml:"tools" json:"tools" jsonschema:"required,minItems=1,maxItems=64"`
+	MaxInflight    int               `yaml:"max_inflight,omitempty" json:"max_inflight,omitempty" jsonschema:"minimum=1,maximum=256"`
 }
 type MCPAuthOptions struct {
 	NoAuth  bool                     `yaml:"no_auth,omitempty" json:"no_auth,omitempty"`
@@ -128,6 +129,9 @@ func validMCPURL(s string, private bool) bool {
 func (o MCPTriggerOptions) Validate() error { return validateMCPTrigger(o) }
 
 func validateMCPTrigger(o MCPTriggerOptions) error {
+	if err := validateMCPEvents(o); err != nil {
+		return err
+	}
 	u, _ := url.Parse(o.PublicURL)
 	if !validMCPURL(o.PublicURL, false) || u.Path != o.Path || !strings.HasPrefix(o.Path, "/") || strings.ContainsAny(o.Path, "{}?#% \t\r\n") || strings.HasSuffix(o.Path, "/") || path.Clean(o.Path) != o.Path || len(o.Path) > 2048 {
 		return errors.New("MCP requires a literal path and matching canonical public_url (HTTPS except localhost)")

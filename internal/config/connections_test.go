@@ -228,7 +228,7 @@ func TestConnectionFieldsMatchDestinationBlocks(t *testing.T) {
 // backend should not silently be unable to use a connection.
 func TestEveryDestinationTypeHasAConnectionType(t *testing.T) {
 	for destType := range destTypeBlocks {
-		if destType == "webhook" {
+		if destType == "webhook" || destType == "mcp_events" {
 			// Deliberately excluded: a webhook credential carries no host, so
 			// it is an auth profile rather than a connection. See
 			// connTypeForDestType.

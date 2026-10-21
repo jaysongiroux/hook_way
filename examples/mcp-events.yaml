@@ -1,0 +1,62 @@
+# Durable MCP webhook subscriptions. Set EVENT_DATABASE_URL, EVENT_ENCRYPTION_KEY
+# (base64 of 32 random bytes), MCP_EVENTS_KEY (32+ chars), and SAMPLE_WEBHOOK_SECRET.
+# Run `hookway event-store migrate --config examples/mcp-events.yaml` before serve.
+server: {addr: ":8080", max_body_bytes: 1048576}
+state_stores: {local: {namespace: mcp-events, memory: {}}}
+event_delivery:
+  postgres_url: "${EVENT_DATABASE_URL}"
+  namespace: example-agent-events
+  encryption_key: {provider: env, name: EVENT_ENCRYPTION_KEY}
+events:
+  issue.opened:
+    description: A new issue was opened in the selected repository.
+    payload_schema:
+      type: object
+      required: [issue_id, repository, title]
+      additionalProperties: false
+      properties:
+        issue_id: {type: string, minLength: 1}
+        repository: {type: string, minLength: 1}
+        title: {type: string, minLength: 1}
+destinations:
+  agents:
+    type: mcp_events
+    mcp_events: {endpoint: agent_tools}
+flows:
+  agent_tools:
+    nodes:
+      - id: mcp
+        type: mcp_trigger
+        path: /agents/mcp
+        public_url: http://localhost:8080/agents/mcp
+        auth:
+          api_keys:
+            reader: {secret_ref: {provider: env, name: MCP_EVENTS_KEY}}
+        tools:
+          - name: get_service_status
+            description: Read the status of this example gateway.
+            read_only: true
+            input_schema: {type: object, additionalProperties: false}
+            output_schema: {type: object}
+            access: {api_keys: [reader]}
+        events:
+          - event: issue.opened
+            input_schema:
+              type: object
+              additionalProperties: false
+              required: [repository]
+              properties: {repository: {type: string, minLength: 1}}
+            filters: {repository: repository}
+            access: {api_keys: [reader]}
+      - {id: status, type: mcp_result, source: constant, value: {status: ready}}
+    edges: [mcp:get_service_status>status]
+  issue_webhook:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/issues, methods: [POST]}
+      - {id: rate, type: rate_limit, store: local, rpm: 60, burst: 10}
+      - {id: read, type: read_body, max_bytes: 262144}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_WEBHOOK_SECRET}, signature_header: X-Api-Key}
+      - {id: env, type: envelope, body_format: json}
+      - {id: event, type: event, event: issue.opened, event_id_path: issue_id}
+      - {id: send, type: publish, destination: agents, target: issue.opened}
+    edges: [in>rate, rate>read, read>auth, auth>env, env>event, event>send]

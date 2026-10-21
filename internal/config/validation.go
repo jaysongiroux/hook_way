@@ -219,7 +219,7 @@ func validationIssues(c Config) []ValidationIssue {
 		if dest.Type == "" {
 			issues = append(issues, validationError(fieldPrefix+".type", "destination backend type is required", "set type to \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"lambda\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", or \"temporal\""))
 		} else if dest.Type != "rabbitmq" && dest.Type != "sqs" && dest.Type != "sns" && dest.Type != "s3" && dest.Type != "lambda" && dest.Type != "postgres" && dest.Type != "mongodb" && dest.Type != "kafka" &&
-			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" && dest.Type != "temporal" {
+			dest.Type != "redis_stream" && dest.Type != "redis_list" && dest.Type != "redis_pubsub" && dest.Type != "redis_kv" && dest.Type != "webhook" && dest.Type != "temporal" && dest.Type != "mcp_events" {
 			issues = append(issues, validationError(fieldPrefix+".type", fmt.Sprintf("%q is not supported", dest.Type), "supported values are \"rabbitmq\", \"sqs\", \"sns\", \"s3\", \"lambda\", \"postgres\", \"mongodb\", \"kafka\", \"redis_stream\", \"redis_list\", \"redis_pubsub\", \"redis_kv\", \"webhook\", and \"temporal\""))
 		}
 		if dest.Type == "sqs" {

@@ -20,19 +20,20 @@ import (
 
 // Config is a Hookway config document: shared process settings plus named flows.
 type Config struct {
-	Events       map[string]EventDefinition
-	StateStores  map[string]protection.Config
-	Routing      routing.Config
-	Credentials  map[string]CredentialProfile
-	Lookups      map[string]LookupProviderConfig
-	LaunchDarkly map[string]LaunchDarklyConnection
-	Server       config.ServerConfig
-	Security     config.SecurityConfig
-	Metrics      config.MetricsConfig
-	Logging      config.LoggingConfig
-	Replay       config.ReplayConfig
-	Destinations map[string]config.DestinationConfig
-	Flows        map[string]graph.FlowConfig
+	EventDelivery *EventDeliveryConfig
+	Events        map[string]EventDefinition
+	StateStores   map[string]protection.Config
+	Routing       routing.Config
+	Credentials   map[string]CredentialProfile
+	Lookups       map[string]LookupProviderConfig
+	LaunchDarkly  map[string]LaunchDarklyConnection
+	Server        config.ServerConfig
+	Security      config.SecurityConfig
+	Metrics       config.MetricsConfig
+	Logging       config.LoggingConfig
+	Replay        config.ReplayConfig
+	Destinations  map[string]config.DestinationConfig
+	Flows         map[string]graph.FlowConfig
 }
 
 // Load reads path and expands environment variables strictly.
@@ -72,7 +73,7 @@ func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []conf
 	// `flows` and `routing` are decoded separately below. Every other
 	// non-shared top-level key -- including
 	// `endpoints` -- is reported as unknown by the strict decoder.
-	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores", "launchdarkly", "events")
+	shared, sharedIssues := config.DecodeSharedYAML(data, source, "flows", "routing", "credentials", "lookups", "state_stores", "launchdarkly", "events", "event_delivery")
 	issues = append(issues, sharedIssues...)
 	issues = append(issues, shared.ValidationIssues()...)
 
@@ -135,12 +136,21 @@ func loadInlineBytes(data []byte, source string, expandEnv bool) (Config, []conf
 			issues = append(issues, cfgIssue("launchdarkly", "unknown or invalid LaunchDarkly configuration", ""))
 		}
 	}
+	if node, ok := root["event_delivery"]; ok {
+		block, _ := yaml.Marshal(node)
+		dec := yaml.NewDecoder(bytes.NewReader(block))
+		dec.KnownFields(true)
+		if err := dec.Decode(&cfg.EventDelivery); err != nil {
+			issues = append(issues, cfgIssue("event_delivery", "unknown or invalid event delivery configuration", ""))
+		}
+	}
 	if node, ok := root["events"]; ok {
 		var eventIssues []config.ValidationIssue
 		cfg.Events, eventIssues = decodeEvents(node)
 		issues = append(issues, eventIssues...)
 	}
 	issues = append(issues, eventReferenceIssues(cfg)...)
+	issues = append(issues, EventDeliveryIssues(cfg)...)
 	issues = append(issues, LaunchDarklyConfigurationIssues(cfg)...)
 	issues = append(issues, LookupConfigurationIssues(cfg)...)
 	cfg.Credentials = credentials
@@ -417,7 +427,7 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 					continue
 				}
 				awsBroker := dest.Type == "sqs" || dest.Type == "sns"
-				webhookJSON := dest.Type == "webhook" && opts.WireBody == "json" && dest.Webhook.Auth.Type != "proxy"
+				webhookJSON := (dest.Type == "mcp_events" || dest.Type == "webhook") && opts.WireBody == "json" && dest.Webhook.Auth.Type != "proxy"
 				customBody := opts.WireBody != "" && opts.WireBody != "envelope" && !webhookJSON
 				if (opts.GroupID != nil || opts.SQS != nil || opts.SNS != nil || len(opts.ResourceAttributes) > 0 || opts.FIFO != nil || opts.Retry != nil || customBody) && !awsBroker {
 					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID, "fifo, retry and broker wire_body require an sqs or sns destination; webhook also supports wire_body: json outside proxy mode", ""))

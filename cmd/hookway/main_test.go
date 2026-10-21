@@ -140,8 +140,8 @@ func TestRun_SchemaDestinationsListsTypes(t *testing.T) {
 			t.Errorf("%s missing block", name)
 		}
 	}
-	if len(doc) != 14 {
-		t.Fatalf("schema --destinations listed %d types, want 14", len(doc))
+	if len(doc) != 15 {
+		t.Fatalf("schema --destinations listed %d types, want 15", len(doc))
 	}
 }
 

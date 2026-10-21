@@ -70,7 +70,7 @@ test("publish declares Envelope output so a success continuation can type-check"
 });
 
 test("destination catalog lists the types the marketing page counts", () => {
-  expect(DEST_TYPES).toHaveLength(14);
+  expect(DEST_TYPES).toHaveLength(15);
   expect(DEST_TYPES).toContain("webhook");
   expect(DEST_TYPES).toContain("redis_stream");
   expect(DEST_TYPES).toContain("lambda");
@@ -99,7 +99,7 @@ test("every connection type in the generated catalog has fields", () => {
 test("every destination type except webhook maps to a real connection type", () => {
   for (const dest of DEST_TYPES) {
     const conn = connTypeForDest(dest);
-    if (dest === "webhook") {
+    if (dest === "webhook" || dest === "mcp_events") {
       expect(
         conn,
         "a webhook credential carries no host, so it is not a connection",

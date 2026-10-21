@@ -736,5 +736,78 @@
       ]
     },
     "type": "object"
+  },
+  "event_delivery": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://github.com/jaysongiroux/hook_way/internal/flowconfig/event-delivery-config",
+    "properties": {
+      "postgres_url": {
+        "type": "string"
+      },
+      "namespace": {
+        "type": "string"
+      },
+      "encryption_key": {
+        "properties": {
+          "selection": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "newest_matching"
+            ]
+          },
+          "json_field": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string",
+            "enum": [
+              "env",
+              "file",
+              "aws_secrets_manager"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "refresh": {
+            "type": "string"
+          },
+          "overlap": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "name"
+        ]
+      },
+      "workers": {
+        "type": "integer",
+        "maximum": 64,
+        "minimum": 1
+      },
+      "max_subscriptions": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "max_pending": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "max_bytes": {
+        "type": "integer",
+        "minimum": 262144
+      }
+    },
+    "additionalProperties": false,
+    "type": "object",
+    "required": [
+      "postgres_url",
+      "namespace",
+      "encryption_key"
+    ]
   }
 }

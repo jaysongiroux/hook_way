@@ -437,6 +437,7 @@ func defineErr[T any](name string, in, out graph.PortType, detached bool, valida
 // RegistryOptions customizes runtime node constructors used when compiling
 // flows for serving. Validation uses the zero value.
 type RegistryOptions struct {
+	EventRuntime       EventRuntime
 	Events             *EventCatalog
 	Protection         func(string) protection.Store
 	StateStores        map[string]protection.Config

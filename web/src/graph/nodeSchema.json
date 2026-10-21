@@ -1258,6 +1258,62 @@
     "schema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
+        "events": {
+          "items": {
+            "properties": {
+              "event": {
+                "type": "string"
+              },
+              "input_schema": {
+                "type": "object"
+              },
+              "filters": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "access": {
+                "properties": {
+                  "api_keys": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "scopes": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "anonymous": {
+                    "type": "boolean"
+                  },
+                  "allow_mutation": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "event",
+              "input_schema",
+              "access"
+            ]
+          },
+          "type": "array"
+        },
         "path": {
           "type": "string"
         },
