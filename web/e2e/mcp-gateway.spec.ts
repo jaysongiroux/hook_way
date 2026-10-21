@@ -1,11 +1,36 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { BuilderPage } from "./builder";
+
+// Compile separately so a cold Go cache cannot consume the server-start deadline.
+const liveTest = test.extend<{ gatewayBinary: string }>({
+  gatewayBinary: [
+    async ({}, use) => {
+      const directory = mkdtempSync(join(tmpdir(), "hookway-mcp-binary-"));
+      const binary = join(directory, "mcp-browser");
+      try {
+        await promisify(execFile)(
+          "go",
+          ["build", "-o", binary, "./internal/httpapi/testdata/mcp-browser"],
+          {
+            cwd: fileURLToPath(new URL("../../", import.meta.url)),
+            timeout: 180_000,
+          },
+        );
+        await use(binary);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+    { timeout: 180_000 },
+  ],
+});
 
 const fixture = readFileSync(
   new URL("../../examples/templates/mcp-gateway.yaml", import.meta.url),
@@ -58,8 +83,9 @@ test("one MCP trigger exposes named native branches and survives YAML persistenc
   ).toBeVisible();
 });
 
-test("live tester discovers and invokes authenticated Go gateway tools", async ({
+liveTest("live tester discovers and invokes authenticated Go gateway tools", async ({
   page,
+  gatewayBinary,
 }, testInfo) => {
   test.setTimeout(120_000);
   const directory = mkdtempSync(join(tmpdir(), "hookway-mcp-browser-"));
@@ -89,8 +115,8 @@ test("live tester discovers and invokes authenticated Go gateway tools", async (
   const configPath = join(directory, "core.yaml");
   writeFileSync(configPath, config);
   const process = spawn(
-    "go",
-    ["run", "./internal/httpapi/testdata/mcp-browser", configPath],
+    gatewayBinary,
+    [configPath],
     {
       cwd: fileURLToPath(new URL("../../", import.meta.url)),
       detached: true,

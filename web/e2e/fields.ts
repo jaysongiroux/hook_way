@@ -462,6 +462,13 @@ export async function expectNodeOptions(
           0,
         );
       }
+    } else if (backend === "webhook") {
+      await expectLabeled(
+        root,
+        "Webhook payload",
+        options.wire_body === "json" ? "Current JSON body" : "Hookway envelope",
+        0,
+      );
     } else if (backend === "s3" || backend === "redis_kv")
       await scalar("payload");
     return;
@@ -618,6 +625,7 @@ export async function expectNodeOptions(
       name: "Result variable",
     },
     code: { script: "JavaScript function body" },
+    event: { event: "Event", event_id_path: "Event ID path" },
     rate_limit: { rpm: "Requests per minute", burst: "Burst allowance" },
     sample: { rate: "Sampling rate" },
   };
