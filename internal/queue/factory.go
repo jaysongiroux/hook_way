@@ -70,37 +70,39 @@ type RedisTarget struct {
 }
 
 type FactoryOptions struct {
-	RabbitMQConnector RabbitMQConnector
-	SQSConnector      SQSConnector
-	SNSConnector      SNSConnector
-	RedisConnector    RedisConnector
-	S3Connector       S3Connector
-	LambdaConnector   LambdaConnector
-	PostgresConnector PostgresConnector
-	MongoConnector    MongoConnector
-	KafkaConnector    KafkaConnector
-	TemporalConnector TemporalConnector
-	WebhookConnector  WebhookConnector
-	Metrics           RabbitMQMetrics
-	Logger            *slog.Logger
-	OnTerminalFailure TerminalFailureFunc // capture hook for async webhook failures no dead letter accepted
+	MCPEventsConnector func(context.Context, string, config.MCPEventsConfig) (Publisher, error)
+	RabbitMQConnector  RabbitMQConnector
+	SQSConnector       SQSConnector
+	SNSConnector       SNSConnector
+	RedisConnector     RedisConnector
+	S3Connector        S3Connector
+	LambdaConnector    LambdaConnector
+	PostgresConnector  PostgresConnector
+	MongoConnector     MongoConnector
+	KafkaConnector     KafkaConnector
+	TemporalConnector  TemporalConnector
+	WebhookConnector   WebhookConnector
+	Metrics            RabbitMQMetrics
+	Logger             *slog.Logger
+	OnTerminalFailure  TerminalFailureFunc // capture hook for async webhook failures no dead letter accepted
 }
 
 type Factory struct {
-	rabbitMQConnector RabbitMQConnector
-	sqsConnector      SQSConnector
-	snsConnector      SNSConnector
-	redisConnector    RedisConnector
-	s3Connector       S3Connector
-	lambdaConnector   LambdaConnector
-	postgresConnector PostgresConnector
-	mongoConnector    MongoConnector
-	kafkaConnector    KafkaConnector
-	temporalConnector TemporalConnector
-	webhookConnector  WebhookConnector
-	metrics           RabbitMQMetrics
-	logger            *slog.Logger
-	onTerminalFailure TerminalFailureFunc
+	mcpEventsConnector func(context.Context, string, config.MCPEventsConfig) (Publisher, error)
+	rabbitMQConnector  RabbitMQConnector
+	sqsConnector       SQSConnector
+	snsConnector       SNSConnector
+	redisConnector     RedisConnector
+	s3Connector        S3Connector
+	lambdaConnector    LambdaConnector
+	postgresConnector  PostgresConnector
+	mongoConnector     MongoConnector
+	kafkaConnector     KafkaConnector
+	temporalConnector  TemporalConnector
+	webhookConnector   WebhookConnector
+	metrics            RabbitMQMetrics
+	logger             *slog.Logger
+	onTerminalFailure  TerminalFailureFunc
 }
 
 func NewFactory(opts FactoryOptions) *Factory {
@@ -322,20 +324,21 @@ func NewFactory(opts FactoryOptions) *Factory {
 		}
 	}
 	return &Factory{
-		rabbitMQConnector: connector,
-		sqsConnector:      sqsConnector,
-		snsConnector:      snsConnector,
-		redisConnector:    redisConnector,
-		s3Connector:       s3Connector,
-		lambdaConnector:   lambdaConnector,
-		postgresConnector: postgresConnector,
-		mongoConnector:    mongoConnector,
-		kafkaConnector:    kafkaConnector,
-		temporalConnector: temporalConnector,
-		webhookConnector:  opts.WebhookConnector,
-		metrics:           opts.Metrics,
-		logger:            opts.Logger,
-		onTerminalFailure: opts.OnTerminalFailure,
+		mcpEventsConnector: opts.MCPEventsConnector,
+		rabbitMQConnector:  connector,
+		sqsConnector:       sqsConnector,
+		snsConnector:       snsConnector,
+		redisConnector:     redisConnector,
+		s3Connector:        s3Connector,
+		lambdaConnector:    lambdaConnector,
+		postgresConnector:  postgresConnector,
+		mongoConnector:     mongoConnector,
+		kafkaConnector:     kafkaConnector,
+		temporalConnector:  temporalConnector,
+		webhookConnector:   opts.WebhookConnector,
+		metrics:            opts.Metrics,
+		logger:             opts.Logger,
+		onTerminalFailure:  opts.OnTerminalFailure,
 	}
 }
 
@@ -351,6 +354,15 @@ func (f *Factory) Create(ctx context.Context, cfg config.Config) (Publisher, err
 			continue
 		}
 		switch destination.Type {
+		case "mcp_events":
+			if f.mcpEventsConnector == nil {
+				return nil, fmt.Errorf("MCP event delivery runtime required")
+			}
+			p, err := f.mcpEventsConnector(ctx, id, destination.MCPEvents)
+			if err != nil {
+				return nil, err
+			}
+			publishers[id] = p
 		case "rabbitmq":
 			rabbit := destination.RabbitMQ
 			publisher, err := f.rabbitMQConnector(ctx, id, RabbitMQConfig{

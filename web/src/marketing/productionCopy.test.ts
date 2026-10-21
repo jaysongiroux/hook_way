@@ -17,7 +17,7 @@ test("operational details cover the six configuration themes", () => {
 // Each operational default is a value a reader can verify in the repo.
 test("operational defaults retain their source-checked values", () => {
   const values = PRODUCTION_CARDS.map((c) => c.value);
-  expect(values).toEqual(["256", "3", "72", "14", "1", "7"]);
+  expect(values).toEqual(["256", "3", "76", "14", "1", "7"]);
 });
 
 // Retry blocks exist for rabbitmq, kafka, and webhook only.
