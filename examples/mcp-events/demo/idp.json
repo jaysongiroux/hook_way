@@ -1,0 +1,15 @@
+{
+  "interactiveLogin": false,
+  "httpServer": "NettyWrapper",
+  "tokenCallbacks": [{
+    "issuerId": "demo",
+    "tokenExpiry": 3600,
+    "requestMappings": [{
+      "requestParam": "client_id", "match": "invalid-audience",
+      "claims": {"aud": ["different-resource"], "sub": "demo-agent", "scope": "issues:read events:read"}
+    }, {
+      "requestParam": "client_id", "match": "*",
+      "claims": {"aud": ["hookway-demo"], "sub": "demo-agent", "scope": "issues:read events:read"}
+    }]
+  }]
+}

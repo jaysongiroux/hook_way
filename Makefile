@@ -321,6 +321,8 @@ validate-examples:
 		REDIS_URL=redis://localhost:6379 \
 		POSTGRES_URL=postgres://localhost:5432/db \
 		EVENT_DATABASE_URL=postgres://localhost:5432/events \
+		DEMO_ISSUER=https://identity.example.test/demo \
+		DEMO_MCP_URL=https://mcp.example.test/agents/mcp \
 		PROTECTION_DATABASE_URL=postgres://localhost:5432/protection \
 		PROTECTION_REDIS_URL=redis://localhost:6379 \
 		MONGODB_URI=mongodb://localhost:27017 \
@@ -369,7 +371,7 @@ validate-examples:
 	done; \
 	$(GO) run ./cmd/hookway validate --no-env --strict --config examples/openapi/core.yaml || exit 1; \
 	$(GO) run ./cmd/hookway validate --config examples/multi-yaml/core.yaml || exit 1; \
-	for d in dev replay; do \
+	for d in dev replay mcp-events/demo; do \
 		echo "validating examples/$$d/core.yaml"; \
 		$(GO) run ./cmd/hookway validate --config examples/$$d/core.yaml || exit 1; \
 		echo "validating examples/$$d/replay.yaml"; \

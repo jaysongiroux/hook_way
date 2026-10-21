@@ -1,0 +1,5 @@
+.env
+*.zip
+runtime/
+evidence/
+__pycache__/

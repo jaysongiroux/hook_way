@@ -7,6 +7,7 @@ export type WasmCapability =
   | "node_schemas"
   | "replay_yaml_validate"
   | "replay_schema"
+  | "mcp_event_action_input"
   | "replay_action_input"
   | "replay_resolution_input"
   | "json_sample_validate"
@@ -58,6 +59,7 @@ const required: Record<WasmCapability, keyof Window> = {
   node_schemas: "hookwayNodeSchemas",
   replay_yaml_validate: "hookwayReplayValidate",
   replay_schema: "hookwayReplaySchema",
+  mcp_event_action_input: "hookwayReplayActionValidate",
   replay_action_input: "hookwayReplayActionValidate",
   replay_resolution_input: "hookwayReplayActionValidate",
   json_sample_validate: "hookwayJSONSampleValidate",

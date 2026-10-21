@@ -20,6 +20,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/capture"
 	"github.com/jaysongiroux/hook_way/internal/deliverysnapshot"
+	"github.com/jaysongiroux/hook_way/internal/eventops"
 	"github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replaywire"
 )
@@ -86,6 +87,7 @@ type Options struct {
 	MaxConcurrent  int
 	MaxRecordBytes int64    // core's replay.max_record_bytes: the largest snapshot core captures
 	Flows          []string // configured flow names, the metric's label set
+	Events         EventOperator
 	Redriver       Redriver
 	Metrics        Metrics
 	Logger         *slog.Logger
@@ -130,6 +132,7 @@ func New(o Options) *Server {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(replaywire.DeliverPath, s.deliver)
+	mux.HandleFunc(eventops.ControlPath, s.events)
 	s.srv = &http.Server{
 		Addr: o.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute,
 		IdleTimeout: replaywire.ControlServerIdleTimeout,

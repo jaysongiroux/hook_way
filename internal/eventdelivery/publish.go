@@ -140,7 +140,7 @@ func (r *Runtime) Publish(ctx context.Context, endpoint, name string, value any)
 			return er
 		}
 		for _, sub := range ids {
-			if _, er = tx.Exec(ctx, `INSERT INTO hookway_events.deliveries(namespace,endpoint,event,event_id,subscription) VALUES($1,$2,$3,$4,$5)`, r.cfg.Namespace, endpoint, name, id, sub); er != nil {
+			if _, er = tx.Exec(ctx, `INSERT INTO hookway_events.deliveries(namespace,endpoint,event,event_id,subscription,generation) SELECT $1,$2,$3,$4,$5,generation FROM hookway_events.subscriptions WHERE namespace=$1 AND id=$5`, r.cfg.Namespace, endpoint, name, id, sub); er != nil {
 				return er
 			}
 		}

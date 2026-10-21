@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/jaysongiroux/hook_way/internal/eventops"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
@@ -73,6 +74,10 @@ func storeError(err error) error {
 	if errors.Is(err, ErrCapacity) || errors.Is(err, ErrConflict) {
 		return err
 	}
+	var operationError *eventops.Error
+	if errors.As(err, &operationError) {
+		return err
+	}
 	return ErrUnavailable
 }
 func (s *Store) Migrate(ctx context.Context) error {
@@ -114,7 +119,7 @@ func (s *Store) Ready(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	v, e := s.SchemaVersion(ctx)
-	if e != nil || v != 1 {
+	if e != nil || v != 2 {
 		return ErrUnavailable
 	}
 	return nil
@@ -151,7 +156,10 @@ func (s *Store) GC(ctx context.Context) error {
 		if _, e := tx.Exec(ctx, `DELETE FROM hookway_events.occurrences o WHERE namespace=$1 AND created_at<now()-interval '24 hours' AND NOT EXISTS(SELECT 1 FROM hookway_events.deliveries d WHERE d.namespace=o.namespace AND d.endpoint=o.endpoint AND d.event=o.event AND d.event_id=o.event_id)`, ns); e != nil {
 			return e
 		}
-		_, e := tx.Exec(ctx, `DELETE FROM hookway_events.subscriptions s WHERE namespace=$1 AND (NOT active OR expires_at<now()-interval '24 hours') AND NOT EXISTS(SELECT 1 FROM hookway_events.deliveries d WHERE d.namespace=s.namespace AND d.subscription=s.id)`, ns)
+		if _, e := tx.Exec(ctx, `DELETE FROM hookway_events.actions WHERE namespace=$1 AND delivery IS NULL AND created_at<now()-interval '24 hours'`, ns); e != nil {
+			return e
+		}
+		_, e := tx.Exec(ctx, `DELETE FROM hookway_events.subscriptions s WHERE namespace=$1 AND revoked_at IS NULL AND (NOT active OR expires_at<now()-interval '24 hours') AND NOT EXISTS(SELECT 1 FROM hookway_events.deliveries d WHERE d.namespace=s.namespace AND d.subscription=s.id)`, ns)
 		return e
 	})
 }

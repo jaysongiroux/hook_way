@@ -89,8 +89,7 @@ the occurrence after any transformations and limits its final JSON body to
 In the builder, use **Config → Events** for definitions and durable delivery
 settings. Select the MCP trigger's **Events** tab for subscriptions and grants,
 then select **MCP events** when adding a destination. The builder exports
-configuration; it does not manage live subscriptions. Subscription and delivery
-console views are a later phase.
+configuration; it does not manage live subscriptions. Live subscriptions and deliveries are managed in the operator console, separately from builder configuration.
 
 ## Client lifecycle
 
@@ -172,8 +171,7 @@ unreferenced bodies by periodic cleanup or `hookway event-store gc`.
 
 This release has no historical subscription catch-up, non-null cursors, poll,
 stream, `gap`, or `terminated` delivery. Recovery applies only to already accepted
-pending deliveries for subscriptions that remain active. Inspect metrics for
-failures; UI inspection and manual delivery redrive belong to the next phase.
+pending deliveries for subscriptions that remain active. Inspect metrics or the operator console for failures. The console supports scoped inspection and eligible manual retries.
 
 Metrics include `hookway_event_delivery_total{operation,outcome}`,
 `hookway_event_pending`, `hookway_event_retained_bytes`, and
@@ -201,3 +199,11 @@ confirm challenge verification, trigger matching and nonmatching webhooks, obser
 an agent turn and a tool call, then unsubscribe. Automated protocol tests do not
 establish that hosted-agent wake-up happened. Record the client, protocol and
 server revision when performing that check.
+
+## Operator console
+
+The [MCP event operations guide](../operations/mcp-events-console.md) covers
+subscription inspection, per-attempt delivery evidence, scoped payload access,
+manual retry cycles, and persistent revocation/restoration. The
+[combined issue demo](../../examples/mcp-events/demo/README.md) includes its own
+Docker test identity provider and an automated OAuth/PKCE check.

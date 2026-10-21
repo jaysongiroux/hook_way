@@ -17,11 +17,13 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jaysongiroux/hook_way/internal/eventops"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 
 	"github.com/jaysongiroux/hook_way/internal/secretref"
@@ -266,7 +268,7 @@ func (r *Runtime) EventCall(ctx context.Context, endpoint, method string, p flow
 	}
 	if method == "events/unsubscribe" {
 		err = r.store.transaction(ctx, func(ctx context.Context, tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, `UPDATE hookway_events.subscriptions SET active=false WHERE namespace=$1 AND id=$2 AND owner=$3`, r.cfg.Namespace, id, p.ID); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE hookway_events.subscriptions SET active=false,version=version+1 WHERE namespace=$1 AND id=$2 AND owner=$3`, r.cfg.Namespace, id, p.ID); err != nil {
 				return err
 			}
 			_, err := tx.Exec(ctx, `UPDATE hookway_events.deliveries SET state='cancelled',finished_at=now(),outcome='unsubscribe' WHERE namespace=$1 AND subscription=$2 AND state='pending'`, r.cfg.Namespace, id)
@@ -302,7 +304,22 @@ func (r *Runtime) EventCall(ctx context.Context, endpoint, method string, p flow
 	if !time.Now().Before(expiry) {
 		return nil, rpcError(-32024, "Forbidden", "")
 	}
-	if err = r.verifyCallback(ctx, p.ID, q.Delivery.URL, id, secret); err != nil {
+	var observedVersion, observedGeneration int64
+	var blocked *time.Time
+	var monitoringActive bool
+	var monitoringExpiry time.Time
+	err = r.store.pool.QueryRow(ctx, `SELECT version,generation,revoked_at,active,expires_at FROM hookway_events.subscriptions WHERE namespace=$1 AND id=$2`, r.cfg.Namespace, id).Scan(&observedVersion, &observedGeneration, &blocked, &monitoringActive, &monitoringExpiry)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, rpcError(-32603, "Event store unavailable", "")
+	}
+	if blocked != nil {
+		return nil, rpcError(-32024, "Forbidden", "revoked")
+	}
+	if !monitoringActive || !monitoringExpiry.After(time.Now()) {
+		observedGeneration++
+	}
+	verificationOwner := p.ID + "\x00interval:" + strconv.FormatInt(observedGeneration, 10)
+	if err = r.verifyCallback(ctx, verificationOwner, q.Delivery.URL, id, secret); err != nil {
 		r.metric("subscribe", "callback_failed")
 		return nil, err
 	}
@@ -324,9 +341,17 @@ func (r *Runtime) EventCall(ctx context.Context, endpoint, method string, p flow
 		var oldCipher []byte
 		var active bool
 		var until time.Time
-		err := tx.QueryRow(ctx, `SELECT secret,active,expires_at FROM hookway_events.subscriptions WHERE namespace=$1 AND id=$2`, r.cfg.Namespace, id).Scan(&oldCipher, &active, &until)
+		var revoked *time.Time
+		var currentVersion int64
+		err := tx.QueryRow(ctx, `SELECT secret,active,expires_at,revoked_at,version FROM hookway_events.subscriptions WHERE namespace=$1 AND id=$2`, r.cfg.Namespace, id).Scan(&oldCipher, &active, &until, &revoked, &currentVersion)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
+		}
+		if currentVersion != observedVersion {
+			return eventops.Fail(409, "subscription_changed")
+		}
+		if revoked != nil {
+			return eventops.Fail(403, "subscription_revoked")
 		}
 		if active && time.Now().Before(until) {
 			old, e := r.openSecret(id, oldCipher)
@@ -346,7 +371,7 @@ func (r *Runtime) EventCall(ctx context.Context, endpoint, method string, p flow
 				return err
 			}
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO hookway_events.subscriptions(namespace,id,endpoint,principal,owner,event,arguments,callback,secret,previous_secret,overlap_until,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()+interval '5 minutes',$11) ON CONFLICT(namespace,id) DO UPDATE SET principal=excluded.principal,secret=excluded.secret,previous_secret=CASE WHEN $10::bytea IS NOT NULL THEN excluded.previous_secret WHEN hookway_events.subscriptions.secret=excluded.secret THEN hookway_events.subscriptions.previous_secret ELSE NULL END,overlap_until=CASE WHEN $10::bytea IS NOT NULL THEN excluded.overlap_until ELSE hookway_events.subscriptions.overlap_until END,expires_at=excluded.expires_at,active=true`, r.cfg.Namespace, id, endpoint, principal, p.ID, q.Name, args, q.Delivery.URL, sealed, previous, expiry)
+		_, err = tx.Exec(ctx, `INSERT INTO hookway_events.subscriptions(namespace,id,endpoint,principal,owner,event,arguments,callback,secret,previous_secret,overlap_until,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()+interval '5 minutes',$11) ON CONFLICT(namespace,id) DO UPDATE SET generation=CASE WHEN hookway_events.subscriptions.active AND hookway_events.subscriptions.expires_at>now() THEN hookway_events.subscriptions.generation ELSE hookway_events.subscriptions.generation+1 END, version=hookway_events.subscriptions.version+1,principal=excluded.principal,secret=excluded.secret,previous_secret=CASE WHEN $10::bytea IS NOT NULL THEN excluded.previous_secret WHEN hookway_events.subscriptions.secret=excluded.secret THEN hookway_events.subscriptions.previous_secret ELSE NULL END,overlap_until=CASE WHEN $10::bytea IS NOT NULL THEN excluded.overlap_until ELSE hookway_events.subscriptions.overlap_until END,expires_at=excluded.expires_at,active=true`, r.cfg.Namespace, id, endpoint, principal, p.ID, q.Name, args, q.Delivery.URL, sealed, previous, expiry)
 		return err
 	})
 	if err != nil {
@@ -355,6 +380,10 @@ func (r *Runtime) EventCall(ctx context.Context, endpoint, method string, p flow
 			outcome = "capacity"
 		}
 		r.metric("subscribe", outcome)
+		var operationError *eventops.Error
+		if errors.As(err, &operationError) {
+			return nil, rpcError(-32024, "Forbidden", "revoked")
+		}
 		if errors.Is(err, ErrCapacity) {
 			return nil, rpcError(-32025, "ResourceExhausted", "subscriptions")
 		}

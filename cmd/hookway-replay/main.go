@@ -24,6 +24,7 @@ import (
 
 	"github.com/jaysongiroux/hook_way/internal/cli"
 	hookconfig "github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/eventops"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
 	"github.com/jaysongiroux/hook_way/internal/replay/api"
 	"github.com/jaysongiroux/hook_way/internal/replay/auth"
@@ -336,9 +337,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	w := worker.New(worker.Options{Store: st, Deliverer: executor, Metrics: m, Logger: logger, ID: workerID(),
 		Concurrency: cfg.Workers.Concurrency, Lease: cfg.Workers.Lease})
 
+	eventClient, err := eventops.NewClient(cfg.Core.ControlURL, cfg.Core.ControlToken, cfg.Core.TLS.Files())
+	if err != nil {
+		logger.Error("event control client configuration failed")
+		return 1
+	}
+	defer eventClient.Close()
 	authn := auth.New(cfg.AuthKeys(), m.AuthFailure)
 	metricsHandler := promhttp.HandlerFor(m.Registry(), promhttp.HandlerOpts{})
-	opts := api.Options{Store: st, Auth: authn, Metrics: m, Logger: logger, MaxRecordBytes: cfg.Retention.MaxRecordBytes, AllowedOrigins: cfg.Server.CORS.AllowedOrigins}
+	opts := api.Options{Events: eventClient, Store: st, Auth: authn, Metrics: m, Logger: logger, MaxRecordBytes: cfg.Retention.MaxRecordBytes, AllowedOrigins: cfg.Server.CORS.AllowedOrigins}
 	if cfg.Metrics.Enabled && cfg.Metrics.Addr == "" {
 		opts.MetricsPath, opts.MetricsHandler = cfg.Metrics.Path, metricsHandler
 	}

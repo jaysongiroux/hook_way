@@ -1,0 +1,83 @@
+name: hookway-event-demo
+x-env: &environment
+  EVENT_DATABASE_URL: postgres://demo:${DEMO_DATABASE_PASSWORD:?Run setup.py first}@postgres:5432/demo?sslmode=disable
+  EVENT_ENCRYPTION_KEY: ${EVENT_ENCRYPTION_KEY:?Run setup.py first}
+  MCP_EVENTS_KEY: ${MCP_EVENTS_KEY:?Run setup.py first}
+  SAMPLE_WEBHOOK_SECRET: ${SAMPLE_WEBHOOK_SECRET:?Run setup.py first}
+  REPLAY_CAPTURE_TOKEN: ${REPLAY_CAPTURE_TOKEN:?Run setup.py first}
+  REPLAY_CONTROL_TOKEN: ${REPLAY_CONTROL_TOKEN:?Run setup.py first}
+  REPLAY_OPERATOR_TOKEN: ${REPLAY_OPERATOR_TOKEN:?Run setup.py first}
+  DEMO_ISSUER: ${DEMO_ISSUER:-http://localhost:18085/demo}
+  DEMO_MCP_URL: ${DEMO_MCP_URL:-http://localhost:18080/agents/mcp}
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment: {POSTGRES_USER: demo, POSTGRES_PASSWORD: "${DEMO_DATABASE_PASSWORD}", POSTGRES_DB: demo}
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U demo -d demo"], interval: 2s, timeout: 3s, retries: 30}
+    volumes: [event-demo-db:/var/lib/postgresql/data]
+  idp:
+    image: ghcr.io/navikt/mock-oauth2-server:6.1.2
+    environment: {JSON_CONFIG_PATH: /config/idp.json, LOG_LEVEL: WARN}
+    volumes:
+      - type: bind
+        source: ./runtime/idp.json
+        target: /config/idp.json
+        read_only: true
+        bind: {create_host_path: false}
+    ports: [127.0.0.1:18086:8080]
+  front:
+    image: python:3.13-alpine
+    command: [python, /app/front.py]
+    environment: {DEMO_PUBLIC_URL: "${DEMO_PUBLIC_URL:-http://localhost:18085}", DEMO_DOMAIN_CHALLENGE: "${DEMO_DOMAIN_CHALLENGE:-}"}
+    volumes: [./front.py:/app/front.py:ro]
+    ports: [127.0.0.1:18085:8080]
+    depends_on: [idp, core]
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.2
+    profiles: [live]
+    command: [tunnel, --no-autoupdate, --url, "http://front:8080"]
+    depends_on: [front]
+  fixture:
+    image: python:3.13-alpine
+    command: [python, /app/fixture.py]
+    volumes: [./fixture.py:/app/fixture.py:ro]
+  event-migrate:
+    image: hookway-event-demo-core:latest
+    build: {context: ../../.., target: core, args: {COMMIT: "${DEMO_SERVER_SHA:-none}"}}
+    command: [event-store, migrate, --config, /config/core.yaml]
+    environment: *environment
+    volumes: [./core.yaml:/config/core.yaml:ro]
+    depends_on: {postgres: {condition: service_healthy}}
+  replay-migrate:
+    image: hookway-event-demo-replay:latest
+    build: {context: ../../.., target: replay, args: {COMMIT: "${DEMO_SERVER_SHA:-none}"}}
+    command: [migrate, --config, /config/replay.yaml]
+    environment: *environment
+    volumes: [./replay.yaml:/config/replay.yaml:ro]
+    depends_on: {postgres: {condition: service_healthy}}
+  core:
+    image: hookway-event-demo-core:latest
+    build: {context: ../../.., target: core, args: {COMMIT: "${DEMO_SERVER_SHA:-none}"}}
+    command: [--config, /config/core.yaml]
+    environment: *environment
+    volumes: [./core.yaml:/config/core.yaml:ro]
+    ports: [127.0.0.1:18080:8080]
+    depends_on:
+      event-migrate: {condition: service_completed_successfully}
+      idp: {condition: service_started}
+      fixture: {condition: service_started}
+  replay:
+    image: hookway-event-demo-replay:latest
+    build: {context: ../../.., target: replay, args: {COMMIT: "${DEMO_SERVER_SHA:-none}"}}
+    command: [serve, --config, /config/replay.yaml]
+    environment: *environment
+    volumes: [./replay.yaml:/config/replay.yaml:ro]
+    ports: [127.0.0.1:18081:8080]
+    depends_on: {replay-migrate: {condition: service_completed_successfully}, core: {condition: service_started}}
+  console:
+    build: {context: ../../.., dockerfile: web/Dockerfile, target: console, args: {COMMIT: "${DEMO_SERVER_SHA:-none}"}}
+    environment: {REPLAY_API_URL: "http://localhost:18081"}
+    ports: [127.0.0.1:18082:8080]
+    depends_on: [replay]
+volumes:
+  event-demo-db:

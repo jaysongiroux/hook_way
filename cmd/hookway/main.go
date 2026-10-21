@@ -338,7 +338,7 @@ func newCapturer(cfg flowconfig.Config, m *metrics.Metrics, logger *slog.Logger)
 
 // newControlServer builds the control listener replay redrives through, when
 // the replay block is configured.
-func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metrics.Metrics, logger *slog.Logger) *control.Server {
+func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metrics.Metrics, logger *slog.Logger, events ...control.EventOperator) *control.Server {
 	if !cfg.Replay.Configured {
 		return nil
 	}
@@ -348,7 +348,11 @@ func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metri
 	}
 	host, _ := os.Hostname()
 	ctl := cfg.Replay.Control
-	return control.New(control.Options{
+	var eventOperator control.EventOperator
+	if len(events) > 0 {
+		eventOperator = events[0]
+	}
+	return control.New(control.Options{Events: eventOperator,
 		Addr: ctl.Addr, Token: ctl.Token, MaxConcurrent: ctl.MaxConcurrent, MaxRecordBytes: cfg.Replay.MaxRecordBytes,
 		Flows: flows, Redriver: redriver, Metrics: m, Logger: logger, CoreVersion: version, CoreInstance: host,
 	})
@@ -495,7 +499,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		}()
 	}
 
-	ctl := newControlServer(flowCfg, flowApp, appMetrics, logger)
+	ctl := newControlServer(flowCfg, flowApp, appMetrics, logger, events)
 	if ctl != nil {
 		controlHTTP := ctl.HTTPServer()
 		go func() {

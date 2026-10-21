@@ -116,7 +116,7 @@ func TestActorIsEmptyOutsideRequire(t *testing.T) {
 }
 
 func TestScopesListsEveryScope(t *testing.T) {
-	want := []Scope{ScopeCapture, ScopeRead, ScopePayload, ScopeRetry, ScopeMetrics}
+	want := []Scope{ScopeCapture, ScopeRead, ScopePayload, ScopeRetry, ScopeMetrics, ScopeEventsRead, ScopeEventsPayload, ScopeEventsRetry, ScopeEventsManage}
 	got := Scopes()
 	if len(got) != len(want) {
 		t.Fatalf("Scopes = %v", got)

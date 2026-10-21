@@ -307,6 +307,8 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"ORDERS_WEBHOOK_SECRET":   "orders-secret",
 		"NOTIFY_WEBHOOK_SECRET":   "notify-secret",
 		"SAMPLE_WEBHOOK_SECRET":   "synthetic-secret",
+		"DEMO_ISSUER":             "https://identity.example.test/demo",
+		"DEMO_MCP_URL":            "https://mcp.example.test/agents/mcp",
 		"REVENUECAT_WEBHOOK_AUTH": "revenuecat-token",
 		"BASIC_WEBHOOK_SECRET":    "basic-secret",
 		"REDIS_URL":               "redis://localhost:6379",

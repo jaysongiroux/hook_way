@@ -4,6 +4,7 @@ package uicontract
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -29,7 +30,7 @@ type InfoDTO struct {
 func Info() InfoDTO {
 	return InfoDTO{ContractVersion: ContractVersion, Capabilities: []string{
 		"core_yaml_validate", "core_yaml_bundle_validate", "core_schema", "node_schemas",
-		"replay_yaml_validate", "replay_schema", "replay_action_input", "replay_resolution_input", "json_sample_validate", "openapi_inspect", "openapi_generate",
+		"mcp_event_action_input", "replay_yaml_validate", "replay_schema", "replay_action_input", "replay_resolution_input", "json_sample_validate", "openapi_inspect", "openapi_generate",
 	}}
 }
 
@@ -39,11 +40,13 @@ type ActionIssue struct {
 }
 
 type ReplayActionInput struct {
-	Action         string   `json:"action,omitempty"`
-	Note           string   `json:"note,omitempty"`
-	Reference      string   `json:"reference,omitempty"`
-	IdempotencyKey string   `json:"idempotency_key"`
-	RecordIDs      []string `json:"record_ids,omitempty"`
+	Action                   string   `json:"action,omitempty"`
+	Version                  string   `json:"version,omitempty"`
+	AcknowledgeDuplicateRisk bool     `json:"acknowledge_duplicate_risk,omitempty"`
+	Note                     string   `json:"note,omitempty"`
+	Reference                string   `json:"reference,omitempty"`
+	IdempotencyKey           string   `json:"idempotency_key"`
+	RecordIDs                []string `json:"record_ids,omitempty"`
 }
 
 type ReplayActionResult struct {
@@ -65,6 +68,19 @@ func ValidateReplayAction(input ReplayActionInput) ReplayActionResult {
 	case "", "retry":
 		if input.Note != "" || input.Reference != "" {
 			result.Issues = append(result.Issues, ActionIssue{"action", "evidence fields require action resolve"})
+		}
+	case "event_retry", "event_revoke", "event_restore":
+		if version, err := strconv.ParseInt(input.Version, 10, 64); err != nil || version < 1 {
+			result.Issues = append(result.Issues, ActionIssue{"version", "Refresh the detail before taking an action."})
+		}
+		if input.Action == "event_retry" && !input.AcknowledgeDuplicateRisk {
+			result.Issues = append(result.Issues, ActionIssue{"acknowledge_duplicate_risk", "Acknowledge the risk of duplicate delivery."})
+		}
+		if input.Action != "event_retry" || input.Note != "" {
+			result.Issues = append(result.Issues, ValidateResolutionInput(ResolutionInput{Note: input.Note}).Issues...)
+		}
+		if input.RecordIDs != nil || input.Reference != "" {
+			result.Issues = append(result.Issues, ActionIssue{"action", "Event operations apply to one event record."})
 		}
 	case ActionResolve:
 		result.Issues = append(result.Issues, ValidateResolutionInput(ResolutionInput{Note: input.Note, Reference: input.Reference}).Issues...)

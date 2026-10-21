@@ -16,7 +16,7 @@ type meResponse struct {
 
 func (a *api) me(w http.ResponseWriter, r *http.Request) {
 	identity := auth.Principal(r.Context())
-	writeJSON(w, http.StatusOK, meResponse{KeyName: identity.Name, Scopes: identity.Scopes, ContractVersion: uicontract.ContractVersion, Capabilities: []string{"record_api", "inspection_records", "failure_inspection", "payload_download", "destination_retry", "batch_retry", "unknown_resolution", "action_input_validation", "action_eligibility"}})
+	writeJSON(w, http.StatusOK, meResponse{KeyName: identity.Name, Scopes: identity.Scopes, ContractVersion: uicontract.ContractVersion, Capabilities: []string{"mcp_event_operations", "record_api", "inspection_records", "failure_inspection", "payload_download", "destination_retry", "batch_retry", "unknown_resolution", "action_input_validation", "action_eligibility"}})
 }
 
 type resolveResponse struct {
