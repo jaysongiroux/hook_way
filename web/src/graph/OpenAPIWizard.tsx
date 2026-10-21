@@ -37,6 +37,7 @@ import settingsSchema from "./openapiSettingsSchema.json";
 import { createDraftStore, FieldDraftContext } from "./formDrafts";
 import { CredentialsForm } from "./CredentialsPanel";
 import { MCPAuthentication } from "./MCPAuthentication";
+import { ExportModal } from "./ExportModal";
 import { MCPTester } from "./MCPTester";
 import { record } from "./WorkspaceEntries";
 import { toYaml } from "./toYaml";
@@ -85,31 +86,19 @@ function initialSettings() {
   };
 }
 
-export function OpenAPIWizard({
-  onClose,
-  onExportWorkspace,
-}: {
-  onClose: () => void;
-  onExportWorkspace: () => void;
-}) {
+export function OpenAPIWizard({ onClose }: { onClose: () => void }) {
   const [drafts] = useState(createDraftStore);
   return (
     <FieldDraftContext.Provider value={drafts}>
-      <Wizard
-        onClose={onClose}
-        onExportWorkspace={onExportWorkspace}
-        drafts={drafts}
-      />
+      <Wizard onClose={onClose} drafts={drafts} />
     </FieldDraftContext.Provider>
   );
 }
 function Wizard({
   onClose,
-  onExportWorkspace,
   drafts,
 }: {
   onClose: () => void;
-  onExportWorkspace: () => void;
   drafts: ReturnType<typeof createDraftStore>;
 }) {
   const [step, setStep] = useState(0);
@@ -127,6 +116,7 @@ function Wizard({
   const [discard, setDiscard] = useState(false);
   const [replace, setReplace] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const importer = useRef<OpenAPIImporter | null>(null);
   const revision = useRef(0);
   const body = useRef<HTMLDivElement>(null);
@@ -280,10 +270,21 @@ function Wizard({
     setError("");
     try {
       const doc = fromYaml(result.yaml);
-      doc.nodes.forEach((node) => {
-        node.data.literalDollars = true;
-      });
-      doc.literalConfigFields = ["server", "credentials"];
+      for (const node of doc.nodes) {
+        if (
+          node.data.nodeType !== "mcp_trigger" ||
+          !Array.isArray(node.data.options.tools)
+        )
+          continue;
+        const paths = node.data.literalDollarPaths ?? [];
+        node.data.options.tools.forEach((_, index) => {
+          paths.push(
+            ["tools", index, "input_schema"],
+            ["tools", index, "output_schema"],
+          );
+        });
+        node.data.literalDollarPaths = paths;
+      }
       useGraphStore.getState().setGraph(doc);
       onClose();
     } catch (e) {
@@ -944,7 +945,7 @@ function Wizard({
             replay configuration. Export the current workspace first if you need
             a copy.
           </Text>
-          <Button variant="default" onClick={onExportWorkspace}>
+          <Button variant="default" onClick={() => setExporting(true)}>
             Export current workspace
           </Button>
           <Group justify="flex-end">
@@ -957,6 +958,7 @@ function Wizard({
           </Group>
         </Stack>
       </Modal>
+      {exporting && <ExportModal opened onClose={() => setExporting(false)} />}
     </>
   );
 }

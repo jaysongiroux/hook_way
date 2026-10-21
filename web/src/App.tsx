@@ -261,7 +261,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             }}
             focusPath={focusPath}
           />
-          {openapiOpen && <OpenAPIWizard onClose={closeOpenAPI} onExportWorkspace={openExport} />}
+          {openapiOpen && <OpenAPIWizard onClose={closeOpenAPI} />}
           <ImportModal opened={importOpen} onClose={closeImport} />
           <ExportModal
             opened={exportOpen}

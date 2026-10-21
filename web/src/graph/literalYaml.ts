@@ -7,8 +7,8 @@ import {
   type Node,
   type Document,
 } from "yaml";
-import type { GraphDocument } from "./model";
-type Path = (string | number)[];
+import type { ConfigPath, GraphDocument } from "./model";
+type Path = ConfigPath;
 export type LiteralRoots = Path[];
 function walk(
   node: Node | null | undefined,
@@ -28,22 +28,32 @@ function walk(
     );
 }
 export function literalRoots(doc: GraphDocument, flow?: string): LiteralRoots {
-  const roots: LiteralRoots = flow
-    ? []
-    : (doc.literalConfigFields ?? []).map((key) => [key]);
+  const roots: LiteralRoots = flow ? [] : [...(doc.literalConfigPaths ?? [])];
   const flows = { ...doc.otherFlows, [doc.activeFlow]: { nodes: doc.nodes } };
   for (const [name, snapshot] of Object.entries(flows)) {
     if (flow && name !== flow) continue;
     snapshot.nodes.forEach((node, index) => {
-      if (node.data.literalDollars)
-        roots.push(flow ? ["nodes", index] : ["flows", name, "nodes", index]);
+      for (const path of node.data.literalDollarPaths ?? [])
+        roots.push([
+          ...(flow ? ["nodes", index] : ["flows", name, "nodes", index]),
+          ...path,
+        ]);
     });
   }
   return roots;
 }
 export function quoteLiterals(document: Document, roots: LiteralRoots) {
   const selected = (path: Path) =>
-    roots.some((root) => root.every((part, i) => path[i] === part));
+    roots.some((root) => {
+      const schema =
+        root.at(-3) === "tools" &&
+        typeof root.at(-2) === "number" &&
+        ["input_schema", "output_schema"].includes(String(root.at(-1)));
+      return (
+        (schema || path.length === root.length) &&
+        root.every((part, i) => path[i] === part)
+      );
+    });
   walk(document.contents, [], (node, path) => {
     if (
       selected(path) &&
@@ -100,12 +110,111 @@ export function restoreLiteralProvenance(
       const nodes =
         flow === doc.activeFlow ? doc.nodes : doc.otherFlows[flow]?.nodes;
       const target = nodes?.[path[3]];
-      if (target) target.data.literalDollars = true;
+      if (target) {
+        const relative = path.slice(4);
+        // Imported JSON Schemas stay literal, including edited enum/default strings.
+        const root =
+          relative[0] === "tools" &&
+          ["input_schema", "output_schema"].includes(String(relative[2]))
+            ? relative.slice(0, 3)
+            : relative;
+        target.data.literalDollarPaths = addRoot(
+          target.data.literalDollarPaths,
+          root,
+        );
+        if (relative[0] === "tools" && typeof relative[1] === "number") {
+          for (const field of ["input_schema", "output_schema"]) {
+            target.data.literalDollarPaths = addRoot(
+              target.data.literalDollarPaths,
+              ["tools", relative[1], field],
+            );
+          }
+        }
+      }
     } else if (typeof path[0] === "string" && path[0] !== "flows") {
-      doc.literalConfigFields = [
-        ...new Set([...(doc.literalConfigFields ?? []), path[0]]),
-      ];
+      doc.literalConfigPaths = addRoot(doc.literalConfigPaths, path);
     }
   });
   return doc;
+}
+
+function addRoot(paths: Path[] = [], root: Path): Path[] {
+  return paths.some((path) => JSON.stringify(path) === JSON.stringify(root))
+    ? paths
+    : [...paths, root];
+}
+const object = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+/** Move provenance with named array entries and renamed map keys, and drop deleted fields. */
+export function reconcileLiteralPaths(
+  paths: Path[] = [],
+  before: unknown,
+  after: unknown,
+): Path[] {
+  return paths.flatMap((path) => {
+    let previous = before,
+      next = after;
+    const result: Path = [];
+    for (const part of path) {
+      let destination = part;
+      if (
+        Array.isArray(previous) &&
+        Array.isArray(next) &&
+        typeof part === "number"
+      ) {
+        const item = object(previous[part]);
+        const identity =
+          typeof item.name === "string"
+            ? "name"
+            : typeof item.id === "string"
+              ? "id"
+              : undefined;
+        if (identity) {
+          let index = next.findIndex(
+            (value) => object(value)[identity] === item[identity],
+          );
+          if (index < 0) {
+            const oldIDs = new Set(
+              previous.map((value) => object(value)[identity]),
+            );
+            const newIDs = new Set(
+              next.map((value) => object(value)[identity]),
+            );
+            const removed = previous.filter(
+              (value) => !newIDs.has(object(value)[identity]),
+            );
+            const added = next
+              .map((value, index) => ({ value, index }))
+              .filter(({ value }) => !oldIDs.has(object(value)[identity]));
+            if (removed.length === 1 && added.length === 1)
+              index = added[0].index;
+          }
+          if (index < 0) return [];
+          destination = index;
+        }
+        if (!(destination in next)) return [];
+        previous = previous[part];
+        next = next[Number(destination)];
+      } else {
+        const old = object(previous),
+          updated = object(next);
+        if (!Object.hasOwn(updated, part)) {
+          const matches = Object.keys(updated).filter(
+            (key) =>
+              !Object.hasOwn(old, key) &&
+              JSON.stringify(updated[key]) === JSON.stringify(old[part]),
+          );
+          if (matches.length !== 1) return [];
+          destination = matches[0];
+        }
+        previous = old[part];
+        next = updated[destination];
+      }
+      result.push(destination);
+    }
+    return [result];
+  });
 }

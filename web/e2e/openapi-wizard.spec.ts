@@ -245,6 +245,19 @@ test("real WASM imports a standalone configuration without touching the current 
       .getByRole("button", { name: "Open in builder", exact: true })
       .click();
     await page
+      .getByRole("button", { name: "Export current workspace", exact: true })
+      .click();
+    const previousExport = page.getByRole("dialog", {
+      name: "Export configs",
+      exact: true,
+    });
+    await expect(previousExport).toBeVisible();
+    await expect(
+      previousExport.getByTestId("export-core.yaml"),
+    ).not.toContainText("imported_api:");
+    await previousExport.getByRole("button", { name: /close/i }).click();
+    await expect(previousExport).toBeHidden();
+    await page
       .getByRole("button", { name: "Cancel replacement", exact: true })
       .click();
     expect(await page.locator(".react-flow__node").count()).toBe(before);

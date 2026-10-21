@@ -8,9 +8,14 @@ import { saveGraph, loadGraph } from "./persistence";
 import { createNode } from "./model";
 const yaml = readFileSync("../examples/openapi/core.yaml", "utf8");
 test("imported dollars survive edits, node/flow rename, persistence and split exports", async () => {
-  const doc = fromYaml(yaml);
+  const doc = fromYaml(
+    yaml.replace(
+      "description: Get a customer.",
+      'description: "Literal \\u0024{ORIGINAL}"',
+    ),
+  );
   const trigger = doc.nodes.find((n) => n.data.nodeType === "mcp_trigger")!;
-  expect(trigger.data.literalDollars).toBe(true);
+  expect(trigger.data.literalDollarPaths).toBeDefined();
   const tools = trigger.data.options.tools as Record<string, unknown>[];
   tools[0].description = "Literal ${HOST_SECRET} and $5";
   tools[0].input_schema = {
@@ -27,8 +32,8 @@ test("imported dollars survive edits, node/flow rename, persistence and split ex
   const restored = (await loadGraph())!;
   expect(
     restored.nodes.find((n) => n.data.nodeType === "mcp_trigger")?.data
-      .literalDollars,
-  ).toBe(true);
+      .literalDollarPaths,
+  ).toBeDefined();
   for (const yamlMode of ["single", "split"] as const) {
     restored.yamlMode = yamlMode;
     const bundle = toBundle(restored);
@@ -39,8 +44,8 @@ test("imported dollars survive edits, node/flow rename, persistence and split ex
     const reopened = fromBundle(bundle);
     expect(
       reopened.nodes.find((n) => n.data.nodeType === "mcp_trigger")?.data
-        .literalDollars,
-    ).toBe(true);
+        .literalDollarPaths,
+    ).toBeDefined();
     expect(toBundle(reopened)).toEqual(bundle);
   }
   expect(
@@ -71,9 +76,94 @@ test("split files retain escaped literals with YAML document markers", () => {
   const imported = fromBundle(bundle);
   expect(
     imported.nodes.find((n) => n.data.nodeType === "mcp_trigger")?.data
-      .literalDollars,
-  ).toBe(true);
+      .literalDollarPaths,
+  ).toBeDefined();
   expect(Object.values(toBundle(imported).files).join("\n")).toContain(
     "\\u0024ref",
   );
+});
+
+test("new authored references stay expandable alongside imported literal fields", () => {
+  const doc = fromYaml(yaml);
+  useGraphStore.getState().setGraph(doc);
+  const request = doc.nodes.find(
+    (node) => node.data.nodeType === "http_request",
+  )!;
+  useGraphStore.getState().updateNodeData(request.id, {
+    options: {
+      ...request.data.options,
+      url: "https://${UPSTREAM_HOST}/customers/{path_1}",
+    },
+  });
+  useGraphStore.getState().setServerConfig({ addr: "${LISTEN_ADDR}" });
+  const text = toBundle(useGraphStore.getState().document()).files["core.yaml"];
+  expect(text).toContain("${UPSTREAM_HOST}");
+  expect(text).toContain("${LISTEN_ADDR}");
+  expect(text).toContain("\\u0024ref");
+});
+
+test("literal schema and description provenance follows tool rename and removal", () => {
+  const doc = fromYaml(
+    yaml.replace(
+      "description: Get a customer.",
+      'description: "Literal \\u0024{ORIGINAL}"',
+    ),
+  );
+  useGraphStore.getState().setGraph(doc);
+  const trigger = useGraphStore
+    .getState()
+    .nodes.find((n) => n.data.nodeType === "mcp_trigger")!;
+  const tools = trigger.data.options.tools as Record<string, unknown>[];
+  const renamed = tools.map((tool, i) =>
+    i === 0
+      ? { ...tool, name: "renamed", description: "Literal ${EDITED}" }
+      : tool,
+  );
+  useGraphStore.getState().updateNodeData(trigger.id, {
+    options: { ...trigger.data.options, tools: renamed },
+  });
+  let text = toBundle(useGraphStore.getState().document()).files["core.yaml"];
+  expect(text).toContain("\\u0024{EDITED}");
+  const schema = {
+    type: "object",
+    properties: { text: { type: "string", enum: ["${SCHEMA_LITERAL}"] } },
+  };
+  useGraphStore.getState().updateNodeData(trigger.id, {
+    options: {
+      ...trigger.data.options,
+      tools: [{ ...renamed[1], input_schema: schema }],
+    },
+  });
+  text = toBundle(useGraphStore.getState().document()).files["core.yaml"];
+  expect(text).toContain("\\u0024{SCHEMA_LITERAL}");
+  expect(text).not.toContain("EDITED");
+});
+
+test("credential rename preserves only imported literal references", () => {
+  const doc = fromYaml(
+    'credentials: {"\\u0024original": {kind: static, allowed_origins: [https://api.example.com], headers: {Authorization: {secret_ref: {provider: file, name: "/literal/\\u0024TOKEN"}}}}}\nflows: {main: {nodes: [], edges: []}}',
+  );
+  useGraphStore.getState().setGraph(doc);
+  const profile = (
+    doc.configExtra.credentials as Record<string, Record<string, unknown>>
+  )["$original"];
+  useGraphStore
+    .getState()
+    .setConfigExtra({ credentials: { renamed: profile } });
+  const header = (profile.headers as Record<string, Record<string, unknown>>)
+    .Authorization;
+  useGraphStore.getState().setConfigExtra({
+    credentials: {
+      renamed: {
+        ...profile,
+        headers: {
+          Authorization: { ...header, prefix: "Bearer ${AUTH_PREFIX}" },
+        },
+      },
+    },
+  });
+  const text = toBundle(useGraphStore.getState().document()).files["core.yaml"];
+  expect(text).toContain("/literal/\\u0024TOKEN");
+  expect(text).toContain("${AUTH_PREFIX}");
+  expect(text).not.toContain("original:");
 });

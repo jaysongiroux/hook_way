@@ -1,3 +1,4 @@
+import { reconcileLiteralPaths } from "./literalYaml";
 import { create } from "zustand";
 import {
   applyEdgeChanges,
@@ -233,6 +234,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
               data: {
                 ...n.data,
                 ...patch,
+                literalDollarPaths: patch.options
+                  ? reconcileLiteralPaths(
+                      n.data.literalDollarPaths,
+                      { ...n.data.options, description: n.data.description },
+                      { ...(patch.options as Record<string, unknown>), description: Object.hasOwn(patch, "description") ? patch.description : n.data.description },
+                    )
+                  : n.data.literalDollarPaths,
                 options:
                   patch.options && typeof patch.options === "object"
                     ? (patch.options as Record<string, unknown>)
@@ -270,6 +278,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         if (value === undefined) delete configExtra[key];
       return {
         configExtra,
+        literalConfigPaths: reconcileLiteralPaths(
+          s.literalConfigPaths,
+          { ...s.configExtra, server: s.serverConfig },
+          { ...configExtra, server: s.serverConfig },
+        ),
         formDrafts: reconcileConfigExtraDrafts(
           s.formDrafts ?? {},
           s.configExtra,
@@ -438,7 +451,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   document: () => {
     const s = get();
     return {
-      literalConfigFields: s.literalConfigFields,
+      literalConfigPaths: s.literalConfigPaths,
       yamlMode: s.yamlMode,
       entryFilename: s.entryFilename,
       flowFiles: s.flowFiles,
