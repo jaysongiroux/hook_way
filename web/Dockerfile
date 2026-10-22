@@ -20,7 +20,7 @@ ARG COMMIT=none
 RUN node -e 'require("node:fs").writeFileSync("public/build-info.json", JSON.stringify({version:process.env.VERSION,commit:process.env.COMMIT})+"\n")'
 RUN npm run build:console && test -s dist-console/hookway.wasm && test -s dist-console/wasm_exec.js
 
-FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3 AS console
+FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS console
 USER root
 # Python is used only at startup for strict URL validation/JSON serialization,
 # and by the local health check. Nginx serves all HTTP requests.
