@@ -235,16 +235,12 @@ test("documentation links open the published pages in the same tab", () => {
 
 test("the page does not restate the documentation it links to", () => {
   wrap();
-  // Guard against the site drifting into a docs rewrite: keep it a signpost.
-  // Measured on the content region, since Mantine injects a stylesheet into
-  // the render container.
-  const copy = screen.getByRole("main").textContent!;
-  // It exists to keep the page a signpost: docs/reference/configuration.md alone is
-  // ~95KB, and the site must not duplicate it.
-  //
-  // Include the ingress-adapter guide and its native capabilities, while
-  // retaining a compact overview, including MCP tools and the replay investigation walkthrough,
-  // rather than duplicating the reference.
+  // Keep the overview a signpost rather than a documentation rewrite.
+  // Mantine's responsive components inject styles inside main, so exclude CSS
+  // from the copy budget without changing the rendered page.
+  const content = screen.getByRole("main").cloneNode(true) as HTMLElement;
+  content.querySelectorAll("style").forEach((style) => style.remove());
+  const copy = content.textContent!;
   expect(copy.length).toBeLessThan(13500);
 });
 
