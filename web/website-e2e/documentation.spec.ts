@@ -19,7 +19,7 @@ async function openSearch(page: Page) {
   await expect(browse).toBeAttached();
   if (await browse.isVisible()) await browse.click();
   await page.getByRole('navigation', { name: 'Documentation', exact: true })
-    .getByRole('button', { name: 'Search', exact: true }).click();
+    .getByRole('button', { name: /^Search\b/ }).click();
 }
 
 test('marketing links open docs in the same tab and deep links survive refresh', async ({ page }) => {

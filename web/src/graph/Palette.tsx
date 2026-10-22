@@ -88,7 +88,7 @@ export function PaletteTabs({
               // every click of the tab already showing.
               if (!active) onChange(tab.value);
             }}
-            px={3}
+            px={2}
             py={4}
             style={{
               borderRadius: 4,
