@@ -40,6 +40,8 @@ export function WorkspaceEntries({
   nameError,
   children,
   warning,
+  emptyMessage,
+  allowRename = true,
 }: {
   label: string;
   value: unknown;
@@ -52,6 +54,8 @@ export function WorkspaceEntries({
     change: (entry: Record<string, unknown>) => void,
   ) => ReactNode;
   warning?: string;
+  emptyMessage?: string;
+  allowRename?: boolean;
 }) {
   const entries = record(value);
   const names = Object.keys(entries);
@@ -97,7 +101,8 @@ export function WorkspaceEntries({
       </Group>
       {names.length === 0 ? (
         <EmptyState>
-          No {label}s configured. Add one above to make it available to nodes.
+          {emptyMessage ??
+            `No ${label}s configured. Add one above to make it available to nodes.`}
         </EmptyState>
       ) : (
         <>
@@ -110,22 +115,24 @@ export function WorkspaceEntries({
           />
           {selected && (
             <Stack key={selected} gap="sm">
-              <EntryName
-                name={selected}
-                names={names}
-                nameError={nameError}
-                onRename={(next) => {
-                  onChange(
-                    Object.fromEntries(
-                      Object.entries(entries).map(([name, entry]) => [
-                        name === selected ? next : name,
-                        entry,
-                      ]),
-                    ),
-                  );
-                  setPicked(next);
-                }}
-              />
+              {allowRename && (
+                <EntryName
+                  name={selected}
+                  names={names}
+                  nameError={nameError}
+                  onRename={(next) => {
+                    onChange(
+                      Object.fromEntries(
+                        Object.entries(entries).map(([name, entry]) => [
+                          name === selected ? next : name,
+                          entry,
+                        ]),
+                      ),
+                    );
+                    setPicked(next);
+                  }}
+                />
+              )}
               {typeof entries[selected] !== "object" ||
               entries[selected] === null ||
               Array.isArray(entries[selected]) ? (

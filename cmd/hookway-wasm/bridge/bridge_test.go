@@ -82,6 +82,43 @@ func TestSampleValidationMatchesNative(t *testing.T) {
 	}
 }
 
+func TestNamedEventsValidationMatchesNative(t *testing.T) {
+	fixture, err := os.ReadFile("../../../examples/adapters/named-events.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.ReplaceAll(string(fixture), "${WEBHOOK_URL}", "https://receiver.example.test")
+	for _, tc := range []struct {
+		name, source string
+		valid        bool
+	}{
+		{"valid", source, true},
+		{"missing reference", strings.Replace(source, "event: issue.opened", "event: missing", 1), false},
+		{"external reference", strings.Replace(source, "title: {type: string, minLength: 1}", "title: {$ref: 'https://example.invalid/schema'}", 1), false},
+		{"unknown field", strings.Replace(source, "description: A new issue was opened.", "description: Issue\n    unknown: true", 1), false},
+		{"exact numeric schema", strings.Replace(source, "additionalProperties: false", "additionalProperties: false\n      maxProperties: 9007199254740993", 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := configapi.Validate([]byte(tc.source))
+			want, err := json.Marshal(response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := bridge.Validate(tc.source)
+			if err != nil || got != string(want) {
+				t.Fatalf("bridge=%s native=%s error=%v", got, want, err)
+			}
+			valid := true
+			for _, issue := range response.Issues {
+				valid = valid && issue.Severity == "warning"
+			}
+			if valid != tc.valid {
+				t.Fatalf("valid=%v: %s", valid, got)
+			}
+		})
+	}
+}
+
 func TestSchemaMatchesConfig(t *testing.T) {
 	want, err := configapi.Schema()
 	if err != nil {

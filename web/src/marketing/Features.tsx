@@ -14,7 +14,7 @@ const FEATURES: { title: string; body: string }[] = [
   },
   {
     title: "Expose APIs as MCP tools",
-    body: "Give assistants access to selected REST or native operations. Each MCP endpoint has its own tools, authentication, schemas and permissions.",
+    body: "Import an OpenAPI spec, select operations, and review the generated tools. Give each caller explicit permissions with API keys or OAuth.",
   },
   {
     title: "Verify who sent each request",
@@ -65,7 +65,7 @@ export function Features() {
       return;
     const animation = animate(
       `[data-feature-panel="${active}"]`,
-      { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+      { transform: ["translateY(8px)", "translateY(0px)"] },
       { duration: 0.28, ease: [0.22, 1, 0.36, 1] },
     );
     return () => animation.cancel();
@@ -87,15 +87,30 @@ export function Features() {
           <Tabs.Tab value="route">Route &amp; recover</Tabs.Tab>
         </Tabs.List>
         {[
-          { id: "connect", features: [0, 5, 1] },
-          { id: "prepare", features: [2, 3, 4, 7] },
-          { id: "route", features: [6, 8, 9, 10] },
+          {
+            id: "connect",
+            summary: "Where an event is published, how an HTTP request returns, and which APIs an agent can call.",
+            features: [0, 5, 1],
+          },
+          {
+            id: "prepare",
+            summary: "Who may send the request, how traffic is limited, and how the body is read and shaped.",
+            features: [2, 3, 4, 7],
+          },
+          {
+            id: "route",
+            summary: "Which events continue, which environment receives them, and how a missed delivery is recovered.",
+            features: [6, 8, 9, 10],
+          },
         ].map((group) => (
           <Tabs.Panel
             key={group.id}
             value={group.id}
             data-feature-panel={group.id}
           >
+            <Text c={DARK.muted} size="sm" mt="md" maw="68ch">
+              {group.summary}
+            </Text>
             {group.features.map((index) => (
               <Box
                 key={FEATURES[index].title}

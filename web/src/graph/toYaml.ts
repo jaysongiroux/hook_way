@@ -1,5 +1,6 @@
 import { Document } from "yaml";
-
-export function toYaml(config: unknown): string {
-  return new Document(config).toString();
+import { quoteLiterals, type LiteralRoots } from "./literalYaml";
+export function toYaml(config: unknown, roots: LiteralRoots = []): string {
+ const document = new Document(config);
+ return roots.length ? quoteLiterals(document, roots) : document.toString();
 }

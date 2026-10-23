@@ -75,8 +75,13 @@ type RedisConfig struct {
 	TLS        RedisTLSConfig
 }
 
+type MCPEventsConfig struct {
+	Endpoint string `yaml:"endpoint" json:"endpoint" jsonschema:"required"`
+}
+
 type DestinationConfig struct {
-	Type string
+	MCPEvents MCPEventsConfig
+	Type      string
 	// Connection is the connections entry this destination referenced, or ""
 	// when it was configured inline. It records what was *authored*: the name
 	// is kept even when it failed to resolve, so a consumer reading a Config
@@ -306,7 +311,8 @@ func convertPostgresConfig(raw rawPostgresConfig) PostgresConfig {
 }
 
 type rawDestinationConfig struct {
-	Type string `yaml:"type"`
+	MCPEvents MCPEventsConfig `yaml:"mcp_events"`
+	Type      string          `yaml:"type"`
 	// Connection names an entry in the top-level connections block whose type
 	// can serve this destination type (see connTypeForDestType). Its fields
 	// are merged into the backend block below by applyConnection, before
@@ -557,6 +563,7 @@ func convertDestination(fieldPrefix string, raw rawDestinationConfig) (Destinati
 		issues = append(issues, issue)
 	}
 	return DestinationConfig{
+		MCPEvents:          raw.MCPEvents,
 		Type:               raw.Type,
 		Connection:         raw.Connection,
 		OnExistingConflict: policy,

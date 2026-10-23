@@ -19,23 +19,24 @@ export function BuilderFrame() {
       data-running={running && !paused ? "true" : "false"}
       style={{
         border: `1px solid ${DARK.border}`,
-        borderRadius: 4,
+        borderRadius: 12,
+        boxShadow: "0 8px 32px rgba(30, 50, 75, 0.06), 0 1px 3px rgba(30, 50, 75, 0.04)",
         overflow: "hidden",
         background: DARK.surface,
       }}
     >
       <Group
         gap={6}
-        px="sm"
-        py={8}
-        style={{ borderBottom: `1px solid ${DARK.border}`, background: DARK.recessed }}
+        px="md"
+        py={10}
+        style={{ borderBottom: `1px solid ${DARK.border}`, background: DARK.surface }}
       >
-        <LogoMark size={14} />
+        <LogoMark size={17} />
         <Text
           size="xs"
           c={DARK.muted}
           ml={4}
-          style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+          style={{ fontFamily: '"Source Code Pro", ui-monospace, Menlo, monospace' }}
         >
           Hookway Builder
         </Text>
@@ -74,10 +75,11 @@ function CanvasMock() {
       style={{ display: "block", fontFamily: "inherit" }}
     >
       <defs>
-        <pattern id="hookway-dots" width="18" height="18" patternUnits="userSpaceOnUse">
-          <circle cx="1" cy="1" r="1" fill={DARK.border} />
+        <pattern id="hookway-dots" width="16" height="16" patternUnits="userSpaceOnUse">
+          <circle cx="0.6" cy="0.6" r="0.65" fill="#DEE4EC" />
         </pattern>
       </defs>
+      <rect x={0} y={0} width={inspectorX - 20} height={LAYOUT.height} fill="#F8FAFD" />
       <rect x={0} y={0} width={inspectorX - 20} height={LAYOUT.height} fill="url(#hookway-dots)" />
       <FlowGraphSvg selectedId="ep" markerId="hookway-hero-edge" animate />
       <Inspector x={inspectorX} />
@@ -95,18 +97,23 @@ function Inspector({ x }: { x: number }) {
   ];
   return (
     <g>
+      <rect x={x - 20} y={0} width={270} height={LAYOUT.height} fill="#FFFFFF" />
       <line x1={x - 20} y1={0} x2={x - 20} y2={LAYOUT.height} stroke={DARK.border} strokeWidth={1} />
-      <text x={x} y={22} fontSize={10} fill={DARK.muted} letterSpacing={1}>
+      <text x={x} y={36} fontSize={15} fontWeight={650} fill={DARK.text}>
+        in
+      </text>
+      <text x={x} y={54} fontSize={11} fill={DARK.accent}>
         HTTP endpoint
       </text>
+      <line x1={x} y1={70} x2={x + 210} y2={70} stroke="#E6EAF0" />
       {rows.map((r, i) => {
-        const top = 46 + i * 52;
+        const top = 91 + i * 55;
         return (
           <g key={r.label}>
             <text x={x} y={top} fontSize={11} fill={DARK.muted}>
               {r.label}
             </text>
-            <rect x={x} y={top + 8} width={210} height={26} rx={4} fill={DARK.recessed} stroke={DARK.border} />
+            <rect x={x} y={top + 6} width={210} height={29} rx={5} fill="#F8FAFD" stroke="#DDE3EB" />
             <text x={x + 8} y={top + 25} fontSize={11} fill={DARK.text}>
               {r.value}
             </text>

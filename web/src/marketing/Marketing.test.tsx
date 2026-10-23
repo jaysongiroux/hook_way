@@ -77,28 +77,33 @@ test("features include MCP alongside native delivery and verification", () => {
   expect(text).not.toMatch(/HMAC, static header, or JWT/);
 });
 
-test("MCP has a prominent discovery path, an authenticated branch diagram and setup links", () => {
+test("MCP connects API import, event-triggered lookup and delivery operations", () => {
   wrap();
   expect(
     screen.getByRole("link", { name: "authenticated MCP endpoints" }),
   ).toHaveAttribute("href", "#mcp-gateway");
   const section = screen
     .getByRole("heading", {
-      name: "Let AI assistants use your APIs",
+      name: "Give agents tools and events",
     })
     .closest("section")!;
   expect(section.parentElement).toHaveAttribute("id", "mcp-gateway");
-  expect(section).toHaveTextContent(/each call runs one selected branch/i);
-  expect(section).toHaveTextContent("/services/mcp");
-  expect(section).toHaveTextContent("/utilities/mcp");
+  expect(section).toHaveTextContent(/Upload an OpenAPI spec/);
+  expect(section).toHaveTextContent("issue.opened");
+  expect(section).toHaveTextContent("get_issue");
+  expect(section).toHaveTextContent(/clients that support MCP Events/);
+  expect(section).toHaveTextContent(/Callback acceptance confirms receipt/);
   expect(section).toHaveTextContent(/API keys or an external OAuth provider/);
   expect(section).toHaveTextContent(/keep upstream credentials separate/i);
   expect(
-    screen.getByRole("link", { name: "Configure the MCP gateway" }),
-  ).toHaveAttribute("href", docsHref("docs/guides/mcp-gateway.md"));
+    screen.getByRole("link", { name: "Import an API as MCP tools" }),
+  ).toHaveAttribute("href", docsHref("docs/guides/openapi-import.md"));
   expect(
-    screen.getByRole("link", { name: "View the authenticated template" }),
-  ).toHaveAttribute("href", docsHref("examples/templates/mcp-gateway.yaml"));
+    screen.getByRole("link", { name: "Try the issue event demo" }),
+  ).toHaveAttribute("href", docsHref("examples/mcp-events/demo/README.md"));
+  expect(
+    screen.getByRole("link", { name: "Explore event operations" }),
+  ).toHaveAttribute("href", docsHref("docs/operations/mcp-events-console.md"));
 });
 
 test("the destination marquee explains Temporal workflow delivery", () => {
@@ -230,16 +235,12 @@ test("documentation links open the published pages in the same tab", () => {
 
 test("the page does not restate the documentation it links to", () => {
   wrap();
-  // Guard against the site drifting into a docs rewrite: keep it a signpost.
-  // Measured on the content region, since Mantine injects a stylesheet into
-  // the render container.
-  const copy = screen.getByRole("main").textContent!;
-  // It exists to keep the page a signpost: docs/reference/configuration.md alone is
-  // ~95KB, and the site must not duplicate it.
-  //
-  // Include the ingress-adapter guide and its native capabilities, while
-  // retaining a compact overview, including MCP tools and the replay investigation walkthrough,
-  // rather than duplicating the reference.
+  // Keep the overview a signpost rather than a documentation rewrite.
+  // Mantine's responsive components inject styles inside main, so exclude CSS
+  // from the copy budget without changing the rendered page.
+  const content = screen.getByRole("main").cloneNode(true) as HTMLElement;
+  content.querySelectorAll("style").forEach((style) => style.remove());
+  const copy = content.textContent!;
   expect(copy.length).toBeLessThan(13500);
 });
 

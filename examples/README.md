@@ -15,6 +15,7 @@ examples under this directory. File headers explain each demonstration;
 | [sample.yaml](sample.yaml) | Keep a configurable random fraction of events with a Sample node. Sampling drops that branch, not just inspection records. |
 | [inspect.yaml](inspect.yaml) | Sample → Inspect on an independent branch, alongside RabbitMQ Publish for every request; uses the local replay stack. See [run instructions](../docs/operations/replay-console.md#view-only-inspections). |
 | [filters.yaml](filters.yaml) | Filtering reference: a filter node after envelope with a silent drop, a branch-level filter that fans out selectively, and `on_no_match: reject` (422) using numeric, regex, and `exists` operators. See `docs/reference/configuration.md` § Filtering. |
+| [adapters/named-events.yaml](adapters/named-events.yaml) | Authenticated issue webhook, filtering/projection, named event validation and synchronous JSON webhook delivery. See [Named events](../docs/guides/named-events.md). |
 | [json-validation.yaml](json-validation.yaml) | Validate required fields, numeric IDs and email formats with local JSON Schema references. Optional explicit conversion; malformed input returns 400. See [Validate JSON](../docs/guides/json-validation.md). |
 | [variables.yaml](variables.yaml) | Dynamic routing reference: an environment comes from a path placeholder or filtered header, `field_map` copies a JSON body field to `vars.tenant`, and `{name}` placeholders select a pre-provisioned SQS queue and webhook URL. Unknown environments and unresolved templates fail closed. See `docs/reference/configuration.md` § Variables. |
 | [on_error.yaml](on_error.yaml) | Error-port reference: `http_request` 5xx to a DLQ (`ack:on_error>dlq`) or an explicit 502 (`up:on_error>fail`); `rate_limit:on_error` to a 429; `auth:on_error` to a 401; `envelope:on_error` to a 400. `http_trigger`, `read_body`, and `no_auth` have no error port. Also shows `http_request` `retry` combined with an `on_error` path. See `docs/reference/configuration.md` § Flows. |
@@ -235,3 +236,6 @@ so remove unused stores. See [Protection stores](../docs/guides/protection-store
 [multi-yaml/core.yaml](multi-yaml/core.yaml) and references separate
 [orders](multi-yaml/flows/orders.yaml) and [billing](multi-yaml/flows/billing.yaml)
 flow bodies. Single-file configuration remains supported.
+
+- [MCP event subscriptions](mcp-events.yaml): PostgreSQL-backed subscriptions, authenticated issue webhooks, and signed callbacks.
+- [Signed HTTPS callback receiver](mcp-events/callback_receiver.py): standard-library test receiver using your TLS certificate.

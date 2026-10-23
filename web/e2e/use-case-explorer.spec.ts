@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { SCENARIO_GROUPS } from "../src/marketing/useCaseDiagrams";
 
 for (const width of [1440, 1024, 769, 390]) {
-  test(`visual use cases preserve all nine examples at ${width}px`, async ({
+  test(`visual use cases preserve all runnable examples at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -62,9 +62,9 @@ test("the scenario rail supports keyboard selection", async ({ page }) => {
   await first.focus();
   await page.keyboard.press("ArrowDown");
   await expect(
-    page.getByRole("tab", { name: "Synchronous API proxy", exact: true }),
+    page.getByRole("tab", { name: "Events for agents", exact: true }),
   ).toBeFocused();
   await expect(
     page.getByRole("tabpanel").getByRole("heading", { level: 2 }),
-  ).toHaveText(/synchronous reverse proxy/);
+  ).toHaveText("Wake agents with business events");
 });

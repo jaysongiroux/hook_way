@@ -25,7 +25,7 @@ import {
 } from "./nodeSchema";
 import { Sections } from "./InspectorSections";
 import { goDurationIssue } from "./goDuration";
-import { clearDraftBranch, useFieldDraft } from "./formDrafts";
+import { useClearDraftBranch, useFieldDraft } from "./formDrafts";
 
 export interface SchemaFormProps {
   schema: JSONSchema | undefined;
@@ -174,6 +174,7 @@ function SchemaField(
     schema: JSONSchema;
   },
 ) {
+  const clearDraftBranch = useClearDraftBranch();
   const {
     name,
     schema,
@@ -460,6 +461,7 @@ function ObjectRows(
     issue?: string;
   },
 ) {
+  const clearDraftBranch = useClearDraftBranch();
   const {
     value,
     onChange,

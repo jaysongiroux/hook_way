@@ -1,3 +1,4 @@
+import { reconcileLiteralPaths } from "./literalYaml";
 import { create } from "zustand";
 import {
   applyEdgeChanges,
@@ -40,6 +41,7 @@ interface GraphState extends GraphDocument {
   onEdgesChange: (changes: EdgeChange[]) => void;
   onConnect: (c: Connection) => void;
   addNode: (n: HookwayNode) => void;
+  appendExampleGraph: (sub: Pick<TemplateSubgraph, "nodes" | "edges">) => void;
   insertSubgraph: (
     sub: TemplateSubgraph,
     position: { x: number; y: number },
@@ -159,6 +161,21 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       get().addFlow(nextMCPFlowName(get()));
     set({ nodes: [...get().nodes, availableMCPEndpoint(n, get())] });
   },
+  // Examples append exactly one graph without the template's MCP/resource rules.
+  appendExampleGraph: (sub) => {
+    const { nodes, edges } = get();
+    const taken = new Set(nodes.flatMap((n) => [n.id, String(n.data.yamlId ?? n.id)]));
+    const bottom = nodes.reduce(
+      (max, node) => Math.max(max, node.position.y + (node.measured?.height ?? node.height ?? 160)),
+      0,
+    );
+    const placed = offsetSubgraph(renameSubgraph(structuredClone(sub), taken), {
+      x: 80,
+      y: nodes.length ? bottom + 80 : 80,
+    });
+    seedCounters([...nodes, ...placed.nodes]);
+    set({ nodes: [...nodes, ...placed.nodes], edges: [...edges, ...placed.edges] });
+  },
   // insertSubgraph drops a palette template onto the canvas. Ids are renamed
   // against everything already in this flow (a second insert of the same
   // template would otherwise export duplicate `id:` keys), and positions are
@@ -233,6 +250,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
               data: {
                 ...n.data,
                 ...patch,
+                literalDollarPaths: patch.options
+                  ? reconcileLiteralPaths(
+                      n.data.literalDollarPaths,
+                      { ...n.data.options, description: n.data.description },
+                      { ...(patch.options as Record<string, unknown>), description: Object.hasOwn(patch, "description") ? patch.description : n.data.description },
+                    )
+                  : n.data.literalDollarPaths,
                 options:
                   patch.options && typeof patch.options === "object"
                     ? (patch.options as Record<string, unknown>)
@@ -270,6 +294,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         if (value === undefined) delete configExtra[key];
       return {
         configExtra,
+        literalConfigPaths: reconcileLiteralPaths(
+          s.literalConfigPaths,
+          { ...s.configExtra, server: s.serverConfig },
+          { ...configExtra, server: s.serverConfig },
+        ),
         formDrafts: reconcileConfigExtraDrafts(
           s.formDrafts ?? {},
           s.configExtra,
@@ -438,6 +467,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   document: () => {
     const s = get();
     return {
+      literalConfigPaths: s.literalConfigPaths,
       yamlMode: s.yamlMode,
       entryFilename: s.entryFilename,
       flowFiles: s.flowFiles,
@@ -606,7 +636,7 @@ function pruneRemovedFieldDrafts(
   return result;
 }
 
-function reconcileConfigExtraDrafts(
+export function reconcileConfigExtraDrafts(
   drafts: Record<string, EditorDraft>,
   previous: Record<string, unknown>,
   next: Record<string, unknown>,
@@ -637,7 +667,7 @@ function reconcileConfigExtraDrafts(
     }
     result = pruneRemovedFieldDrafts(result, oldEntry, entry, scope, path);
   }
-  for (const category of ["lookups", "state_stores"]) {
+  for (const category of ["lookups", "state_stores", "events"]) {
     const oldEntries = asRecord(previous[category]),
       entries = asRecord(next[category]);
     result = reconcileNamedDrafts(result, oldEntries, entries, category, {

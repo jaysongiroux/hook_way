@@ -53,6 +53,7 @@ func TestConsoleBrowserFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
+	eventClient, seedEvents := prepareEvents(t, database, pool)
 	seed := func() error {
 		if _, err := pool.Exec(ctx, "TRUNCATE records CASCADE; UPDATE usage SET records=0, bytes=0"); err != nil {
 			return err
@@ -170,7 +171,7 @@ func TestConsoleBrowserFixture(t *testing.T) {
 				}
 			}
 		}
-		return nil
+		return seedEvents()
 	}
 	if err := seed(); err != nil {
 		t.Fatal(err)
@@ -178,11 +179,11 @@ func TestConsoleBrowserFixture(t *testing.T) {
 	m := metrics.New()
 	a := auth.New([]auth.Key{
 		// #nosec G101 -- Public synthetic token in a loopback-only test executable, never production.
-		{Name: "demo-operator", Token: "console-ops-token-0123456789abcdefghijkl", Scopes: []auth.Scope{auth.ScopeRead, auth.ScopeRetry, auth.ScopePayload}},
-		{Name: "demo-reader", Token: "console-read-token-0123456789abcdefghijkl", Scopes: []auth.Scope{auth.ScopeRead}},
+		{Name: "demo-operator", Token: "console-ops-token-0123456789abcdefghijkl", Scopes: []auth.Scope{auth.ScopeRead, auth.ScopeRetry, auth.ScopePayload, auth.ScopeEventsRead, auth.ScopeEventsPayload, auth.ScopeEventsRetry, auth.ScopeEventsManage}},
+		{Name: "demo-reader", Token: "console-read-token-0123456789abcdefghijkl", Scopes: []auth.Scope{auth.ScopeRead, auth.ScopeEventsRead}},
 		{Name: "demo-recovery", Token: "console-retry-token-0123456789abcdefghijkl", Scopes: []auth.Scope{auth.ScopeRead, auth.ScopeRetry}},
 	}, m.AuthFailure)
-	production := api.New(api.Options{Store: st, Auth: a, Metrics: m, MaxRecordBytes: 1 << 20, AllowedOrigins: []string{"http://127.0.0.1:5183"}})
+	production := api.New(api.Options{Events: eventClient, Store: st, Auth: a, Metrics: m, MaxRecordBytes: 1 << 20, AllowedOrigins: []string{"http://127.0.0.1:5183"}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /test/reset", func(w http.ResponseWriter, r *http.Request) {
 		if err := seed(); err != nil {

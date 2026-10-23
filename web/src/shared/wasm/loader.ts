@@ -7,9 +7,12 @@ export type WasmCapability =
   | "node_schemas"
   | "replay_yaml_validate"
   | "replay_schema"
+  | "mcp_event_action_input"
   | "replay_action_input"
   | "replay_resolution_input"
-  | "json_sample_validate";
+  | "json_sample_validate"
+ | "openapi_inspect"
+ | "openapi_generate";
 
 interface WasmContractInfo {
   contract_version: number;
@@ -43,6 +46,8 @@ declare global {
     hookwayReplayValidate?: (yaml: string) => string;
     hookwayReplaySchema?: () => string;
     hookwayReplayActionValidate?: (json: string) => string;
+    hookwayOpenAPIInspect?: (json: string) => string;
+    hookwayOpenAPIGenerate?: (json: string) => string;
     hookwayJSONSampleValidate?: (json: string) => string;
   }
 }
@@ -54,9 +59,12 @@ const required: Record<WasmCapability, keyof Window> = {
   node_schemas: "hookwayNodeSchemas",
   replay_yaml_validate: "hookwayReplayValidate",
   replay_schema: "hookwayReplaySchema",
+  mcp_event_action_input: "hookwayReplayActionValidate",
   replay_action_input: "hookwayReplayActionValidate",
   replay_resolution_input: "hookwayReplayActionValidate",
   json_sample_validate: "hookwayJSONSampleValidate",
+  openapi_inspect: "hookwayOpenAPIInspect",
+  openapi_generate: "hookwayOpenAPIGenerate",
 };
 
 let state: WasmState = { status: "idle" };

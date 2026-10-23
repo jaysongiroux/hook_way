@@ -19,7 +19,7 @@ async function openSearch(page: Page) {
   await expect(browse).toBeAttached();
   if (await browse.isVisible()) await browse.click();
   await page.getByRole('navigation', { name: 'Documentation', exact: true })
-    .getByRole('button', { name: 'Search', exact: true }).click();
+    .getByRole('button', { name: /^Search\b/ }).click();
 }
 
 test('marketing links open docs in the same tab and deep links survive refresh', async ({ page }) => {
@@ -36,6 +36,14 @@ test('marketing links open docs in the same tab and deep links survive refresh',
   await page.reload();
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Configuration');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.goto('/#mcp-gateway');
+  await page.getByRole('link', { name: 'Try the issue event demo', exact: true }).click();
+  await expect(page).toHaveURL(/\/docs\/examples\/mcp-events\/demo\/$/);
+  await expect(page.getByRole('article').getByRole('heading', { level: 1 })).toBeVisible();
+  await page.goto('/#mcp-gateway');
+  await page.getByRole('link', { name: 'Explore event operations', exact: true }).click();
+  await expect(page).toHaveURL(/\/docs\/operations\/mcp-events-console\/$/);
+  await expect(page.getByRole('article').getByRole('heading', { level: 1 })).toBeVisible();
 });
 
 test('examples preserve multi-file routes and original YAML downloads', async ({ page }, testInfo) => {

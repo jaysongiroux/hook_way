@@ -574,3 +574,7 @@ The replay binary serves only the scoped API and workers. Build it with
 `make build` without web dependencies. Deploy `hookway-console` separately for
 browser operations; its `REPLAY_API_URL` and replay `server.cors.allowed_origins`
 connect the services. See [replay-console.md](../operations/replay-console.md).
+
+## event-store
+
+`hookway event-store migrate|status|gc --config FILE` administers the optional durable MCP event store. Migrate explicitly creates its schema and tables under an advisory migration lock; serving never migrates. Status prints only the schema version. GC removes terminal delivery records older than 24 hours and unreferenced event bodies. See [MCP events](../guides/mcp-events.md).

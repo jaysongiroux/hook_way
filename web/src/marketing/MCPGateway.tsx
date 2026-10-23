@@ -15,8 +15,8 @@ export function MCPGateway() {
   return (
     <Box id="mcp-gateway" style={{ scrollMarginTop: 88 }}>
       <Section
-        title="Let AI assistants use your APIs"
-        lead="Turn selected API operations into tools an AI assistant can discover and call through the Model Context Protocol (MCP). You decide what it can do."
+        title="Give agents tools and events"
+        lead="Import APIs as MCP tools. Let compatible agents subscribe to events and look up details when something changes."
         background={DARK.recessed}
       >
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing={48}>
@@ -24,98 +24,99 @@ export function MCPGateway() {
             <Box component="ol" className="hookway-setup-steps">
               <li>
                 <Title order={3} size="h5">
-                  Define a tool
+                  Import the operations you choose
                 </Title>
                 <Text c={DARK.muted} mt={8}>
-                  Name the operation, describe it, and define its input and
-                  output. For example, check your service’s status.
+                  Upload an OpenAPI spec, select operations, and review the
+                  generated flow before exporting YAML.
                 </Text>
               </li>
               <li>
                 <Title order={3} size="h5">
-                  Connect it to your API
+                  Set each agent’s access
                 </Title>
                 <Text c={DARK.muted} mt={8}>
-                  Connect the tool to an HTTP request and return its result. Add
-                  native steps to prepare data.
+                  Use API keys or an external OAuth provider. Grant tools and
+                  events per caller; keep upstream credentials separate.
                 </Text>
               </li>
               <li>
                 <Title order={3} size="h5">
-                  Connect your assistant
+                  Let events start the next step
                 </Title>
                 <Text c={DARK.muted} mt={8}>
-                  Deploy the flow and add its URL to a compatible MCP client.
-                  Authenticate with API keys or an external OAuth provider, and
-                  grant access per tool.
+                  Publish named events from your flows. Subscribed clients
+                  receive matching events through signed webhooks.
                 </Text>
               </li>
             </Box>
-            <Anchor href={docsHref("docs/guides/mcp-gateway.md")} fw={600}>
-              Configure the MCP gateway
+            <Anchor href={docsHref("docs/guides/openapi-import.md")} fw={600}>
+              Import an API as MCP tools
             </Anchor>
           </Stack>
           <Box
             component="figure"
             m={0}
             className="hookway-mcp-example"
-            aria-label="An assistant calls a permitted MCP tool, Hookway requests your API, and returns a validated result"
+            aria-label="An issue webhook creates an event, Hookway delivers it to a matching subscriber, and the agent calls get_issue"
           >
             <Text component="figcaption" size="sm" c={DARK.muted}>
-              Example: check a service from your assistant
+              Example: an issue event starts an agent workflow
             </Text>
             <Box className="hookway-mcp-question">
               <Text size="lg" fw={600}>
-                “Is our service healthy?”
+                “When an issue opens, fetch its details.”
               </Text>
               <Text size="sm" c={DARK.muted} mt={4}>
-                You ask in your connected assistant.
+                For clients that support MCP Events, including ChatGPT Work.
               </Text>
             </Box>
             <ol className="hookway-tool-path" data-marketing-motion="sequence">
               <li>
-                <Text fw={600}>The assistant calls your tool</Text>
-                <code>get_service_status</code>
+                <Text fw={600}>A webhook creates a named event</Text>
+                <code>issue.opened</code>
                 <Text size="sm" c={DARK.muted}>
-                  Hookway checks the caller’s permissions and tool input.
+                  Verify the sender and validate the event payload.
                 </Text>
               </li>
               <li>
-                <Text fw={600}>Hookway requests your API</Text>
-                <code>GET https://status.example.com/status</code>
+                <Text fw={600}>Hookway delivers the matching event</Text>
+                <code>Signed callback → subscribed agent</code>
                 <Text size="sm" c={DARK.muted}>
-                  Your API credentials stay in Hookway.
+                  Subscription filters decide which events reach the agent.
                 </Text>
               </li>
               <li>
-                <Text fw={600}>The result returns to the assistant</Text>
-                <code>{'{"status":"ok"}'}</code>
+                <Text fw={600}>The agent looks up the details</Text>
+                <code>get_issue</code>
                 <Text size="sm" c={DARK.muted}>
-                  Hookway validates the output before returning it.
+                  An authenticated tool retrieves details from your API.
                 </Text>
               </li>
             </ol>
             <Anchor
-              href={docsHref("examples/templates/mcp-gateway.yaml")}
+              href={docsHref("examples/mcp-events/demo/README.md")}
               size="sm"
             >
-              View the authenticated template
+              Try the issue event demo
             </Anchor>
           </Box>
         </SimpleGrid>
         <Box className="hookway-section-note">
           <Title order={3} size="h5">
-            Choose what each assistant can access
+            Inspect and recover event delivery
           </Title>
           <Text c={DARK.muted} size="sm" mt={8}>
-            Endpoints such as <code>/services/mcp</code> and{" "}
-            <code>/utilities/mcp</code> each own their tools and permissions.
-            Keep upstream credentials separate, set call deadlines, rate limits
-            and concurrency limits. Each call runs one selected branch.
+            Inspect callback attempts, retry eligible failures, or revoke a
+            subscription from the console. Callback acceptance confirms receipt;
+            the agent’s work is tracked by its client.
           </Text>
           <Group mt={12}>
-            <Anchor href={docsHref("examples/mcp-endpoints.yaml")} size="sm">
-              See multiple MCP endpoints
+            <Anchor href={docsHref("docs/operations/mcp-events-console.md")} size="sm">
+              Explore event operations
+            </Anchor>
+            <Anchor href={docsHref("docs/guides/mcp-events.md")} size="sm">
+              Configure MCP Events
             </Anchor>
           </Group>
         </Box>

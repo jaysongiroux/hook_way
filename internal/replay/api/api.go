@@ -41,6 +41,7 @@ type Store interface {
 
 // Options configures New.
 type Options struct {
+	Events         EventControl
 	Store          Store
 	Auth           *auth.Authenticator
 	Metrics        *metrics.Metrics
@@ -62,6 +63,7 @@ const (
 )
 
 type api struct {
+	events         EventControl
 	store          Store
 	metrics        *metrics.Metrics
 	logger         *slog.Logger
@@ -70,7 +72,7 @@ type api struct {
 
 // New returns the API handler.
 func New(opts Options) http.Handler {
-	a := &api{store: opts.Store, metrics: opts.Metrics, logger: opts.Logger, maxRecordBytes: opts.MaxRecordBytes}
+	a := &api{events: opts.Events, store: opts.Store, metrics: opts.Metrics, logger: opts.Logger, maxRecordBytes: opts.MaxRecordBytes}
 	if a.logger == nil {
 		a.logger = slog.Default()
 	}
@@ -79,6 +81,9 @@ func New(opts Options) http.Handler {
 	handlers := map[string]http.HandlerFunc{"validateAction": a.validateAction, "whoAmI": a.me, "resolveRecord": a.resolve, "captureRecord": a.ingest, "listRecords": a.list, "getRecord": a.get, "downloadPayload": a.payload, "retryRecord": a.retry, "dismissRecord": a.dismiss, "retryRecords": a.retryBatch, "getRetry": a.getRun, "health": a.healthz, "ready": a.readyz}
 	for _, route := range Routes() {
 		handler := handlers[route.OperationID]
+		if strings.HasPrefix(route.OperationID, "mcpEvent_") {
+			handler = a.eventOperation(strings.TrimPrefix(route.OperationID, "mcpEvent_"))
+		}
 		if handler == nil {
 			panic("replay route has no handler: " + route.OperationID)
 		}

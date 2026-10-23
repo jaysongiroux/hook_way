@@ -11,84 +11,91 @@ import (
 )
 
 type Metrics struct {
-	mcpCalls                  *prometheus.CounterVec
-	mcpDuration               *prometheus.HistogramVec
-	flagEvaluations           *prometheus.CounterVec
-	flagConnections           *prometheus.GaugeVec
-	protectionOperations      *prometheus.CounterVec
-	protectionDuration        *prometheus.HistogramVec
-	protectionPool            *prometheus.GaugeVec
-	protectionPoolWait        *prometheus.CounterVec
-	protectionReady           *prometheus.GaugeVec
-	protectionCleanup         *prometheus.CounterVec
-	protectionDeleted         *prometheus.CounterVec
-	protectionCleanupDuration *prometheus.HistogramVec
-	admissionWaiting          prometheus.Gauge
-	admissionWaits            *prometheus.CounterVec
-	admissionWaitDuration     *prometheus.HistogramVec
-	batch                     *prometheus.CounterVec
-	credentials               *prometheus.CounterVec
-	routing                   *prometheus.CounterVec
-	registry                  *prometheus.Registry
-	httpRequests              *prometheus.CounterVec
-	authFailures              *prometheus.CounterVec
-	rateLimited               *prometheus.CounterVec
-	saturated                 *prometheus.CounterVec
-	forbidden                 *prometheus.CounterVec
-	duplicateRejected         *prometheus.CounterVec
-	filtered                  *prometheus.CounterVec
-	variableUnresolved        *prometheus.CounterVec
-	variableLookup            *prometheus.CounterVec
-	variableLookupDuration    *prometheus.HistogramVec
-	loopRejected              *prometheus.CounterVec
-	publishTotal              *prometheus.CounterVec
-	publishDuration           *prometheus.HistogramVec
-	messagesPublished         *prometheus.CounterVec
-	requestDuration           *prometheus.HistogramVec
-	bodyBytes                 *prometheus.HistogramVec
-	endpointInfo              *prometheus.GaugeVec
-	destinationInfo           *prometheus.GaugeVec
-	inflight                  prometheus.Gauge
-	admitted                  *prometheus.GaugeVec
-	admissionCapacity         prometheus.Gauge
-	admissionServers          *prometheus.GaugeVec
-	configLoadFailures        *prometheus.CounterVec
-	rabbitMQReconnects        prometheus.Counter
-	rabbitMQConfirms          prometheus.Counter
-	rabbitMQRetries           prometheus.Counter
-	rabbitMQDLQPublishes      prometheus.Counter
-	rabbitMQUnroutable        *prometheus.CounterVec
-	redisPubSubNoSubscribers  *prometheus.CounterVec
-	webhookDelivery           *prometheus.CounterVec
-	webhookRetries            *prometheus.CounterVec
-	webhookDropped            *prometheus.CounterVec
-	webhookDeadLetter         *prometheus.CounterVec
-	webhookDeadLetterFailure  *prometheus.CounterVec
-	webhookQueueDepth         *prometheus.GaugeVec
-	webhookQueueCapacity      *prometheus.GaugeVec
-	webhookQueueBytes         *prometheus.GaugeVec
-	webhookQueueByteCapacity  *prometheus.GaugeVec
-	destinationReady          *prometheus.GaugeVec
-	panics                    *prometheus.CounterVec
-	buildInfo                 *prometheus.GaugeVec
-	compensationFailed        *prometheus.CounterVec
-	flowOutcomes              *prometheus.CounterVec
-	nodeTotal                 *prometheus.CounterVec
-	nodeDuration              *prometheus.HistogramVec
-	secretRefreshFailures     *prometheus.CounterVec
-	captureTotal              *prometheus.CounterVec
-	captureDropped            *prometheus.CounterVec
-	inspectionTotal           *prometheus.CounterVec
-	inspectionDropped         *prometheus.CounterVec
-	captureBufferBytes        prometheus.Gauge
-	controlRuns               *prometheus.CounterVec
-	controlInflight           prometheus.Gauge
-	runtimeRegistered         bool
-	logsSuppressed            prometheus.Counter
+	events                               *prometheus.CounterVec
+	eventPending, eventBytes, eventReady prometheus.Gauge
+	mcpCalls                             *prometheus.CounterVec
+	mcpDuration                          *prometheus.HistogramVec
+	flagEvaluations                      *prometheus.CounterVec
+	flagConnections                      *prometheus.GaugeVec
+	protectionOperations                 *prometheus.CounterVec
+	protectionDuration                   *prometheus.HistogramVec
+	protectionPool                       *prometheus.GaugeVec
+	protectionPoolWait                   *prometheus.CounterVec
+	protectionReady                      *prometheus.GaugeVec
+	protectionCleanup                    *prometheus.CounterVec
+	protectionDeleted                    *prometheus.CounterVec
+	protectionCleanupDuration            *prometheus.HistogramVec
+	admissionWaiting                     prometheus.Gauge
+	admissionWaits                       *prometheus.CounterVec
+	admissionWaitDuration                *prometheus.HistogramVec
+	batch                                *prometheus.CounterVec
+	credentials                          *prometheus.CounterVec
+	routing                              *prometheus.CounterVec
+	registry                             *prometheus.Registry
+	httpRequests                         *prometheus.CounterVec
+	authFailures                         *prometheus.CounterVec
+	rateLimited                          *prometheus.CounterVec
+	saturated                            *prometheus.CounterVec
+	forbidden                            *prometheus.CounterVec
+	duplicateRejected                    *prometheus.CounterVec
+	filtered                             *prometheus.CounterVec
+	variableUnresolved                   *prometheus.CounterVec
+	variableLookup                       *prometheus.CounterVec
+	variableLookupDuration               *prometheus.HistogramVec
+	loopRejected                         *prometheus.CounterVec
+	publishTotal                         *prometheus.CounterVec
+	publishDuration                      *prometheus.HistogramVec
+	messagesPublished                    *prometheus.CounterVec
+	requestDuration                      *prometheus.HistogramVec
+	bodyBytes                            *prometheus.HistogramVec
+	endpointInfo                         *prometheus.GaugeVec
+	destinationInfo                      *prometheus.GaugeVec
+	inflight                             prometheus.Gauge
+	admitted                             *prometheus.GaugeVec
+	admissionCapacity                    prometheus.Gauge
+	admissionServers                     *prometheus.GaugeVec
+	configLoadFailures                   *prometheus.CounterVec
+	rabbitMQReconnects                   prometheus.Counter
+	rabbitMQConfirms                     prometheus.Counter
+	rabbitMQRetries                      prometheus.Counter
+	rabbitMQDLQPublishes                 prometheus.Counter
+	rabbitMQUnroutable                   *prometheus.CounterVec
+	redisPubSubNoSubscribers             *prometheus.CounterVec
+	webhookDelivery                      *prometheus.CounterVec
+	webhookRetries                       *prometheus.CounterVec
+	webhookDropped                       *prometheus.CounterVec
+	webhookDeadLetter                    *prometheus.CounterVec
+	webhookDeadLetterFailure             *prometheus.CounterVec
+	webhookQueueDepth                    *prometheus.GaugeVec
+	webhookQueueCapacity                 *prometheus.GaugeVec
+	webhookQueueBytes                    *prometheus.GaugeVec
+	webhookQueueByteCapacity             *prometheus.GaugeVec
+	destinationReady                     *prometheus.GaugeVec
+	panics                               *prometheus.CounterVec
+	buildInfo                            *prometheus.GaugeVec
+	compensationFailed                   *prometheus.CounterVec
+	flowOutcomes                         *prometheus.CounterVec
+	nodeTotal                            *prometheus.CounterVec
+	nodeDuration                         *prometheus.HistogramVec
+	secretRefreshFailures                *prometheus.CounterVec
+	captureTotal                         *prometheus.CounterVec
+	captureDropped                       *prometheus.CounterVec
+	inspectionTotal                      *prometheus.CounterVec
+	inspectionDropped                    *prometheus.CounterVec
+	captureBufferBytes                   prometheus.Gauge
+	controlRuns                          *prometheus.CounterVec
+	controlInflight                      prometheus.Gauge
+	runtimeRegistered                    bool
+	logsSuppressed                       prometheus.Counter
 }
 
 func New() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
+	m.events = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_event_delivery_total", Help: "MCP event lifecycle and delivery outcomes."}, []string{"operation", "outcome"})
+	m.eventPending = prometheus.NewGauge(prometheus.GaugeOpts{Name: "hookway_event_pending", Help: "Pending durable event deliveries."})
+	m.eventBytes = prometheus.NewGauge(prometheus.GaugeOpts{Name: "hookway_event_retained_bytes", Help: "Retained event body bytes."})
+	m.eventReady = prometheus.NewGauge(prometheus.GaugeOpts{Name: "hookway_event_store_ready", Help: "Event store worker health."})
+	m.registry.MustRegister(m.events, m.eventPending, m.eventBytes, m.eventReady)
 	m.mcpCalls = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "hookway_mcp_calls_total", Help: "MCP calls and rejections."}, []string{"flow", "tool", "outcome"})
 	m.mcpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "hookway_mcp_duration_seconds", Help: "MCP invocation duration."}, []string{"flow", "tool", "outcome"})
 	m.registry.MustRegister(m.mcpCalls, m.mcpDuration)
@@ -643,4 +650,17 @@ func (m *Metrics) FlagConnection(connection, state string) {
 func (m *Metrics) MCP(flow, tool, outcome string, d time.Duration) {
 	m.mcpCalls.WithLabelValues(flow, tool, outcome).Inc()
 	m.mcpDuration.WithLabelValues(flow, tool, outcome).Observe(d.Seconds())
+}
+
+func (m *Metrics) EventDelivery(operation, outcome string) {
+	m.events.WithLabelValues(operation, outcome).Inc()
+}
+func (m *Metrics) EventDeliveryState(pending, bytes int64, ready bool) {
+	m.eventPending.Set(float64(pending))
+	m.eventBytes.Set(float64(bytes))
+	v := 0.0
+	if ready {
+		v = 1
+	}
+	m.eventReady.Set(v)
 }

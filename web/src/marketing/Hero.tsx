@@ -34,7 +34,7 @@ export function Hero() {
               <Anchor href="#mcp-gateway" inherit c={DARK.accent}>
                 authenticated MCP endpoints
               </Anchor>{" "}
-              that AI clients can discover and call.
+              and let compatible agents subscribe to business events.
             </Text>
             <Group gap="sm">
               <Button component={Link} to="/builder" size="md" color="brand">

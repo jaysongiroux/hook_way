@@ -10,6 +10,7 @@ import { ServerPanel } from "./graph/ServerPanel";
 import { ReplaySettingsPanel } from "./graph/ReplaySettingsPanel";
 import { DestinationsPanel } from "./graph/DestinationsPanel";
 import { ConnectionsPanel } from "./graph/ConnectionsPanel";
+import { OpenAPIWizard } from "./graph/OpenAPIWizard";
 import { ImportModal } from "./graph/ImportModal";
 import { BuilderHeader } from "./graph/BuilderHeader";
 import { SidePanel, usePanelWidths } from "./graph/BuilderShell";
@@ -23,6 +24,7 @@ import { loadValidator } from "./graph/validate";
 import { starterDocument } from "./graph/starter";
 import { RoutingPanel } from "./graph/RoutingPanel";
 import { LaunchDarklyPanel } from "./graph/LaunchDarklyForm";
+import { EventsPanel } from "./graph/EventsPanel";
 import { LookupsPanel } from "./graph/LookupsPanel";
 import { StateStoresPanel } from "./graph/StateStoresPanel";
 import { CredentialsPanel } from "./graph/CredentialsPanel";
@@ -51,6 +53,7 @@ export default function App({ product = false, headerActions }: { product?: bool
   useDocumentTitle("Hookway Config");
   usePersistence(product);
   useEffect(() => { void initializeValidator(); }, []);
+  const [openapiOpen, { open: openOpenAPI, close: closeOpenAPI }] = useDisclosure(false);
   const [importOpen, { open: openImport, close: closeImport }] =
     useDisclosure(false);
   const [exportOpen, { open: openExport, close: closeExport }] =
@@ -65,6 +68,7 @@ export default function App({ product = false, headerActions }: { product?: bool
     useDisclosure(false);
   const [credentialsOpen, { open: openCredentials, close: closeCredentials }] =
     useDisclosure(false);
+  const [eventsOpen, { open: openEvents, close: closeEvents }] = useDisclosure(false);
   const [lookupsOpen, { open: openLookups, close: closeLookups }] =
     useDisclosure(false);
   const [launchDarklyOpen, { open: openLaunchDarkly, close: closeLaunchDarkly }] = useDisclosure(false);
@@ -109,6 +113,7 @@ export default function App({ product = false, headerActions }: { product?: bool
     setReturnToInspector(true);
     closeInspector();
     ({
+      events: openEvents,
       lookups: openLookups,
  launchdarkly: openLaunchDarkly,
       state_stores: openStateStores,
@@ -148,21 +153,20 @@ export default function App({ product = false, headerActions }: { product?: bool
               useGraphStore.getState().setSelected(null);
               openInspector();
             }}
+            onOpenAPI={openOpenAPI}
             onImport={openImport}
             onExport={openExport}
             onDestinations={openDest}
             onConnections={openConn}
             onRouting={openRouting}
             onCredentials={openCredentials}
+            onEvents={openEvents}
             onLookups={openLookups}
  onLaunchDarkly={openLaunchDarkly}
             onStateStores={openStateStores}
             onEnv={openEnv}
             onServer={openServer}
             onReplay={openReplay}
-            onLoadExample={() =>
-              useGraphStore.getState().setGraph(starterDocument())
-            }
             onClear={openClear}
           />
 
@@ -206,6 +210,9 @@ export default function App({ product = false, headerActions }: { product?: bool
             >
               <Palette
                 tab={paletteTab}
+                onExampleImported={() => {
+                  if (compact) setPaletteOpen(false);
+                }}
                 onAddNode={(type) => {
                   const store = useGraphStore.getState();
                   const node = createNode(type, {
@@ -216,6 +223,10 @@ export default function App({ product = false, headerActions }: { product?: bool
                   store.setSelected(node.id);
                   if (compact) setPaletteOpen(false);
                   openInspector();
+                }}
+                onLoadProductionTemplate={() => {
+                  useGraphStore.getState().setGraph(starterDocument());
+                  if (compact) setPaletteOpen(false);
                 }}
                 onAddTemplate={(id) => {
                   const sub = templateSubgraph(id);
@@ -240,6 +251,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             opened={routingOpen}
             onClose={() => closeWorkspace(closeRouting)}
           />
+          <EventsPanel opened={eventsOpen} onClose={() => closeWorkspace(closeEvents)} />
           <LookupsPanel
             opened={lookupsOpen}
             onClose={() => closeWorkspace(closeLookups)}
@@ -258,6 +270,7 @@ export default function App({ product = false, headerActions }: { product?: bool
             }}
             focusPath={focusPath}
           />
+          {openapiOpen && <OpenAPIWizard onClose={closeOpenAPI} />}
           <ImportModal opened={importOpen} onClose={closeImport} />
           <ExportModal
             opened={exportOpen}

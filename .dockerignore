@@ -63,3 +63,10 @@ web/blob-report
 web/*.tsbuildinfo
 web/vite.config.js
 web/vite.config.d.ts
+
+# Local agent caches and private event-demo artifacts never enter image layers.
+.scratch
+.codegraph
+examples/mcp-events/demo/runtime
+examples/mcp-events/demo/evidence
+examples/mcp-events/demo/*.zip

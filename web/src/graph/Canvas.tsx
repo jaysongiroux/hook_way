@@ -19,7 +19,7 @@ import { createNode, isNodeKind } from "./model";
 import { DND_MIME, DND_TEMPLATE_MIME } from "./Palette";
 import { isTemplateId, templateSubgraph } from "./templates";
 import { useGraphStore } from "./store";
-import { Button, Text } from "@mantine/core";
+import { Button } from "@mantine/core";
 import { DARK, EDGE } from "../tokens";
 
 /** React Flow stops at 0.5 by default, which cuts off zoom-out on a wide flow. */
@@ -170,23 +170,6 @@ function CanvasInner({ onNodeActivate }: { onNodeActivate?: () => void }) {
             Arrange
           </Button>
         </Panel>
-        {nodes.length === 0 && (
-          <Panel position="top-center">
-            <Text
-              size="sm"
-              c={DARK.muted}
-              px="md"
-              py={8}
-              style={{
-                background: DARK.surface,
-                border: `1px solid ${DARK.border}`,
-                borderRadius: 4,
-              }}
-            >
-              Open Nodes to add a node, or start with a template.
-            </Text>
-          </Panel>
-        )}
       </ReactFlow>
     </div>
   );

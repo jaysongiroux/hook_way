@@ -135,7 +135,7 @@ export function ExportModal({
     }
   };
   return (
-    <Modal opened={opened} onClose={onClose} title="Export configs" size="lg">
+    <Modal opened={opened} onClose={onClose} title="Export configs" size="lg" closeButtonProps={{ "aria-label": "Close export configs" }}>
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           Choose how flows are stored. Downloads include every configured YAML

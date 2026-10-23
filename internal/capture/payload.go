@@ -20,7 +20,8 @@ type Payload struct {
 
 // RenderPayload returns what dest would receive for msg: the object bytes for
 // s3 and redis_kv in object mode, the original request body for a proxy-mode
-// webhook, and the JSON envelope — byte-for-byte what the adapters send — for
+// webhook, frozen JSON for explicitly selected webhook body delivery, and the
+// JSON envelope — byte-for-byte what the adapters send — for
 // everything else. Flows cannot select Temporal's body input, so Temporal
 // always receives the envelope as well.
 func RenderPayload(dest config.DestinationConfig, msg queue.Message) (Payload, error) {
@@ -32,7 +33,7 @@ func RenderPayload(dest config.DestinationConfig, msg queue.Message) (Payload, e
 	}
 	var b []byte
 	var err error
-	if dest.Type == "sqs" || dest.Type == "sns" {
+	if dest.Type == "sqs" || dest.Type == "sns" || (dest.Type == "webhook" && msg.Publish != nil && msg.Publish.WireBody == "json") {
 		b, err = queue.BrokerBody(msg)
 	} else {
 		b, err = json.Marshal(msg)

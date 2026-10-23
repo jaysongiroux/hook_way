@@ -1,6 +1,6 @@
 # Build from the repository root: docker build -f web/Dockerfile .
 # WASM and wasm_exec.js always come from the same pinned Go toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS wasm
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS wasm
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -13,15 +13,14 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 # Builder examples are imported as raw YAML from outside web/.
-COPY examples/templates/ /examples/templates/
-COPY examples/showcase/ /examples/showcase/
+COPY examples/ /examples/
 COPY --from=wasm /out/hookway.wasm /out/wasm_exec.js ./public/
 ARG VERSION=dev
 ARG COMMIT=none
 RUN node -e 'require("node:fs").writeFileSync("public/build-info.json", JSON.stringify({version:process.env.VERSION,commit:process.env.COMMIT})+"\n")'
 RUN npm run build:console && test -s dist-console/hookway.wasm && test -s dist-console/wasm_exec.js
 
-FROM nginxinc/nginx-unprivileged:stable-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3 AS console
+FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS console
 USER root
 # Python is used only at startup for strict URL validation/JSON serialization,
 # and by the local health check. Nginx serves all HTTP requests.

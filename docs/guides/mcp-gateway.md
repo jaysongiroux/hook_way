@@ -311,8 +311,8 @@ Use a Streamable HTTP client that supports the configured authentication method.
 Configure an API key as a bearer header where supported, or use the client's
 OAuth login flow with your identity provider. API-key support varies by client;
 check compatibility before deployment. The SDK supports current `2026-07-28` and tested older Streamable
-HTTP revisions. Legacy HTTP+SSE, prompts, resources, sampling and subscriptions
-are not advertised. Each HTTP request must contain one JSON-RPC message;
+HTTP revisions. Legacy HTTP+SSE, prompts, resources and sampling are not advertised.
+Optional [MCP event subscriptions](mcp-events.md) use signed webhook delivery. Each HTTP request must contain one JSON-RPC message;
 JSON-RPC batches are not accepted, including on older protocol revisions.
 Real client/provider compatibility must be checked against
 the deployed versions; automated SDK tests do not establish those connections.

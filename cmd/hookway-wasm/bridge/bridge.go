@@ -6,7 +6,11 @@
 package bridge
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"github.com/jaysongiroux/hook_way/internal/openapiimport"
+	"io"
 
 	"github.com/jaysongiroux/hook_way/internal/configapi"
 	replayconfigapi "github.com/jaysongiroux/hook_way/internal/replay/configapi"
@@ -106,4 +110,49 @@ func ValidateBundle(raw string) (string, error) {
 	}
 	b, err := json.Marshal(configapi.ValidateBundle(input))
 	return string(b), err
+}
+
+// OpenAPIInspect passes raw document text to the shared offline importer.
+func OpenAPIInspect(raw string) (string, error) {
+	var input uicontract.OpenAPIInspectInput
+	if err := decodeOpenAPIInput([]byte(raw), &input); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(openapiimport.Inspect([]byte(input.Document)))
+	return string(b), err
+}
+
+// OpenAPIGenerate uses exactly the CLI's settings decoder and generator.
+func OpenAPIGenerate(raw string) (string, error) {
+	var input uicontract.OpenAPIGenerateInput
+	if err := decodeOpenAPIInput([]byte(raw), &input); err != nil {
+		return "", err
+	}
+	settings, err := openapiimport.DecodeSettings([]byte(input.SettingsYAML))
+	result := uicontract.OpenAPIGenerateResult{Diagnostics: []openapiimport.Diagnostic{}}
+	if err != nil {
+		result.Diagnostics = append(result.Diagnostics, openapiimport.Diagnostic{Severity: "error", Location: "settings", Message: err.Error()})
+	} else {
+		generated := openapiimport.Generate([]byte(input.Document), settings)
+		result.YAML = string(generated.YAML)
+		result.Diagnostics = append(result.Diagnostics, generated.Diagnostics...)
+	}
+	b, err := json.Marshal(result)
+	return string(b), err
+}
+
+// Bound the escaped message before strict decoding. No external IO is permitted.
+func decodeOpenAPIInput(raw []byte, target any) error {
+	if len(raw) > 12*openapiimport.MaxDocumentBytes {
+		return errors.New("import request exceeds limits")
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(target); err != nil {
+		return errors.New("invalid import request")
+	}
+	if err := d.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return errors.New("expected one import request")
+	}
+	return nil
 }

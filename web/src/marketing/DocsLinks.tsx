@@ -1,4 +1,4 @@
-import { Anchor, Box, Stack, Text, Title } from "@mantine/core";
+import { Anchor, Box, Text, Title } from "@mantine/core";
 import { DOC_LINKS, EXAMPLES, docsHref } from "./links";
 import { Section } from "./Section";
 import { DARK } from "../tokens";
@@ -37,23 +37,34 @@ export function DocsLinks() {
       background={DARK.recessed}
     >
       <Box className="hookway-docs-layout">
-        <Stack gap={16} className="hookway-docs-start">
+        <Box className="hookway-docs-start">
           <Title order={3} size="h4">
             Run your first flow
           </Title>
-          <Text c={DARK.muted} size="sm">
+          <Text c={DARK.muted} size="sm" mt={8}>
             Run Hookway locally, change an example, and follow a request through
             your infrastructure.
           </Text>
-          <Anchor href={quickstart.href} fw={600}>
-            {quickstart.title}
-          </Anchor>
-          <Anchor href={EXAMPLES.href}>{EXAMPLES.title}</Anchor>
-          <Anchor href={docsHref("docs/guides/mcp-gateway.md")}>
-            MCP gateway guide
-          </Anchor>
-          <Anchor href={development.href}>{development.title}</Anchor>
-        </Stack>
+          <Box component="ul" className="hookway-docs-list">
+            {[
+              quickstart,
+              EXAMPLES,
+              {
+                href: docsHref("docs/guides/mcp-gateway.md"),
+                title: "MCP gateway guide",
+                description: "Configure endpoints, tool catalogues, and who can call them.",
+              },
+              development,
+            ].map((link) => (
+              <li key={link.href}>
+                <Anchor href={link.href}>{link.title}</Anchor>
+                <Text size="sm" c={DARK.muted}>
+                  {link.description}
+                </Text>
+              </li>
+            ))}
+          </Box>
+        </Box>
         <Box className="hookway-docs-references">
           {GROUPS.map((group) => (
             <Box key={group.title} className="hookway-docs-group">

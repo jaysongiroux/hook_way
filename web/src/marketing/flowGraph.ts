@@ -26,14 +26,16 @@ export interface FlowEdge {
 }
 
 export const LAYOUT = {
-  width: 900,
-  height: 340,
-  nodeW: 200,
-  nodeH: 90,
-  nodeHShort: 68,
+  width: 820,
+  height: 360,
+  nodeW: 196,
+  nodeH: 96,
+  nodeHShort: 80,
   handle: 5,
-  colX: [12, 350, 688],
-  rowY: [16, 126, 236],
+  /** How far an arrow stops short of the target port, so the head stays visible. */
+  arrowGap: 6,
+  colX: [20, 292, 564],
+  rowY: [16, 132, 248],
 } as const;
 
 export const FLOW_NODES: FlowNode[] = [
@@ -146,10 +148,14 @@ export function edgePath(from: FlowNode, to: FlowNode): string {
   const b = nodeBox(to);
   const x1 = a.x + a.w;
   const y1 = a.y + a.h / 2;
-  const x2 = b.x;
+  const x2 = b.x - LAYOUT.arrowGap;
   const y2 = b.y + b.h / 2;
-  const mx = (x1 + x2) / 2;
-  return `M ${x1} ${y1} C ${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`;
+  // Give curved branches a straight landing so the arrowhead sits on a
+  // horizontal shaft rather than overlapping the last part of the bend.
+  const landing = y1 === y2 ? 0 : 16;
+  const curveEnd = x2 - landing;
+  const dx = (curveEnd - x1) * 0.5;
+  return `M ${x1} ${y1} C ${x1 + dx} ${y1} ${curveEnd - dx} ${y2} ${curveEnd} ${y2} L ${x2} ${y2}`;
 }
 
 /** A sentence describing the flow, used as the diagram's accessible name. */

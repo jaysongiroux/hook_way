@@ -53,6 +53,7 @@ type DestTypeSchema struct {
 // destTypeBlocks maps the user-facing destination type name to the YAML block
 // key under that destination entry. Redis variants share one connection block.
 var destTypeBlocks = map[string]string{
+	"mcp_events":   "mcp_events",
 	"rabbitmq":     "rabbitmq",
 	"sqs":          "sqs",
 	"sns":          "sns",

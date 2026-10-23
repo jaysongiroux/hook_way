@@ -26,6 +26,9 @@ import (
 )
 
 type principal struct {
+	Audience      string
+	Issuer        string
+	ExpiresAt     time.Time
 	ID, Key       string
 	Scopes, Roles []string
 	Anonymous     bool
@@ -143,7 +146,11 @@ func (a *authenticator) verify(ctx context.Context, r *http.Request) (principal,
 		return principal{}, errors.New("ambiguous API key")
 	}
 	if matched != "" {
-		return principal{ID: "key:" + matched, Key: matched}, nil
+		for _, k := range a.keys {
+			if k.name == matched {
+				return principal{ID: "key:" + matched, Key: matched, ExpiresAt: k.expires}, nil
+			}
+		}
 	}
 	if a.opts.OAuth == nil {
 		return principal{}, errors.New("invalid credentials")
@@ -170,7 +177,8 @@ func (a *authenticator) verify(ctx context.Context, r *http.Request) (principal,
 		return principal{}, errors.New("access token subject missing")
 	}
 	// Tool grants are checked separately from the verified issuer and subject.
-	p := principal{ID: fmt.Sprintf("oauth:%x", sha256.Sum256([]byte(a.opts.OAuth.Issuer+"\x00"+sub))), Scopes: stringList(claims["scope"])}
+	expiry, _ := claims.GetExpirationTime()
+	p := principal{Audience: a.opts.OAuth.Audience, Issuer: a.opts.OAuth.Issuer, ExpiresAt: expiry.Time, ID: fmt.Sprintf("oauth:%x", sha256.Sum256([]byte(a.opts.OAuth.Issuer+"\x00"+sub))), Scopes: stringList(claims["scope"])}
 	if len(p.Scopes) == 0 {
 		p.Scopes = stringList(claims["scp"])
 	}

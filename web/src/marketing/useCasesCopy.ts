@@ -31,6 +31,17 @@ export const USE_CASES: UseCase[] = [
     exampleLabel: "mcp-gateway.yaml",
   },
   {
+    id: "mcp-events",
+    title: "Wake agents with business events",
+    summary:
+      "An issue webhook reaches a matching subscription. The agent wakes and calls get_issue for the details.",
+    detail:
+      "Create a validated issue.opened event from a verified webhook. Hookway stores matching deliveries in PostgreSQL and sends signed callbacks to authenticated subscribers. A client that supports MCP Events can start an agent turn and call the permitted get_issue tool. Delivery is at least once and unordered, with no historical catch-up. Inspect attempts, retry eligible failures, or revoke a subscription in the console. The self-contained demo uses a disposable OAuth provider and fixture API.",
+    examplePath: "examples/mcp-events/demo/core.yaml",
+    exampleHref: docsHref("examples/mcp-events/demo/core.yaml"),
+    exampleLabel: "Issue event demo configuration",
+  },
+  {
     id: "sampled-inspection",
     title: "Spot-check webhooks while delivering every event",
     summary:

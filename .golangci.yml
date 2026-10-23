@@ -50,6 +50,9 @@ linters:
           files:
             - "**/internal/replay/**"
             - "**/cmd/hookway-replay/**"
+            # Browser acceptance fixture boots a real private core control API.
+            # It is test-only; replay production code retains the boundary below.
+            - "!**/internal/replay/consolebrowser/events_test.go"
           deny:
             - pkg: "github.com/jaysongiroux/hook_way/internal/httpapi"
               desc: "the replay service must not depend on core's runtime"

@@ -1,0 +1,91 @@
+# Durable MCP webhook subscriptions. Set EVENT_DATABASE_URL, EVENT_ENCRYPTION_KEY
+# (base64 of 32 random bytes), MCP_EVENTS_KEY (32+ chars), and SAMPLE_WEBHOOK_SECRET.
+# Run `hookway event-store migrate --config examples/mcp-events.yaml` before serve.
+server: {addr: ":8080", max_body_bytes: 1048576}
+state_stores: {local: {namespace: mcp-events, memory: {}}}
+event_delivery:
+  postgres_url: "${EVENT_DATABASE_URL}"
+  namespace: example-agent-events
+  encryption_key: {provider: env, name: EVENT_ENCRYPTION_KEY}
+replay:
+  url: http://replay:8080
+  capture_token: "${REPLAY_CAPTURE_TOKEN}"
+  control: {addr: ':9092', token: "${REPLAY_CONTROL_TOKEN}"}
+events:
+  issue.opened:
+    description: A new issue was opened in the selected repository.
+    payload_schema:
+      type: object
+      required: [issue_id, repository, title]
+      additionalProperties: false
+      properties:
+        issue_id: {type: string, minLength: 1}
+        repository: {type: string, minLength: 1}
+        title: {type: string, minLength: 1}
+destinations:
+  agents:
+    type: mcp_events
+    mcp_events: {endpoint: agent_tools}
+flows:
+  agent_tools:
+    nodes:
+      - id: mcp
+        type: mcp_trigger
+        path: /agents/mcp
+        public_url: "${DEMO_MCP_URL}"
+        auth:
+          api_keys:
+            reader: {secret_ref: {provider: env, name: MCP_EVENTS_KEY}}
+          oauth:
+            issuer: "${DEMO_ISSUER}"
+            audience: hookway-demo
+            jwks_url: http://idp:8080/demo/jwks
+            allow_private_targets: true
+            discovery_scopes: [issues:read, events:read]
+        tools:
+          - name: get_issue
+            description: Fetch the full details of an issue after receiving issue.opened.
+            read_only: true
+            access: {api_keys: [reader], scopes: [issues:read]}
+            input_schema:
+              type: object
+              additionalProperties: false
+              required: [issue_id]
+              properties: {issue_id: {type: string, pattern: '^[0-9]{1,10}$'}}
+            output_schema: {type: object}
+            request: {variables: {issue_id: issue_id}}
+          - name: get_service_status
+            description: Read the status of this example gateway.
+            read_only: true
+            input_schema: {type: object, additionalProperties: false}
+            output_schema: {type: object}
+            access: {api_keys: [reader], scopes: [events:read]}
+        events:
+          - event: issue.opened
+            input_schema:
+              type: object
+              additionalProperties: false
+              required: [repository]
+              properties: {repository: {type: string, minLength: 1}}
+            filters: {repository: repository}
+            access: {api_keys: [reader], scopes: [events:read]}
+      - {id: status, type: mcp_result, source: constant, value: {status: ready}}
+      - id: lookup
+        type: http_request
+        url: http://fixture:8080/issues/{issue_id}
+        method: GET
+        body: none
+        allow_private_targets: true
+        max_response_bytes: 16384
+      - {id: issue_result, type: mcp_result, source: upstream}
+    edges: [mcp:get_service_status>status, mcp:get_issue>lookup, lookup>issue_result]
+  issue_webhook:
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/issues, methods: [POST]}
+      - {id: rate, type: rate_limit, store: local, rpm: 60, burst: 10}
+      - {id: read, type: read_body, max_bytes: 262144}
+      - {id: auth, type: auth, scheme: exact, secret_ref: {provider: env, name: SAMPLE_WEBHOOK_SECRET}, signature_header: X-Api-Key}
+      - {id: env, type: envelope, body_format: json}
+      - {id: event, type: event, event: issue.opened, event_id_path: issue_id}
+      - {id: send, type: publish, destination: agents, target: issue.opened}
+    edges: [in>rate, rate>read, read>auth, auth>env, env>event, event>send]

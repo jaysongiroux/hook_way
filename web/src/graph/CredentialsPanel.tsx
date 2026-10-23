@@ -1,4 +1,13 @@
-import { Alert, Button, Modal, Select, Stack, Text } from "@mantine/core";
+import { useReconcileCredentialDrafts } from "./formDrafts";
+import {
+  Accordion,
+  Alert,
+  Button,
+  Modal,
+  Select,
+  Stack,
+  Text,
+} from "@mantine/core";
 import { DARK } from "../tokens";
 import { SchemaForm } from "./SchemaForm";
 import { useGraphStore } from "./store";
@@ -184,19 +193,38 @@ export function CredentialsPanel({
           profile. This editor does not contact token services or verify live
           credentials.
         </Text>
-        <WorkspaceEntries
-          label="credential profile"
+        <CredentialsForm
           value={configExtra.credentials}
-          initial={() => ({ kind: "static", allowed_origins: [] })}
-          nameError={credentialNameError}
-          onChange={(entries) => setConfigExtra({ credentials: entries })}
-        >
-          {(name, entry, change) => (
-            <CredentialEditor name={name} entry={entry} change={change} />
-          )}
-        </WorkspaceEntries>
+          onChange={(credentials) => setConfigExtra({ credentials })}
+        />
       </Stack>
     </Modal>
+  );
+}
+
+export function CredentialsForm({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (next: Record<string, unknown>) => void;
+}) {
+  const reconcile = useReconcileCredentialDrafts();
+  return (
+    <WorkspaceEntries
+      label="credential profile"
+      value={value}
+      initial={() => ({ kind: "static", allowed_origins: [] })}
+      nameError={credentialNameError}
+      onChange={(next) => {
+        reconcile(value, next);
+        onChange(next);
+      }}
+    >
+      {(name, entry, change) => (
+        <CredentialEditor name={name} entry={entry} change={change} />
+      )}
+    </WorkspaceEntries>
   );
 }
 
@@ -457,13 +485,15 @@ function CredentialEditor({
   );
 }
 
-function SecretReference({
+export function SecretReference({
   label,
   value,
   scope,
   onChange,
+  compact = false,
 }: {
   label: string;
+  compact?: boolean;
   value: unknown;
   scope: string;
   onChange: (next: Record<string, unknown>) => void;
@@ -474,19 +504,30 @@ function SecretReference({
   const providers = ["env", "file", "aws_secrets_manager"];
   return (
     <Stack gap="xs">
-      <Text size="sm" fw={600}>
-        {label}
-      </Text>
+      {!compact && (
+        <Text size="sm" fw={600}>
+          {label}
+        </Text>
+      )}
       <Select
-        label={`${label} provider`}
+        label={compact ? "Secret source" : `${label} provider`}
         value={provider || null}
         allowDeselect={false}
         data={
           providers.includes(provider) || !provider
-            ? providers
+            ? compact
+              ? [
+                  { value: "env", label: "Environment variable" },
+                  { value: "file", label: "File" },
+                  {
+                    value: "aws_secrets_manager",
+                    label: "AWS Secrets Manager",
+                  },
+                ]
+              : providers
             : [...providers, provider]
         }
-        description={help.provider}
+        description={compact ? undefined : help.provider}
         onChange={(next) => {
           if (!next || next === provider) return;
           const updated = { ...ref, provider: next };
@@ -524,14 +565,45 @@ function SecretReference({
         scope={scope}
         onChange={(next) => onChange(record(next))}
         hideFields={
-          provider === "aws_secrets_manager"
-            ? ["provider"]
-            : ["provider", "selection"]
+          compact
+            ? ["provider", "json_field", "selection", "refresh", "overlap"]
+            : provider === "aws_secrets_manager"
+              ? ["provider"]
+              : ["provider", "selection"]
         }
         order={["name", "json_field", "selection", "refresh", "overlap"]}
-        labels={{ name: `${label} name` }}
+        labels={{
+          name: compact
+            ? provider === "env"
+              ? "Environment variable name"
+              : provider === "file"
+                ? "Secret file path"
+                : "AWS secret identifier"
+            : `${label} name`,
+        }}
         fieldHelp={(key) => help[key]}
       />
+      {compact && (
+        <Accordion variant="default" transitionDuration={0}>
+          <Accordion.Item value="advanced">
+            <Accordion.Control>Secret options</Accordion.Control>
+            <Accordion.Panel>
+              <SchemaForm
+                schema={schema}
+                value={ref}
+                scope={scope}
+                onChange={(next) => onChange(record(next))}
+                hideFields={
+                  provider === "aws_secrets_manager"
+                    ? ["provider", "name"]
+                    : ["provider", "name", "selection"]
+                }
+                fieldHelp={(key) => help[key]}
+              />
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+      )}
     </Stack>
   );
 }

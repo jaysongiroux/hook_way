@@ -3,7 +3,12 @@ import { BuilderPage } from "./builder";
 import { readFileSync } from "node:fs";
 
 const nodeCount = Object.keys(
-  JSON.parse(readFileSync(new URL("../src/graph/nodeSchema.json", import.meta.url), "utf8")),
+  JSON.parse(
+    readFileSync(
+      new URL("../src/graph/nodeSchema.json", import.meta.url),
+      "utf8",
+    ),
+  ),
 ).length;
 
 for (const viewport of [
@@ -31,7 +36,7 @@ for (const viewport of [
       await expect(cards).toHaveCount(nodeCount);
       for (const tab of ["Nodes", "Templates"]) {
         await page.getByRole("tab", { name: tab, exact: true }).click();
-        await expect(cards).toHaveCount(tab === "Nodes" ? nodeCount : 6);
+        await expect(cards).toHaveCount(tab === "Nodes" ? nodeCount : 7);
         const measurements = await cards.evaluateAll((items) =>
           items.map((item) => {
             const button = item.querySelector("button")!;

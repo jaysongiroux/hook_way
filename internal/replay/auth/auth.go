@@ -17,17 +17,21 @@ type Scope string
 
 const (
 	// MaxTokenBytes bounds credentials in configuration and incoming requests.
-	MaxTokenBytes       = 256
-	ScopeCapture  Scope = "capture"
-	ScopeRead     Scope = "read"
-	ScopePayload  Scope = "payload"
-	ScopeRetry    Scope = "retry"
-	ScopeMetrics  Scope = "metrics"
+	MaxTokenBytes            = 256
+	ScopeEventsRead    Scope = "events_read"
+	ScopeEventsPayload Scope = "events_payload"
+	ScopeEventsRetry   Scope = "events_retry"
+	ScopeEventsManage  Scope = "events_manage"
+	ScopeCapture       Scope = "capture"
+	ScopeRead          Scope = "read"
+	ScopePayload       Scope = "payload"
+	ScopeRetry         Scope = "retry"
+	ScopeMetrics       Scope = "metrics"
 )
 
 // Scopes lists every scope in documentation order.
 func Scopes() []Scope {
-	return []Scope{ScopeCapture, ScopeRead, ScopePayload, ScopeRetry, ScopeMetrics}
+	return []Scope{ScopeCapture, ScopeRead, ScopePayload, ScopeRetry, ScopeMetrics, ScopeEventsRead, ScopeEventsPayload, ScopeEventsRetry, ScopeEventsManage}
 }
 
 // Key is one configured credential.

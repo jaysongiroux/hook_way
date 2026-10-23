@@ -432,7 +432,13 @@ func buildWebhookRequest(ctx context.Context, d *webhookDelivery, msg Message) (
 		stampTraceparent(req, msg) // traceparent is not hop-by-hop; overwrites any copied inbound value
 		return req, nil            // proxy: no hook_way auth
 	}
-	body, err := json.Marshal(msg)
+	var body []byte
+	var err error
+	if msg.Publish != nil && msg.Publish.WireBody == "json" {
+		body, err = BrokerBody(msg)
+	} else {
+		body, err = json.Marshal(msg)
+	}
 	if err != nil {
 		return nil, err
 	}

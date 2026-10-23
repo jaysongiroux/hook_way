@@ -95,6 +95,7 @@ func ExpandConfigEnv(raw string, expand func(string) (string, []string)) (string
 			typ := fields["type"]
 			if typ != nil && typ.Value == "mcp_trigger" {
 				protectSchema(fields["tools"])
+				protectSchema(fields["events"])
 			}
 			if typ != nil && typ.Value == "json_validate" {
 				protectSchema(fields["schema"])
@@ -117,6 +118,9 @@ func ExpandConfigEnv(raw string, expand func(string) (string, []string)) (string
 	root := document.Content[0]
 	if root.Kind == yaml.MappingNode {
 		for i := 0; i+1 < len(root.Content); i += 2 {
+			if root.Content[i].Value == "events" {
+				protectSchema(root.Content[i+1])
+			}
 			if root.Content[i].Value == "flows" {
 				walkNodes(root.Content[i+1])
 			}

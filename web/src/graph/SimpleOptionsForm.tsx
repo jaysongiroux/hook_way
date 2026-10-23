@@ -32,6 +32,7 @@ export const CODE_EXAMPLE = "return { body: input.body, vars: input.vars };";
 
 export function SimpleOptionsForm(props: OptionsProps) {
   const { nodeType, value, onChange, nodeId } = props;
+  const events = useGraphStore((s) => s.configExtra.events);
   const providers = useGraphStore((s) => s.configExtra.lookups);
   const meta = NODE_SCHEMAS[nodeType];
   if (!meta)
@@ -47,6 +48,8 @@ export function SimpleOptionsForm(props: OptionsProps) {
   const managed =
     nodeType === "http_trigger"
       ? ["methods"]
+      : nodeType === "event"
+        ? ["event"]
       : nodeType === "lookup"
           ? ["provider", "table", "cache", "negative_ttl"]
           : [];
@@ -81,6 +84,7 @@ export function SimpleOptionsForm(props: OptionsProps) {
         ttl: "Cache lifetime",
         key: nodeType === "lookup" ? "Lookup key" : "Request key template",
         provider: "Lookup provider",
+        event_id_path: "Event ID path",
         name: "Result variable",
         script: "JavaScript function body",
         rpm: "Requests per minute",
@@ -100,6 +104,11 @@ export function SimpleOptionsForm(props: OptionsProps) {
         <Text size="sm" c={DARK.muted}>
           {presentation?.summary}
         </Text>
+      )}
+      {nodeType === "event" && (
+        <ReferenceSelect label="Event" value={value.event} names={Object.keys(record(events))}
+          panel="events" onChange={(event) => onChange({ ...value, event })}
+          description="Choose the payload contract shared by your flows." />
       )}
       {nodeType === "lookup" && (
         <>

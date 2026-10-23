@@ -11,6 +11,7 @@ export type WorkspacePanel =
   | "credentials"
   | "destinations"
   | "state_stores"
+  | "events"
   | "lookups"
  | "launchdarkly";
 export const WorkspaceActions = createContext<(panel: WorkspacePanel) => void>(

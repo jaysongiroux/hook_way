@@ -27,10 +27,12 @@ import (
 
 type Runner func(context.Context, graph.Envelope) (graph.Terminal, error)
 type Options struct {
-	Config  flowconfig.MCPTriggerOptions
-	Run     Runner
-	Observe func(tool, outcome string, duration time.Duration)
-	Logger  *slog.Logger
+	Events   flowconfig.EventRuntime
+	Endpoint string
+	Config   flowconfig.MCPTriggerOptions
+	Run      Runner
+	Observe  func(tool, outcome string, duration time.Duration)
+	Logger   *slog.Logger
 }
 type compiledTool struct {
 	opts          flowconfig.MCPToolOptions
@@ -84,6 +86,13 @@ func New(o Options) (*Gateway, error) {
 		}
 		g.tools[t.Name] = &compiledTool{t, in, out, make(chan struct{}, t.Concurrency())}
 	}
+	if len(o.Config.Events) > 0 {
+		if o.Events == nil {
+			_ = a.Close()
+			return nil, errors.New("MCP events runtime required")
+		}
+		o.Events.BindEventAuthorizer(o.Endpoint, g.eventPrincipalValid)
+	}
 	g.handler = mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		p, ok := r.Context().Value(principalKey{}).(principal)
 		if !ok {
@@ -103,6 +112,9 @@ func New(o Options) (*Gateway, error) {
 			s.AddTool(&mcp.Tool{Name: name, Description: t.opts.Description, InputSchema: t.opts.InputSchema, OutputSchema: t.opts.OutputSchema, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: t.opts.ReadOnly}}, func(ctx context.Context, r *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				return g.call(ctx, p, t, r)
 			})
+		}
+		if err := g.registerEvents(s); err != nil {
+			return nil
 		}
 		return s
 	}, &mcp.StreamableHTTPOptions{Stateless: true, PropagateRequestCancellation: true, MaxRequestBodyBytes: flowconfig.MCPMaxBytes})

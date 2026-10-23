@@ -1,5 +1,5 @@
-// hookway-openapi deterministically generates the HTTP contracts from live route
-// metadata and Go DTOs. --check verifies committed files without rewriting them.
+// hookway-openapi deterministically generates HTTP and browser authoring contracts
+// from live route metadata and Go DTOs. --check verifies committed files without rewriting them.
 package main
 
 import (
@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 
 	"github.com/jaysongiroux/hook_way/internal/editor"
+	"github.com/jaysongiroux/hook_way/internal/openapiimport"
 	replayapi "github.com/jaysongiroux/hook_way/internal/replay/api"
+	"github.com/jaysongiroux/hook_way/internal/uicontract"
 )
 
 func main() {
@@ -26,7 +28,7 @@ func generate(out string, check bool) error {
 	for _, spec := range []struct {
 		name   string
 		render func() ([]byte, error)
-	}{{"editor.openapi.json", editor.OpenAPI}, {"replay.openapi.json", replayapi.OpenAPI}} {
+	}{{"editor.openapi.json", editor.OpenAPI}, {"replay.openapi.json", replayapi.OpenAPI}, {"authoring.openapi.json", uicontract.AuthoringOpenAPI}, {"openapi-import.settings.schema.json", openapiimport.SettingsSchema}} {
 		data, err := spec.render()
 		if err != nil {
 			return err

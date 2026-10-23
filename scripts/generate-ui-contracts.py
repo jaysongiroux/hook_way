@@ -24,17 +24,19 @@ def generate(kind, temp):
             if flag:
                 outputs[ROOT / f"web/src/graph/{name}.json"] = raw
             else:
-                workspace = {key: parsed["properties"][key] for key in ["routing", "credentials", "lookups", "state_stores", "launchdarkly"]}
+                workspace = {key: parsed["properties"][key] for key in ["routing", "credentials", "lookups", "state_stores", "launchdarkly", "events", "event_delivery"]}
                 outputs[ROOT / "web/src/graph/workspaceSchema.json"] = (json.dumps(workspace, indent=2) + "\n").encode()
     else:
         run(go, "run", "./cmd/hookway-openapi", "--out", str(temp))
-        for name in ["editor", "replay"]:
+        for name in ["editor", "replay", "authoring"]:
             source = temp / f"{name}.openapi.json"
             json.loads(source.read_bytes())
             outputs[ROOT / f"docs/api/{source.name}"] = source.read_bytes()
             dest = temp / f"{name}.ts"
             run(str(ROOT / "web/node_modules/.bin/openapi-typescript"), str(source), "--output", str(dest), "--default-non-nullable", "false")
             outputs[ROOT / f"web/src/shared/contracts/generated/{name}.ts"] = dest.read_bytes()
+        outputs[ROOT / "docs/api/openapi-import.settings.schema.json"] = (temp / "openapi-import.settings.schema.json").read_bytes()
+        outputs[ROOT / "web/src/graph/openapiSettingsSchema.json"] = (temp / "openapi-import.settings.schema.json").read_bytes()
     return outputs
 
 

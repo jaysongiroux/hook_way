@@ -104,7 +104,8 @@ export function SidePanel({
       }}
     >
       <Group
-        px="sm"
+        px={headerContent ? 8 : "sm"}
+        gap={headerContent ? 4 : "md"}
         py={10}
         justify="space-between"
         wrap="nowrap"

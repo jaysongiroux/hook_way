@@ -37,6 +37,15 @@ export function assertSchemaImportPrecision(document: Document) {
     visited.add(node);
     if (isAlias(node)) { walk(node.resolve(document)); return; }
     if (isMap(node)) {
+      if (node.get("type") === "mcp_trigger") {
+        const events = node.get("events", true);
+        if (isSeq(events)) for (const event of events.items) if (isMap(event)) check(event.get("input_schema", true));
+        const tools = node.get("tools", true);
+        if (isSeq(tools)) for (const tool of tools.items) if (isMap(tool)) {
+          check(tool.get("input_schema", true));
+          check(tool.get("output_schema", true));
+        }
+      }
       if (node.get("type") === "json_validate") check(node.get("schema", true));
       if (node.get("type") === "transform" && node.get("kind") === "json_schema") check(node.get("json_schema", true));
       for (const pair of node.items) walk(pair.value);
@@ -44,5 +53,11 @@ export function assertSchemaImportPrecision(document: Document) {
       for (const item of node.items) walk(item);
     }
   };
+  if (isMap(document.contents)) {
+    const events = document.contents.get("events", true);
+    if (isMap(events)) for (const pair of events.items) {
+      if (isMap(pair.value)) check(pair.value.get("payload_schema", true));
+    }
+  }
   walk(document.contents);
 }

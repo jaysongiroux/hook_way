@@ -40,6 +40,7 @@ import (
 
 // FlowServer serves configured flows through the graph executor.
 type FlowServer struct {
+	eventRuntime   flowconfig.EventRuntime
 	cfg            flowconfig.Config
 	process        config.Config
 	publisher      queue.Publisher
@@ -128,7 +129,20 @@ func NewFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	return newFlowServer(cfg, pub, logger, m, flowconfig.RegistryOptions{})
 }
 
+func NewFlowServerWithEvents(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics, events flowconfig.EventRuntime) (*FlowServer, error) {
+	if events == nil {
+		return NewFlowServer(cfg, pub, logger, m)
+	}
+	if issues := flowconfig.StandaloneIssues(cfg); len(issues) > 0 {
+		return nil, fmt.Errorf("unsupported flow: %s", issues[0].Message)
+	}
+	return newFlowServer(cfg, pub, logger, m, flowconfig.RegistryOptions{EventRuntime: events})
+}
+
 func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logger, m *metrics.Metrics, extra flowconfig.RegistryOptions) (*FlowServer, error) {
+	if issues := flowconfig.EventDeliveryIssues(cfg); len(issues) > 0 {
+		return nil, fmt.Errorf("invalid event delivery: %s", issues[0].Message)
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -147,6 +161,11 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	if issues := flowconfig.CredentialConfigurationIssues(cfg); len(issues) > 0 {
 		return nil, fmt.Errorf("invalid credentials: %s", issues[0].Message)
 	}
+	events, eventIssues := flowconfig.CompileEventCatalog(cfg.Events)
+	if len(eventIssues) > 0 {
+		return nil, fmt.Errorf("invalid events: %s: %s", eventIssues[0].Field, eventIssues[0].Message)
+	}
+	extra.Events = events
 	headers, queries := flowconfig.AuthenticationRedactions(cfg)
 	cfg.Security.RedactedHeaderDenylist = append(append([]string(nil), cfg.Security.RedactedHeaderDenylist...), headers...)
 	extra.QueryDenylist = queries
@@ -338,7 +357,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 				closeAll()
 				return nil, compileErr
 			}
-			gateway, err := mcpgateway.New(mcpgateway.Options{Config: mcpOptions, Logger: logger.With("flow", name),
+			gateway, err := mcpgateway.New(mcpgateway.Options{Events: extra.EventRuntime, Endpoint: name, Config: mcpOptions, Logger: logger.With("flow", name),
 				Observe: func(tool, outcome string, duration time.Duration) { m.MCP(name, tool, outcome, duration) },
 				Run: func(ctx context.Context, env graph.Envelope) (graph.Terminal, error) {
 					if s.lifecycle.Load() >= 2 {
@@ -395,6 +414,7 @@ func newFlowServer(cfg flowconfig.Config, pub queue.Publisher, logger *slog.Logg
 	// constructors (and therefore extra.Secrets) run inside graph.Compile, so
 	// closers is still empty when the struct is built. Copying the slice
 	// header early would drop every resolver.
+	s.eventRuntime = extra.EventRuntime
 	s.closers = closers
 	s.trustedProxies = parseCIDRs(cfg.Security.TrustedProxies)
 	s.gate = newRequestGate(cfg.Server.MaxInflightRequests, cfg.Server.MaxPendingRequests, cfg.Server.AdmissionWaitTimeout)
@@ -947,6 +967,10 @@ type flowReadyState struct {
 }
 
 func (s *FlowServer) handleReady(w http.ResponseWriter, r *http.Request) {
+	if s.eventRuntime != nil && s.eventRuntime.Ready(r.Context()) != nil {
+		s.writeJSON(w, r, http.StatusServiceUnavailable, map[string]any{"error": "event delivery unavailable"})
+		return
+	}
 	if state := s.lifecycle.Load(); state != 0 {
 		status := "withdrawing"
 		if state >= 2 {

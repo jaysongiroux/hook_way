@@ -63,7 +63,7 @@ test("the marketing nav moves between the three public routes", async ({
 test("a direct marketing section link retains its target", async ({ page }) => {
   await page.goto("/#mcp-gateway");
   await expect(
-    page.getByRole("heading", { name: "Let AI assistants use your APIs" }),
+    page.getByRole("heading", { name: "Give agents tools and events" }),
   ).toBeInViewport();
   await expect
     .poll(() => page.evaluate(() => window.scrollY))
@@ -108,27 +108,22 @@ for (const width of [1440, 390]) {
     const section = page.locator("#mcp-gateway");
     await expect(
       section.getByRole("heading", {
-        name: "Let AI assistants use your APIs",
+        name: "Give agents tools and events",
       }),
     ).toBeVisible();
     await expect(section.getByRole("figure")).toBeVisible();
     await expect(
-      section.getByText("/services/mcp", { exact: true }),
+      section.getByText("issue.opened", { exact: true }),
     ).toBeVisible();
     await expect(
-      section.getByText("/utilities/mcp", { exact: true }),
+      section.getByText("get_issue", { exact: true }),
     ).toBeVisible();
     await expect(
-      section.getByText("get_service_status", { exact: true }),
+      section.getByText("Signed callback → subscribed agent", { exact: true }),
     ).toBeVisible();
     await expect(
-      section.getByText("GET https://status.example.com/status", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(
-      section.getByRole("link", { name: "Configure the MCP gateway" }),
-    ).toHaveAttribute("href", /mcp-gateway/);
+      section.getByRole("link", { name: "Import an API as MCP tools" }),
+    ).toHaveAttribute("href", /openapi-import/);
     await expect
       .poll(() =>
         page.evaluate(
@@ -139,6 +134,8 @@ for (const width of [1440, 390]) {
     await section.screenshot({
       path: testInfo.outputPath(`mcp-marketing-${width}.png`),
     });
+    await expect(section.getByRole("link", { name: "Try the issue event demo" }))
+      .toHaveAttribute("href", "/docs/examples/mcp-events/demo/");
     await page.goto("/compare");
     const row = page
       .getByRole("rowheader", { name: /^MCP tools/ })

@@ -13,16 +13,18 @@ import { nodeHelp, PALETTE_GROUP_HELP } from "./help";
 import { PALETTE_ITEM_CLASS } from "./builderStyles";
 import { DARK } from "../tokens";
 import { TEMPLATES } from "./templates";
+import { ExamplesPanel } from "./ExamplesPanel";
 
 export const DND_MIME = "application/hookway-node";
 export const DND_TEMPLATE_MIME = "application/hookway-template";
 
-/** Which half of the palette is showing. The panel owns the value. */
-export type PaletteTab = "nodes" | "templates";
+/** The panel owns the active palette section. */
+export type PaletteTab = "nodes" | "templates" | "examples";
 
 const TABS: { value: PaletteTab; label: string }[] = [
   { value: "nodes", label: "Nodes" },
   { value: "templates", label: "Templates" },
+  { value: "examples", label: "Examples" },
 ];
 
 const GROUPS: { title: string; types: string[] }[] = [
@@ -73,7 +75,7 @@ export function PaletteTabs({
   onChange: (tab: PaletteTab) => void;
 }) {
   return (
-    <Group role="tablist" aria-label="Palette sections" gap={4} wrap="nowrap">
+    <Group role="tablist" aria-label="Palette sections" gap={2} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
       {TABS.map((tab) => {
         const active = tab.value === value;
         return (
@@ -86,7 +88,7 @@ export function PaletteTabs({
               // every click of the tab already showing.
               if (!active) onChange(tab.value);
             }}
-            px={8}
+            px={2}
             py={4}
             style={{
               borderRadius: 4,
@@ -97,9 +99,7 @@ export function PaletteTabs({
             <Text
               fw={600}
               size="xs"
-              tt="uppercase"
               c={active ? DARK.text : DARK.muted}
-              style={{ letterSpacing: "0.08em" }}
             >
               {tab.label}
             </Text>
@@ -115,18 +115,23 @@ function PaletteItem({
   help,
   onDragStart,
   onAdd,
+  actionLabel = "Add",
+  actionName,
 }: {
   label: string;
   help: string;
-  onDragStart: (e: React.DragEvent) => void;
+  onDragStart?: (e: React.DragEvent) => void;
+  actionLabel?: string;
+  actionName?: string;
   onAdd?: () => void;
 }) {
   return (
     <Box
       className={PALETTE_ITEM_CLASS}
       p={10}
-      draggable
+      draggable={!!onDragStart}
       onDragStart={onDragStart}
+      style={{ cursor: onDragStart ? "grab" : "default" }}
     >
       <Group align="flex-start" justify="space-between" wrap="nowrap" gap="sm">
         <Text size="sm" fw={600} c={DARK.text} style={{ minWidth: 0, flex: 1 }}>
@@ -137,11 +142,11 @@ function PaletteItem({
             size="compact-xs"
             variant="subtle"
             color="brand"
-            aria-label={`Add ${label}`}
+            aria-label={actionName ?? `Add ${label}`}
             style={{ flexShrink: 0, minWidth: 40 }}
             onClick={onAdd}
           >
-            Add
+            {actionLabel}
           </Button>
         )}
       </Group>
@@ -160,12 +165,18 @@ export function Palette({
   tab,
   onAddNode,
   onAddTemplate,
+  onLoadProductionTemplate,
+  onExampleImported,
 }: {
   tab: PaletteTab;
   onAddNode?: (type: string) => void;
   onAddTemplate?: (id: string) => void;
+  onLoadProductionTemplate?: () => void;
+  onExampleImported?: () => void;
 }) {
   const [search, setSearch] = useState("");
+
+  if (tab === "examples") return <ExamplesPanel onImported={onExampleImported} />;
 
   if (tab === "templates") {
     return (
@@ -173,6 +184,13 @@ export function Palette({
         <Text size="xs" c={DARK.muted} lh={1.4}>
           {PALETTE_GROUP_HELP.Templates}
         </Text>
+        <PaletteItem
+          label="Production example"
+          help="A complete GitHub webhook workspace with delivery branches and example destinations. Replaces the current workspace."
+          onAdd={onLoadProductionTemplate}
+          actionLabel="Load"
+          actionName="Load production example"
+        />
         {TEMPLATES.map((def) => (
           <PaletteItem
             key={def.id}

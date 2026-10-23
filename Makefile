@@ -159,7 +159,7 @@ COVERAGE_FLOOR ?= 80.9
 # replay-integration-test instead: under -short they have nothing to run.
 # Instrument the whole selected set so shared code exercised by another
 # package's contract/conformance tests contributes to the aggregate report.
-COVER_PKGS := $(shell $(GO) list ./... | grep -v '/internal/replay/store$$' | grep -v '/internal/replay/replaytest$$')
+COVER_PKGS := $(shell $(GO) list ./... | grep -v '/internal/replay/store$$' | grep -v '/internal/replay/replaytest$$' | grep -v '/internal/eventdelivery$$')
 
 coverage:
 	$(GO) test $(UNIT_FLAGS) -covermode=atomic -coverpkg=$$(printf '%s\n' $(COVER_PKGS) | paste -sd, -) -coverprofile=$(COVERAGE_PROFILE) $(COVER_PKGS)
@@ -320,6 +320,9 @@ validate-examples:
 		JWT_PUBLIC_KEY=dummy \
 		REDIS_URL=redis://localhost:6379 \
 		POSTGRES_URL=postgres://localhost:5432/db \
+		EVENT_DATABASE_URL=postgres://localhost:5432/events \
+		DEMO_ISSUER=https://identity.example.test/demo \
+		DEMO_MCP_URL=https://mcp.example.test/agents/mcp \
 		PROTECTION_DATABASE_URL=postgres://localhost:5432/protection \
 		PROTECTION_REDIS_URL=redis://localhost:6379 \
 		MONGODB_URI=mongodb://localhost:27017 \
@@ -368,7 +371,7 @@ validate-examples:
 	done; \
 	$(GO) run ./cmd/hookway validate --no-env --strict --config examples/openapi/core.yaml || exit 1; \
 	$(GO) run ./cmd/hookway validate --config examples/multi-yaml/core.yaml || exit 1; \
-	for d in dev replay; do \
+	for d in dev replay mcp-events/demo; do \
 		echo "validating examples/$$d/core.yaml"; \
 		$(GO) run ./cmd/hookway validate --config examples/$$d/core.yaml || exit 1; \
 		echo "validating examples/$$d/replay.yaml"; \
@@ -540,3 +543,8 @@ prod-local-reset: prod-local-check
 	[ "$(PROD_LOCAL_CONFIRM_RESET)" = "$$project" ] || { echo "Reset deletes project data; set PROD_LOCAL_CONFIRM_RESET=$$project" >&2; exit 1; }; \
 	echo "Deleting containers and named volumes for $$project. Credentials/configuration retained."; \
 	$(PROD_LOCAL_COMPOSE) down --volumes
+
+.PHONY: event-integration-test
+event-integration-test:
+	HOOKWAY_REQUIRE_INTEGRATION=1 $(GO) test -race ./internal/eventdelivery -count=1 -coverprofile=event-delivery-coverage.out
+	@total="$$($(GO) tool cover -func=event-delivery-coverage.out | awk '/^total:/ { print substr($$3, 1, length($$3)-1) }')"; awk -v t="$$total" 'BEGIN { if ((t+0) < 80) { printf "event delivery coverage %s%% is below 80%%\n", t; exit 1 } printf "event delivery coverage %s%% (floor 80%%)\n", t }'

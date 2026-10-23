@@ -22,6 +22,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/configapi"
 	"github.com/jaysongiroux/hook_way/internal/control"
 	"github.com/jaysongiroux/hook_way/internal/editor"
+	"github.com/jaysongiroux/hook_way/internal/eventdelivery"
 	"github.com/jaysongiroux/hook_way/internal/flowconfig"
 	"github.com/jaysongiroux/hook_way/internal/httpapi"
 	hooklogging "github.com/jaysongiroux/hook_way/internal/logging"
@@ -66,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runSchema(args[1:], stdout, stderr)
 	case "editor":
 		return runEditor(args[1:], stdout, stderr)
+	case "event-store":
+		return runEventStore(args[1:], stdout, stderr)
 	case "state-store":
 		return runStateStore(args[1:], stdout, stderr)
 	case "version":
@@ -335,7 +338,7 @@ func newCapturer(cfg flowconfig.Config, m *metrics.Metrics, logger *slog.Logger)
 
 // newControlServer builds the control listener replay redrives through, when
 // the replay block is configured.
-func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metrics.Metrics, logger *slog.Logger) *control.Server {
+func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metrics.Metrics, logger *slog.Logger, events ...control.EventOperator) *control.Server {
 	if !cfg.Replay.Configured {
 		return nil
 	}
@@ -345,7 +348,11 @@ func newControlServer(cfg flowconfig.Config, redriver control.Redriver, m *metri
 	}
 	host, _ := os.Hostname()
 	ctl := cfg.Replay.Control
-	return control.New(control.Options{
+	var eventOperator control.EventOperator
+	if len(events) > 0 {
+		eventOperator = events[0]
+	}
+	return control.New(control.Options{Events: eventOperator,
 		Addr: ctl.Addr, Token: ctl.Token, MaxConcurrent: ctl.MaxConcurrent, MaxRecordBytes: cfg.Replay.MaxRecordBytes,
 		Flows: flows, Redriver: redriver, Metrics: m, Logger: logger, CoreVersion: version, CoreInstance: host,
 	})
@@ -417,7 +424,21 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 			_ = capturer.Close()
 		}
 	}
+	events, err := eventdelivery.New(context.Background(), flowCfg, appMetrics)
+	if err != nil {
+		logger.Error("event delivery initialization failed", "error", err)
+		closeCapturer()
+		return 1
+	}
+	if events != nil {
+		defer func() { _ = events.Close() }()
+	}
 	factoryOpts := queue.FactoryOptions{Metrics: appMetrics, Logger: logger}
+	if events != nil {
+		factoryOpts.MCPEventsConnector = func(_ context.Context, _ string, c config.MCPEventsConfig) (queue.Publisher, error) {
+			return &eventdelivery.Publisher{Runtime: events, Endpoint: c.Endpoint}, nil
+		}
+	}
 	if capturer != nil {
 		factoryOpts.OnTerminalFailure = capturer.OnTerminalFailure
 	}
@@ -428,12 +449,19 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	flowApp, err := httpapi.NewFlowServer(flowCfg, publisher, logger, appMetrics)
+	var eventRuntime flowconfig.EventRuntime
+	if events != nil {
+		eventRuntime = events
+	}
+	flowApp, err := httpapi.NewFlowServerWithEvents(flowCfg, publisher, logger, appMetrics, eventRuntime)
 	if err != nil {
 		logger.Error("flow server failed", "error", err)
 		_ = publisher.Close()
 		closeCapturer()
 		return 1
+	}
+	if events != nil {
+		events.Start()
 	}
 	flowApp.SetCapturer(capturer)
 	app := flowApp
@@ -471,7 +499,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		}()
 	}
 
-	ctl := newControlServer(flowCfg, flowApp, appMetrics, logger)
+	ctl := newControlServer(flowCfg, flowApp, appMetrics, logger, events)
 	if ctl != nil {
 		controlHTTP := ctl.HTTPServer()
 		go func() {
@@ -486,6 +514,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	closers := []io.Closer{app, publisher}
+	if events != nil {
+		closers = append([]io.Closer{events}, closers...)
+	}
 	if capturer != nil {
 		closers = append(closers, capturer) // after the publisher: draining engines can still capture
 	}
@@ -524,6 +555,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	if waitErr != nil {
 		delay = 0
 	} // a failed listener cannot serve during withdrawal
+	if events != nil {
+		events.Stop()
+	}
 	logger.Info("hookway withdrawing", "delay", delay, "shutdown_total_timeout", timeout)
 	if err := withdrawBeforeDrain(ctx, delay, app.Withdraw); err != nil {
 		logger.Error("readiness withdrawal failed", "error", err)

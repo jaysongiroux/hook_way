@@ -105,6 +105,22 @@
       "type": "object"
     }
   },
+  "mcp_events": {
+    "block": "mcp_events",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "endpoint"
+      ]
+    }
+  },
   "mongodb": {
     "block": "mongodb",
     "connection": "mongodb",

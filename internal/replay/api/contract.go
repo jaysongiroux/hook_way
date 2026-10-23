@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/jaysongiroux/hook_way/internal/apicontract"
+	"github.com/jaysongiroux/hook_way/internal/eventops"
 	"github.com/jaysongiroux/hook_way/internal/problem"
 	"github.com/jaysongiroux/hook_way/internal/replay/auth"
 	"github.com/jaysongiroux/hook_way/internal/replay/store"
@@ -87,11 +88,12 @@ func Routes() []apicontract.Route {
 	validate := route("POST", "/v1/actions/validate", "validateAction", "Pure retry/resolution input validation, also provided by WASM. Does not access records or perform an action. HTTP 200 with issues means inputs are invalid; scopes, eligibility and evidence authenticity remain authoritative at action time.", auth.ScopeRead, jsonResponse(200, "Input issues; empty issues means syntactically valid only.", "ActionValidationResult", uicontract.ReplayActionResult{}), 400, 413, 500)
 	validate.Request = &apicontract.Request{Required: true, MediaType: "application/json", Model: &apicontract.Model{Name: "ActionValidationInput", Value: uicontract.ReplayActionInput{}, Input: true, Required: []string{"idempotency_key"}}}
 	validate.Extensions = map[string]any{"x-max-body-bytes": maxJSONBodyBytes}
-	return []apicontract.Route{me, resolve, validate, capture, list, get, payload, retry, dismiss, batch, run, health, ready}
+	return append([]apicontract.Route{me, resolve, validate, capture, list, get, payload, retry, dismiss, batch, run, health, ready}, eventRoutes()...)
 }
 
 func OpenAPI() ([]byte, error) {
 	models := []apicontract.Model{
+		{Name: "MCPEventEligibility", Value: eventops.Eligibility{}}, {Name: "MCPEventAttempt", Value: eventops.Attempt{}}, {Name: "MCPEventReceipt", Value: eventops.Receipt{}}, {Name: "MCPSubscription", Value: eventops.Subscription{}}, {Name: "MCPDelivery", Value: eventops.Delivery{}},
 		{Name: "ActionValidationInput", Value: uicontract.ReplayActionInput{}, Input: true, Required: []string{"idempotency_key"}},
 		{Name: "ActionValidationResult", Value: uicontract.ReplayActionResult{}},
 		{Name: "ActionIssue", Value: uicontract.ActionIssue{}},

@@ -10,6 +10,7 @@ var program = cli.Program{
 	Summary: "run the webhook ingress server and inspect flow configurations",
 	Default: "serve",
 	Commands: []cli.Command{
+		{Name: "event-store", Args: "migrate|status|gc --config FILE", Summary: "administer durable MCP event delivery", Help: "migrate creates the event schema and tables under an advisory migration lock. Serving never migrates. status reads the schema version. gc removes terminal deliveries older than 24 hours and unreferenced event bodies.", Examples: []string{"hookway event-store migrate --config core.yaml", "hookway event-store status --config core.yaml", "hookway event-store gc --config core.yaml"}},
 		{Name: "import-openapi", Args: "--spec FILE (--list [--json] | --settings FILE [--out FILE])", Summary: "generate MCP tools from selected OpenAPI operations", Help: `Inspect a local OpenAPI 3.0/3.1 document or generate a new standalone Hookway configuration.
 Generation requires an import settings file with explicit operation selections and grants.
 No network requests, environment expansion or secret resolution occur. Output defaults to stdout;

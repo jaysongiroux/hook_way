@@ -44,6 +44,7 @@ import {
   type Session,
 } from "./session";
 import { ActionDialog, type Intent } from "./ActionDialog";
+import { EventOperations } from "./EventOperations";
 import { RecordDetail } from "./RecordDetail";
 import "./console.css";
 
@@ -449,18 +450,21 @@ export function ReplayConsole({ apiUrl }: { apiUrl: string }) {
 function Records({ session, identity, active }: { session: Session; identity: Identity; active: boolean }) {
   const [kind, setKind] = React.useState("failures");
   const hasInspections = identity.capabilities.includes("inspection_records");
+  const hasEvents = identity.capabilities.includes("mcp_event_operations");
   return (
     <>
-      {active && hasInspections && (
+      {active && (hasInspections || hasEvents) && (
         <Tabs id="record-kind" value={kind} onChange={(value) => setKind(value || "failures")} className="record-navigation">
           <Tabs.List aria-label="Record kind">
             <Tabs.Tab value="failures" aria-controls="record-kind-panel-failures">Failures</Tabs.Tab>
-            <Tabs.Tab value="inspections" aria-controls="record-kind-panel-inspections">Inspections</Tabs.Tab>
+            {hasInspections && <Tabs.Tab value="inspections" aria-controls="record-kind-panel-inspections">Inspections</Tabs.Tab>}
+            {hasEvents && <Tabs.Tab value="events">MCP events</Tabs.Tab>}
           </Tabs.List>
         </Tabs>
       )}
       <Inbox session={session} identity={identity} active={active && kind === "failures"} inspection={false} />
       {hasInspections && <Inbox session={session} identity={identity} active={active && kind === "inspections"} inspection />}
+      {hasEvents && <EventOperations session={session} identity={identity} active={active && kind === "events"} />}
     </>
   );
 }
