@@ -26,6 +26,13 @@ export const BUILDER_CSS = `
   border: 2px solid transparent;
   border-radius: 999px;
 }
+/* ScrollArea draws its own thumb; keep the underlying native one hidden. */
+.hookway-builder-root .mantine-ScrollArea-viewport {
+  scrollbar-width: none;
+}
+.hookway-builder-root .mantine-ScrollArea-viewport::-webkit-scrollbar {
+  display: none;
+}
 .hookway-builder-root :focus-visible {
   outline: 2px solid ${DARK.accent};
   outline-offset: 2px;
@@ -46,6 +53,13 @@ export const BUILDER_CSS = `
 }
 .${PALETTE_ITEM_CLASS}:active {
   cursor: grabbing;
+}
+button.${PALETTE_ITEM_CLASS},
+button.${PALETTE_ITEM_CLASS}:active {
+  cursor: pointer;
+}
+button.${PALETTE_ITEM_CLASS}:active {
+  background-color: ${DARK.border};
 }
 .${DEST_ROW_CLASS} {
   display: block;

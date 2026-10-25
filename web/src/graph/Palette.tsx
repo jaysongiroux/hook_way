@@ -75,7 +75,7 @@ export function PaletteTabs({
   onChange: (tab: PaletteTab) => void;
 }) {
   return (
-    <Group role="tablist" aria-label="Palette sections" gap={2} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+    <Group role="tablist" aria-label="Palette sections" gap={4} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
       {TABS.map((tab) => {
         const active = tab.value === value;
         return (
@@ -88,12 +88,13 @@ export function PaletteTabs({
               // every click of the tab already showing.
               if (!active) onChange(tab.value);
             }}
-            px={2}
-            py={4}
+            px={0}
+            py={6}
             style={{
-              borderRadius: 4,
-              background: active ? DARK.surface : "transparent",
-              border: `1px solid ${active ? DARK.border : "transparent"}`,
+              flex: "1 1 auto",
+              textAlign: "center",
+              whiteSpace: "nowrap",
+              borderBottom: `2px solid ${active ? DARK.accent : "transparent"}`,
             }}
           >
             <Text

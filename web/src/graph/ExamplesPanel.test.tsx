@@ -56,6 +56,15 @@ test("failed catalogue loading supports retry", async () => {
   expect(await screen.findByRole("button", { name: "Import example nested/notification.yaml" })).toBeEnabled();
 });
 
+test("clicking an example card opens its import choices", async () => {
+  wrap(<ExamplesPanel />);
+  fireEvent.click(await screen.findByText("Notification"));
+
+  expect(screen.getByRole("dialog", { name: "Import Notification" })).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Nodes only" })).toBeChecked();
+  expect(useGraphStore.getState().nodes).toHaveLength(0);
+});
+
 test("nodes mode defaults to the first flow, updates counts, and appends only the selected flow", () => {
   const onImported = vi.fn(), onClose = vi.fn();
   wrap(<ExampleImportDialog example={example} onClose={onClose} onImported={onImported} />);

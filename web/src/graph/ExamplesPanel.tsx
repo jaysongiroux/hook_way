@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Button, Group, Modal, NativeSelect, Radio, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Button, Group, Modal, NativeSelect, Radio, Stack, Text, TextInput, UnstyledButton } from "@mantine/core";
 import type { RepositoryExample } from "./exampleCatalog";
 import { fromBundle } from "./bundle";
 import { useGraphStore } from "./store";
@@ -43,17 +43,14 @@ export function ExamplesPanel({ onImported }: { onImported?: () => void }) {
       ) : !matches ? <Text size="sm" role="status">Loading examples…</Text> : matches.length === 0 ? (
         <Text size="sm" c={DARK.muted} role="status">{examples?.length ? `No examples match “${search.trim()}”.` : "No examples are available."}</Text>
       ) : matches.map((example) => (
-        <Box key={example.id} className={PALETTE_ITEM_CLASS} p={10} style={{ cursor: "default" }}>
-          <Group justify="space-between" align="flex-start" wrap="nowrap" gap="sm">
-            <Text size="sm" fw={600} style={{ minWidth: 0, flex: 1 }}>{example.label}</Text>
-            <Button size="compact-xs" variant="subtle" aria-label={`Import example ${example.id}`}
-              onClick={() => setSelected(example)}>Import</Button>
-          </Group>
-          <Text size="xs" c={DARK.muted} mt={4} style={{ overflowWrap: "anywhere" }}>{example.id}</Text>
-          <Text size="xs" c={DARK.muted} mt={4} style={{ overflowWrap: "anywhere" }}>
+        <UnstyledButton key={example.id} className={PALETTE_ITEM_CLASS} p={10}
+          aria-label={`Import example ${example.id}`} onClick={() => setSelected(example)}>
+          <Text component="span" display="block" size="sm" fw={600}>{example.label}</Text>
+          <Text component="span" display="block" size="xs" c={DARK.muted} mt={4} style={{ overflowWrap: "anywhere" }}>{example.id}</Text>
+          <Text component="span" display="block" size="xs" c={DARK.muted} mt={4} style={{ overflowWrap: "anywhere" }}>
             Flows: {example.flows.map((flow) => flow.name).join(", ")}
           </Text>
-        </Box>
+        </UnstyledButton>
       ))}
       {selected && <ExampleImportDialog key={selected.id} example={selected}
         onClose={() => setSelected(undefined)} onImported={onImported} />}

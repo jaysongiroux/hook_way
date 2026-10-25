@@ -42,7 +42,7 @@ function DiagramSvg() {
       aria-label={flowDescription()}
       viewBox={`0 0 ${LAYOUT.width} ${LAYOUT.height}`}
       width="100%"
-      style={{ display: "block", maxWidth: LAYOUT.width, fontFamily: "inherit" }}
+      style={{ display: "block", fontFamily: "inherit" }}
     >
       <FlowGraphSvg markerId="hookway-diagram-edge" />
     </svg>
