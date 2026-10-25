@@ -7,7 +7,7 @@ RUN go mod download
 COPY . .
 RUN mkdir -p /out && GOOS=js GOARCH=wasm go build -o /out/hookway.wasm ./cmd/hookway-wasm && cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" /out/wasm_exec.js
 
-FROM --platform=$BUILDPLATFORM node:26.11.1-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS ui
+FROM --platform=$BUILDPLATFORM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS ui
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
@@ -20,7 +20,7 @@ ARG COMMIT=none
 RUN node -e 'require("node:fs").writeFileSync("public/build-info.json", JSON.stringify({version:process.env.VERSION,commit:process.env.COMMIT})+"\n")'
 RUN npm run build:console && test -s dist-console/hookway.wasm && test -s dist-console/wasm_exec.js
 
-FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03 AS console
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e AS console
 USER root
 # Python is used only at startup for strict URL validation/JSON serialization,
 # and by the local health check. Nginx serves all HTTP requests.
