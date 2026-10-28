@@ -33,6 +33,9 @@ func TestFormAuthCatalogMatchesRegistry(t *testing.T) {
 		if capability.RequestSignature != auth.IsRequestScheme(scheme) || capability.SeparateTimestamp != auth.SeparateTimestamp(scheme) || capability.JWT != auth.SchemeAllowedForAuthType(auth.AuthTypeJWT, scheme) {
 			t.Errorf("capabilities disagree with registry for %s: %+v", scheme, capability)
 		}
+		if capability.MessageID != (scheme == auth.SchemeHMACSHA256Polar) {
+			t.Errorf("incorrect message ID capability for %s", scheme)
+		}
 	}
 	if !reflect.DeepEqual(property.Enum, want) {
 		t.Errorf("scheme enum=%v want registry=%v", property.Enum, want)

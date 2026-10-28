@@ -16,6 +16,7 @@ import (
 type AuthSchemeSchema struct {
 	RequestSignature  bool   `json:"request_signature"`
 	SeparateTimestamp bool   `json:"separate_timestamp"`
+	MessageID         bool   `json:"message_id"`
 	JWT               bool   `json:"jwt"`
 	KeyFormat         string `json:"key_format"`
 }
@@ -93,6 +94,7 @@ func authSchemeSchemas(schema *jsonschema.Schema) map[string]AuthSchemeSchema {
 		out[scheme] = AuthSchemeSchema{
 			RequestSignature:  auth.IsRequestScheme(scheme),
 			SeparateTimestamp: auth.SeparateTimestamp(scheme),
+			MessageID:         scheme == auth.SchemeHMACSHA256Polar,
 			JWT:               auth.SchemeAllowedForAuthType(auth.AuthTypeJWT, scheme),
 			KeyFormat:         format,
 		}

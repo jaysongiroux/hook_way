@@ -10,7 +10,7 @@ response and broker bytes before changing its ingress.
 
 ## Request signatures
 
-Hookway offers 14 authentication formats. The separate `no_auth` node
+Hookway offers 15 authentication formats. The separate `no_auth` node
 explicitly permits unauthenticated traffic. The existing schemes are listed in [Security](../reference/security.md#auth-schemes).
 Three request protocols add explicit timestamp and body controls:
 
@@ -27,6 +27,11 @@ format from the PEM key used by JWT ES256. Separate-header schemes require
 tolerance. `age` rejects old timestamps but permits future timestamps;
 `unchecked` disables the freshness check. Choose either explicitly only when
 matching a known contract. A signature still has to verify.
+
+Polar's `hmac_sha256_polar` additionally authenticates a message ID from
+`message_id_header: webhook-id`. It requires seconds timestamps, a symmetric
+window and raw bytes, and automatically accepts current and legacy Polar secrets
+unchanged. See [Polar provider compatibility](provider-compatibility.md#polar).
 
 `body_representation` defaults to `raw`. Separate-header HMAC can opt into
 `json_js`: JavaScript `JSON.stringify(JSON.parse(original_body))` semantics,

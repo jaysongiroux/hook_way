@@ -262,7 +262,7 @@ test("the compare page leads with the publish wedge and where Hookway differs", 
   expect(main).toHaveTextContent(
     /sends events directly to queues, streams, databases, and object storage/i,
   );
-  expect(main).toHaveTextContent(/14 authentication formats/);
+  expect(main).toHaveTextContent(/15 authentication formats/);
   expect(main).toHaveTextContent(/HTTP Basic/);
   expect(main).toHaveTextContent(/HS256/);
   expect(main).toHaveTextContent(/unknown schemes are rejected/i);

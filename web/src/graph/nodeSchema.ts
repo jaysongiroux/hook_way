@@ -42,6 +42,7 @@ export interface NodeSchemaMeta {
     {
       request_signature: boolean;
       separate_timestamp: boolean;
+      message_id: boolean;
       jwt: boolean;
       key_format: "shared_secret" | "pem" | "base64_der";
     }

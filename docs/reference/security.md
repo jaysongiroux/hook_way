@@ -42,7 +42,7 @@ Paddle, and Slack. See [Configuration](configuration.md#auth) for all auth field
 
 Each `auth` node requires an explicit `scheme`. Inline secrets build a verifier at startup; `secret_ref` uses the cached current/overlap values. An unknown scheme fails closed: validation and standalone startup reject it; verification errors never accept unverified traffic.
 
-There are fourteen authentication formats in the builder catalog. The table
+The builder exposes registered authentication formats. The table
 also shows the separate `no_auth` option; it is not an authentication format.
 
 | Scheme | Family | Verifies | Notes |
@@ -51,6 +51,7 @@ also shows the separate `no_auth` option; it is not an authentication format.
 | `hmac_sha256_ts_dot` | `hmac_sha256` | timestamp + raw body | signed timestamp; see below |
 | `hmac_sha256_headers_dot` | `hmac_sha256` | separate timestamp header + body | explicit raw or original JavaScript JSON representation |
 | `hmac_sha256_ts_dot_multi` | `hmac_sha256` | timestamp + body, multiple signatures | accepts any matching configured signature label |
+| `hmac_sha256_polar` | `hmac_sha256` | message ID + timestamp + raw body | current and legacy Polar keys; Base64 signatures |
 | `ecdsa_p256_sha256_headers` | `ecdsa` | separate timestamp header concatenated with raw body | P-256/SHA-256, base64 ASN.1 DER signature |
 | `hmac_sha256_hex` | `hmac_sha256` | raw body | see below |
 | `hmac_sha256_base64` | `hmac_sha256` | raw body | see below |
@@ -78,6 +79,34 @@ Timestamped HMAC-SHA256 with a dot separator (used by Stripe's `Stripe-Signature
 ### `hmac_sha256_slack_v0` (separate timestamp)
 
 Verifies Slack's `X-Slack-Signature: v0=<hex>` over `v0:<timestamp>:<raw_body>`. Configure `timestamp_header: X-Slack-Request-Timestamp`, `timestamp_unit: seconds`, and `timestamp_tolerance: 5m`. The timestamp is checked symmetrically by default; raw bytes are authenticated before JSON decoding. See the signed Events API challenge recipe and tested scope in [Provider compatibility](../guides/provider-compatibility.md).
+
+### `hmac_sha256_polar` (signed message ID and timestamp)
+
+Verifies Polar's `webhook-signature: v1,<base64>` over
+`webhook-id + "." + webhook-timestamp + "." + raw_body`. Set
+`signature_header: webhook-signature`, `timestamp_header: webhook-timestamp`,
+`message_id_header: webhook-id`, and `timestamp_unit: seconds`. All three header
+names must differ, case-insensitively; missing or duplicate headers fail closed.
+The message ID must be nonempty, bounded to 8 KiB and contain no dots or whitespace.
+The signature header is bounded to 8 KiB and at most 16 space-separated candidates;
+unknown versions and malformed candidates cannot authenticate a request, but do
+not prevent a later valid `v1` candidate from matching. Digests use constant-time
+comparison.
+
+Use the dashboard secret unchanged. Hookway automatically tries both Polar's
+current Standard Webhooks key (Base64-decoded after removing an optional `whsec_`
+prefix) and its legacy key (the full secret's UTF-8 bytes). If Base64 decoding
+fails, legacy verification remains available. Empty or oversized secrets are
+rejected. Refresh and rotation overlap use the existing secret-reference mechanism.
+
+The timestamp window is symmetric and defaults to five minutes. Milliseconds,
+`age`, `unchecked`, JSON reserialization, custom signature labels, Bearer stripping
+and query credentials are rejected. Invalid authentication defaults to 401; key
+resolution failures retain 503, and existing flow response overrides apply.
+Preserve the verified webhook ID for consumer deduplication: freshness checking
+does not prevent repeats within the allowed window. See the [Polar provider
+recipe](../guides/provider-compatibility.md#polar) and [Polar's validation
+documentation](https://polar.sh/docs/integrate/webhooks/delivery#custom-validation).
 
 ### `hmac_sha256_base64` (`hmac_sha256`)
 

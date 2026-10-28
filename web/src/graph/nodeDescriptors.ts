@@ -214,6 +214,7 @@ export const NODE_DESCRIPTORS: Record<keyof typeof nodeCatalog, NodeDescriptor> 
       "tenant_claim": "Verified JWT claim containing the tenant ID, such as tenant_id. Requires configured expected issuer and audience for tenant quotas.",
       "body_hash_claim": "JWT claim that must hash-match the raw body.",
       "timestamp_header": "Separate timestamp header for header-based HMAC or ECDSA. Must differ from the signature header.",
+      "message_id_header": "Polar event ID header, normally webhook-id. Must differ from the signature and timestamp headers.",
       "timestamp_unit": "Seconds or milliseconds since Unix epoch. Required for request signature schemes.",
       "timestamp_policy": "symmetric (default) checks past and future; age checks only maximum age; unchecked explicitly skips freshness checks while still requiring a valid signed timestamp.",
       "body_representation": "raw (default) signs original bytes. json_js is an explicit JavaScript parse/stringify representation for hmac_sha256_headers_dot only; raw bytes remain available downstream.",

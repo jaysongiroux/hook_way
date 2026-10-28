@@ -218,7 +218,7 @@ func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
 }
 
 func TestQuotedSchemeCountMatchesRegistry(t *testing.T) {
-	const quoted = "14"
+	const quoted = "15"
 	// no_auth is an explicit bypass, not an authentication format.
 	authenticated := 0
 	for _, scheme := range auth.Schemes() {

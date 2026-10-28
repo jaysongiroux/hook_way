@@ -116,7 +116,7 @@ for (const [scheme, capability] of Object.entries(
       expect(
         screen.queryByLabelText("Raw body SHA-256 claim"),
       ).not.toBeInTheDocument();
-    if (capability.request_signature)
+    if (capability.request_signature && !capability.message_id)
       expect(
         screen.getByRole("combobox", { name: "timestamp unit" }),
       ).toBeRequired();
@@ -140,6 +140,10 @@ for (const [scheme, capability] of Object.entries(
       expect(
         screen.queryByLabelText("timestamp header"),
       ).not.toBeInTheDocument();
+    if (capability.message_id)
+      expect(screen.getByLabelText("message id header")).toBeRequired();
+    else
+      expect(screen.queryByLabelText("message id header")).not.toBeInTheDocument();
     if (capability.key_format === "pem") {
       expect(screen.getByLabelText("Verification key").tagName).toBe(
         "TEXTAREA",
@@ -154,6 +158,47 @@ for (const [scheme, capability] of Object.entries(
       expect(screen.getByText(/username:password/)).toBeInTheDocument();
   });
 }
+
+test("Polar selection fills headers, preserves secret references and removes incompatible settings", () => {
+  const { change } = setup("auth", {
+    scheme: "jwt_hs256",
+    source: { kind: "query", key: "token" },
+    secret_ref: { provider: "env", name: "POLAR_WEBHOOK_SECRET" },
+    body_hash_claim: "hash",
+    timestamp_tolerance: "2m",
+  });
+  choose("Authentication strategy", "Polar · webhook signature");
+  expect(change.mock.calls.at(-1)?.[0]).toEqual({
+    scheme: "hmac_sha256_polar",
+    signature_header: "webhook-signature",
+    timestamp_header: "webhook-timestamp",
+    message_id_header: "webhook-id",
+    timestamp_unit: "seconds",
+    timestamp_policy: "symmetric",
+    body_representation: "raw",
+    timestamp_tolerance: "2m",
+    secret_ref: { provider: "env", name: "POLAR_WEBHOOK_SECRET" },
+  });
+  expect(screen.getByText(/Use the secret exactly as copied from Polar/)).toBeInTheDocument();
+  expect(screen.queryByText(/These settings do not apply to this mode/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "timestamp unit" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "timestamp policy" })).not.toBeInTheDocument();
+  choose("Authentication strategy", "HMAC SHA-256 · hexadecimal");
+  const next = change.mock.calls.at(-1)?.[0];
+  expect(next).not.toHaveProperty("message_id_header");
+  expect(next).not.toHaveProperty("timestamp_header");
+  expect(next).not.toHaveProperty("timestamp_unit");
+  expect(next).not.toHaveProperty("body_representation");
+});
+
+test("Polar imports expose incompatible protocol settings with an explicit repair", () => {
+  const { change } = setup("auth", { ...auth, scheme: "hmac_sha256_polar", timestamp_unit: "milliseconds", timestamp_policy: "unchecked", body_representation: "json_js" });
+  expect(change).not.toHaveBeenCalled();
+  expect(screen.getByText(/Polar requires seconds timestamps/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Use Polar signing settings" }));
+  expect(change.mock.calls.at(-1)?.[0]).toMatchObject({ timestamp_unit: "seconds", timestamp_policy: "symmetric", body_representation: "raw" });
+  expect(screen.queryByText(/Polar requires seconds timestamps/)).not.toBeInTheDocument();
+});
 
 test("auth strategy switching removes inactive JWT fields and keeps unrelated authored values", () => {
   const { change } = setup("auth", {

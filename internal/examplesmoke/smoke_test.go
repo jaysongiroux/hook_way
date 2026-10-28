@@ -72,7 +72,7 @@ func TestExampleSmoke(t *testing.T) {
 	t.Setenv("EVENT_DATABASE_URL", "postgres://example:example@127.0.0.1:5432/events?sslmode=disable")
 	t.Setenv("PROTECTION_DATABASE_URL", "postgres://example:example@127.0.0.1:5432/hookway?sslmode=disable")
 	t.Setenv("PROTECTION_REDIS_URL", "redis://127.0.0.1:6379/0")
-	for _, provider := range []string{"GITHUB", "STRIPE", "PADDLE", "SLACK"} {
+	for _, provider := range []string{"GITHUB", "STRIPE", "PADDLE", "SLACK", "POLAR"} {
 		path := filepath.Join(t.TempDir(), "signing-secret")
 		if err := os.WriteFile(path, []byte("provider-smoke-secret"), 0600); err != nil {
 			t.Fatal(err)
@@ -304,6 +304,7 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 		"PADDLE_WEBHOOK_SECRET":   "paddle-secret",
 		"GITHUB_WEBHOOK_SECRET":   "github-secret",
 		"STRIPE_WEBHOOK_SECRET":   "stripe-secret",
+		"POLAR_WEBHOOK_SECRET":    "polar-secret",
 		"ORDERS_WEBHOOK_SECRET":   "orders-secret",
 		"NOTIFY_WEBHOOK_SECRET":   "notify-secret",
 		"SAMPLE_WEBHOOK_SECRET":   "synthetic-secret",
@@ -501,6 +502,15 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 			}
 			secret := authSecret(t, opts)
 			switch scheme {
+			case auth.SchemeHMACSHA256Polar:
+				ts := strconv.FormatInt(time.Now().Unix(), 10)
+				id := "polar-smoke-event"
+				mac := hmac.New(sha256.New, []byte(secret)) // Exercise Polar's legacy key format.
+				_, _ = mac.Write([]byte(id + "." + ts + "."))
+				_, _ = mac.Write(body)
+				req.Header.Set(header, "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+				req.Header.Set(opts.TimestampHeader, ts)
+				req.Header.Set(opts.MessageIDHeader, id)
 			case auth.SchemeHMACSHA256SlackV0, auth.SchemeHMACSHA256HeadersDot, auth.SchemeHMACSHA256TSDotMulti, auth.SchemeECDSAP256SHA256Headers:
 				ts := strconv.FormatInt(time.Now().Unix(), 10)
 				if opts.TimestampUnit == "milliseconds" {

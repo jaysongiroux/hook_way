@@ -38,6 +38,9 @@
         "timestamp_header": {
           "type": "string"
         },
+        "message_id_header": {
+          "type": "string"
+        },
         "timestamp_unit": {
           "type": "string",
           "enum": [
@@ -73,6 +76,7 @@
             "hmac_sha256_base64",
             "hmac_sha256_headers_dot",
             "hmac_sha256_hex",
+            "hmac_sha256_polar",
             "hmac_sha256_slack_v0",
             "hmac_sha256_ts_colon",
             "hmac_sha256_ts_dot",
@@ -174,84 +178,105 @@
       "basic": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "ecdsa_p256_sha256_headers": {
         "request_signature": true,
         "separate_timestamp": true,
+        "message_id": false,
         "jwt": false,
         "key_format": "base64_der"
       },
       "exact": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha1_hex": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_base64": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_headers_dot": {
         "request_signature": true,
         "separate_timestamp": true,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_hex": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_polar": {
+        "request_signature": true,
+        "separate_timestamp": true,
+        "message_id": true,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_slack_v0": {
         "request_signature": true,
         "separate_timestamp": true,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_ts_colon": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_ts_dot": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "hmac_sha256_ts_dot_multi": {
         "request_signature": true,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },
       "jwt_es256": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": true,
         "key_format": "pem"
       },
       "jwt_hs256": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": true,
         "key_format": "shared_secret"
       },
       "jwt_rs256": {
         "request_signature": false,
         "separate_timestamp": false,
+        "message_id": false,
         "jwt": true,
         "key_format": "pem"
       }

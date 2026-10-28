@@ -22,6 +22,7 @@ const (
 	SchemeHMACSHA256SlackV0      = "hmac_sha256_slack_v0"
 	SchemeHMACSHA256HeadersDot   = "hmac_sha256_headers_dot"
 	SchemeHMACSHA256TSDotMulti   = "hmac_sha256_ts_dot_multi"
+	SchemeHMACSHA256Polar        = "hmac_sha256_polar"
 	SchemeECDSAP256SHA256Headers = "ecdsa_p256_sha256_headers"
 	MaxCredentialBytes           = 8192
 	MaxSignatureCandidates       = 16
@@ -29,9 +30,9 @@ const (
 
 // Input preserves separate wire inputs and the original bounded request body.
 type Input struct {
-	cache                *bodyCache
-	Signature, Timestamp string
-	Body                 []byte
+	cache                           *bodyCache
+	Signature, Timestamp, MessageID string
+	Body                            []byte
 }
 type RequestVerifier interface {
 	VerifyRequest(context.Context, Input, time.Time) error
@@ -51,7 +52,7 @@ func FailureReason(err error) string {
 	var f Failure
 	if errors.As(err, &f) {
 		switch f.Reason {
-		case "missing_header", "duplicate_header", "missing_timestamp", "malformed_timestamp", "timestamp_window", "header_too_large", "too_many_signatures", "missing_signature", "malformed_signature", "invalid_body", "digest_mismatch":
+		case "missing_header", "duplicate_header", "missing_timestamp", "malformed_timestamp", "malformed_message_id", "timestamp_window", "header_too_large", "too_many_signatures", "missing_signature", "malformed_signature", "invalid_body", "digest_mismatch":
 			return f.Reason
 		}
 	}
@@ -59,10 +60,10 @@ func FailureReason(err error) string {
 }
 
 func IsRequestScheme(scheme string) bool {
-	return scheme == SchemeHMACSHA256SlackV0 || scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeHMACSHA256TSDotMulti || scheme == SchemeECDSAP256SHA256Headers
+	return scheme == SchemeHMACSHA256SlackV0 || scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeHMACSHA256TSDotMulti || scheme == SchemeECDSAP256SHA256Headers || scheme == SchemeHMACSHA256Polar
 }
 func SeparateTimestamp(scheme string) bool {
-	return scheme == SchemeHMACSHA256SlackV0 || scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeECDSAP256SHA256Headers
+	return scheme == SchemeHMACSHA256SlackV0 || scheme == SchemeHMACSHA256HeadersDot || scheme == SchemeECDSAP256SHA256Headers || scheme == SchemeHMACSHA256Polar
 }
 
 // ValidateSpec checks protocol configuration without accessing key material.
@@ -96,6 +97,9 @@ func ValidateSpec(s Spec) error {
 	if s.Scheme == SchemeHMACSHA256SlackV0 && s.TimestampUnit != "seconds" {
 		return errors.New("slack timestamps use seconds")
 	}
+	if s.Scheme == SchemeHMACSHA256Polar && (s.TimestampUnit != "seconds" || s.TimestampPolicy != "" && s.TimestampPolicy != "symmetric") {
+		return errors.New("polar signatures require seconds timestamps and a symmetric timestamp policy")
+	}
 	if s.SignatureLabel != "" {
 		if s.Scheme != SchemeHMACSHA256TSDotMulti || len(s.SignatureLabel) > 32 || s.SignatureLabel == "t" {
 			return errors.New("signature_label requires a distinct label on the multi-signature scheme")
@@ -111,8 +115,9 @@ func ValidateSpec(s Spec) error {
 }
 
 type requestVerifier struct {
-	spec Spec
-	key  *ecdsa.PublicKey
+	spec      Spec
+	key       *ecdsa.PublicKey
+	polarKeys [][]byte
 }
 
 func newRequestVerifier(s Spec) (Verifier, error) {
@@ -123,6 +128,15 @@ func newRequestVerifier(s Spec) (Verifier, error) {
 		return nil, errors.New("key material must be nonempty and at most 64 KiB")
 	}
 	v := requestVerifier{spec: s}
+	if s.Scheme == SchemeHMACSHA256Polar {
+		// Polar's current format decodes the whsec_ payload; legacy endpoints
+		// sign with the complete dashboard secret's UTF-8 bytes instead.
+		encoded := strings.TrimPrefix(s.Secret, "whsec_")
+		if decoded, err := base64.StdEncoding.Strict().DecodeString(encoded); err == nil && len(decoded) > 0 {
+			v.polarKeys = append(v.polarKeys, decoded)
+		}
+		v.polarKeys = append(v.polarKeys, []byte(s.Secret))
+	}
 	if s.Scheme == SchemeECDSAP256SHA256Headers {
 		// Auth secret is a base64 encoded PKIX/SubjectPublicKeyInfo DER public key.
 		der, err := base64.StdEncoding.Strict().DecodeString(s.Secret)
@@ -148,6 +162,7 @@ func init() {
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256SlackV0, true, newRequestVerifier)
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256HeadersDot, true, newRequestVerifier)
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256TSDotMulti, true, newRequestVerifier)
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256Polar, true, newRequestVerifier)
 	Register("ecdsa", SchemeECDSAP256SHA256Headers, true, newRequestVerifier)
 }
 func (v requestVerifier) Verify(header string, body []byte, now time.Time) error {
@@ -160,7 +175,7 @@ func (v requestVerifier) VerifyRequest(ctx context.Context, in Input, now time.T
 	if len(in.Signature) == 0 {
 		return fail("missing_header")
 	}
-	if len(in.Signature) > MaxCredentialBytes || len(in.Timestamp) > 32 {
+	if len(in.Signature) > MaxCredentialBytes || len(in.Timestamp) > 32 || len(in.MessageID) > MaxCredentialBytes {
 		return fail("header_too_large")
 	}
 	ts := in.Timestamp
@@ -240,6 +255,9 @@ func (v requestVerifier) VerifyRequest(ctx context.Context, in Input, now time.T
 		if signed.Before(clock.Add(-v.spec.TimestampTolerance)) || (v.spec.TimestampPolicy != "age" && signed.After(clock.Add(v.spec.TimestampTolerance))) {
 			return fail("timestamp_window")
 		}
+	}
+	if v.spec.Scheme == SchemeHMACSHA256Polar {
+		return v.verifyPolar(in)
 	}
 	body := in.Body
 	if v.spec.BodyRepresentation == "json_js" {

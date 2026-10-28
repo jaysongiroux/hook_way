@@ -1419,6 +1419,7 @@ Each flow builds its verifier once at startup from the `auth` (or `no_auth`) nod
 - `scheme`: wire format. Built-in schemes:
   - `hmac_sha256_ts_colon` (`hmac_sha256`): timestamped `ts=<unix>;h1=<hex>` over `ts + ":" + raw_body`. *Example: Paddle `Paddle-Signature`.*
   - `hmac_sha256_ts_dot` (`hmac_sha256`): `t=<unix>,v1=<hex>` over `t + "." + raw_body`. *Example: Stripe `Stripe-Signature`.*
+  - `hmac_sha256_polar` (`hmac_sha256`): `v1,<base64>` over `message_id + "." + timestamp + "." + raw_body`. Automatically supports current Standard Webhooks and legacy Polar secrets copied unchanged from the dashboard. See the [Polar recipe](../guides/provider-compatibility.md#polar).
   - `hmac_sha256_hex` (`hmac_sha256`): prefixed hex HMAC-SHA256 over the raw body. *Example: GitHub `X-Hub-Signature-256`.*
   - `hmac_sha256_base64` (`hmac_sha256`): raw base64 HMAC-SHA256. *Example: Shopify `X-Shopify-Hmac-SHA256`.*
   - `hmac_sha1_hex` (`hmac_sha256`): prefixed hex HMAC-SHA1. *Example: GitHub legacy `X-Hub-Signature`.*
@@ -1429,6 +1430,7 @@ Each flow builds its verifier once at startup from the `auth` (or `no_auth`) nod
 - `secret` or `secret_ref`: required except for `no_auth`. See [Secret references](#secret-references).
 - `signature_header`: header Hookway reads. Alternative: `source: {kind: header|query, key: ...}`. `kind: query` reads a query parameter (e.g. `?authID=`). Query keys used for auth are redacted. If both `source` and `signature_header` are set, `source` wins.
 - `timestamp_tolerance`: defaults to `5m`; timestamped HMAC uses it as the freshness window, JWT as clock leeway.
+- Polar requires `timestamp_header: webhook-timestamp`, `message_id_header: webhook-id`, `timestamp_unit: seconds`, and a signature header (normally `webhook-signature`). Custom header names must be distinct. `message_id_header` is only supported by Polar. Its time window is symmetric; query credentials, milliseconds, unchecked/age policies and body transformations are rejected.
 
 HMAC schemes verify the **raw** body bytes. New providers are added by registering a scheme in `internal/auth`.
 

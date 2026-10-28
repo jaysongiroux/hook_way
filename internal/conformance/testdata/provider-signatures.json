@@ -30,5 +30,23 @@
     "timestamp": "1710000000",
     "header": "X-Slack-Signature",
     "signature": "v0=e1e4c4c6ca73e54474e291cc32cb05779585cfc8c43528ab22c734563d7079d4"
+  },
+  {
+    "provider": "polar",
+    "body": "{\"id\":\"evt_fixture\", \"event_id\":\"Ev-fixture\", \"type\":\"event_callback\", \"text\":\"café\"}\n",
+    "secret": "whsec_cG9sYXItaW5kZXBlbmRlbnQtZml4dHVyZS1rZXktMzIh",
+    "timestamp": "1710000000",
+    "header": "webhook-signature",
+    "signature": "v1,oyk+mpFSj0Epv1+lMDioNPUQCbvR3u5P0pBs6A0hMEs=",
+    "messageID": "polar-fixture-event-1"
+  },
+  {
+    "provider": "polar_standard",
+    "body": "{\"id\":\"evt_fixture\", \"event_id\":\"Ev-fixture\", \"type\":\"event_callback\", \"text\":\"café\"}\n",
+    "secret": "whsec_cG9sYXItaW5kZXBlbmRlbnQtZml4dHVyZS1rZXktMzIh",
+    "timestamp": "1710000000",
+    "header": "webhook-signature",
+    "signature": "v1,Lmxl/2GgLuCDVQYXA/gbJBGPe/B1ug60nnFmKpJ99Vs=",
+    "messageID": "polar-fixture-event-1"
   }
 ]

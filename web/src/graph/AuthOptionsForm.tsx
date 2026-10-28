@@ -1,4 +1,4 @@
-import { Alert, Select, Stack, Text } from "@mantine/core";
+import { Alert, Button, Select, Stack, Text } from "@mantine/core";
 import { NODE_SCHEMAS, schemaProperties, type JSONSchema } from "./nodeSchema";
 import { nodeFieldHelp } from "./help";
 import { SchemaForm } from "./SchemaForm";
@@ -11,6 +11,7 @@ import {
 } from "./FormPresentation";
 
 const REQUEST_FIELDS = [
+  "message_id_header",
   "timestamp_header",
   "timestamp_unit",
   "timestamp_policy",
@@ -34,6 +35,7 @@ const LABELS: Record<string, string> = {
   hmac_sha256_ts_dot: "Timestamp + HMAC SHA-256",
   hmac_sha256_ts_dot_multi: "Timestamp + multiple signatures",
   hmac_sha256_slack_v0: "Slack · timestamp + HMAC SHA-256",
+  hmac_sha256_polar: "Polar · webhook signature",
   hmac_sha256_headers_dot: "Separate timestamp + HMAC SHA-256",
   ecdsa_p256_sha256_headers: "Separate timestamp + ECDSA P-256",
 };
@@ -44,6 +46,7 @@ export function AuthOptionsForm(props: OptionsProps) {
   const jwt = capability?.jwt ?? scheme.startsWith("jwt_");
   const request = capability?.request_signature ?? false;
   const separate = capability?.separate_timestamp ?? false;
+  const messageID = capability?.message_id ?? false;
   const keyFormat = capability?.key_format ?? "shared_secret";
   const schemes = Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {});
   const source = object(value.source);
@@ -60,8 +63,9 @@ export function AuthOptionsForm(props: OptionsProps) {
       ? REQUEST_FIELDS.filter(
           (k) =>
             (k !== "timestamp_header" || separate) &&
+            (k !== "message_id_header" || messageID) &&
             (k !== "body_representation" ||
-              scheme === "hmac_sha256_headers_dot") &&
+              scheme === "hmac_sha256_headers_dot" || messageID) &&
             (k !== "signature_label" || scheme === "hmac_sha256_ts_dot_multi"),
         )
       : []),
@@ -87,8 +91,9 @@ export function AuthOptionsForm(props: OptionsProps) {
         ? REQUEST_FIELDS.filter(
             (k) =>
               (k !== "timestamp_header" || cap.separate_timestamp) &&
+              (k !== "message_id_header" || cap.message_id) &&
               (k !== "body_representation" ||
-                next === "hmac_sha256_headers_dot") &&
+                next === "hmac_sha256_headers_dot" || cap.message_id) &&
               (k !== "signature_label" || next === "hmac_sha256_ts_dot_multi"),
           )
         : ["remove_bearer"]),
@@ -101,10 +106,21 @@ export function AuthOptionsForm(props: OptionsProps) {
         ...JWT_FIELDS,
         "remove_prefix",
         "remove_bearer",
+        ...(cap?.message_id ? ["source"] : []),
       ].filter((k) => !keep.includes(k)),
       {
         scheme: next,
-        ...(cap?.separate_timestamp && source.kind === "query"
+        ...(cap?.message_id
+          ? {
+              signature_header: "webhook-signature",
+              timestamp_header: "webhook-timestamp",
+              message_id_header: "webhook-id",
+              timestamp_unit: "seconds",
+              timestamp_policy: "symmetric",
+              body_representation: "raw",
+            }
+          : {}),
+        ...(cap?.separate_timestamp && !cap.message_id && source.kind === "query"
           ? { source: { kind: "header", key: "" } }
           : {}),
       },
@@ -283,13 +299,15 @@ export function AuthOptionsForm(props: OptionsProps) {
         }
       />
       <Text size="xs" c="dimmed">
-        {keyFormat === "pem"
-          ? "Use a PEM public key."
-          : keyFormat === "base64_der"
-            ? "Use a Base64-encoded PKIX DER P-256 public key."
-            : scheme === "basic"
-              ? "The shared value must be username:password."
-              : "Use the shared secret supplied by the sender."}{" "}
+        {messageID
+          ? "Use the secret exactly as copied from Polar. Current and legacy signing secrets are both supported."
+          : keyFormat === "pem"
+            ? "Use a PEM public key."
+            : keyFormat === "base64_der"
+              ? "Use a Base64-encoded PKIX DER P-256 public key."
+              : scheme === "basic"
+                ? "The shared value must be username:password."
+                : "Use the shared secret supplied by the sender."}{" "}
         The builder does not fetch secrets.
       </Text>
       {secretMode === "reference" ? (
@@ -369,9 +387,13 @@ export function AuthOptionsForm(props: OptionsProps) {
       {request && (
         <Fields
           {...props}
-          fields={compatible.filter((k) => REQUEST_FIELDS.includes(k))}
+          fields={compatible.filter((k) =>
+            REQUEST_FIELDS.includes(k) &&
+            (!messageID || !["timestamp_unit", "timestamp_policy", "body_representation"].includes(k)),
+          )}
           required={[
             ...(separate ? ["timestamp_header"] : []),
+            ...(messageID ? ["message_id_header"] : []),
             "timestamp_unit",
           ]}
           defaults={{
@@ -381,6 +403,18 @@ export function AuthOptionsForm(props: OptionsProps) {
             signature_label: "s",
           }}
         />
+      )}
+      {messageID && (
+        value.timestamp_unit !== "seconds" ||
+        (value.timestamp_policy !== undefined && !["", "symmetric"].includes(String(value.timestamp_policy))) ||
+        (value.body_representation !== undefined && !["", "raw"].includes(String(value.body_representation)))
+      ) && (
+        <Alert color="red">
+          Polar requires seconds timestamps, a symmetric time window and the original request body.
+          <Button variant="subtle" onClick={() => selectScheme(scheme)}>
+            Use Polar signing settings
+          </Button>
+        </Alert>
       )}
       {!jwt && !request && tolerance && (
         <Fields

@@ -68,6 +68,7 @@ type AuthOptions struct {
 	CredentialID       string             `yaml:"credential_id,omitempty" json:"credential_id,omitempty"`
 	TenantClaim        string             `yaml:"tenant_claim,omitempty" json:"tenant_claim,omitempty"`
 	TimestampHeader    string             `yaml:"timestamp_header,omitempty" json:"timestamp_header,omitempty"`
+	MessageIDHeader    string             `yaml:"message_id_header,omitempty" json:"message_id_header,omitempty"`
 	TimestampUnit      string             `yaml:"timestamp_unit,omitempty" json:"timestamp_unit,omitempty" jsonschema:"enum=seconds,enum=milliseconds"`
 	TimestampPolicy    string             `yaml:"timestamp_policy,omitempty" json:"timestamp_policy,omitempty" jsonschema:"enum=symmetric,enum=age,enum=unchecked"`
 	BodyRepresentation string             `yaml:"body_representation,omitempty" json:"body_representation,omitempty" jsonschema:"enum=raw,enum=json_js"`
@@ -733,7 +734,7 @@ func validateAuth(o AuthOptions) error {
 	if o.TenantClaim != "" && (len(o.TenantClaim) > 128 || strings.ContainsAny(o.TenantClaim, "\x00\r\n") || !auth.SchemeAllowedForAuthType(auth.AuthTypeJWT, defaultAuthScheme(o.Scheme))) {
 		return errors.New("tenant_claim must be a bounded JWT claim name and requires a JWT scheme")
 	}
-	for _, header := range []string{o.SignatureHeader, o.TimestampHeader} {
+	for _, header := range []string{o.SignatureHeader, o.TimestampHeader, o.MessageIDHeader} {
 		if header != "" && !validAuthHeader(header) {
 			return errors.New("authentication header must be a valid HTTP field name")
 		}
@@ -763,6 +764,20 @@ func validateAuth(o AuthOptions) error {
 		}
 	} else if o.TimestampHeader != "" {
 		return errors.New("timestamp_header requires a separate-header signature scheme")
+	}
+	if o.Scheme == auth.SchemeHMACSHA256Polar {
+		signature := o.SignatureHeader
+		if o.Source != nil {
+			signature = o.Source.Key
+		}
+		if o.MessageIDHeader == "" || strings.EqualFold(o.MessageIDHeader, signature) || strings.EqualFold(o.MessageIDHeader, o.TimestampHeader) {
+			return errors.New("polar signatures require distinct, nonempty signature, timestamp and message ID headers")
+		}
+		if o.RemoveBearer {
+			return errors.New("polar signatures do not support remove_bearer")
+		}
+	} else if o.MessageIDHeader != "" {
+		return errors.New("message_id_header requires the polar signature scheme")
 	}
 	if o.Scheme == auth.SchemeHMACSHA256TSDotMulti && o.SignatureHeader == "" && o.Source == nil {
 		return errors.New("multi-signature scheme requires a credential source")

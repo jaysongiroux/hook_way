@@ -103,7 +103,7 @@ func (n *authNode) Run(ctx context.Context, in graph.Payload) (graph.Payload, er
 		}
 	}
 	credential, err := n.credential(raw)
-	request := auth.Input{Signature: credential, Timestamp: raw.Head.Header.Get(n.opts.TimestampHeader), Body: raw.Body}
+	request := auth.Input{Signature: credential, Timestamp: raw.Head.Header.Get(n.opts.TimestampHeader), MessageID: raw.Head.Header.Get(n.opts.MessageIDHeader), Body: raw.Body}
 	if err == nil && n.opts.BodyRepresentation == "json_js" {
 		request = request.WithCanonicalCache()
 	}
@@ -195,6 +195,9 @@ func (n *authNode) credential(raw graph.RawRequest) (string, error) {
 		return "", auth.Failure{Reason: "duplicate_header"}
 	}
 	if n.opts.TimestampHeader != "" && len(raw.Head.Header.Values(n.opts.TimestampHeader)) > 1 {
+		return "", auth.Failure{Reason: "duplicate_header"}
+	}
+	if n.opts.MessageIDHeader != "" && len(raw.Head.Header.Values(n.opts.MessageIDHeader)) > 1 {
 		return "", auth.Failure{Reason: "duplicate_header"}
 	}
 	if len(values) == 0 || values[0] == "" {

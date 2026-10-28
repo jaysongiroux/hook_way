@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,7 @@ import (
 	"github.com/jaysongiroux/hook_way/internal/httpapi"
 )
 
-type providerVector struct{ Provider, Body, Secret, Timestamp, Header, Signature string }
+type providerVector struct{ Provider, Body, Secret, Timestamp, Header, Signature, MessageID string }
 
 func providerVectors(t *testing.T) []providerVector {
 	t.Helper()
@@ -50,6 +51,9 @@ func providerSpec(provider, secret string) auth.Spec {
 	case "slack":
 		s.Scheme = auth.SchemeHMACSHA256SlackV0
 		s.TimestampUnit = "seconds"
+	case "polar", "polar_standard":
+		s.Scheme = auth.SchemeHMACSHA256Polar
+		s.TimestampUnit = "seconds"
 	}
 	return s
 }
@@ -65,7 +69,7 @@ func TestProviderIndependentSignatureVectors(t *testing.T) {
 				t.Fatal(err)
 			}
 			ts, _ := strconv.ParseInt(v.Timestamp, 10, 64)
-			input := auth.Input{Signature: v.Signature, Timestamp: v.Timestamp, Body: []byte(v.Body)}
+			input := auth.Input{Signature: v.Signature, Timestamp: v.Timestamp, MessageID: v.MessageID, Body: []byte(v.Body)}
 			verify := func(in auth.Input, clock time.Time) error {
 				if rv, ok := verifier.(auth.RequestVerifier); ok {
 					return rv.VerifyRequest(context.Background(), in, clock)
@@ -121,8 +125,14 @@ func providerRequest(provider, secret, body string, stamp time.Time) *http.Reque
 		prefix, header = ts+":", "Paddle-Signature"
 	case "slack":
 		prefix, header = "v0:"+ts+":", "X-Slack-Signature"
+	case "polar", "polar_standard":
+		prefix, header = "polar-event-1."+ts+".", "webhook-signature"
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
+	key := []byte(secret)
+	if provider == "polar_standard" {
+		key, _ = base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+	}
+	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(prefix + body))
 	digest := hex.EncodeToString(mac.Sum(nil))
 	signature := "sha256=" + digest
@@ -133,12 +143,21 @@ func providerRequest(provider, secret, body string, stamp time.Time) *http.Reque
 		signature = "ts=" + ts + ";h1=" + digest
 	case "slack":
 		signature = "v0=" + digest
+	case "polar", "polar_standard":
+		signature = "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	}
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/"+provider, strings.NewReader(body))
+	if provider == "polar_standard" {
+		req.URL.Path = "/webhooks/polar"
+	}
 	req.Header.Set(header, signature)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Slack-Request-Timestamp", ts)
 	req.Header.Set("X-GitHub-Delivery", "delivery-stable")
+	if provider == "polar" || provider == "polar_standard" {
+		req.Header.Set("webhook-id", "polar-event-1")
+		req.Header.Set("webhook-timestamp", ts)
+	}
 	return req
 }
 func providerRecipe(t *testing.T) (string, map[string]string) {
@@ -149,7 +168,7 @@ func providerRecipe(t *testing.T) (string, map[string]string) {
 	}
 	paths := map[string]string{}
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	for _, p := range []string{"github", "stripe", "paddle", "slack"} {
+	for _, p := range []string{"github", "stripe", "paddle", "slack", "polar"} {
 		path := filepath.Join(t.TempDir(), "secret")
 		if err = os.WriteFile(path, []byte("current"), 0600); err != nil {
 			t.Fatal(err)
@@ -161,7 +180,7 @@ func providerRecipe(t *testing.T) (string, map[string]string) {
 }
 func TestProviderRecipesThroughFlowServer(t *testing.T) {
 	yaml, _ := providerRecipe(t)
-	for _, provider := range []string{"github", "stripe", "paddle", "slack"} {
+	for _, provider := range []string{"github", "stripe", "paddle", "slack", "polar"} {
 		t.Run(provider, func(t *testing.T) {
 			pub := &testPublisher{}
 			srv := newServer(t, yaml, pub)
@@ -234,11 +253,17 @@ func TestProviderSecretFileRotation(t *testing.T) {
 	defer func() { _ = srv.Close() }()
 	body := `{"id":"evt_1","type":"event_callback"}`
 	for provider, path := range paths {
-		if err = os.WriteFile(path, []byte("rotated"), 0600); err != nil {
+		rotated := "rotated"
+		mode := provider
+		if provider == "polar" {
+			rotated = "whsec_" + base64.StdEncoding.EncodeToString([]byte("rotated-polar-standard-key"))
+			mode = "polar_standard"
+		}
+		if err = os.WriteFile(path, []byte(rotated), 0600); err != nil {
 			t.Fatal(err)
 		}
 		deadline := time.Now().Add(3 * time.Second)
-		for post(srv, providerRequest(provider, "rotated", body, time.Now())).Code != 200 {
+		for post(srv, providerRequest(mode, rotated, body, time.Now())).Code != 200 {
 			if time.Now().After(deadline) {
 				t.Fatal("new signing secret never activated for", provider)
 			}
@@ -253,7 +278,7 @@ func TestProviderSecretFileRotation(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		if got := post(srv, providerRequest(provider, "rotated", body, time.Now())).Code; got != 200 {
+		if got := post(srv, providerRequest(mode, rotated, body, time.Now())).Code; got != 200 {
 			t.Fatalf("new key lost for %s: %d", provider, got)
 		}
 	}
@@ -261,7 +286,7 @@ func TestProviderSecretFileRotation(t *testing.T) {
 
 func TestProviderAcknowledgementBudget(t *testing.T) {
 	yaml, _ := providerRecipe(t)
-	for _, provider := range []string{"github", "stripe", "paddle", "slack"} {
+	for _, provider := range []string{"github", "stripe", "paddle", "slack", "polar"} {
 		t.Run(provider, func(t *testing.T) {
 			pub := &testPublisher{delay: 3 * time.Second}
 			srv := newServer(t, yaml, pub)

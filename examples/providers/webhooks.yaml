@@ -1,7 +1,7 @@
-# GitHub, Stripe snapshot events, Paddle Billing, and Slack Events API ingress.
+# GitHub, Stripe snapshot events, Paddle Billing, Slack Events API, and Polar ingress.
 # ACK follows a RabbitMQ publisher confirm; consumer deduplication is required.
 # Secrets use mounted files so rotation can refresh without restarting Hookway.
-# Required variables: RABBITMQ_URL and {GITHUB,STRIPE,PADDLE,SLACK}_SECRET_FILE.
+# Required variables: RABBITMQ_URL and {GITHUB,STRIPE,PADDLE,SLACK,POLAR}_SECRET_FILE.
 # See docs/guides/provider-compatibility.md for contracts, recovery, and tested limits.
 server:
   addr: ":8080"
@@ -10,7 +10,7 @@ server:
   publish_timeout: 2s
   write_timeout: 5s
 security:
-  forwarded_header_allowlist: [Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Slack-Retry-Num, X-Slack-Retry-Reason]
+  forwarded_header_allowlist: [Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Slack-Retry-Num, X-Slack-Retry-Reason, webhook-id]
 destinations:
   events:
     type: rabbitmq
@@ -22,6 +22,24 @@ destinations:
       declare_queues: true
       publish_timeout: 2s
 flows:
+  polar:
+    responses:
+      published: {status: 200, body: accepted}
+    nodes:
+      - {id: in, type: http_trigger, path: /webhooks/polar, methods: [POST]}
+      - {id: body, type: read_body, max_bytes: 1048576}
+      - id: auth
+        type: auth
+        scheme: hmac_sha256_polar
+        signature_header: webhook-signature
+        timestamp_header: webhook-timestamp
+        message_id_header: webhook-id
+        timestamp_unit: seconds
+        timestamp_tolerance: 5m
+        secret_ref: {provider: file, name: "${POLAR_SECRET_FILE}", refresh: 1m, overlap: 10m}
+      - {id: env, type: envelope, body_format: json}
+      - {id: out, type: publish, destination: events, target: polar-events, create: true}
+    edges: [in>body, body>auth, auth>env, env>out]
   github:
     responses:
       published: {status: 200, body: accepted}
