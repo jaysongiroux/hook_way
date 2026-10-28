@@ -63,11 +63,13 @@ func TestPolarRecipeBothSigningFormatsAndHeaderBinding(t *testing.T) {
 			if got := post(srv, request()).Code; got != 200 {
 				t.Fatal("valid request rejected", got)
 			}
-			ids := pub.last.Headers["webhook-id"] // Envelope metadata uses lowercase header keys.
+			// Envelope metadata is a lowercase-keyed map, not canonical HTTP headers.
+			headers := map[string][]string(pub.last.Headers)
+			ids := headers["webhook-id"]
 			if len(ids) != 1 || ids[0] != "polar-event-1" || string(pub.last.RawBody) != body {
 				t.Fatal("message ID or body lost", pub.last)
 			}
-			if len(pub.last.Headers["webhook-signature"]) != 0 {
+			if len(headers["webhook-signature"]) != 0 {
 				t.Fatal("signature should not be forwarded by recipe")
 			}
 			if got := post(srv, request()).Code; got != 200 || pub.published != before+2 {
