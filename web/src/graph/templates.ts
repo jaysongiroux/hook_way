@@ -3,6 +3,7 @@ import slackYaml from "../../../examples/templates/slack-notify.yaml?raw";
 import discordYaml from "../../../examples/templates/discord-notify.yaml?raw";
 import stripeYaml from "../../../examples/templates/stripe-ingest.yaml?raw";
 import paddleYaml from "../../../examples/templates/paddle-ingest.yaml?raw";
+import sentryYaml from "../../../examples/templates/sentry-ingest.yaml?raw";
 import xmlYaml from "../../../examples/templates/xml-ingest.yaml?raw";
 import type { Edge } from "@xyflow/react";
 import { fromYaml } from "./fromYaml";
@@ -54,6 +55,13 @@ export const TEMPLATES: TemplateDef[] = [
     help: "Receive Paddle webhooks, verify Paddle-Signature, limit requests, reject duplicates, and parse JSON. Choose a protection store and connect a destination to deliver the events.",
     nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
     yaml: paddleYaml,
+  },
+  {
+    id: "sentry-ingest",
+    label: "Sentry webhook",
+    help: "Receive Sentry webhooks, verify Sentry-Hook-Signature, limit requests, reject duplicates, and parse JSON. Choose a protection store and connect a destination to deliver the events.",
+    nodeIds: ["in", "hops", "rl", "body", "auth", "replay", "env"],
+    yaml: sentryYaml,
   },
   {
     id: "xml-ingest",

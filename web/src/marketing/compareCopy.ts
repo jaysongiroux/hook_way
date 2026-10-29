@@ -148,7 +148,7 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookway: {
         level: "yes",
         detail:
-          "15 authentication formats: HMAC, ECDSA P-256, HTTP Basic, exact tokens, and JWT HS256/RS256/ES256. Unknown schemes are rejected; unauthenticated flows use an explicit no_auth node",
+          "16 authentication formats: HMAC, ECDSA P-256, HTTP Basic, exact tokens, and JWT HS256/RS256/ES256. Unknown schemes are rejected; unauthenticated flows use an explicit no_auth node",
       },
       hookdeck: {
         level: "yes",

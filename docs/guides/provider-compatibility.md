@@ -6,15 +6,30 @@ Slack Events API callbacks, and Polar webhooks. Local tests check these recipes 
 flow server with a test publisher. They do not replace testing your public URL,
 provider account, broker, or application.
 
+For Sentry issue alerts, use [Sentry to Discord](sentry-discord.md) or the
+[reusable Sentry ingress template](../../examples/templates/sentry-ingest.yaml).
+These follow the existing webhook pattern and are tested with a local Discord stub.
+
 ## Provider recipes
 
 | Provider | Authentication | Response deadline |
 | --- | --- | --- |
+| Sentry | `hmac_sha256_raw_hex`, `Sentry-Hook-Signature`, integration Client Secret | Respond within 1 second; example acknowledges async queue admission |
 | GitHub JSON | `hmac_sha256_hex`, `X-Hub-Signature-256` | 2xx within 10 seconds |
 | Stripe snapshot events | `hmac_sha256_ts_dot`, `Stripe-Signature`, 5-minute tolerance | Return 2xx promptly after publication |
 | Paddle Billing | `hmac_sha256_ts_colon`, `Paddle-Signature`, 5-second tolerance | 200 within 5 seconds |
 | Slack Events API | `hmac_sha256_slack_v0`, `X-Slack-Signature`, 5-minute tolerance | 2xx within 3 seconds |
 | Polar | `hmac_sha256_polar`, `webhook-signature`, signed ID and seconds timestamp, 5-minute tolerance | Aim for 2xx within 2 seconds; provider timeout is 10 seconds |
+
+### Sentry
+
+Use an internal integration with Alert Rule Action enabled for selected issue
+alerts (`event_alert` / `triggered`). The signature covers the raw body only;
+`Sentry-Hook-Timestamp` and `Request-ID` are unsigned. The Sentry examples use a
+body-based replay guard, with process-local memory by default. See the
+[setup guide](sentry-discord.md) for secret rotation, duplicate responses, the
+one-second acknowledgement deadline and async queue limitations. Local tests do
+not establish live Sentry delivery or an automatic sender retry guarantee.
 
 ### GitHub
 

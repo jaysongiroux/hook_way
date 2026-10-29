@@ -1190,9 +1190,8 @@ func validatePublish(o PublishOptions) error {
 	if err := require("destination", o.Destination); err != nil {
 		return err
 	}
-	if err := require("target", o.Target); err != nil {
-		return err
-	}
+	// An empty webhook target delivers to the exact configured URL. The full
+	// document validator requires a nonempty target for other destinations.
 	if err := validateTemplate("target", o.Target); err != nil {
 		return err
 	}

@@ -80,7 +80,7 @@ export function PublishOptionsForm(props: OptionsProps) {
       <Fields
         {...props}
         fields={(type === "temporal" || type === "mcp_events") ? ["target"] : ["target", "create"]}
-        required={["target"]}
+        required={type === "webhook" ? [] : ["target"]}
         labels={{
           target:
             type === "temporal"
@@ -99,8 +99,8 @@ export function PublishOptionsForm(props: OptionsProps) {
       {type === "webhook" && (
         <Stack gap="xs">
           <Text size="xs" c="dimmed">
-            This path is appended to the destination base URL. Configure the
-            base URL in Destinations.
+            This path is appended to the destination base URL. Leave it empty to
+            use the exact URL configured in Destinations.
           </Text>
           <Select label="Webhook payload"
             description="JSON sends the current body, including a named event. Destination retry settings still apply. Proxy authentication forwards the original request instead."

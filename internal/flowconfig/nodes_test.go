@@ -135,7 +135,7 @@ func TestSettledRequiredAndExclusiveOptions(t *testing.T) {
 		{"auth", "scheme: hmac_sha256_hex\nsecret: one\nsecret_ref: {provider: env, name: TWO}\n"},
 		{"json_validate", ""}, {"json_validate", "schema: {type: invalid}\n"},
 		{"filter", ""}, {"lookup", "provider: dynamodb\n"}, {"transform", "kind: changed_fields\n"},
-		{"code", ""}, {"switch", ""}, {"http_request", ""}, {"publish", "destination: primary\n"},
+		{"code", ""}, {"switch", ""}, {"http_request", ""}, {"publish", "target: t\n"},
 		{"respond", ""}, {"respond", "status: 200\npassthrough: true\n"},
 	}
 	r, err := NewRegistryWithOptions(protectionTestOptions(t, RegistryOptions{}))

@@ -113,10 +113,16 @@ These are the configs the web builder round-trips. `make validate-examples` skip
 | [showcase/invalid-gate-order.yaml](showcase/invalid-gate-order.yaml) | Invalid: gate after `read_body` (must fail validate). |
 | [showcase/invalid-many.yaml](showcase/invalid-many.yaml) | Invalid: several distinct problems reported together. |
 
+## Sentry notifications
+
+- [sentry-discord.yaml](sentry-discord.yaml): selected Sentry issue alerts to Discord,
+  with signature verification, duplicate protection and async delivery.
+- [Setup and signed local fixture](../docs/guides/sentry-discord.md).
+
 ## Templates (`examples/templates/`)
 
 Each file is a runnable configuration and a template in the builder palette.
-Notification templates insert the format-and-POST pair. Stripe/Paddle ingest
+Notification templates insert the format-and-POST pair. Stripe/Paddle/Sentry ingest
 templates insert the verified prefix; connect its envelope to your destination.
 The XML template inserts a complete XML pipeline.
 
@@ -129,6 +135,7 @@ allowlisted headers.
 | File | Pattern |
 | --- | --- |
 | [templates/stripe-ingest.yaml](templates/stripe-ingest.yaml) | Stripe webhook ingest: loop/rate guards, `hmac_sha256_ts_dot` on `Stripe-Signature` via `secret_ref`, replay guard, JSON envelope. Wrapper publish HMAC-signs the next hop. |
+| [templates/sentry-ingest.yaml](templates/sentry-ingest.yaml) | Sentry ingress: verify unprefixed `Sentry-Hook-Signature` using the integration Client Secret, guard duplicates and parse JSON. Connect any destination. |
 | [templates/paddle-ingest.yaml](templates/paddle-ingest.yaml) | Paddle Billing ingest: same shape with `hmac_sha256_ts_colon` on `Paddle-Signature`. |
 | [templates/slack-notify.yaml](templates/slack-notify.yaml) | Format an event and POST it to a Slack incoming webhook. Wrapper still HMAC-authenticates the inbound caller. |
 | [templates/discord-notify.yaml](templates/discord-notify.yaml) | Format an event and POST it to a Discord webhook. Same inbound auth as Slack. |

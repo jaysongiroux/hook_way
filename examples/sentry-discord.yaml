@@ -1,0 +1,100 @@
+# Sentry issue alert -> Discord. Setup: docs/guides/sentry-discord.md
+# Requires SENTRY_CLIENT_SECRET, DISCORD_WEBHOOK_URL, HOOKWAY_API_KEY.
+# Acknowledges the existing async memory queue before Discord responds.
+# A crash can lose accepted work; memory duplicate history resets on restart.
+# Duplicate raw bodies within 24h return 409 and do not enqueue another message.
+# Only selected summary fields leave this flow; mentions are disabled.
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "500ms"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  forwarded_header_allowlist:
+    - Content-Type
+    - Sentry-Hook-Resource
+
+destinations:
+  discord:
+    type: webhook
+    webhook:
+      url: "${DISCORD_WEBHOOK_URL}"
+      delivery_mode: async
+      timeout: 5s
+      max_queue: 1000
+      retry: {max_attempts: 5, initial_backoff: 1s, max_backoff: 30s}
+      # The URL contains Discord's credential; do not forward Sentry credentials.
+      auth: {type: none}
+
+flows:
+  sentry_discord:
+    responses:
+      dropped: {status: 200, body: ignored}
+    nodes:
+      - {id: in, type: http_trigger, description: "Sentry posts notification deliveries here.", path: /webhooks/sentry, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound Sentry retries per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: "Verifies Sentry-Hook-Signature (unprefixed HMAC-SHA256)."
+        scheme: hmac_sha256_raw_hex
+        secret_ref: {provider: env, name: SENTRY_CLIENT_SECRET, refresh: 15m, overlap: 5m}
+        signature_header: Sentry-Hook-Signature
+      - {id: replay, type: replay_guard, store: local, description: "Drops a delivery Sentry already succeeded within the TTL.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Decodes the JSON event (`action`, `data`, …).", body_format: json}
+      - id: selected
+        type: filter
+        conditions:
+          - {source: header, path: Sentry-Hook-Resource, operator: eq, value: event_alert}
+          - {source: body, path: action, operator: eq, value: triggered}
+        on_no_match: drop
+        drop_reason: dropped_unused_event_type
+      - id: fmt
+        type: code
+        timeout: 50ms
+        script: |
+          const data = (input.body && input.body.data) || {};
+          const event = data.event || {};
+          // Bound each field, remove control characters and escape Discord markdown.
+          function text(value, fallback, limit) {
+            if (typeof value !== 'string' && typeof value !== 'number') value = fallback;
+            return String(value).replace(/[\u0000-\u001f\u007f]/g, ' ')
+              .slice(0, limit).replace(/[\\*_`~|<>]/g, '\\$&');
+          }
+          const title = text(event.title || event.message, 'Issue alert triggered', 250);
+          const rule = text(data.triggered_rule, 'Sentry issue alert', 100);
+          const project = text(event.project, 'unknown', 60);
+          let environment = event.environment;
+          if (!environment && Array.isArray(event.tags)) {
+            const tag = event.tags.find(t => Array.isArray(t) && t[0] === 'environment');
+            if (tag) environment = tag[1];
+          }
+          const env = text(environment, 'unknown', 60);
+          const level = text(event.level, 'unknown', 30);
+          let content = '**Sentry: ' + title + '**\nRule: ' + rule +
+            '\nProject: ' + project + ' · Environment: ' + env + ' · Level: ' + level;
+          // Use the human-facing URL, never the event/issue API URL.
+          if (typeof event.web_url === 'string' && event.web_url.length <= 800 &&
+              /^https:\/\/[^\s<>]+$/.test(event.web_url)) content += '\n<' + event.web_url + '>';
+          return {body: {content: content, allowed_mentions: {parse: []}}, vars: input.vars};
+      # Empty target preserves the complete Discord webhook URL (including query).
+      - {id: out, type: publish, destination: discord, target: "", wire_body: json}
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>selected, selected>fmt, fmt>out]

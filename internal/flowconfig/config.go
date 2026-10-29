@@ -426,6 +426,9 @@ func crossFlowIssues(cfg Config) []config.ValidationIssue {
 						"reference an existing destinations.* id"))
 					continue
 				}
+				if dest.Type != "webhook" && strings.TrimSpace(opts.Target) == "" {
+					issues = append(issues, cfgIssue("flows."+name+".nodes."+nc.ID+".target", "target is required for non-webhook destinations", "set the destination resource name"))
+				}
 				awsBroker := dest.Type == "sqs" || dest.Type == "sns"
 				webhookJSON := (dest.Type == "mcp_events" || dest.Type == "webhook") && opts.WireBody == "json" && dest.Webhook.Auth.Type != "proxy"
 				customBody := opts.WireBody != "" && opts.WireBody != "envelope" && !webhookJSON

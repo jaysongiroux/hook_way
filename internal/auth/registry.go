@@ -23,6 +23,7 @@ const (
 	SchemeHMACSHA256TSColon = "hmac_sha256_ts_colon" // labeled timestamp header, payload "<ts>:<body>"
 	SchemeHMACSHA256TSDot   = "hmac_sha256_ts_dot"   // labeled timestamp header, payload "<ts>.<body>"
 	SchemeHMACSHA256Hex     = "hmac_sha256_hex"      // prefixed hex digest over the raw body
+	SchemeHMACSHA256RawHex  = "hmac_sha256_raw_hex"  // unprefixed hex digest over the raw body
 	SchemeHMACSHA256Base64  = "hmac_sha256_base64"   // raw base64 digest over the raw body
 	SchemeHMACSHA1Hex       = "hmac_sha1_hex"        // prefixed hex SHA-1 digest over the raw body
 
@@ -64,6 +65,9 @@ func init() {
 	})
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256Hex, false, func(s Spec) (Verifier, error) {
 		return hmacVerifier{secret: s.Secret, scheme: hmacSHA256HexScheme()}, nil
+	})
+	Register(AuthTypeHMACSHA256, SchemeHMACSHA256RawHex, false, func(s Spec) (Verifier, error) {
+		return hmacVerifier{secret: s.Secret, scheme: hmacSHA256RawHexScheme()}, nil
 	})
 	Register(AuthTypeHMACSHA256, SchemeHMACSHA256TSDot, true, func(s Spec) (Verifier, error) {
 		return hmacVerifier{secret: s.Secret, tolerance: s.TimestampTolerance, scheme: hmacSHA256TSDotScheme()}, nil

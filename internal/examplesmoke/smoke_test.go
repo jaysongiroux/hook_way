@@ -301,6 +301,7 @@ func setExampleEnv(t *testing.T, jwtPEM, upstreamURL string) {
 	t.Setenv("JWT_PUBLIC_KEY", strings.ReplaceAll(strings.TrimSpace(jwtPEM), "\n", `\n`))
 	vals := map[string]string{
 		"RABBITMQ_URL":            "amqp://guest:guest@localhost:5672/", // #nosec G101 -- example smoke fixture
+		"SENTRY_CLIENT_SECRET":    "sentry-secret",
 		"PADDLE_WEBHOOK_SECRET":   "paddle-secret",
 		"GITHUB_WEBHOOK_SECRET":   "github-secret",
 		"STRIPE_WEBHOOK_SECRET":   "stripe-secret",
@@ -390,7 +391,11 @@ func requestForFlow(t *testing.T, fc graph.FlowConfig, jwtPriv *rsa.PrivateKey, 
 			}
 		}
 	}
+	if path == "/webhooks/sentry" {
+		body = []byte(`{"action":"triggered","data":{"event":{"title":"Smoke alert"}}}`)
+	}
 	req := httptest.NewRequestWithContext(context.Background(), method, path, bytes.NewReader(body))
+	req.Header.Set("Sentry-Hook-Resource", "event_alert")
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("X-GitHub-Event", "push")
 	// showcase/production.yaml's trusted flow allowlists RFC1918 ranges.
@@ -559,6 +564,8 @@ func signRequest(t *testing.T, req *http.Request, fc graph.FlowConfig, body []by
 					req.Header.Set(opts.TimestampHeader, ts)
 				}
 				req.Header.Set(header, signature)
+			case auth.SchemeHMACSHA256RawHex:
+				req.Header.Set(header, strings.TrimPrefix(githubHMAC(secret, body), "sha256="))
 			case auth.SchemeHMACSHA256Hex:
 				req.Header.Set(header, githubHMAC(secret, body))
 			case auth.SchemeHMACSHA256TSColon:

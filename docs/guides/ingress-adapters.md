@@ -10,7 +10,7 @@ response and broker bytes before changing its ingress.
 
 ## Request signatures
 
-Hookway offers 15 authentication formats. The separate `no_auth` node
+Hookway offers 16 authentication formats. The separate `no_auth` node
 explicitly permits unauthenticated traffic. The existing schemes are listed in [Security](../reference/security.md#auth-schemes).
 Three request protocols add explicit timestamp and body controls:
 

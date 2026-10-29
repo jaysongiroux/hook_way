@@ -179,6 +179,22 @@ test("the xml template keeps the envelope, filter, prune and forward consistent"
   expect(post.data.options.forward_headers).toBeUndefined();
 });
 
+test("Sentry inserts the reusable verified ingress without a destination", () => {
+  const sub = templateSubgraph("sentry-ingest")!;
+  expect(sub.nodes.map(n => n.data.nodeType)).toEqual([
+    "http_trigger", "loop_guard", "rate_limit", "read_body", "auth", "replay_guard", "envelope",
+  ]);
+  const auth = sub.nodes.find(n => n.data.nodeType === "auth")!.data.options;
+  expect(auth.scheme).toBe("hmac_sha256_raw_hex");
+  expect(auth.signature_header).toBe("Sentry-Hook-Signature");
+  expect(auth.secret_ref).toEqual({provider: "env", name: "SENTRY_CLIENT_SECRET", refresh: "15m", overlap: "5m"});
+  expect(auth.timestamp_header).toBeUndefined();
+  expect(sub.nodes.find(n => n.data.nodeType === "replay_guard")!.data.options.key).toBeUndefined();
+  for (const node of sub.nodes.filter(n => ["rate_limit", "replay_guard"].includes(n.data.nodeType))) {
+    expect(node.data.options.store).toBe("");
+  }
+});
+
 test("every template config authenticates inbound traffic and keeps secrets out of YAML", () => {
   for (const def of TEMPLATES) {
     expect(def.yaml, def.id).not.toMatch(/\btype:\s*no_auth\b/);

@@ -87,7 +87,7 @@ func (v hmacVerifier) Verify(header string, rawBody []byte, now time.Time) error
 func bodyOnlyPayload(_ parsedSig, rawBody []byte) []byte { return rawBody }
 
 // rawHeaderParser treats the trimmed header value as the whole signature, with
-// no prefix and no timestamp (used by the base64 scheme).
+// no prefix and no timestamp (used by raw hex and base64 schemes).
 func rawHeaderParser(header string) (parsedSig, error) {
 	sig := strings.TrimSpace(header)
 	if sig == "" {
@@ -169,6 +169,13 @@ func hmacSHA256HexScheme() hmacScheme {
 	return hmacScheme{
 		newHash: sha256New, encoding: encHex, requiresTimestamp: false,
 		parseHeader: prefixHeaderParser("sha256="), buildPayload: bodyOnlyPayload,
+	}
+}
+
+func hmacSHA256RawHexScheme() hmacScheme {
+	return hmacScheme{
+		newHash: sha256New, encoding: encHex,
+		parseHeader: rawHeaderParser, buildPayload: bodyOnlyPayload,
 	}
 }
 

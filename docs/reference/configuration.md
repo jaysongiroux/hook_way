@@ -990,6 +990,11 @@ The byte budget includes retained raw/object/encoded payloads, headers and parse
 
 **NON-DURABLE by default:** the delivery queue is in-memory only. There is no write-ahead log or persistent queue. A `dead_letter` destination can retain observed terminal failures after its own publish succeeds. To survive a core crash after acknowledgement, publish directly to a durable broker configured with the required persistence and replication. Broker acceptance does not guarantee downstream processing or eliminate duplicate delivery.
 
+For a webhook destination, `publish.target: ""` uses the exact configured URL
+without appending a path (including its query string). Other destination types
+require a nonempty resource target. See [Sentry to Discord](../guides/sentry-discord.md)
+for an async notification example using `wire_body: json`.
+
 **Dead-letter (`dead_letter`, async only):** when an async delivery fails terminally — a terminal `4xx`, or `5xx`/timeout/error after retries are exhausted — Hookway can redirect the message to another destination instead of dropping it (log-and-drop is the default when no `dead_letter` is set). The redirected message is the original envelope enriched with a `dead_letter` block (`destination`, `target`, `outcome`, `attempts`, `failed_at`). The referenced destination MUST exist and MUST NOT itself be a `webhook` destination — this makes delivery loops structurally impossible (no cycle-detection needed). The dead-letter target queue/topic is auto-collected into the backend destination (and declared for RabbitMQ when `declare_queues: true`) even if no `publish` node targets it directly.
 
 **Not a transparent proxy (async webhook destination):** Hookway does not return the downstream HTTP response to the inbound sender. With default response policies, async mode returns Hookway's own `202 Accepted` (queue acceptance) or an error. Sync mode also returns Hookway's status, not the downstream body. Use `http_request` and a passthrough `respond` node to relay the upstream response.
@@ -1420,6 +1425,7 @@ Each flow builds its verifier once at startup from the `auth` (or `no_auth`) nod
   - `hmac_sha256_ts_colon` (`hmac_sha256`): timestamped `ts=<unix>;h1=<hex>` over `ts + ":" + raw_body`. *Example: Paddle `Paddle-Signature`.*
   - `hmac_sha256_ts_dot` (`hmac_sha256`): `t=<unix>,v1=<hex>` over `t + "." + raw_body`. *Example: Stripe `Stripe-Signature`.*
   - `hmac_sha256_polar` (`hmac_sha256`): `v1,<base64>` over `message_id + "." + timestamp + "." + raw_body`. Automatically supports current Standard Webhooks and legacy Polar secrets copied unchanged from the dashboard. See the [Polar recipe](../guides/provider-compatibility.md#polar).
+  - `hmac_sha256_raw_hex`: unprefixed hex HMAC-SHA256 over the exact raw body. *Example: Sentry `Sentry-Hook-Signature`.*
   - `hmac_sha256_hex` (`hmac_sha256`): prefixed hex HMAC-SHA256 over the raw body. *Example: GitHub `X-Hub-Signature-256`.*
   - `hmac_sha256_base64` (`hmac_sha256`): raw base64 HMAC-SHA256. *Example: Shopify `X-Shopify-Hmac-SHA256`.*
   - `hmac_sha1_hex` (`hmac_sha256`): prefixed hex HMAC-SHA1. *Example: GitHub legacy `X-Hub-Signature`.*

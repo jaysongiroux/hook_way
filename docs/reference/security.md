@@ -53,6 +53,7 @@ also shows the separate `no_auth` option; it is not an authentication format.
 | `hmac_sha256_ts_dot_multi` | `hmac_sha256` | timestamp + body, multiple signatures | accepts any matching configured signature label |
 | `hmac_sha256_polar` | `hmac_sha256` | message ID + timestamp + raw body | current and legacy Polar keys; Base64 signatures |
 | `ecdsa_p256_sha256_headers` | `ecdsa` | separate timestamp header concatenated with raw body | P-256/SHA-256, base64 ASN.1 DER signature |
+| `hmac_sha256_raw_hex` | `hmac_sha256` | raw body | unprefixed hex; no signed timestamp |
 | `hmac_sha256_hex` | `hmac_sha256` | raw body | see below |
 | `hmac_sha256_base64` | `hmac_sha256` | raw body | see below |
 | **`hmac_sha1_hex`** | `hmac_sha256` | raw body | **SHA-1** — see the warning below |
@@ -71,6 +72,15 @@ default. Hookway reads the exact raw request body once, reads the configured `si
 ### `hmac_sha256_hex` (`hmac_sha256`)
 
 Prefixed hex HMAC-SHA256 over the exact raw body, no signed timestamp (used by GitHub's `X-Hub-Signature-256: sha256=<hex>`). Hookway computes HMAC-SHA256 over the exact raw body with the endpoint secret and compares using `hmac.Equal`. There is no signed timestamp, so `timestamp_tolerance` is not used. A missing/short/tampered signature or empty secret fails closed.
+
+### `hmac_sha256_raw_hex` (`hmac_sha256`)
+
+Unprefixed hex HMAC-SHA256 over the exact raw body, used by Sentry's
+`Sentry-Hook-Signature`. The key is the integration's Client Secret. Comparison
+uses `hmac.Equal`; missing, malformed, prefixed, wrong-length or tampered
+signatures and empty secrets fail closed. No timestamp is signed, so
+`timestamp_tolerance` does not provide freshness. Use a body-based replay guard;
+see [Sentry to Discord](../guides/sentry-discord.md).
 
 ### `hmac_sha256_ts_dot` (timestamped, `hmac_sha256`)
 

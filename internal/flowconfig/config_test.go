@@ -6,7 +6,28 @@ import (
 	"testing"
 
 	"github.com/jaysongiroux/hook_way/internal/config"
+	"github.com/jaysongiroux/hook_way/internal/graph"
 )
+
+func TestEmptyPublishTargetOnlyForWebhook(t *testing.T) {
+	for _, kind := range []string{"webhook", "rabbitmq", "sqs", "s3"} {
+		cfg := Config{
+			Destinations: map[string]config.DestinationConfig{"primary": {Type: kind}},
+			Flows: map[string]graph.FlowConfig{"sample": {Nodes: []graph.NodeConfig{
+				nodeConfigFromYAML(t, "publish", "destination: primary\ntarget: \"\"\n"),
+			}}},
+		}
+		found := false
+		for _, issue := range crossFlowIssues(cfg) {
+			if strings.Contains(issue.Message, "target is required") {
+				found = true
+			}
+		}
+		if found != (kind != "webhook") {
+			t.Fatalf("%s empty target rejected=%v", kind, found)
+		}
+	}
+}
 
 // TestLoadBytesRejectsLegacyTopLevelKeys pins the fresh-reset contract: there
 // is no config version field and no endpoints-based format, so both are just

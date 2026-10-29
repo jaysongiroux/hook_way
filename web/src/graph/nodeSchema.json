@@ -77,6 +77,7 @@
             "hmac_sha256_headers_dot",
             "hmac_sha256_hex",
             "hmac_sha256_polar",
+            "hmac_sha256_raw_hex",
             "hmac_sha256_slack_v0",
             "hmac_sha256_ts_colon",
             "hmac_sha256_ts_dot",
@@ -228,6 +229,13 @@
         "request_signature": true,
         "separate_timestamp": true,
         "message_id": true,
+        "jwt": false,
+        "key_format": "shared_secret"
+      },
+      "hmac_sha256_raw_hex": {
+        "request_signature": false,
+        "separate_timestamp": false,
+        "message_id": false,
         "jwt": false,
         "key_format": "shared_secret"
       },

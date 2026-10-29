@@ -37,7 +37,7 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "controls",
     title: "Set access rules for each flow",
-    value: "15",
+    value: "16",
     valueLabel: "authentication formats",
     line: "Reject invalid senders and duplicates. Use memory for one replica, or Redis/PostgreSQL for shared protection.",
   },

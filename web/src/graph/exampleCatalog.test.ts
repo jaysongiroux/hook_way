@@ -51,7 +51,7 @@ test.each([
 
 test("repository discovery includes every eligible directory and all bundles round trip", () => {
   expect(repositoryExamples.length).toBeGreaterThan(60);
-  for (const id of ["config.yaml", "multi-yaml/core.yaml", "openapi/core.yaml", "mcp-events.yaml", "production-local/core.yaml", "templates/mcp-gateway.yaml"]) {
+  for (const id of ["config.yaml", "multi-yaml/core.yaml", "openapi/core.yaml", "mcp-events.yaml", "production-local/core.yaml", "templates/mcp-gateway.yaml", "sentry-discord.yaml", "templates/sentry-ingest.yaml"]) {
     expect(repositoryExamples.some((item) => item.id === id), id).toBe(true);
   }
   for (const example of repositoryExamples) {

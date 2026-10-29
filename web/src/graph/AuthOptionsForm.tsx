@@ -26,6 +26,7 @@ const LABELS: Record<string, string> = {
   exact: "Exact value",
   basic: "HTTP Basic",
   hmac_sha256_hex: "HMAC SHA-256 · hexadecimal",
+  hmac_sha256_raw_hex: "HMAC SHA-256 · unprefixed hexadecimal (Sentry)",
   hmac_sha256_base64: "HMAC SHA-256 · Base64",
   hmac_sha512_hex: "HMAC SHA-512 · hexadecimal",
   hmac_sha512_base64: "HMAC SHA-512 · Base64",

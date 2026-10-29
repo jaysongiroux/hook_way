@@ -22,6 +22,7 @@ Start with the [project overview](../README.md), then choose the task you need.
   [OAuth configuration](guides/mcp-gateway.md#oauth-configuration), including
   identity-provider setup and per-tool permissions.
 - [OpenAPI importer](guides/openapi-import.md): generate MCP tools from explicitly selected API operations.
+- [Sentry to Discord](guides/sentry-discord.md): signed issue alerts, setup and a local fixture.
 - [Provider recipes](guides/provider-compatibility.md): GitHub, Stripe, Paddle and Slack.
 - [Named events](guides/named-events.md): shared payload contracts and event construction before delivery.
 - [Validate JSON](guides/json-validation.md): schemas, conversions and sample checks.

@@ -1,0 +1,19 @@
+{
+  "action": "triggered",
+  "actor": {"id": "sentry", "name": "Sentry", "type": "application"},
+  "installation": {"uuid": "00000000-0000-0000-0000-000000000001"},
+  "data": {
+    "triggered_rule": "New production issue",
+    "event": {
+      "event_id": "0123456789abcdef0123456789abcdef",
+      "issue_id": "123",
+      "title": "ReferenceError: checkout is not defined",
+      "project": 42,
+      "level": "error",
+      "tags": [["environment", "production"]],
+      "web_url": "https://sentry.io/organizations/example/issues/123/events/0123456789abcdef0123456789abcdef/",
+      "user": {"email": "must-not-forward@example.test"},
+      "request": {"data": "must-not-forward"}
+    }
+  }
+}

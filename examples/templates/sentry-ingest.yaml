@@ -1,0 +1,72 @@
+# TEMPLATE: receive signed Sentry webhooks and parse their JSON payload.
+# The builder inserts in through env; out is only a runnable wrapper.
+# Choose a protection store after insertion and connect env to a destination.
+# See docs/guides/sentry-discord.md for Sentry setup and a Discord example.
+#
+# Requires SENTRY_CLIENT_SECRET, WEBHOOK_URL, WEBHOOK_SECRET, HOOKWAY_API_KEY.
+# The Client Secret signs the exact raw body as unprefixed HMAC-SHA256 hex.
+# Sentry-Hook-Timestamp and Request-ID are not signed; the replay guard keys
+# on the body instead. Memory protection resets on restart and is per process.
+# Use shared Redis/PostgreSQL protection across replicas when needed.
+# Sentry expects a response within one second. The async wrapper acknowledges
+# queue admission, not delivery; a crash can lose acknowledged work.
+
+state_stores:
+  local:
+    namespace: hookway
+    memory: {} # Per process; select Redis or PostgreSQL for shared protection.
+
+server:
+  addr: ":8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "60s"
+  shutdown_timeout: "10s"
+  publish_timeout: "500ms"
+  max_body_bytes: 1048576
+  max_inflight_requests: 256
+  fanout_concurrency: 8
+
+metrics:
+  enabled: true
+  path: /metrics
+  addr: ":9090"
+
+security:
+  api_key: "${HOOKWAY_API_KEY}"
+  forwarded_header_allowlist:
+    - Content-Type
+    - Sentry-Hook-Resource
+
+destinations:
+  events:
+    type: webhook
+    webhook:
+      url: "${WEBHOOK_URL}"
+      delivery_mode: async
+      timeout: "10s"
+      retry:
+        max_attempts: 5
+        initial_backoff: "500ms"
+        max_backoff: "30s"
+      auth:
+        type: hmac
+        secret: "${WEBHOOK_SECRET}"
+
+flows:
+  sentry:
+    nodes:
+      - {id: in, type: http_trigger, description: "Sentry posts notification deliveries here.", path: /webhooks/sentry, methods: [POST]}
+      - {id: hops, type: loop_guard, description: "Rejects a request that already looped through Hookway.", max_hops: 3}
+      - {id: rl, type: rate_limit, store: local, description: "Caps inbound Sentry retries per source IP in this process.", rpm: 60, burst: 20, key_by: source_ip}
+      - {id: body, type: read_body, description: "Buffers the raw body so the signature can be verified.", max_bytes: 1048576}
+      - id: auth
+        type: auth
+        description: "Verifies Sentry-Hook-Signature (unprefixed HMAC-SHA256)."
+        scheme: hmac_sha256_raw_hex
+        secret_ref: {provider: env, name: SENTRY_CLIENT_SECRET, refresh: 15m, overlap: 5m}
+        signature_header: Sentry-Hook-Signature
+      - {id: replay, type: replay_guard, store: local, description: "Drops a delivery Sentry already succeeded within the TTL.", ttl: 24h, max_entries: 100000}
+      - {id: env, type: envelope, description: "Decodes the JSON event (`action`, `data`, …).", body_format: json}
+      - {id: out, type: publish, description: "Wrapper publish so this file is a complete config. Not part of the inserted template.", destination: events, target: sentry-events}
+    edges: [in>hops, hops>rl, rl>body, body>auth, auth>replay, replay>env, env>out]

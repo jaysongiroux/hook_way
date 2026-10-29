@@ -310,6 +310,7 @@ validate:
 validate-examples:
 	@export RABBITMQ_URL=amqp://guest:guest@localhost:5672/ \
 		PADDLE_WEBHOOK_SECRET=dummy \
+		SENTRY_CLIENT_SECRET=dummy \
 		GITHUB_WEBHOOK_SECRET=dummy \
 		STRIPE_WEBHOOK_SECRET=dummy \
 		POLAR_WEBHOOK_SECRET=dummy \
