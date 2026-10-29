@@ -406,6 +406,24 @@ already permits `http://localhost:8082`.
 binaries. `make console-e2e` runs the standalone frontend on port 5183 against
 its real fixture API on 5184 and a disposable PostgreSQL database.
 
+CI runs the complete builder browser suite across four isolated runners, with one
+Playwright worker on each runner. Website and console browser suites run in
+separate parallel jobs after the same prerequisite checks. Every shard and suite
+is required by `Checks / All checks passed`; a failed shard does not cancel the
+others. The console job still uses its real API and disposable PostgreSQL fixture.
+
+Local browser targets run the complete suite by default. To reproduce one CI
+builder shard:
+
+```sh
+CI=1 make web-e2e PLAYWRIGHT_ARGS='--shard=1/4 --reporter=github,blob'
+```
+
+Builder shard blobs are retained as `playwright-builder-blob-1` through `-4` and
+merged into the existing `playwright-report` HTML artifact, including after test
+failures. Website and console HTML reports are retained separately as
+`playwright-website-report` and `playwright-console-report`.
+
 `make compose-e2e-test COMPOSE_E2E_BUILD=dockerfile` automates the signed-event,
 failed-destination, and retry walkthrough using the Dockerfiles. It uses its own
 Compose project and random loopback ports, then removes its containers/volumes.

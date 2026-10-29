@@ -85,8 +85,11 @@ web-knip:
 	cd web && npx --yes knip@6.36.0
 
 # Browser tests exercise the real Go validator compiled to WebAssembly.
+# Optional Playwright CLI arguments; local runs still execute the complete suite.
+PLAYWRIGHT_ARGS ?=
+
 web-e2e: wasm
-	cd web && npm run test:e2e
+	cd web && npm run test:e2e -- $(PLAYWRIGHT_ARGS)
 
 web-build:
 	cd web && npm run build
@@ -105,7 +108,7 @@ website-test:
 	cd web && npm run test:docs
 
 website-e2e: wasm website-build
-	cd web && npx playwright test --config playwright.website.config.ts
+	cd web && npx playwright test --config playwright.website.config.ts $(PLAYWRIGHT_ARGS)
 
 console-build:
 	cd web && npm run build:console
@@ -114,7 +117,7 @@ console-ui: wasm
 	$(MAKE) console-build
 
 console-e2e: console-ui
-	cd web && npm run test:console
+	cd web && npm run test:console -- $(PLAYWRIGHT_ARGS)
 
 # ui assembles the embed bundle: build the WASM validator (Milestone 1) and the
 # SPA, then stage both into internal/editor/webui/ for go:embed.

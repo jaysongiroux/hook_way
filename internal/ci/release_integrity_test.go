@@ -42,7 +42,7 @@ type policyWorkflow struct {
 func TestConsoleGateUsesStandaloneBrowserAndFullReplayIntegration(t *testing.T) {
 	w := loadPolicy(t, "reusable-ci.yml")
 	var browserCommands string
-	for _, step := range w.Jobs["web-e2e"].Steps {
+	for _, step := range w.Jobs["console-e2e"].Steps {
 		browserCommands += step.Run + "\n"
 	}
 	if !strings.Contains(browserCommands, "make console-e2e") {

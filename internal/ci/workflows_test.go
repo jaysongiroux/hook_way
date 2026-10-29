@@ -3,6 +3,7 @@ package ci
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,13 +12,22 @@ import (
 
 type workflow struct {
 	Jobs map[string]struct {
-		Needs stringList `yaml:"needs"`
+		Name     string     `yaml:"name"`
+		If       string     `yaml:"if"`
+		Needs    stringList `yaml:"needs"`
+		Strategy struct {
+			FailFast *bool `yaml:"fail-fast"`
+			Matrix   struct {
+				Shard []int `yaml:"shard"`
+			} `yaml:"matrix"`
+		} `yaml:"strategy"`
 		Steps []struct {
 			Name string            `yaml:"name"`
 			If   string            `yaml:"if"`
 			Uses string            `yaml:"uses"`
 			Run  string            `yaml:"run"`
 			With map[string]string `yaml:"with"`
+			Env  map[string]string `yaml:"env"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
@@ -155,9 +165,9 @@ func TestCIRunsInStages(t *testing.T) {
 	stages := [][]string{
 		{"formatting", "golangci", "govulncheck", "static", "web-lint"},
 		{"go", "go-race", "examples", "web", "coverage", "observability"},
-		{"web-e2e", "integration", "image"},
+		{"web-e2e", "website-e2e", "console-e2e", "integration", "image"},
 	}
-	staged := map[string]bool{"success": true}
+	staged := map[string]bool{"success": true, "browser-reports": true}
 	var previous []string // the stage before; none for the first
 	for _, stage := range stages {
 		for _, name := range stage {
@@ -185,6 +195,9 @@ func TestCIRunsInStages(t *testing.T) {
 		if name != "success" && !w.Jobs["success"].Needs.has(name) {
 			t.Errorf("the summary check does not wait for %q", name)
 		}
+	}
+	if !w.Jobs["browser-reports"].Needs.has("web-e2e") {
+		t.Fatal("browser report merge must wait for every builder shard")
 	}
 }
 
@@ -214,5 +227,60 @@ func TestCIIncludesMCPRuntimeAndBrowserTests(t *testing.T) {
 	}
 	if !hasGo || !discoversMCP {
 		t.Fatal("MCP browser tests require Go for the real gateway fixture and explicit test discovery")
+	}
+}
+
+func TestBrowserShardsPreserveCompleteSuitesAndReports(t *testing.T) {
+	w := loadWorkflow(t, "reusable-ci.yml")
+	builder := w.Jobs["web-e2e"]
+	if !reflect.DeepEqual(builder.Strategy.Matrix.Shard, []int{1, 2, 3, 4}) || builder.Strategy.FailFast == nil || *builder.Strategy.FailFast {
+		t.Fatal("all four builder shards must run, including after another shard fails")
+	}
+	for name, command := range map[string]string{"web-e2e": "make web-e2e", "website-e2e": "make website-e2e", "console-e2e": "make console-e2e"} {
+		job := w.Jobs[name]
+		found, report := false, false
+		for _, step := range job.Steps {
+			if step.Run == command {
+				found = true
+				want := "--reporter=github,html"
+				if name == "web-e2e" {
+					want = "--shard=${{ matrix.shard }}/4 --reporter=github,blob"
+				}
+				if step.Env["PLAYWRIGHT_ARGS"] != want {
+					t.Errorf("%s must run its complete suite with only shard/report arguments", name)
+				}
+			}
+			if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.If == "${{ !cancelled() }}" && step.With["if-no-files-found"] == "error" {
+				wantName, wantPath := "playwright-"+strings.TrimSuffix(name, "-e2e")+"-report", "web/playwright-report/"
+				if name == "web-e2e" {
+					wantName, wantPath = "playwright-builder-blob-${{ matrix.shard }}", "web/blob-report/"
+				}
+				report = step.With["name"] == wantName && step.With["path"] == wantPath
+			}
+		}
+		if !found || !report {
+			t.Errorf("%s must run the complete browser suite and preserve its own failure report", name)
+		}
+		for _, other := range []string{"web-e2e", "website-e2e", "console-e2e"} {
+			if job.Needs.has(other) {
+				t.Errorf("%s must not wait behind browser suite %s", name, other)
+			}
+		}
+	}
+	merge := w.Jobs["browser-reports"]
+	if merge.If != "${{ !cancelled() && needs.web-e2e.result != 'skipped' }}" {
+		t.Fatal("merge must retain diagnostics after failed tests without running after skipped stages")
+	}
+	download, merges, upload := false, false, false
+	for _, step := range merge.Steps {
+		download = download || (strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["pattern"] == "playwright-builder-blob-*" && step.With["merge-multiple"] == "true")
+		merges = merges || strings.Contains(step.Run, "playwright merge-reports --reporter=html ./all-blob-reports")
+		upload = upload || (strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.With["name"] == "playwright-report")
+	}
+	if !download || !merges || !upload {
+		t.Fatal("all shard reports must merge into the existing playwright-report artifact")
+	}
+	if w.Jobs["success"].Name != "All checks passed" {
+		t.Fatal("the branch protection check name must remain stable")
 	}
 }
