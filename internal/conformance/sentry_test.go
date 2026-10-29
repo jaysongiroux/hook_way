@@ -28,7 +28,7 @@ type discordReceipt struct {
 }
 
 func sentryRequest(body, resource, secret string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/sentry", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/webhooks/sentry", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Sentry-Hook-Resource", resource)
 	mac := hmac.New(sha256.New, []byte(secret))
