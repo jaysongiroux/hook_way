@@ -10,7 +10,7 @@ declare module "virtual:hookway-docs-data" {
   interface NavItem { label: string; link?: string; items?: NavItem[] }
   const publication: {
     sidebar: NavItem[];
-    pages: { route: string; title: string; dataUrl: string }[];
+    pages: { route: string; title: string; dataUrl: string; source: string | null; rawUrl: string | null }[];
     origin: string;
   };
   export default publication;

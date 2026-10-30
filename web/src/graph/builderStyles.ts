@@ -102,19 +102,4 @@ button.${PALETTE_ITEM_CLASS}:active {
 .hookway-inspector-node:hover {
   background: ${DARK.recessed};
 }
-.hookway-builder-root .react-flow__controls-button {
-  color: ${DARK.text};
-  background: ${DARK.surface};
-  border-bottom-color: ${DARK.border};
-}
-.hookway-builder-root .react-flow__controls-button:hover:not(:disabled) {
-  background: ${DARK.recessed};
-}
-.hookway-builder-root .react-flow__controls-button svg {
-  fill: currentColor;
-}
-.hookway-builder-root .react-flow__attribution {
-  color: ${DARK.muted};
-  background: transparent;
-}
 `;

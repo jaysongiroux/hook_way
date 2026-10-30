@@ -20,6 +20,6 @@ test("the app forces the light colour scheme for the builder too", () => {
   expect(read("src/shared/ui/UIProvider.tsx")).toContain('forceColorScheme="light"');
 });
 
-test("the builder canvas runs in light colour mode", () => {
-  expect(read("src/graph/Canvas.tsx")).toContain('colorMode="light"');
+test("the shared graph view runs in light colour mode", () => {
+  expect(read("src/graph/GraphView.tsx")).toContain('colorMode="light"');
 });

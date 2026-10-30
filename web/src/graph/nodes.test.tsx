@@ -4,15 +4,17 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { FlowNode } from "./nodes";
-import { useGraphStore } from "./store";
+import { GraphPresentationContext, type GraphPresentation } from "./GraphPresentation";
 import { createNode, resetIdCounters } from "./model";
 import { NODE_SIZE } from "../tokens";
 import { NODE_ICON_SIZE } from "./nodeIcon";
 
-function wrap(ui: React.ReactNode) {
+function wrap(ui: React.ReactNode, presentation: Partial<GraphPresentation> = {}) {
   return render(
     <MantineProvider theme={theme}>
-      <ReactFlowProvider>{ui}</ReactFlowProvider>
+      <GraphPresentationContext value={{ destinations: {}, selectedNodeId: null, selectedEdgeId: null, readOnly: false, ...presentation }}>
+        <ReactFlowProvider>{ui}</ReactFlowProvider>
+      </GraphPresentationContext>
     </MantineProvider>,
   );
 }
@@ -50,7 +52,6 @@ test("every node icon uses the same color", () => {
   const filter = createNode("filter", { x: 0, y: 0 });
   const publish = createNode("publish", { x: 0, y: 0 });
   publish.data.options = { destination: "orders", target: "q" };
-  useGraphStore.setState({ destinations: { orders: { type: "sqs" } } });
   const { container } = wrap(
     <>
       <FlowNode id={filter.id} type="flow" data={filter.data} {...nodeProps} />
@@ -67,8 +68,7 @@ test("a publish node shows the icon of its destination", () => {
   resetIdCounters();
   const n = createNode("publish", { x: 0, y: 0 });
   n.data.options = { destination: "orders", target: "github-main" };
-  useGraphStore.setState({ destinations: { orders: { type: "sqs" }, events: { type: "kafka" } } });
-  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />, { destinations: { orders: { type: "sqs" }, events: { type: "kafka" } } });
   expect(container.querySelector('[data-node-icon="sqs"] svg')).not.toBeNull();
   expect(container.querySelector('[data-node-icon="publish"]')).toBeNull();
 });
@@ -158,8 +158,7 @@ test("rate_limit keeps an on-error handle", () => {
 test("node is outlined when selected", () => {
   resetIdCounters();
   const n = createNode("filter", { x: 0, y: 0 });
-  useGraphStore.setState({ selectedId: n.id, selectedEdgeId: null });
-  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />);
+  const { container } = wrap(<FlowNode id={n.id} type="flow" data={n.data} {...nodeProps} />, { selectedNodeId: n.id });
   const paper = container.querySelector(".mantine-Paper-root") as HTMLElement;
   expect(paper.style.outline).toContain("2px solid");
 });

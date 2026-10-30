@@ -7,11 +7,11 @@ import type { CSSProperties } from "react";
 import type { HookwayNode } from "./model";
 import { labelledPorts, nodeMeta, nodeHasOnError, nodeLabel } from "./nodeSchema";
 import { HANDLE_IN, HANDLE_ON_ERROR, HANDLE_OUT } from "./connection";
-import { useGraphStore } from "./store";
+import { useGraphPresentation } from "./GraphPresentation";
 import { DARK, NODE, NODE_SIZE, PORT } from "../tokens";
 
 function useSelectionRing(id: string, color: string): CSSProperties {
-  const selected = useGraphStore((s) => s.selectedId === id);
+  const selected = useGraphPresentation().selectedNodeId === id;
   return selected ? { outline: `2px solid ${color}`, outlineOffset: 2 } : {};
 }
 
@@ -70,7 +70,9 @@ const DESCRIPTION: CSSProperties = {
   overflow: "hidden",
 };
 
-export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
+export function FlowNode({ id, data, isConnectable }: NodeProps<HookwayNode>) {
+  // Handles have separate start/end switches, even when the node is not connectable.
+  const connectivity = { isConnectable, isConnectableStart: isConnectable, isConnectableEnd: isConnectable };
   const meta = nodeMeta(data.nodeType, data.options);
   const input = meta?.input ?? "Envelope";
   const output = meta?.output ?? "Envelope";
@@ -80,7 +82,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   const labelled = labelledPorts(data.nodeType, data.options);
   const showDefaultOut = output !== "Terminal" && labelled.length === 0 && data.nodeType !== "mcp_trigger";
   const showError = nodeHasOnError(data.nodeType);
-  const destinations = useGraphStore((s) => s.destinations);
+  const destinations = useGraphPresentation().destinations;
   const destinationType =
     data.nodeType === "publish" ? destinationTypeOf(destinations, String(data.options.destination ?? "")) : "";
   const cardLabel =
@@ -90,7 +92,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
   return (
     <Paper withBorder radius="sm" style={{ ...CARD, ...useSelectionRing(id, color) }}>
       {input !== "None" && (
-        <Handle
+        <Handle {...connectivity}
           type="target"
           position={Position.Left}
           id={HANDLE_IN}
@@ -125,7 +127,7 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
             <Text size="xs" c={DARK.muted} title={port} style={PORT_LABEL}>
               {port}
             </Text>
-            <Handle
+            <Handle {...connectivity}
               type="source"
               position={Position.Right}
               id={port}
@@ -150,10 +152,10 @@ export function FlowNode({ id, data }: NodeProps<HookwayNode>) {
         )}
       </Stack>
       {showDefaultOut && (
-        <Handle type="source" position={Position.Right} id={HANDLE_OUT} title={output} style={handleStyle(output)} />
+        <Handle {...connectivity} type="source" position={Position.Right} id={HANDLE_OUT} title={output} style={handleStyle(output)} />
       )}
       {showError && (
-        <Handle
+        <Handle {...connectivity}
           type="source"
           position={Position.Bottom}
           id={HANDLE_ON_ERROR}

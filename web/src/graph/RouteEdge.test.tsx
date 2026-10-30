@@ -1,12 +1,16 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { ReactFlow, ReactFlowProvider, Position } from "@xyflow/react";
 import { MantineProvider } from "@mantine/core";
 import { theme } from "../theme";
 import { edgeTypes } from "./RouteEdge";
 import { createNode, resetIdCounters } from "./model";
-import { useGraphStore } from "./store";
+import { GraphPresentationContext, type GraphPresentation } from "./GraphPresentation";
 import { EDGE } from "../tokens";
+
+function wrap(ui: React.ReactNode, presentation: Partial<GraphPresentation> = {}) {
+  return render(<GraphPresentationContext value={{ destinations: {}, selectedNodeId: null, selectedEdgeId: null, readOnly: false, ...presentation }}>{ui}</GraphPresentationContext>);
+}
 
 function hexRgb(hex: string) {
   const h = hex.replace("#", "");
@@ -33,7 +37,7 @@ function pair() {
 
 test("RouteEdge renders a labelled port as a chip", () => {
   const { a, b } = pair();
-  const { getByText } = render(
+  const { getByText } = wrap(
     <MantineProvider theme={theme}>
       <ReactFlowProvider>
         <div style={{ width: 600, height: 400 }}>
@@ -51,7 +55,7 @@ test("RouteEdge renders a labelled port as a chip", () => {
 
 test("a route edge renders an arrowhead marker showing data direction", () => {
   const { a, b } = pair();
-  const { container } = render(
+  const { container } = wrap(
     <MantineProvider theme={theme}>
       <ReactFlowProvider>
         <div style={{ width: 600, height: 400 }}>
@@ -75,7 +79,7 @@ test("a route edge renders an arrowhead marker showing data direction", () => {
 // measures the rendered gap.
 test("the path stops arrowGap short of the target connection point", () => {
   const { a, b } = pair();
-  const { container } = render(
+  const { container } = wrap(
     <MantineProvider theme={theme}>
       <ReactFlowProvider>
         <div style={{ width: 600, height: 400 }}>
@@ -94,9 +98,8 @@ test("the path stops arrowGap short of the target connection point", () => {
 });
 
 test("the selected edge's chip is highlighted", () => {
-  useGraphStore.setState({ selectedId: null, selectedEdgeId: "e1" });
   const { a, b } = pair();
-  const { getByText } = render(
+  const { getByText } = wrap(
     <MantineProvider theme={theme}>
       <ReactFlowProvider>
         <div style={{ width: 600, height: 400 }}>
@@ -108,6 +111,7 @@ test("the selected edge's chip is highlighted", () => {
         </div>
       </ReactFlowProvider>
     </MantineProvider>,
+    { selectedEdgeId: "e1" },
   );
   const chip = getByText("matched");
   expect(chip.style.borderColor).toBe(hexRgb(EDGE.selected));
@@ -115,9 +119,9 @@ test("the selected edge's chip is highlighted", () => {
 });
 
 test("clicking a route chip selects that edge", () => {
-  useGraphStore.setState({ selectedId: null, selectedEdgeId: null });
+  const onEdgeSelect = vi.fn();
   const { a, b } = pair();
-  const { getByText } = render(
+  const { getByText } = wrap(
     <MantineProvider theme={theme}>
       <ReactFlowProvider>
         <div style={{ width: 600, height: 400 }}>
@@ -129,7 +133,8 @@ test("clicking a route chip selects that edge", () => {
         </div>
       </ReactFlowProvider>
     </MantineProvider>,
+    { onEdgeSelect },
   );
   fireEvent.click(getByText("matched"));
-  expect(useGraphStore.getState().selectedEdgeId).toBe("e1");
+  expect(onEdgeSelect).toHaveBeenCalledWith("e1");
 });

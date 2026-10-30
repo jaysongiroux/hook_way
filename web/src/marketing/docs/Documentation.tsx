@@ -8,13 +8,17 @@ import {
   TextInput,
   Text,
 } from "@mantine/core";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useDocumentTitle, useReducedMotion } from "@mantine/hooks";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import publication from "virtual:hookway-docs-data";
 import { MarketingShell } from "../MarketingShell";
 import { DARK } from "../../tokens";
 import "./documentation.css";
+
+const ExamplePreview = lazy(() => import("./ExamplePreview").catch(() => ({
+  default: () => <Text role="status" size="sm" my="md">Graph preview unavailable. The YAML source is available below.</Text>,
+})));
 
 interface Heading {
   id: string;
@@ -424,6 +428,11 @@ export default function Documentation() {
                       </Anchor>
                     )}
                   </div>
+                )}
+                {page.kind === "yaml" && page.source?.startsWith("examples/") && page.rawUrl && (
+                  <Suspense fallback={<Loader size="sm" my="md" aria-label="Loading graph preview" />}>
+                    <ExamplePreview key={page.source} page={page} publishedFiles={publication.pages} />
+                  </Suspense>
                 )}
                 {page.rawUrl && (
                   <Group className="docs-yaml-actions" gap="sm">

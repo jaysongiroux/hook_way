@@ -1,0 +1,9 @@
+.docs-example-preview { margin: 24px 0; min-width: 0; }
+.docs-example-canvas {
+  height: 480px;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--docs-border);
+  border-radius: 4px;
+}
+@media (max-width: 640px) { .docs-example-canvas { height: 360px; } }

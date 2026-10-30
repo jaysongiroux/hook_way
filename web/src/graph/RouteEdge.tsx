@@ -1,5 +1,5 @@
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, Position, type EdgeProps, type EdgeTypes } from "@xyflow/react";
-import { useGraphStore } from "./store";
+import { useGraphPresentation } from "./GraphPresentation";
 import { DARK, EDGE } from "../tokens";
 
 const PARALLEL_GAP = 32;
@@ -39,7 +39,8 @@ function RouteEdge({
   const count = d.parallelCount ?? 1;
   const index = d.parallelIndex ?? 0;
   const label = String(d.label ?? "");
-  const selected = useGraphStore((s) => s.selectedEdgeId === id);
+  const { selectedEdgeId, onEdgeSelect } = useGraphPresentation();
+  const selected = selectedEdgeId === id;
 
   const end = backOff(targetX, targetY, targetPosition);
 
@@ -91,7 +92,7 @@ function RouteEdge({
             }}
             onClick={(e) => {
               e.stopPropagation();
-              useGraphStore.getState().setSelectedEdge(id);
+              onEdgeSelect?.(id);
             }}
           >
             {label}

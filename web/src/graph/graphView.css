@@ -1,0 +1,10 @@
+.hookway-graph-view { width: 100%; height: 100%; color-scheme: light; }
+.hookway-graph-view .react-flow__controls-button {
+  color: inherit;
+  background: var(--graph-surface);
+  border-bottom-color: var(--graph-border);
+}
+.hookway-graph-view .react-flow__controls-button:hover:not(:disabled) { background: var(--graph-recessed); }
+.hookway-graph-view .react-flow__controls-button svg { fill: currentColor; }
+.hookway-graph-view .react-flow__attribution { color: var(--graph-muted); background: transparent; }
+.hookway-graph-view[data-mode="readOnly"] .react-flow__node { cursor: pointer; }
