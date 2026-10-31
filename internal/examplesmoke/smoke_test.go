@@ -226,8 +226,8 @@ func discoverExamples(t *testing.T) (valid, invalid []string) {
 		if d.Name() == "docker-compose.yaml" {
 			return nil
 		}
-		// These three files configure optional monitoring dependencies, not
-		// Hookway. metrics/prometheus validates their actual tool contracts.
+		// OpenAPI source/settings and optional monitoring dependencies are not
+		// core configurations. Their owning packages validate their contracts.
 		rel, relErr := filepath.Rel(root, path)
 		if relErr != nil {
 			return relErr
@@ -236,7 +236,7 @@ func discoverExamples(t *testing.T) (valid, invalid []string) {
 			return nil
 		} // Flow bodies are exercised through their entry YAML.
 		switch filepath.ToSlash(rel) {
-		case "openapi/api.yaml", "openapi/settings.yaml", "production-local/monitoring/compose.yaml", "production-local/monitoring/prometheus.yaml", "production-local/monitoring/alertmanager.yaml":
+		case "openapi/api.yaml", "openapi/settings.yaml", "openapi/demo-settings.yaml", "production-local/monitoring/compose.yaml", "production-local/monitoring/prometheus.yaml", "production-local/monitoring/alertmanager.yaml":
 			return nil
 		}
 		// Every replay.yaml (examples/replay/, examples/dev/) configures
