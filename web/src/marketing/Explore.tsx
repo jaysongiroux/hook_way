@@ -30,7 +30,7 @@ export function Explore() {
               {"{envName}-events"}
             </Text>.
           </Text>
-          <Anchor component={Link} to="/use-cases" fw={650} c={DARK.accent} underline="always">
+          <Anchor component={Link} to="/use-cases/" fw={650} c={DARK.accent} underline="always">
             Explore use cases
           </Anchor>
         </Stack>
@@ -42,7 +42,7 @@ export function Explore() {
           <Text size="sm" c={DARK.muted} style={{ lineHeight: 1.6 }}>
             Compare deployment, delivery and MCP tools with Hookdeck Event Gateway and Convoy. Includes source links and a separate look at Outpost.
           </Text>
-          <Anchor component={Link} to="/compare" fw={650} c={DARK.accent} underline="always">
+          <Anchor component={Link} to="/compare/" fw={650} c={DARK.accent} underline="always">
             View the comparison
           </Anchor>
         </Stack>

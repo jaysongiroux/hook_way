@@ -1,5 +1,14 @@
-import { Anchor, Box, Button, Container, Group, Stack, Table, Text, Title } from "@mantine/core";
-import { useDocumentTitle } from "@mantine/hooks";
+import {
+  Anchor,
+  Box,
+  Button,
+  Container,
+  Group,
+  Stack,
+  Table,
+  Text,
+  Title,
+} from "@mantine/core";
 import { Link } from "react-router-dom";
 import {
   COMPARE_DIFFERS,
@@ -35,16 +44,32 @@ function levelLabel(level: SupportLevel): string {
 }
 
 export function Compare() {
-  useDocumentTitle("Compare — Hookway");
   return (
     <MarketingShell animated>
-      <Box component="section" className={PAGE_HERO_CLASS} pt={56} pb={64} style={{ background: DARK.bg }}>
+      <Box
+        component="section"
+        className={PAGE_HERO_CLASS}
+        pt={56}
+        pb={64}
+        style={{ background: DARK.bg }}
+      >
         <Container size="lg">
+          <Group component="nav" aria-label="Breadcrumb" gap="xs" mb="xl">
+            <Anchor component={Link} to="/">
+              Home
+            </Anchor>
+            <Text size="sm">/ Compare</Text>
+          </Group>
           <Stack gap="md" maw={720} data-marketing-motion="intro">
             <Title
               order={1}
               c={DARK.text}
-              style={{ fontSize: "clamp(32px, 5vw, 44px)", lineHeight: 1.15, letterSpacing: -0.4, fontWeight: 650 }}
+              style={{
+                fontSize: "clamp(32px, 5vw, 44px)",
+                lineHeight: 1.15,
+                letterSpacing: -0.4,
+                fontWeight: 650,
+              }}
             >
               {COMPARE_INTRO.title}
             </Title>
@@ -52,7 +77,7 @@ export function Compare() {
               {COMPARE_INTRO.lead}
             </Text>
             <Group gap="sm" mt="xs">
-              <Button component={Link} to="/use-cases" size="md" color="brand">
+              <Button component={Link} to="/use-cases/" size="md" color="brand">
                 See use cases
               </Button>
               <Button
@@ -60,7 +85,13 @@ export function Compare() {
                 to="/builder"
                 size="md"
                 variant="default"
-                styles={{ root: { background: DARK.surface, borderColor: DARK.border, color: DARK.text } }}
+                styles={{
+                  root: {
+                    background: DARK.surface,
+                    borderColor: DARK.border,
+                    color: DARK.text,
+                  },
+                }}
               >
                 Open the builder
               </Button>
@@ -89,13 +120,25 @@ export function Compare() {
             >
               <Stack gap={8}>
                 <Group gap="sm">
-                  <Text fw={650} c={DARK.text}>{c.name}</Text>
-                  {c.mark && <Text size="xs" c={DARK.muted}>{c.mark}</Text>}
+                  <Text fw={650} c={DARK.text}>
+                    {c.name}
+                  </Text>
+                  {c.mark && (
+                    <Text size="xs" c={DARK.muted}>
+                      {c.mark}
+                    </Text>
+                  )}
                 </Group>
                 <Text size="sm" c={DARK.muted} style={{ lineHeight: 1.55 }}>
                   {c.role}
                 </Text>
-                <Anchor href={c.sourceHref} target="_blank" rel="noopener noreferrer" size="sm" c={DARK.accent}>
+                <Anchor
+                  href={c.sourceHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  size="sm"
+                  c={DARK.accent}
+                >
                   {c.sourceLabel}
                 </Anchor>
               </Stack>
@@ -109,8 +152,19 @@ export function Compare() {
         lead={`Baseline checked ${COMPARE_CHECKED_ON}; newer checks are dated on their rows. Each cell links to its supporting documentation. Delivery, storage and MCP tool boundaries are explained where they matter.`}
         background={DARK.recessed}
       >
-        <Box component="aside" className="hookway-compare-differs" aria-labelledby="where-hookway-differs">
-          <Text id="where-hookway-differs" component="h3" fw={650} c={DARK.text} size="md" style={{ margin: 0 }}>
+        <Box
+          component="aside"
+          className="hookway-compare-differs"
+          aria-labelledby="where-hookway-differs"
+        >
+          <Text
+            id="where-hookway-differs"
+            component="h3"
+            fw={650}
+            c={DARK.text}
+            size="md"
+            style={{ margin: 0 }}
+          >
             {COMPARE_DIFFERS.title}
           </Text>
           <Box component="ul" className="hookway-compare-differs-list">
@@ -119,7 +173,12 @@ export function Compare() {
                 <Text fw={650} c={DARK.text} size="sm">
                   {point.title}
                 </Text>
-                <Text size="sm" c={DARK.muted} mt={4} style={{ lineHeight: 1.5 }}>
+                <Text
+                  size="sm"
+                  c={DARK.muted}
+                  mt={4}
+                  style={{ lineHeight: 1.5 }}
+                >
                   {point.detail}
                 </Text>
               </Box>
@@ -155,7 +214,12 @@ export function Compare() {
                 fontSize: 13,
                 borderColor: DARK.border,
               },
-              td: { color: DARK.muted, fontSize: 13, verticalAlign: "top", borderColor: DARK.border },
+              td: {
+                color: DARK.muted,
+                fontSize: 13,
+                verticalAlign: "top",
+                borderColor: DARK.border,
+              },
             }}
           >
             <Table.Thead>
@@ -192,14 +256,20 @@ export function Compare() {
                           fw={650}
                           size="xs"
                         >
-                          {cell.count !== undefined ? `${cell.count} ${cell.count === 1 ? "type" : "types"}` : levelLabel(cell.level)}
+                          {cell.count !== undefined
+                            ? `${cell.count} ${cell.count === 1 ? "type" : "types"}`
+                            : levelLabel(cell.level)}
                         </Text>
                         <Text size="sm" mt={6} style={{ lineHeight: 1.45 }}>
                           {cell.detail}
                         </Text>
                         <Anchor
                           href={row.sources[c.id]}
-                          target={row.sources[c.id].startsWith("/") ? undefined : "_blank"}
+                          target={
+                            row.sources[c.id].startsWith("/")
+                              ? undefined
+                              : "_blank"
+                          }
                           rel="noopener noreferrer"
                           size="xs"
                           aria-label={`${c.name}: ${row.capability} documentation`}
@@ -219,13 +289,39 @@ export function Compare() {
       <Section title={COMPARE_OUTPOST_NOTE.title}>
         <Text size="md" c={DARK.muted} maw={720} style={{ lineHeight: 1.55 }}>
           {COMPARE_OUTPOST_NOTE.body}{" "}
-          <Anchor href={COMPARE_OUTPOST_NOTE.href} target="_blank" rel="noopener noreferrer" c={DARK.accent}>
+          <Anchor
+            href={COMPARE_OUTPOST_NOTE.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            c={DARK.accent}
+          >
             {COMPARE_OUTPOST_NOTE.label}
           </Anchor>
           .
         </Text>
         <Text size="sm" c={DARK.muted} mt={16} maw={720}>
-          MCP also appears in event delivery: <Anchor href="https://hookdeck.com/docs/guides/how-to-use-event-gateway-as-mcp-events-forward-proxy" target="_blank" rel="noopener noreferrer">Event Gateway forwards MCP Events</Anchor>, while <Anchor href="https://hookdeck.com/docs/outpost/guides/send-mcp-events-webhooks-with-outpost" target="_blank" rel="noopener noreferrer">Outpost delivers event webhooks from your MCP server</Anchor>. Those workflows are separate from publishing your REST operations as callable tools. Hookway currently exposes tools, not MCP event subscriptions. MCP sources checked October 16, 2026.
+          MCP also appears in event delivery:{" "}
+          <Anchor
+            href="https://hookdeck.com/docs/guides/how-to-use-event-gateway-as-mcp-events-forward-proxy"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Event Gateway forwards MCP Events
+          </Anchor>
+          , while{" "}
+          <Anchor
+            href="https://hookdeck.com/docs/outpost/guides/send-mcp-events-webhooks-with-outpost"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Outpost delivers event webhooks from your MCP server
+          </Anchor>
+          . Those workflows are separate from publishing your REST operations as
+          callable tools. Hookway exposes selected APIs as tools and supports
+          MCP Events subscriptions for compatible clients. Callback acceptance
+          confirms receipt, not completion of an agent task. Hookway
+          capabilities checked October 31, 2026; vendor MCP sources were checked
+          October 16, 2026.
         </Text>
         <Box mt={28}>
           <Text size="sm" fw={650} c={DARK.text} mb={8}>
@@ -233,7 +329,14 @@ export function Compare() {
           </Text>
           <Stack gap={4}>
             {COMPARE_SOURCES.map((s) => (
-              <Anchor key={s.href} href={s.href} target={s.href.startsWith("/") ? undefined : "_blank"} rel="noopener noreferrer" size="sm" c={DARK.accent}>
+              <Anchor
+                key={s.href}
+                href={s.href}
+                target={s.href.startsWith("/") ? undefined : "_blank"}
+                rel="noopener noreferrer"
+                size="sm"
+                c={DARK.accent}
+              >
                 {s.label}
               </Anchor>
             ))}

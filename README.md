@@ -1,6 +1,7 @@
 # Hookway
 
 Receive, verify, and route webhooks to the systems you already run.
+Expose selected APIs as authenticated MCP tools, configured in the same YAML flows.
 Hookway is self-hosted: configure flows in YAML or export them from the visual
 builder, then run core as a Go binary or Docker container.
 
@@ -36,6 +37,8 @@ builder, then run core as a Go binary or Docker container.
 Your applications own queue consumption and business processing. A successful
 response means the [acknowledgement policy you configured](docs/operations/delivery-guarantees.md),
 not exactly-once processing. Async HTTP delivery uses a process-local memory queue.
+
+[Website](https://www.gethookway.com/) · [First signed webhook](https://www.gethookway.com/docs/get-started/) · [API-to-MCP guide](https://www.gethookway.com/docs/guides/openapi-import/)
 
 ## Quick start
 

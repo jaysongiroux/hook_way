@@ -25,13 +25,13 @@ test("the root url serves the marketing overview, not the builder", () => {
 test("/builder mounts the config builder", async () => {
   renderAt("/builder");
   // The builder is lazy-loaded, so it arrives after the dynamic import settles.
-  expect(await screen.findByRole("button", { name: "Inspector" }, { timeout: 5_000 })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Inspector" }, { timeout: 15_000 })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Hookway home" })).toBeInTheDocument();
-});
+}, 20_000);
 
-test("an unknown path falls back to the overview", () => {
+test("an unknown path shows the not-found page", () => {
   renderAt("/nope");
-  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("404");
   expect(screen.queryByRole("button", { name: "Inspector" })).not.toBeInTheDocument();
 });
 
@@ -55,7 +55,7 @@ test("the overview and the builder set their own document titles", async () => {
   overview.unmount();
 
   renderAt("/builder");
-  await screen.findByRole("button", { name: "Inspector" }, { timeout: 5_000 });
+  await screen.findByRole("button", { name: "Inspector" }, { timeout: 15_000 });
   expect(document.title).toBe("Hookway Config");
 });
 

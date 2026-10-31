@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/docs/check-site.mjs",
+    "build": "tsc -b && vite build && node scripts/website/prerender.mjs && node scripts/docs/check-site.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -33,6 +33,7 @@
     "mermaid": "12.2.0",
     "motion": "^14.3.0",
     "openapi-fetch": "0.17.0",
+    "posthog-js": "^1.444.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-icons": "^5.7.0",

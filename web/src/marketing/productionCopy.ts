@@ -1,3 +1,4 @@
+import { NODE_SCHEMAS } from "../graph/nodeSchema";
 // Operational defaults; Go tests check the quoted counts against their sources.
 // Performance measurements describe a dated workload, not a capacity guarantee.
 
@@ -37,7 +38,7 @@ export const PRODUCTION_CARDS: ProductionCard[] = [
   {
     id: "controls",
     title: "Set access rules for each flow",
-    value: "16",
+    value: String(Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length),
     valueLabel: "authentication formats",
     line: "Reject invalid senders and duplicates. Use memory for one replica, or Redis/PostgreSQL for shared protection.",
   },

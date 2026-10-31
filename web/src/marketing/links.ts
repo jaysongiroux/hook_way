@@ -5,12 +5,6 @@ export const GITHUB_REPO = "https://github.com/jaysongiroux/hook_way";
 // Public source links follow the repository's published branch.
 export const GITHUB_REF = "main";
 
-/** Repository slug for visible attribution. */
-export const GITHUB_REPO_SLUG = GITHUB_REPO.replace(
-  /^https?:\/\/github\.com\//,
-  "",
-);
-
 /** repoBlob links a file for the documented product version. */
 export function repoBlob(path: string): string {
   return `${GITHUB_REPO}/blob/${GITHUB_REF}/${path}`;

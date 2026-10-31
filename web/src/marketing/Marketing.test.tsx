@@ -21,11 +21,11 @@ test("the hero states what Hookway does and offers both calls to action", () => 
   wrap();
   const heading = screen.getByRole("heading", { level: 1 });
   expect(heading).toHaveTextContent(
-    /route webhooks\. serve HTTP routes\. expose MCP tools/i,
+    /verify and route webhooks\. in your infrastructure/i,
   );
   const main = screen.getByRole("main");
   expect(main).toHaveTextContent(
-    /handle synchronous HTTP requests as a reverse proxy or native flow/i,
+    /use Hookway as a reverse proxy or a synchronous request handler/i,
   );
   expect(main).toHaveTextContent(/test deployed MCP tools from the builder/i);
   expect(screen.getByRole("link", { name: "Hookway home" })).toHaveAttribute(
@@ -36,7 +36,7 @@ test("the hero states what Hookway does and offers both calls to action", () => 
     screen.getByRole("navigation", { name: "Primary" }),
   ).toBeInTheDocument();
 
-  const builderCta = screen.getByRole("link", { name: /open the builder/i });
+  const builderCta = screen.getByRole("link", { name: /try the builder/i });
   expect(builderCta).toHaveAttribute("href", "/builder");
 
   const repoCta = screen.getByRole("link", { name: /github/i });
@@ -122,10 +122,10 @@ test("the overview points to dynamic-routing use cases and the sourced compariso
   expect(main).toHaveTextContent(/\{envName\}-events/);
   expect(
     screen.getByRole("link", { name: "Explore use cases" }),
-  ).toHaveAttribute("href", "/use-cases");
+  ).toHaveAttribute("href", "/use-cases/");
   expect(
     screen.getByRole("link", { name: "View the comparison" }),
-  ).toHaveAttribute("href", "/compare");
+  ).toHaveAttribute("href", "/compare/");
 });
 
 test("the overview uses concrete product language instead of generic hype", () => {

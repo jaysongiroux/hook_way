@@ -1,0 +1,17 @@
+# Local read-only walkthrough; no real credentials or customer data.
+server:
+  addr: 127.0.0.1:18091
+endpoint:
+  path: /customers/mcp
+  public_url: http://127.0.0.1:18091/customers/mcp
+  auth:
+    api_keys:
+      reader:
+        secret_ref: {provider: env, name: MCP_READER_TOKEN}
+upstream:
+  base_url: http://127.0.0.1:18090
+  allow_private_targets: true
+operations:
+  - method: GET
+    path: /customers/{id}
+    access: {api_keys: [reader]}

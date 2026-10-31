@@ -1,3 +1,4 @@
+import { useTelemetry } from "../shared/telemetry";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import {
@@ -108,6 +109,7 @@ function Wizard({
   const [step, setStep] = useState(0);
   const [configured, setConfigured] = useState(false);
   const [source, setSource] = useState("");
+  const track = useTelemetry();
   const [filename, setFilename] = useState("");
   const [report, setReport] = useState<OpenAPIReport>();
   const [choices, setChoices] = useState<Record<string, Choice>>({});
@@ -321,6 +323,7 @@ function Wizard({
     link.href = url;
     link.download = "core.yaml";
     link.click();
+    track("config_exported", { location: "builder", method: "download", format: "yaml" });
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
   function openInBuilder() {

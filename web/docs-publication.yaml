@@ -10,7 +10,7 @@ respectGitignore: true
 repository: https://github.com/jaysongiroux/hook_way
 ref: main
 labels:
-  reference: Configuration
+  reference: Configuration reference
   guides: Guides
   operations: Operations
   examples: Examples

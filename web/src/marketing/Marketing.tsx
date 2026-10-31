@@ -1,4 +1,3 @@
-import { useDocumentTitle } from "@mantine/hooks";
 import { CodeBand } from "./CodeBand";
 import { CtaBand } from "./CtaBand";
 import { DestinationMarquee } from "./DestinationMarquee";
@@ -18,7 +17,6 @@ import { ReplayOperations } from "./ReplayOperations";
 // them. Bands alternate between the canvas and the recessed surface so the
 // page has a rhythm rather than one repeated card grid.
 export function Marketing() {
-  useDocumentTitle("Hookway — Webhooks, reverse proxy, and MCP tools.");
   return (
     <MarketingShell animated>
       <Hero />

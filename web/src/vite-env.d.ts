@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 declare module "virtual:hookway-docs" {
-  export const site: { description: string; origin: string };
+  export const site: { description: string; origin: string; indexable: boolean };
   const links: Record<string, string>;
   export default links;
 }

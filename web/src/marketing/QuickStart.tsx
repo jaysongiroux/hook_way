@@ -1,16 +1,19 @@
 import { Box, Button, Group, Paper, Text } from "@mantine/core";
 import { useState } from "react";
+import { useTelemetry } from "../shared/telemetry";
 import { QUICK_START_COMMAND } from "./quickStartCommand";
 import { DARK } from "../tokens";
 
 // One command, one click to copy it. The button reports back so the click is
 // not silent.
 export function QuickStart() {
+  const track = useTelemetry();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(QUICK_START_COMMAND);
       setCopied(true);
+      track("quick_start_copied", { location: "quick_start" });
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard access can be denied; the command stays selectable on screen.

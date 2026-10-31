@@ -1,9 +1,78 @@
+---
+title: Import OpenAPI operations as MCP tools
+description: Run a local customer API, import one read operation, grant an MCP caller access, and verify a tool call through Hookway with reviewable YAML.
+---
+
+Last revised: October 31, 2026.
 # Import OpenAPI operations as MCP tools
 
 Use `hookway import-openapi` to generate a new Hookway configuration from selected
 API operations. The importer runs locally, makes no network requests, does not
 expand environment variables, and never loads credential secrets. Generated tools
 run through the existing [MCP gateway](mcp-gateway.md).
+
+## Run a complete local example
+
+This read-only walkthrough uses a synthetic customer API on loopback. You need
+Git, Make, the Go version from `go.mod`, Python 3, curl and OpenSSL. Work from the
+repository root; `make build` downloads Go dependencies when needed.
+
+In one terminal, build Hookway and start the fixture API:
+
+```sh
+make build
+python3 examples/openapi/demo-server.py
+```
+
+In a second terminal, generate a fresh configuration. The importer refuses to
+overwrite an existing output, so choose a new output filename on a repeat run.
+
+```sh
+mkdir -p .scratch/openapi-guide
+bin/hookway import-openapi --spec examples/openapi/api.yaml \
+  --settings examples/openapi/demo-settings.yaml \
+  --out .scratch/openapi-guide/core.yaml
+bin/hookway validate --config .scratch/openapi-guide/core.yaml --no-env --strict
+export MCP_READER_TOKEN="$(openssl rand -hex 24)"
+bin/hookway serve --config .scratch/openapi-guide/core.yaml
+```
+
+The [demo settings](../../examples/openapi/demo-settings.yaml) select only
+`GET /customers/{id}`. The source spec also contains a write operation, but it is
+not imported or granted. Private upstream targets are explicitly permitted only
+for this local demonstration. Keep the terminal running.
+
+In a third terminal, set `MCP_READER_TOKEN` to the **same generated value** from
+the server terminal using your normal local credential handling. Do not generate
+a second value or put the token in a public issue. Then call the read tool:
+
+```sh
+curl --fail-with-body -sS http://127.0.0.1:18091/customers/mcp \
+  -H "Authorization: Bearer $MCP_READER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H 'MCP-Method: tools/call' \
+  --data-binary '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_customer","arguments":{"path":{"id":"customer-1"}}}}'
+```
+
+The JSON-RPC result includes `Sample customer` and the string ID `customer-1`.
+Depending on transport negotiation, the response is JSON or a server-sent event
+containing JSON. This verifies a tool call through Hookway to the local API;
+it is not proof that any hosted agent can reach your computer.
+
+Expected failure cases:
+
+- Missing or wrong caller token: HTTP 401 or 403, with no API access granted.
+- API stopped: a tool error rather than a fabricated customer response.
+- Unsupported selected operation: generation fails; review the diagnostic.
+- Port already in use: stop the conflicting local process or choose matching
+  addresses in the demo settings and fixture server before trying again.
+
+Use Ctrl-C in the server terminals to stop both processes. The generated YAML
+contains an environment reference, not the actual token. Remove the disposable
+scratch output when no longer needed. Continue below for the full importer
+contract or use the [browser wizard](#builder-wizard) with your own API document.
 
 ## Inspect, select, generate
 

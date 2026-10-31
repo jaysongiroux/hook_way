@@ -4,6 +4,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse } from "parse5";
 import { repoRoot } from "./catalog.mjs";
+import registry from "../../site.json" with { type: "json" };
+import { siteOrigin, siteIndexable } from "./render.mjs";
 
 export async function checkSite(root = repoRoot) {
   const manifest = JSON.parse(
@@ -19,25 +21,82 @@ export async function checkSite(root = repoRoot) {
     const tree = parse(await readFile(file, "utf8"));
     const ids = new Set();
     const urls = [];
+    const metadata = {
+      h1: 0,
+      title: "",
+      description: "",
+      canonical: "",
+      robots: "",
+    };
     function walk(node) {
       const attributes = Object.fromEntries(
         (node.attrs || []).map(({ name, value }) => [name, value]),
       );
       if (attributes.id) ids.add(attributes.id);
+      if (node.tagName === "h1") metadata.h1++;
+      if (node.tagName === "title")
+        metadata.title = (node.childNodes || [])
+          .map((child) => child.value || "")
+          .join("");
+      if (node.tagName === "meta" && attributes.name === "description")
+        metadata.description = attributes.content;
+      if (node.tagName === "meta" && attributes.name === "robots")
+        metadata.robots = attributes.content;
+      if (node.tagName === "link" && attributes.rel === "canonical")
+        metadata.canonical = attributes.href;
+      if (
+        node.tagName === "script" &&
+        attributes.type === "application/ld+json"
+      )
+        JSON.parse(
+          (node.childNodes || []).map((child) => child.value || "").join(""),
+        );
       if (attributes.href) urls.push(attributes.href);
       if (attributes.src) urls.push(attributes.src);
       for (const child of node.childNodes || []) walk(child);
     }
     walk(tree);
-    const result = { ids, urls };
+    const result = { ids, urls, metadata };
     cache.set(file, result);
     return result;
   }
-  for (const page of manifest.pages) {
+  const titles = new Set();
+  const sitePages = [
+    ...manifest.pages,
+    ...registry.pages.map((page) => ({ route: page.path })),
+  ];
+  for (const required of registry.requiredDocs)
+    assert(
+      manifest.pages.some((page) => page.route === required),
+      "Missing tracked launch page: " + required,
+    );
+  for (const page of sitePages) {
     const file = path.join(output, page.route, "index.html");
-    const { urls } = await document(file);
+    const { urls, metadata } = await document(file);
+    assert.equal(
+      metadata.h1,
+      1,
+      page.route + ": one H1 must exist in initial HTML",
+    );
+    assert(metadata.description, page.route + ": missing description");
+    assert(
+      !titles.has(metadata.title),
+      page.route + ": duplicate document title " + metadata.title,
+    );
+    titles.add(metadata.title);
+    assert.equal(
+      metadata.canonical,
+      siteOrigin() + page.route,
+      page.route + ": canonical mismatch",
+    );
+    assert.equal(
+      metadata.robots,
+      siteIndexable() ? "index, follow" : "noindex, follow",
+      page.route + ": wrong robots policy",
+    );
     for (const link of urls) {
-      if (!link.startsWith("/docs/") && !link.startsWith("#")) continue;
+      if (!link.startsWith("/") && !link.startsWith("#")) continue;
+      if (link === "/builder") continue;
       const url = new URL(link, `https://site.invalid${page.route}`);
       let target = path.join(output, decodeURIComponent(url.pathname));
       const info = await stat(target).catch(() => null);
@@ -52,6 +111,10 @@ export async function checkSite(root = repoRoot) {
       }
     }
   }
+  assert(
+    (await stat(path.join(output, registry.image))).isFile(),
+    "Missing social preview image",
+  );
   for (const source of manifest.assets) {
     assert.deepEqual(
       await readFile(path.join(output, "docs/raw", source)),

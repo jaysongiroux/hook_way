@@ -13,7 +13,7 @@ test("the hover lift is defined and switched off under reduced motion", () => {
 });
 
 test("marketing navigation has compact breakpoints for narrow screens", () => {
-  expect(MARKETING_CSS).toMatch(/max-width:\s*48em[\s\S]*site-nav-secondary[\s\S]*display:\s*none/);
+  expect(MARKETING_CSS).toMatch(/max-width:\s*48em[\s\S]*site-nav[\s\S]*gap:\s*12px/);
   expect(MARKETING_CSS).toMatch(/max-width:\s*30em[\s\S]*hookway-logo-word[\s\S]*display:\s*none/);
 });
 

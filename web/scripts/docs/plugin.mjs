@@ -4,7 +4,7 @@ import { parse } from "parse5";
 import { execFileSync } from "node:child_process";
 import { createCatalog, repoRoot } from "./catalog.mjs";
 import { generate } from "./generate.mjs";
-import { pageHtml, escapeHtml, siteOrigin } from "./render.mjs";
+import { pageHtml, siteIndexable, siteOrigin } from "./render.mjs";
 
 const ids = ["virtual:hookway-docs", "virtual:hookway-docs-data"];
 export function documentationPlugin(mode, origin) {
@@ -45,7 +45,11 @@ export function documentationPlugin(mode, origin) {
           for (const child of node.childNodes || []) walk(child);
         }
         walk(html);
-        const site = { description, origin: siteOrigin(origin) };
+        const site = {
+          description,
+          origin: siteOrigin(origin),
+          indexable: siteIndexable(),
+        };
         return `export const site = ${JSON.stringify(site)}; export default ${JSON.stringify((await createCatalog()).links)};`;
       }
       if (id === "\0virtual:hookway-docs-data") {
@@ -133,11 +137,36 @@ export function documentationPlugin(mode, origin) {
       );
       server.middlewares.use(async (request, response, next) => {
         const pathname = new URL(request.url, "http://localhost").pathname;
-        if (!/^\/docs(?:\/|$)/.test(pathname)) return next();
+        if (pathname === "/builder/") {
+          response.statusCode = 308;
+          response.setHeader(
+            "Location",
+            "/builder" + new URL(request.url, "http://localhost").search,
+          );
+          response.end();
+          return;
+        }
+        if (pathname === "/builder") {
+          request.url = "/builder.html";
+          return next();
+        }
+        if (
+          pathname !== "/" &&
+          !pathname.endsWith("/") &&
+          !/\.[^/]+$/.test(pathname)
+        ) {
+          response.statusCode = 308;
+          response.setHeader(
+            "Location",
+            pathname + "/" + new URL(request.url, "http://localhost").search,
+          );
+          response.end();
+          return;
+        }
         try {
           const file = path.resolve(output, `.${decodeURIComponent(pathname)}`);
           const info =
-            file.startsWith(`${output}/`) &&
+            (file === output || file.startsWith(`${output}/`)) &&
             (await stat(file).catch(() => null));
           if (
             info?.isFile() ||
@@ -149,7 +178,12 @@ export function documentationPlugin(mode, origin) {
             return next();
           response.statusCode = 404;
           response.setHeader("Content-Type", "text/html; charset=utf-8");
-          const content = await readFile(path.join(output, "docs/404.html"));
+          const content = await readFile(
+            path.join(
+              output,
+              pathname.startsWith("/docs/") ? "docs/404.html" : "404.html",
+            ),
+          );
           response.end(request.method === "HEAD" ? undefined : content);
         } catch {
           response.statusCode = 404;
@@ -197,16 +231,13 @@ export function documentationPlugin(mode, origin) {
             template,
             {
               route: "/docs/404/",
+              indexable: false,
               title: "404 — Page not found",
               description: "Documentation page not found.",
               html: '<p>Return to <a href="/docs/">documentation</a>.</p>',
             },
             originValue,
           ),
-        );
-        emit(
-          "sitemap.xml",
-          `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${["/", "/use-cases", "/compare", ...data.pages.map((page) => page.route)].map((route) => `<url><loc>${escapeHtml(originValue + route)}</loc></url>`).join("")}</urlset>`,
         );
       },
     },

@@ -1,3 +1,4 @@
+import { applyMetadata } from "../../website/metadata";
 import {
   Anchor,
   Button,
@@ -26,6 +27,8 @@ interface Heading {
   depth: number;
 }
 interface DocPage {
+  documentTitle?: string;
+  headingTitle?: string;
   route: string;
   title: string;
   description: string;
@@ -209,7 +212,7 @@ export default function Documentation() {
   });
   const page = loaded?.route === route ? loaded : undefined;
   useDocumentTitle(
-    `${page?.title || metadata?.title || "404 — Page not found"} | Hookway`,
+    page?.documentTitle || `${page?.title || metadata?.title || "404 — Page not found"} | Hookway`,
   );
   useEffect(() => {
     setFailed(false);
@@ -228,23 +231,7 @@ export default function Documentation() {
     return () => controller.abort();
   }, [route, metadata, page]);
   useEffect(() => {
-    const description = document.querySelector('meta[name="description"]');
-    description?.setAttribute(
-      "content",
-      page?.description ||
-        (metadata
-          ? "Documentation for Hookway."
-          : "Documentation page not found."),
-    );
-    let canonical = document.querySelector<HTMLLinkElement>(
-      'link[rel="canonical"]',
-    );
-    if (!canonical) {
-      canonical = document.createElement("link");
-      canonical.rel = "canonical";
-      document.head.append(canonical);
-    }
-    canonical.href = publication.origin + route;
+    applyMetadata({ path: route, title: page?.documentTitle || (page?.title || metadata?.title || "404 — Page not found") + " | Hookway", description: page?.description || (metadata ? "Documentation for Hookway." : "Documentation page not found."), indexable: Boolean(metadata) });
   }, [page, metadata, route]);
   useEffect(() => {
     if (!page) return;
@@ -408,12 +395,12 @@ export default function Documentation() {
               <Loader aria-label="Loading documentation" />
             ) : (
               <>
-                {route !== "/docs/" && (
+                {(
                   <div className="docs-breadcrumb">
-                    <Link to="/docs/">Docs</Link> / {page.title}
+                    <Link to="/">Home</Link> / {page.title}
                   </div>
                 )}
-                <h1>{page.title}</h1>
+                <h1>{page.headingTitle || page.title}</h1>
                 {page.source && (
                   <div className="docs-source">
                     <code>{page.source}</code>

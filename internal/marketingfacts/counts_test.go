@@ -217,8 +217,7 @@ func TestQuotedMetricCountMatchesDeclarations(t *testing.T) {
 	requireTileValue(t, readRepoFile(t, productionCopyPath), quoted, "the exported metric count")
 }
 
-func TestQuotedSchemeCountMatchesRegistry(t *testing.T) {
-	const quoted = "16"
+func TestAuthenticationCountsUseGeneratedRegistry(t *testing.T) {
 	// no_auth is an explicit bypass, not an authentication format.
 	authenticated := 0
 	for _, scheme := range auth.Schemes() {
@@ -226,14 +225,13 @@ func TestQuotedSchemeCountMatchesRegistry(t *testing.T) {
 			authenticated++
 		}
 	}
-	if got := strconv.Itoa(authenticated); got != quoted {
-		t.Fatalf("auth registry has %d authentication formats but the site quotes %s", authenticated, quoted)
+	if !strings.Contains(readRepoFile(t, productionCopyPath), "Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length") {
+		t.Fatal("production authentication count must derive from the generated catalog")
 	}
-	requireTileValue(t, readRepoFile(t, productionCopyPath), quoted, "the authentication format count")
 	requireCopyContains(t, readRepoFile(t, productionCopyPath), "authentication formats", "the authentication count label")
 	compareSrc := readRepoFile(t, compareCopyPath)
-	if !strings.Contains(compareSrc, quoted+" authentication formats") {
-		t.Fatalf("%s must agree with the registry count of %s authentication formats", compareCopyPath, quoted)
+	if !strings.Contains(compareSrc, "Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length") {
+		t.Fatalf("%s must derive its authentication count from the generated registry", compareCopyPath)
 	}
 	var catalog map[string]struct {
 		AuthSchemes map[string]json.RawMessage `json:"auth_schemes"`
@@ -251,25 +249,18 @@ func TestQuotedSchemeCountMatchesRegistry(t *testing.T) {
 	}
 }
 
-// TestQuotedDestinationCountMatchesSchema closes a real drift hole. The
-// homepage marquee renders DEST_TYPES.length, so it self-updates; compareCopy
-// hardcodes the same number in prose, so it does not. Adding a destination
-// would have silently left /compare a count behind.
-func TestQuotedDestinationCountMatchesSchema(t *testing.T) {
+// TestDestinationCountDerivesFromSchema keeps comparison counts tied to the
+// same generated catalog used by the builder and homepage.
+func TestDestinationCountDerivesFromSchema(t *testing.T) {
 	var schema map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(readRepoFile(t, destSchemaPath)), &schema); err != nil {
-		t.Fatalf("parse %s: %v", destSchemaPath, err)
+		t.Fatal(err)
 	}
-	compareSrc := readRepoFile(t, compareCopyPath)
-	m := regexp.MustCompile(`(\d+)\s+catalog types`).FindStringSubmatch(compareSrc)
-	if m == nil {
-		t.Fatalf("%s no longer states an \"N catalog types\" count; %s has %d destinations "+
-			"and the marquee quotes that number, so /compare must agree or say nothing.",
-			compareCopyPath, destSchemaPath, len(schema))
+	if len(schema) == 0 {
+		t.Fatal("destination catalog is empty")
 	}
-	if quoted, _ := strconv.Atoi(m[1]); quoted != len(schema) {
-		t.Fatalf("%s has %d destination types but %s quotes %d catalog types",
-			destSchemaPath, len(schema), compareCopyPath, quoted)
+	if !strings.Contains(readRepoFile(t, compareCopyPath), "DEST_TYPES.length") {
+		t.Fatal("comparison destination count must derive from DEST_TYPES.length")
 	}
 }
 

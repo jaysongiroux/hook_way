@@ -11,12 +11,16 @@ export const COMPARE_TABLE_CLASS = "hookway-compare-table";
 export const COMPARE_LEVEL_CLASS = "hookway-compare-level";
 export const SITE_HEADER_INNER_CLASS = "hookway-site-header-inner";
 export const SITE_NAV_CLASS = "hookway-site-nav";
-export const SITE_NAV_SECONDARY_CLASS = "hookway-site-nav-secondary";
 export const EXPLORE_GRID_CLASS = "hookway-explore-grid";
 export const EXPLORE_PRIMARY_CLASS = "hookway-explore-primary";
 export const EXPLORE_SECONDARY_CLASS = "hookway-explore-secondary";
 
 export const MARKETING_CSS = `
+.hookway-prose p { max-width: 84ch; line-height: 1.75; }
+.hookway-prose h2 { margin-top: 16px; }
+.hookway-use-case { padding: 28px 0; border-bottom: 1px solid ${DARK.border}; }
+.hookway-consent { position: fixed; z-index: 1000; bottom: 16px; right: 16px; width: min(440px, calc(100vw - 32px)); background: white; box-shadow: 0 4px 24px #172e4420; }
+
 .hookway-site-shell { --hookway-content-width: 80rem; }
 .hookway-site-shell .mantine-Container-root { max-width: var(--hookway-content-width); }
 .hookway-marketing-page main a { text-underline-offset: 4px; transition: color 140ms ease; }
@@ -343,7 +347,6 @@ export const MARKETING_CSS = `
     border-top: 1px solid ${DARK.border};
     border-left: 0;
   }
-  .${SITE_NAV_SECONDARY_CLASS} { display: none; }
   .${SITE_HEADER_INNER_CLASS},
   .${SITE_NAV_CLASS} { gap: 12px; }
 }

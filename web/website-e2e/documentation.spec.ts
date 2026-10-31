@@ -1,3 +1,4 @@
+import registry from "../site.json" with { type: "json" };
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -106,14 +107,14 @@ test('leaving a directly loaded doc restores marketing metadata and canonical UR
   const heading = await page.getByRole('heading', { level: 1 }).innerText();
   const description = await page.locator('meta[name="description"]').getAttribute('content');
   const origin = new URL((await page.locator('link[rel="canonical"]').getAttribute('href'))!).origin;
-  for (const [name, pathname, title] of [['Use cases', '/use-cases', 'Use cases — Hookway'], ['Compare', '/compare', 'Compare — Hookway']] as const) {
+  for (const [name, pathname, title] of [['Use cases', '/use-cases/', registry.pages[1].title], ['Compare', '/compare/', registry.pages[3].title]] as const) {
     await page.goto('/docs/reference/configuration/');
     await expect(page).toHaveTitle('Configuration | Hookway');
     await expect(page.locator('meta[name="description"]')).not.toHaveAttribute('content', /<[^>]+>/);
     await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name, exact: true }).click();
     await expect(page).toHaveTitle(title);
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', origin + pathname);
-    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', description!);
+    await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', registry.pages.find(p => p.path === pathname)!.description);
   }
   await page.goto('/docs/');
   await page.getByRole('link', { name: 'Hookway home', exact: true }).click();
@@ -127,13 +128,14 @@ test('a docs example still imports, validates, and exports in the production bui
   await expect(raw).toBeOK();
   const yaml = await raw.text();
   await page.goto('/docs/examples/filters/');
+  await page.getByRole('button', { name: 'Decline', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Copy YAML', exact: true })).toBeVisible();
   const docCanonical = await page.locator('link[rel="canonical"]').getAttribute('href');
   await page.getByRole('navigation', { name: 'Primary' }).getByRole('link', { name: 'Builder', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Inspector', exact: true })).toBeVisible();
   await expect(page).toHaveTitle('Hookway Config');
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', new URL(docCanonical!).origin + '/builder');
-  await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /self-hosted gateway/);
+  await expect(page.locator('meta[name="description"]')).toHaveAttribute('content', /Build, validate and export/);
   const builder = new BuilderPage(page);
   await builder.importYaml(yaml);
   const dialog = await builder.openConfigItem('Export YAML');

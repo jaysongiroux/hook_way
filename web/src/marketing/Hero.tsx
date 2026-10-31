@@ -10,7 +10,7 @@ import {
 } from "@mantine/core";
 import { Link } from "react-router-dom";
 import { BuilderFrame } from "./BuilderFrame";
-import { GITHUB_REPO } from "./links";
+import { docsHref } from "./links";
 import { DARK } from "../tokens";
 
 export function Hero() {
@@ -23,28 +23,31 @@ export function Hero() {
       <Container size="lg">
         <Box className="hookway-hero-intro" data-marketing-motion="intro">
           <Title order={1} c={DARK.text} className="hookway-hero-title">
-            Route webhooks.
-            <br /> Serve HTTP routes.
-            <br /> Expose MCP tools.
+            Verify and route webhooks.
+            <br /> In your infrastructure.
           </Title>
           <Stack className="hookway-hero-copy" gap={24}>
             <Text c={DARK.muted} className="hookway-hero-lead">
-              Verify and route webhooks. Handle synchronous HTTP requests as a
-              reverse proxy or native flow. Expose selected APIs through{" "}
+              Receive signed webhooks and deliver verified events to your
+              queues, streams, databases and APIs. Also handle HTTP requests and
+              expose selected APIs through{" "}
               <Anchor href="#mcp-gateway" inherit c={DARK.accent}>
                 authenticated MCP endpoints
               </Anchor>{" "}
               and let compatible agents subscribe to business events.
             </Text>
             <Group gap="sm">
-              <Button component={Link} to="/builder" size="md" color="brand">
-                Open the builder
+              <Button
+                component={Link}
+                to={docsHref("docs/get-started.md")}
+                size="md"
+                color="brand"
+              >
+                Get started
               </Button>
               <Button
-                component="a"
-                href={GITHUB_REPO}
-                target="_blank"
-                rel="noopener noreferrer"
+                component={Link}
+                to="/builder"
                 size="md"
                 variant="default"
                 styles={{
@@ -55,12 +58,9 @@ export function Hero() {
                   },
                 }}
               >
-                View on GitHub
+                Try the builder
               </Button>
             </Group>
-            <Text size="sm" c={DARK.muted}>
-              Self-hosted. Configured in YAML. Built for the systems you run.
-            </Text>
           </Stack>
         </Box>
         <Box data-marketing-motion="visual">

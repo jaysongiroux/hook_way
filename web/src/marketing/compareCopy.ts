@@ -1,10 +1,12 @@
-// Feature comparison, checked against linked vendor documentation on 2026-10-05.
-// The MCP row was checked separately on 2026-10-15.
+// Feature comparison, checked against linked vendor documentation on 2026-10-31.
+// MCP tool and event-forwarding statements were reviewed on the same date.
 // Compare Event Gateway separately from the outbound Outpost product.
 
 import { GITHUB_REPO, docsHref } from "./links";
+import { DEST_TYPES, NODE_SCHEMAS } from "../graph/nodeSchema";
+const authCount = Object.keys(NODE_SCHEMAS.auth.auth_schemes ?? {}).length;
 
-export const COMPARE_CHECKED_ON = "2026-10-05";
+export const COMPARE_CHECKED_ON = "2026-10-31";
 
 export type SupportLevel = "yes" | "partial" | "no" | "n/a";
 type CompetitorId = "hookway" | "hookdeck" | "convoy";
@@ -43,7 +45,7 @@ export const COMPARE_DIFFERS = {
     {
       title: "Native destinations",
       detail:
-        "Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — 15 catalog types. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.",
+        `Publishes into queues, streams, databases, object storage, Lambda, Temporal, and webhooks — ${DEST_TYPES.length} catalog types. Configure Temporal workflow type, input, IDs and timeouts in YAML or the builder.`,
     },
     {
       title: "Object and file publish",
@@ -116,7 +118,7 @@ export const COMPARE_ROWS: CompareRow[] = [
   {
     id: "mcp",
     capability: "MCP tools",
-    note: "Hookway exposes selected APIs as tools; Hookdeck provides gateway administration tools. Checked October 16, 2026. Not documented means the reviewed docs do not establish this capability.",
+    note: "Hookway exposes selected APIs as tools; Hookdeck provides gateway administration tools. Checked October 31, 2026. Not documented means the reviewed docs do not establish this capability.",
     sources: {
       hookway: docsHref("docs/guides/mcp-gateway.md"),
       hookdeck: "https://hookdeck.com/docs/cli#mcp",
@@ -148,7 +150,7 @@ export const COMPARE_ROWS: CompareRow[] = [
       hookway: {
         level: "yes",
         detail:
-          "16 authentication formats: HMAC, ECDSA P-256, HTTP Basic, exact tokens, and JWT HS256/RS256/ES256. Unknown schemes are rejected; unauthenticated flows use an explicit no_auth node",
+          `${authCount} authentication formats: HMAC, ECDSA P-256, HTTP Basic, exact tokens, and JWT HS256/RS256/ES256. Unknown schemes are rejected; unauthenticated flows use an explicit no_auth node`,
       },
       hookdeck: {
         level: "yes",
@@ -188,9 +190,9 @@ export const COMPARE_ROWS: CompareRow[] = [
     values: {
       hookway: {
         level: "yes",
-        count: 15,
+        count: DEST_TYPES.length,
         detail:
-          "15 catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, MCP events, and Temporal workflow starts with configurable input, IDs and timeouts",
+          `${DEST_TYPES.length} catalog types: RabbitMQ, SQS, SNS, S3, Lambda, Redis (stream/list/pubsub/kv), Postgres, MongoDB, Kafka, webhook, MCP events, and Temporal workflow starts with configurable input, IDs and timeouts`,
       },
       hookdeck: {
         level: "yes",
@@ -216,14 +218,14 @@ export const COMPARE_ROWS: CompareRow[] = [
           "publish.payload: object writes decoded multipart file bytes to S3 or redis_kv",
       },
       hookdeck: {
-        level: "no",
+        level: "n/a",
         detail:
-          "HTTP delivery can call your own upload handler; no native decoded-file publish. Outpost is a separate product",
+          "HTTP delivery can call your own upload handler; the reviewed docs do not establish native decoded-file publication to object storage. Outpost is a separate product",
       },
       convoy: {
-        level: "no",
+        level: "n/a",
         detail:
-          "HTTP endpoints can implement uploads themselves. An S3 retention archive stores webhook history, not decoded multipart files",
+          "HTTP endpoints can implement uploads themselves. The documented S3 retention archive stores webhook history; it does not establish decoded multipart-file publication",
       },
     },
   },
@@ -334,7 +336,7 @@ export const COMPARE_ROWS: CompareRow[] = [
       },
       convoy: {
         level: "yes",
-        detail: "Prometheus metrics; dashboards in the product",
+        detail: "Prometheus metrics (enable explicitly and check license entitlement); product delivery dashboards",
       },
     },
   },

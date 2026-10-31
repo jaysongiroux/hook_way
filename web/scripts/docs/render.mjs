@@ -9,6 +9,7 @@ import GithubSlugger from "github-slugger";
 import { createHighlighter } from "shiki";
 import { fromHtml } from "hast-util-from-html";
 import { parser } from "./catalog.mjs";
+import registry from "../../site.json" with { type: "json" };
 
 // Markdown HTML is sanitized before our trusted highlighting/diagram transforms.
 const schema = {
@@ -33,9 +34,7 @@ export const escapeHtml = (value) =>
         c
       ],
   );
-export function siteOrigin(
-  value = process.env.SITE_URL || "https://gethookway.com",
-) {
+export function siteOrigin(value = process.env.SITE_URL || registry.origin) {
   const url = new URL(value);
   if (
     !["http:", "https:"].includes(url.protocol) ||
@@ -127,6 +126,19 @@ export async function compilePage(entry, body, config) {
     source: entry.source,
     route: entry.route,
     title: entry.title,
+    headingTitle:
+      entry.title +
+      (yaml
+        ? " — " +
+          entry.source.replace(/^examples\//, "").replace(/\.ya?ml$/, "")
+        : ""),
+    documentTitle:
+      entry.title +
+      (yaml
+        ? " — " +
+          entry.source.replace(/^examples\//, "").replace(/\.ya?ml$/, "")
+        : "") +
+      " | Hookway",
     kind: entry.kind,
     description:
       entry.description ||
@@ -145,14 +157,97 @@ export async function compilePage(entry, body, config) {
       ),
   };
 }
-export function pageHtml(template, page, origin) {
-  const metadata = `<title>${escapeHtml(page.title)} | Hookway</title><meta name="description" content="${escapeHtml(page.description)}"><link rel="canonical" href="${escapeHtml(origin + page.route)}">`;
+export function siteIndexable() {
+  return (
+    process.env.VERCEL_ENV !== "preview" &&
+    process.env.SITE_INDEXABLE !== "false"
+  );
+}
+export function metadataHtml(template, page, origin) {
+  const title = page.documentTitle || page.title + " | Hookway";
+  const url = origin + page.route;
+  const indexable = siteIndexable() && page.indexable !== false;
+  const graph =
+    page.route === "/"
+      ? [{ "@type": "WebSite", name: registry.name, url }]
+      : page.indexable === false
+        ? []
+        : [
+            {
+              "@type": "BreadcrumbList",
+              itemListElement: [
+                {
+                  "@type": "ListItem",
+                  position: 1,
+                  name: "Home",
+                  item: origin + "/",
+                },
+                {
+                  "@type": "ListItem",
+                  position: 2,
+                  name: page.title,
+                  item: url,
+                },
+              ],
+            },
+          ];
+  const schema = graph.length
+    ? '<script id="hookway-schema" type="application/ld+json">' +
+      JSON.stringify({
+        "@context": "https://schema.org",
+        "@graph": graph,
+      }).replace(/</g, "\\u003c") +
+      "</script>"
+    : "";
+  const tags =
+    "<title>" +
+    escapeHtml(title) +
+    "</title>" +
+    '<meta name="description" content="' +
+    escapeHtml(page.description) +
+    '">' +
+    '<meta name="robots" content="' +
+    (indexable ? "index, follow" : "noindex, follow") +
+    '">' +
+    '<link rel="canonical" href="' +
+    escapeHtml(url) +
+    '">' +
+    '<meta property="og:type" content="website"><meta property="og:site_name" content="Hookway">' +
+    '<meta property="og:title" content="' +
+    escapeHtml(title) +
+    '"><meta property="og:description" content="' +
+    escapeHtml(page.description) +
+    '">' +
+    '<meta property="og:url" content="' +
+    escapeHtml(url) +
+    '"><meta property="og:image" content="' +
+    escapeHtml(origin + registry.image) +
+    '">' +
+    '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' +
+    escapeHtml(title) +
+    '">' +
+    '<meta name="twitter:description" content="' +
+    escapeHtml(page.description) +
+    '"><meta name="twitter:image" content="' +
+    escapeHtml(origin + registry.image) +
+    '">' +
+    schema;
   return template
-    .replace(/<title>[\s\S]*?<\/title>/, "")
-    .replace(/<meta\s+name="description"[^>]*>/, "")
-    .replace("</head>", `${metadata}</head>`)
-    .replace(
-      '<div id="root"></div>',
-      `<div id="root"><article><h1>${escapeHtml(page.title)}</h1>${page.html}</article></div><script id="hookway-doc-page" type="application/json">${JSON.stringify(page).replace(/</g, "\\u003c")}</script>`,
-    );
+    .replace(/<title>[\s\S]*?<\/title>/g, "")
+    .replace(/<meta\s+name="description"[^>]*>/g, "")
+    .replace("</head>", tags + "</head>");
+}
+export function pageHtml(template, page, origin) {
+  return metadataHtml(template, page, origin).replace(
+    '<div id="root"></div>',
+    '<div id="root"><header><a href="/">Hookway</a><nav aria-label="Primary"><a href="/use-cases/">Use cases</a> <a href="/mcp-gateway/">MCP gateway</a> <a href="/compare/">Compare</a> <a href="/docs/">Docs</a> <a href="/builder">Builder</a></nav></header><article><nav aria-label="Breadcrumb"><a href="/">Home</a> / <span>' +
+      escapeHtml(page.title) +
+      "</span></nav><h1>" +
+      escapeHtml(page.headingTitle || page.title) +
+      "</h1>" +
+      page.html +
+      '</article></div><script id="hookway-doc-page" type="application/json">' +
+      JSON.stringify(page).replace(/</g, "\\u003c") +
+      "</script>",
+  );
 }

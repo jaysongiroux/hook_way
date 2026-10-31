@@ -4,7 +4,9 @@
     "src/console/main.tsx",
     "playwright.website.config.ts",
     "website-e2e/*.ts",
-    "scripts/docs/*.mjs"
+    "scripts/docs/*.mjs",
+    "src/website/render.tsx",
+    "scripts/website/*.mjs"
   ],
   "ignore": [
     "src/shared/contracts/generated/**"

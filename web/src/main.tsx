@@ -5,13 +5,18 @@ import ReactDOM from "react-dom/client";
 import { UIProvider } from "./shared/ui/UIProvider";
 import { BrowserRouter } from "react-router-dom";
 import { AppRoutes } from "./AppRoutes";
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
+import { WebsiteAnalytics } from "./website/WebsiteAnalytics";
+const root = document.getElementById("root")!;
+const app = (
   <React.StrictMode>
     <UIProvider>
       <BrowserRouter>
-        <AppRoutes />
+        <WebsiteAnalytics>
+          <AppRoutes />
+        </WebsiteAnalytics>
       </BrowserRouter>
     </UIProvider>
-  </React.StrictMode>,
+  </React.StrictMode>
 );
+if (root.dataset.prerendered) ReactDOM.hydrateRoot(root, app);
+else ReactDOM.createRoot(root).render(app);

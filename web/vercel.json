@@ -4,6 +4,64 @@
   "buildCommand": "bash ../scripts/vercel-build.sh",
   "routes": [
     {
+      "src": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "hookway.jasongiroux.com"
+        }
+      ],
+      "headers": {
+        "Location": "https://www.gethookway.com/$1"
+      },
+      "status": 308
+    },
+    {
+      "src": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "hook-way.vercel.app"
+        }
+      ],
+      "headers": {
+        "Location": "https://www.gethookway.com/$1"
+      },
+      "status": 308
+    },
+    {
+      "src": "/(use-cases|compare|mcp-gateway|about|privacy)",
+      "headers": {
+        "Location": "/$1/"
+      },
+      "status": 308
+    },
+    {
+      "src": "/docs",
+      "headers": {
+        "Location": "/docs/"
+      },
+      "status": 308
+    },
+    {
+      "src": "(/docs/[^.]*[^/])",
+      "headers": {
+        "Location": "$1/"
+      },
+      "status": 308
+    },
+    {
+      "src": "/builder/",
+      "headers": {
+        "Location": "/builder"
+      },
+      "status": 308
+    },
+    {
+      "src": "/builder/?",
+      "dest": "/builder.html"
+    },
+    {
       "handle": "filesystem"
     },
     {
@@ -12,8 +70,9 @@
       "status": 404
     },
     {
-      "src": "/(?:builder|use-cases|compare)/?",
-      "dest": "/index.html"
+      "src": "/.*",
+      "dest": "/404.html",
+      "status": 404
     }
   ]
 }

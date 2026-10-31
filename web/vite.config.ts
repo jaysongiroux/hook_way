@@ -67,7 +67,9 @@ export default defineConfig(async ({ mode }) => {
           for (const id of Array.from(this.getModuleIds())) {
             if (
               /\/src\/marketing\//.test(id) ||
-              /\/src\/AppRoutes\.tsx/.test(id)
+              /\/src\/AppRoutes\.tsx/.test(id) ||
+              /\/src\/website\//.test(id) ||
+              /\/node_modules\/(?:posthog-js|@posthog)\//.test(id)
             ) {
               this.error(`Product imports marketing code: ${id}`);
             }
@@ -86,6 +88,7 @@ export default defineConfig(async ({ mode }) => {
         }
       : {}),
     build: {
+      manifest: mode !== "console",
       outDir: mode === "console" ? "dist-console" : "dist",
       emptyOutDir: true,
       rollupOptions: {

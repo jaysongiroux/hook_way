@@ -1,0 +1,56 @@
+{
+  "name": "Hookway",
+  "origin": "https://www.gethookway.com",
+  "github": "https://github.com/jaysongiroux/hook_way",
+  "image": "/hookway-social.png",
+  "description": "Hookway is an MIT-licensed, self-hosted gateway for verifying and routing webhooks, handling HTTP requests, and exposing selected APIs as authenticated MCP tools.",
+  "pages": [
+    {
+      "path": "/",
+      "title": "Hookway | Self-hosted webhook gateway",
+      "description": "Verify and route webhooks to queues, streams, databases and APIs. Run Hookway in your infrastructure, with YAML flows, a visual builder and optional MCP tools."
+    },
+    {
+      "path": "/use-cases/",
+      "title": "Webhook and MCP use cases | Hookway",
+      "description": "Explore runnable Hookway workflows for webhook routing, queues, multipart files, XML, synchronous HTTP requests and authenticated MCP tools."
+    },
+    {
+      "path": "/mcp-gateway/",
+      "title": "Self-hosted API-to-MCP gateway | Hookway",
+      "description": "Expose selected API operations as MCP tools with explicit caller permissions, API keys or OAuth, separate upstream credentials and reviewable YAML."
+    },
+    {
+      "path": "/compare/",
+      "title": "Compare Hookway, Hookdeck and Convoy | Hookway",
+      "description": "Compare deployment, webhook verification, delivery destinations, recovery and MCP workflows in Hookway, Hookdeck Event Gateway and Convoy, with sources."
+    },
+    {
+      "path": "/about/",
+      "title": "About the open-source Hookway project",
+      "description": "Hookway is an MIT-licensed project maintained by Jason Giroux. Learn about self-hosting, the public builder, project boundaries and operational evidence."
+    },
+    {
+      "path": "/privacy/",
+      "title": "Website privacy and analytics choices | Hookway",
+      "description": "Learn how optional Hookway website analytics work, what metadata is collected after permission, and how to change your choice. Self-hosted instances are separate."
+    }
+  ],
+  "requiredDocs": [
+    "/docs/get-started/",
+    "/docs/guides/webhooks-to-queues/",
+    "/docs/guides/openapi-import/"
+  ],
+  "llmsPaths": [
+    "/",
+    "/about/",
+    "/mcp-gateway/",
+    "/docs/get-started/",
+    "/docs/guides/webhooks-to-queues/",
+    "/docs/guides/openapi-import/",
+    "/docs/guides/mcp-events/",
+    "/docs/reference/security/",
+    "/docs/operations/delivery-guarantees/",
+    "/docs/evidence/performance/"
+  ]
+}

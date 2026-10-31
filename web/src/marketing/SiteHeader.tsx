@@ -2,12 +2,8 @@ import { Anchor, Box, Container, Group } from "@mantine/core";
 import { Link, NavLink } from "react-router-dom";
 import { Logo } from "../brand/Logo";
 import { HEADER_HEIGHT, HEADER_STYLE } from "../brand/chrome";
-import { docsHref, GITHUB_REPO } from "./links";
-import {
-  SITE_HEADER_INNER_CLASS,
-  SITE_NAV_CLASS,
-  SITE_NAV_SECONDARY_CLASS,
-} from "./marketingStyles";
+import { docsHref } from "./links";
+import { SITE_HEADER_INNER_CLASS, SITE_NAV_CLASS } from "./marketingStyles";
 import { DARK } from "../tokens";
 
 const navLinkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -29,29 +25,39 @@ export function SiteHeader() {
       }}
     >
       <Container size="lg">
-        <Group className={SITE_HEADER_INNER_CLASS} h={HEADER_HEIGHT} justify="space-between" wrap="nowrap">
+        <Group
+          className={SITE_HEADER_INNER_CLASS}
+          h={HEADER_HEIGHT}
+          justify="space-between"
+          wrap="nowrap"
+        >
           <Logo to="/" />
-          <Group component="nav" aria-label="Primary" className={SITE_NAV_CLASS} gap="lg" wrap="nowrap">
-            <NavLink to="/use-cases" style={navLinkStyle}>
+          <Group
+            component="nav"
+            aria-label="Primary"
+            className={SITE_NAV_CLASS}
+            gap="lg"
+            wrap="nowrap"
+          >
+            <NavLink to="/use-cases/" style={navLinkStyle}>
               Use cases
             </NavLink>
-            <NavLink to="/compare" style={navLinkStyle}>
+            <NavLink to="/mcp-gateway/" style={navLinkStyle}>
+              MCP gateway
+            </NavLink>
+            <NavLink to="/compare/" style={navLinkStyle}>
               Compare
             </NavLink>
             <NavLink to={docsHref("docs/README.md")} style={navLinkStyle}>
               Docs
             </NavLink>
             <Anchor
-              className={SITE_NAV_SECONDARY_CLASS}
-              href={GITHUB_REPO}
-              target="_blank"
-              rel="noopener noreferrer"
+              component={Link}
+              to="/builder"
               size="sm"
-              c={DARK.muted}
+              fw={600}
+              c={DARK.accentText}
             >
-              Source
-            </Anchor>
-            <Anchor component={Link} to="/builder" size="sm" fw={600} c={DARK.accentText}>
               Builder
             </Anchor>
           </Group>

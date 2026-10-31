@@ -4,6 +4,9 @@ Start with the [project overview](../README.md), then choose the task you need.
 
 ## Get started
 
+- [First signed webhook](get-started.md): run the local stack and inspect delivery.
+- [Webhooks to queues](guides/webhooks-to-queues.md): RabbitMQ walkthrough and Kafka/SQS alternatives.
+
 - [Run locally](development/local-development.md): disposable dev stack, persistent
   production-style setup, signed requests and a failure/retry walkthrough.
 - [Examples](../examples/README.md): runnable YAML grouped by feature.

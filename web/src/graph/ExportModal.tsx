@@ -1,3 +1,4 @@
+import { useTelemetry } from "../shared/telemetry";
 import { Select, TextInput } from "@mantine/core";
 import {
   toBundle,
@@ -97,7 +98,7 @@ export function ExportModal({
     return issues;
   }, [bundle, doc.yamlMode, doc.replayServiceConfig, doc.replayFilename]);
   const downloadWorkspace = async () => {
-    if (!bundle) return;
+    if (!bundle) return false;
     setDownloadError("");
     try {
       const bytes = isZIP
@@ -116,8 +117,10 @@ export function ExportModal({
       anchor.click();
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 0);
+      return true;
     } catch (error) {
       setDownloadError(String(error));
+      return false;
     }
   };
   const showSource = (source: string) => {
@@ -319,7 +322,7 @@ function DocumentExport({
   downloadFilename,
 }: {
   onSource?: (source: string) => void;
-  onDownload: () => Promise<void>;
+  onDownload: () => Promise<boolean>;
   downloadFilename: string;
   draftIssues?: { key: string; error: string }[];
   onIssue?: (field: string) => void;
@@ -330,6 +333,7 @@ function DocumentExport({
   command: string;
   validate: (yaml: string) => Promise<ValidationIssue[] | null>;
 }) {
+  const track = useTelemetry();
   const [downloading, setDownloading] = useState(false);
   const [issues, setIssues] = useState<ValidationIssue[] | null>(null);
   const [validationUnavailable, setValidationUnavailable] = useState(false);
@@ -372,6 +376,7 @@ function DocumentExport({
       if (!navigator.clipboard) throw new Error("Clipboard unavailable");
       await navigator.clipboard.writeText(yaml);
       setCopyStatus("copied");
+      track("config_exported", { location: "builder", method: "copy", format: "yaml" });
     } catch {
       setCopyStatus("failed");
     }
@@ -522,7 +527,8 @@ function DocumentExport({
           onClick={async () => {
             setDownloading(true);
             try {
-              await onDownload();
+              const dispatched = await onDownload();
+              if (dispatched) track("config_exported", { location: "builder", method: "download", format: downloadFilename.endsWith(".zip") ? "zip" : "yaml" });
             } finally {
               setDownloading(false);
             }

@@ -107,6 +107,11 @@ website-preview:
 website-test:
 	cd web && npm run test:docs
 
+# Exercise the production consent flow against a synthetic, intercepted host.
+# Normal website builds and Vercel previews keep analytics disabled by default.
+website-e2e: export VITE_POSTHOG_ENABLED=true
+website-e2e: export VITE_POSTHOG_PROJECT_TOKEN=website-browser-test
+website-e2e: export VITE_POSTHOG_HOST=https://ingest.example.com
 website-e2e: wasm website-build
 	cd web && npx playwright test --config playwright.website.config.ts $(PLAYWRIGHT_ARGS)
 

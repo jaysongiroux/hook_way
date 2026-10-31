@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactElement } from "react";
@@ -42,18 +42,12 @@ test("use-cases page states the S3 attachment pattern and links examples that ex
   );
   const main = screen.getByRole("main");
   for (const uc of USE_CASES) {
-    fireEvent.change(
-      screen.getByLabelText("Choose a use case", { selector: "select" }),
-      {
-        target: { value: uc.id },
-      },
-    );
     expect(
-      screen.getByRole("heading", { level: 2, name: uc.title }),
+      screen.getByRole("heading", { level: 3, name: uc.title }),
     ).toBeInTheDocument();
     expect(main).toHaveTextContent(uc.summary);
     expect(main).toHaveTextContent(uc.detail);
-    expect(within(main).getByRole("img")).toBeInTheDocument();
+    expect(within(main).getAllByRole("img", { hidden: true }).length).toBeGreaterThan(0);
     expect(
       existsSync(resolve(repoRoot, uc.examplePath)),
       `${uc.examplePath} missing`,
@@ -236,9 +230,9 @@ test("the matrix separates payload retention from object publish", () => {
   expect(files.values.hookway.level).toBe("yes");
   expect(files.values.hookway.detail).toMatch(/publish\.payload: object/);
   expect(files.values.hookway.detail).toMatch(/S3 or redis_kv/);
-  expect(files.values.hookdeck.level).toBe("no");
+  expect(files.values.hookdeck.level).toBe("n/a");
   expect(files.values.hookdeck.detail).toMatch(/Outpost is a separate product/);
-  expect(files.values.convoy.level).toBe("no");
+  expect(files.values.convoy.level).toBe("n/a");
   expect(files.values.convoy.detail).toMatch(/S3 retention archive/);
 
   wrap(<Compare />);
@@ -325,7 +319,7 @@ test("the MCP comparison distinguishes custom tools from gateway administration 
   expect(row.values.hookdeck.level).toBe("yes");
   expect(row.values.hookdeck.detail).toMatch(/stdio/);
   expect(row.values.convoy.level).toBe("n/a");
-  expect(row.note).toContain("October 16, 2026");
+  expect(row.note).toContain("October 31, 2026");
   expect(row.sources.hookway).toBe(docsHref("docs/guides/mcp-gateway.md"));
   wrap(<UseCases />);
   expect(
@@ -335,12 +329,6 @@ test("the MCP comparison distinguishes custom tools from gateway administration 
 
 test("sampled inspection copy points to the runnable observation branch", () => {
   wrap(<UseCases />);
-  fireEvent.change(
-    screen.getByLabelText("Choose a use case", { selector: "select" }),
-    {
-      target: { value: "sampled-inspection" },
-    },
-  );
   const pattern = USE_CASES.find((item) => item.id === "sampled-inspection")!;
   expect(pattern.examplePath).toBe("examples/inspect.yaml");
   expect(pattern.detail).toMatch(/separate observation branch/);

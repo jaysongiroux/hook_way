@@ -1,62 +1,49 @@
 import { Center, Loader } from "@mantine/core";
-import { Suspense, lazy, useEffect, useLayoutEffect } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { site } from "virtual:hookway-docs";
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { DARK } from "./tokens";
 import { Compare } from "./marketing/Compare";
 import { Marketing } from "./marketing/Marketing";
 import { UseCases } from "./marketing/UseCases";
-
-// The builder pulls React Flow, Dagre, and Dexie, so it loads on demand: a
-// visitor to the overview never downloads the editor bundle.
+import { AboutPage, MCPPage, NotFoundPage, PrivacyPage } from "./website/Pages";
+import { applyMetadata, pageMetadata } from "./website/metadata";
+import { useTelemetry } from "./shared/telemetry";
 const Documentation = lazy(() => import("./marketing/docs/Documentation"));
 const Builder = lazy(() => import("./App"));
-
+function HostedBuilder() {
+  const track = useTelemetry();
+  const reported = useRef(false);
+  useEffect(() => {
+    if (!reported.current) {
+      reported.current = true;
+      track("builder_opened");
+    }
+  }, [track]);
+  return <Builder />;
+}
 export function AppRoutes() {
   const { pathname, hash } = useLocation();
   useLayoutEffect(() => {
-    if (!["/", "/use-cases", "/compare"].includes(pathname)) return;
-    // Reset before paint so a newly mounted page never flashes at the old offset.
-    // Documentation owns its scroll position once its async content is ready.
+    if (pathname.startsWith("/docs/")) return;
     if (hash) {
-      let id = hash.slice(1);
       try {
-        id = decodeURIComponent(id);
+        document
+          .getElementById(decodeURIComponent(hash.slice(1)))
+          ?.scrollIntoView({ behavior: "instant" });
       } catch {
-        // A malformed fragment simply has no matching section.
+        /* Invalid fragment. */
       }
-      document.getElementById(id)?.scrollIntoView({ behavior: "instant" });
-    } else {
-      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-    }
+    } else window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    applyMetadata(pageMetadata(pathname));
   }, [pathname, hash]);
-  useEffect(() => {
-    if (/^\/docs(?:\/|$)/.test(pathname)) return;
-    // Docs and marketing share a document: each route must claim its metadata.
-    let description = document.querySelector<HTMLMetaElement>(
-      'meta[name="description"]',
-    );
-    if (!description) {
-      description = document.createElement("meta");
-      description.name = "description";
-      document.head.append(description);
-    }
-    description.content = site.description;
-    let canonical = document.querySelector<HTMLLinkElement>(
-      'link[rel="canonical"]',
-    );
-    if (!canonical) {
-      canonical = document.createElement("link");
-      canonical.rel = "canonical";
-      document.head.append(canonical);
-    }
-    canonical.href = site.origin + pathname;
-  }, [pathname]);
   return (
     <Routes>
       <Route path="/" element={<Marketing />} />
       <Route path="/use-cases" element={<UseCases />} />
       <Route path="/compare" element={<Compare />} />
+      <Route path="/mcp-gateway" element={<MCPPage />} />
+      <Route path="/about" element={<AboutPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
       <Route
         path="/builder"
         element={
@@ -67,7 +54,7 @@ export function AppRoutes() {
               </Center>
             }
           >
-            <Builder />
+            <HostedBuilder />
           </Suspense>
         }
       />
@@ -89,7 +76,7 @@ export function AppRoutes() {
           </Suspense>
         }
       />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
