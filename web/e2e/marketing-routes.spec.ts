@@ -11,10 +11,10 @@ import { test, expect } from "@playwright/test";
 const ROUTES: { path: string; heading: RegExp }[] = [
   {
     path: "/",
-    heading: /route webhooks\. serve HTTP routes\. expose MCP tools/i,
+    heading: /verify and route webhooks\. in your infrastructure/i,
   },
-  { path: "/use-cases", heading: /Patterns that stay in your infrastructure/i },
-  { path: "/compare", heading: /How Hookway compares/i },
+  { path: "/use-cases/", heading: /Patterns that stay in your infrastructure/i },
+  { path: "/compare/", heading: /How Hookway compares/i },
 ];
 
 for (const { path, heading } of ROUTES) {
@@ -42,7 +42,7 @@ test("the marketing nav moves between the three public routes", async ({
     .poll(() => page.evaluate(() => window.scrollY))
     .toBeGreaterThan(0);
   await nav.getByRole("link", { name: /use cases/i }).click();
-  await expect(page).toHaveURL(/\/use-cases$/);
+  await expect(page).toHaveURL(/\/use-cases\/$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expect(
     page.getByRole("heading", {
@@ -53,7 +53,7 @@ test("the marketing nav moves between the three public routes", async ({
 
   await page.evaluate(() => window.scrollTo(0, 900));
   await nav.getByRole("link", { name: /compare/i }).click();
-  await expect(page).toHaveURL(/\/compare$/);
+  await expect(page).toHaveURL(/\/compare\/$/);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expect(
     page.getByRole("heading", { level: 1, name: /How Hookway compares/i }),
@@ -100,7 +100,7 @@ for (const width of [1440, 390]) {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/");
-    await expect(page).toHaveTitle(/Webhooks, reverse proxy, and MCP tools/);
+    await expect(page).toHaveTitle("Hookway | Self-hosted webhook gateway");
     await page
       .getByRole("link", { name: "authenticated MCP endpoints", exact: true })
       .click();
@@ -136,7 +136,7 @@ for (const width of [1440, 390]) {
     });
     await expect(section.getByRole("link", { name: "Try the issue event demo" }))
       .toHaveAttribute("href", "/docs/examples/mcp-events/demo/");
-    await page.goto("/compare");
+    await page.goto("/compare/");
     const row = page
       .getByRole("rowheader", { name: /^MCP tools/ })
       .locator("..");

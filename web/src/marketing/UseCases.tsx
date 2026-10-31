@@ -80,8 +80,10 @@ export function UseCases() {
                   <details className="hookway-scenario-detail">
                     <summary>How this pattern works</summary>
                     <Text size="sm">{scenario.detail}</Text>
-                    <figure>
-                      <UseCaseDiagram diagram={diagram} />
+                    <figure className="hookway-scenario-figure">
+                      <div className="hookway-scenario-canvas">
+                        <UseCaseDiagram diagram={diagram} />
+                      </div>
                       <figcaption>{diagram.caption}</figcaption>
                     </figure>
                   </details>

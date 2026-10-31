@@ -13,7 +13,9 @@ for (const width of [1440, 390]) {
         exact: true,
       }),
     ).toBeVisible();
-    await expect(page.locator(".docs-breadcrumb")).toHaveCount(0);
+    await expect(page.locator(".docs-breadcrumb")).toBeVisible();
+    await expect(page.locator(".docs-breadcrumb").getByRole("link", { name: "Home", exact: true }))
+      .toHaveAttribute("href", "/");
     await expect(
       page.getByRole("link", { name: "View on GitHub" }),
     ).toHaveAttribute(

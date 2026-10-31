@@ -6,19 +6,15 @@ for (const width of [1440, 1024, 769, 390]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 1000 });
-    await page.goto("/use-cases");
-    const panel = page.getByRole("tabpanel");
+    await page.goto("/use-cases/");
     for (const item of SCENARIO_GROUPS.flatMap((group) => group.items)) {
-      if (width > 768)
-        await page.getByRole("tab", { name: item.label, exact: true }).click();
-      else
-        await page
-          .getByRole("combobox", { name: "Choose a use case" })
-          .selectOption(item.id);
-      await expect(panel.getByRole("heading", { level: 2 })).toBeVisible();
+      const panel = page.locator(`article#${item.id}`);
+      await expect(panel.getByRole("heading", { level: 3 })).toBeVisible();
+      await expect(panel.locator('a[href^="/docs/examples/"]')).toBeVisible();
+      await panel.getByText("How this pattern works", { exact: true }).click();
       await expect(panel.getByRole("img")).toBeVisible();
       // SVGs can fit the viewport while scaling their labels below readable
-      // sizes. Include the sidebar's intermediate widths in that check.
+      // sizes. Include intermediate viewport widths in that check.
       await expect
         .poll(() =>
           panel.getByRole("img").evaluate((svg) =>
@@ -35,11 +31,10 @@ for (const width of [1440, 1024, 769, 390]) {
           ),
         )
         .toBeGreaterThanOrEqual(12);
-      await expect(panel.getByRole("link")).toHaveAttribute(
+      await expect(panel.locator('a[href^="/docs/examples/"]')).toHaveAttribute(
         "href",
         /^\/docs\/examples\//,
       );
-      await panel.getByText("How this pattern works", { exact: true }).click();
       await expect(panel.locator("details p")).toBeVisible();
       await expect
         .poll(() =>
@@ -52,19 +47,15 @@ for (const width of [1440, 1024, 769, 390]) {
   });
 }
 
-test("the scenario rail supports keyboard selection", async ({ page }) => {
+test("scenario details support keyboard access", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto("/use-cases");
-  const first = page.getByRole("tab", {
-    name: "APIs for AI assistants",
-    exact: true,
-  });
-  await first.focus();
-  await page.keyboard.press("ArrowDown");
-  await expect(
-    page.getByRole("tab", { name: "Events for agents", exact: true }),
-  ).toBeFocused();
-  await expect(
-    page.getByRole("tabpanel").getByRole("heading", { level: 2 }),
-  ).toHaveText("Wake agents with business events");
+  await page.goto("/use-cases/");
+  const scenario = page.locator("article#mcp-events");
+  const summary = scenario.locator("summary");
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(scenario.locator("details")).toHaveAttribute("open", "");
+  await expect(scenario.getByRole("img")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(scenario.locator("details")).not.toHaveAttribute("open", "");
 });

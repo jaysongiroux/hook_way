@@ -321,7 +321,7 @@ export function Compare() {
           MCP Events subscriptions for compatible clients. Callback acceptance
           confirms receipt, not completion of an agent task. Hookway
           capabilities checked October 31, 2026; vendor MCP sources were checked
-          October 16, 2026.
+          October 31, 2026.
         </Text>
         <Box mt={28}>
           <Text size="sm" fw={650} c={DARK.text} mb={8}>

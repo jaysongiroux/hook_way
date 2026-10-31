@@ -16,17 +16,15 @@ for (const [label, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 8
     await expect.poll(() => preview.evaluate((image) => (image as HTMLImageElement).complete && (image as HTMLImageElement).naturalWidth === 1280)).toBe(true);
     // Exclude the sticky global navigation from this section-only evidence.
     await replay.screenshot({ path: testInfo.outputPath(`records-marketing-replay-${label}.png`), animations: "disabled", style: "header { visibility: hidden !important; }" });
-    await page.goto("/use-cases");
+    await page.goto("/use-cases/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    if (label === "mobile") {
-      await page.getByRole("combobox", { name: "Choose a use case" }).selectOption("sampled-inspection");
-    } else {
-      await page.getByRole("tab", { name: "Sample traffic for inspection" }).click();
-    }
+    const inspection = page.locator("article#sampled-inspection");
+    await inspection.scrollIntoViewIfNeeded();
+    await inspection.getByText("How this pattern works", { exact: true }).click();
     await expect(page.getByRole("link", { name: "inspect.yaml", exact: true })).toBeVisible();
     await expect(page.getByText("Spot-check webhooks while delivering every event", { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`records-marketing-usecases-${label}.png`), fullPage: true, animations: "disabled" });
-    await page.goto("/compare");
+    await page.goto("/compare/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     await expect(page.getByRole("main")).toContainText("Sample → Inspect adds view-only webhook observations");
     await page.screenshot({ path: testInfo.outputPath(`records-marketing-compare-${label}.png`), fullPage: true, animations: "disabled" });
