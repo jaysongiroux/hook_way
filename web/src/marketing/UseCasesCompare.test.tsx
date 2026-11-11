@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactElement } from "react";
@@ -42,6 +42,10 @@ test("use-cases page states the S3 attachment pattern and links examples that ex
   );
   const main = screen.getByRole("main");
   for (const uc of USE_CASES) {
+    const choice = within(screen.getByRole("navigation", { name: "Use case patterns" }))
+      .getAllByRole("link").find((link) => link.getAttribute("href")?.endsWith(`#${uc.id}`))!;
+    fireEvent.click(choice);
+    expect(choice).toHaveAttribute("aria-current", "true");
     expect(
       screen.getByRole("heading", { level: 3, name: uc.title }),
     ).toBeInTheDocument();
@@ -329,6 +333,7 @@ test("the MCP comparison distinguishes custom tools from gateway administration 
 
 test("sampled inspection copy points to the runnable observation branch", () => {
   wrap(<UseCases />);
+  fireEvent.click(screen.getByRole("link", { name: "Sample traffic for inspection" }));
   const pattern = USE_CASES.find((item) => item.id === "sampled-inspection")!;
   expect(pattern.examplePath).toBe("examples/inspect.yaml");
   expect(pattern.detail).toMatch(/separate observation branch/);

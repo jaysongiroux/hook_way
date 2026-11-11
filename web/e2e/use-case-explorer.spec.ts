@@ -8,6 +8,11 @@ for (const width of [1440, 1024, 769, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto("/use-cases/");
     for (const item of SCENARIO_GROUPS.flatMap((group) => group.items)) {
+      if (width <= 768) {
+        await page.getByLabel("Choose a use case").selectOption(item.id);
+      } else {
+        await page.getByRole("link", { name: item.label, exact: true }).click();
+      }
       const panel = page.locator(`article#${item.id}`);
       await expect(panel.getByRole("heading", { level: 3 })).toBeVisible();
       await expect(panel.locator('a[href^="/docs/examples/"]')).toBeVisible();
@@ -50,6 +55,7 @@ for (const width of [1440, 1024, 769, 390]) {
 test("scenario details support keyboard access", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/use-cases/");
+  await page.getByRole("link", { name: "Events for agents", exact: true }).click();
   const scenario = page.locator("article#mcp-events");
   const summary = scenario.locator("summary");
   await summary.focus();

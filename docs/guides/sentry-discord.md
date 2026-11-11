@@ -76,12 +76,22 @@ The message resembles:
 ```text
 Sentry: ReferenceError: checkout is not defined
 Rule: New production issue
-Project: 42 · Environment: production · Level: error
+Project: storefront · Environment: production · Level: error
 https://sentry.io/organizations/example/issues/123/events/0123456789abcdef0123456789abcdef/
 ```
 
-Sentry's documented event payload includes a project ID, so the recipe shows
-that ID without making an enrichment API call. Environment comes from
+One internal integration and webhook endpoint can serve multiple projects in the
+same Sentry organization. Select the integration in each project's alert rule, or
+use an organization-wide alert with **All Projects** when available in your Sentry
+UI. Your Sentry rules choose which new errors, escalations or regressions notify
+Discord.
+
+The formatter uses a project name or slug from the payload, falling back to the
+project slug in Sentry's event API URL. It does not need an enrichment API call or
+a hardcoded project-ID list. If no readable project is available, it shows
+`unknown project`. It skips placeholder titles such as `?` and `<untitled>`, then
+tries the event message, log entry, exception details and issue title.
+Environment comes from
 `event.environment` or its `environment` tag. Missing optional fields use readable
 fallbacks, and a missing human-facing `web_url` omits the link. Field limits keep
 the message below Discord's 2,000-character content limit, markdown in values is

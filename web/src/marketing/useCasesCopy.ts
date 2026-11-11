@@ -20,6 +20,17 @@ export const USE_CASES_INTRO = {
 
 export const USE_CASES: UseCase[] = [
   {
+    id: "sentry-discord",
+    title: "Send Sentry errors from every project to Discord",
+    summary:
+      "Connect projects in your Sentry organization to one Hookway endpoint. See the error title, project name and event link in your Discord channel.",
+    detail:
+      "Choose which errors should notify your team with Sentry alert rules. Hookway verifies the signature, filters issue alerts and formats a readable Discord message. The YAML example resolves project names from Sentry event URLs and uses the message or exception when the title is missing. Mentions are disabled. Delivery retries transient failures, using an in-memory queue that can lose pending messages on restart.",
+    examplePath: "examples/sentry-discord.yaml",
+    exampleHref: docsHref("examples/sentry-discord.yaml"),
+    exampleLabel: "Sentry to Discord configuration",
+  },
+  {
     id: "mcp-gateway",
     title: "Give AI clients controlled access to your APIs",
     summary:

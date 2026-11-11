@@ -118,7 +118,7 @@ func TestSentryDiscordExample(t *testing.T) {
 	}
 	select {
 	case receipt := <-receipts:
-		want := "**Sentry: ReferenceError: checkout is not defined**\nRule: New production issue\nProject: 42 · Environment: production · Level: error\n<https://sentry.io/organizations/example/issues/123/events/0123456789abcdef0123456789abcdef/>"
+		want := "**Sentry: ReferenceError: checkout is not defined**\nRule: New production issue\nProject: storefront · Environment: production · Level: error\n<https://sentry.io/organizations/example/issues/123/events/0123456789abcdef0123456789abcdef/>"
 		if receipt.Content != want || receipt.AllowedMentions.Parse == nil || len(receipt.AllowedMentions.Parse) != 0 {
 			t.Fatalf("wrong Discord message: %+v", receipt)
 		}
@@ -146,7 +146,7 @@ func TestSentryDiscordExample(t *testing.T) {
 	}
 	select {
 	case receipt := <-receipts:
-		if receipt.Content != "**Sentry: Issue alert triggered**\nRule: Sentry issue alert\nProject: unknown · Environment: unknown · Level: unknown" {
+		if receipt.Content != "**Sentry: Issue alert triggered**\nRule: Sentry issue alert\nProject: unknown project · Environment: unknown · Level: unknown" {
 			t.Fatalf("unexpected fallback or extra delivery: %+v", receipt)
 		}
 	case <-time.After(5 * time.Second):
@@ -176,6 +176,36 @@ func TestSentryDiscordExample(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("missing bounded message")
+	}
+}
+
+func TestSentryReadableProjectAndPlaceholderTitles(t *testing.T) {
+	receipts := make(chan discordReceipt, 2)
+	srv := sentryExample(t, func(w http.ResponseWriter, r *http.Request) {
+		var receipt discordReceipt
+		if err := json.NewDecoder(r.Body).Decode(&receipt); err != nil {
+			t.Error(err)
+		}
+		receipts <- receipt
+		w.WriteHeader(http.StatusNoContent)
+	})
+	for _, tc := range []struct{ name, body, title, project string }{
+		{"message with project URL", `{"action":"triggered","data":{"event":{"title":"<untitled>","message":"Database connection failed","project":42,"url":"https://us.sentry.io/api/0/projects/example/storefront/events/abc/"}}}`, "Database connection failed", "storefront"},
+		{"exception with project name", `{"action":"triggered","data":{"event":{"title":"?","message":"?","exception":{"values":[{"type":"TypeError","value":"Cannot read property"}]},"project":{"name":"Checkout Web","slug":"checkout-web"}}}}`, "TypeError: Cannot read property", "Checkout Web"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := post(srv, sentryRequest(tc.body, "event_alert", "sentry-secret")).Code; got != 202 {
+				t.Fatal(got)
+			}
+			select {
+			case receipt := <-receipts:
+				if !strings.Contains(receipt.Content, "**Sentry: "+tc.title+"**") || !strings.Contains(receipt.Content, "Project: "+tc.project+" ·") {
+					t.Fatalf("unreadable notification: %s", receipt.Content)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("missing Discord message")
+			}
+		})
 	}
 }
 

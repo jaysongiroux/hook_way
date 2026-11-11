@@ -85,6 +85,8 @@ export function UseCaseDiagram({ diagram }: { diagram: ScenarioDiagram }) {
           id={marker}
           markerWidth="8"
           markerHeight="8"
+          viewBox="0 0 8 8"
+          markerUnits="userSpaceOnUse"
           refX="7"
           refY="4"
           orient="auto"
@@ -93,11 +95,13 @@ export function UseCaseDiagram({ diagram }: { diagram: ScenarioDiagram }) {
             d="M1 1 L7 4 L1 7"
             fill="none"
             stroke={DARK.accent}
-            strokeWidth="1.2"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           />
         </marker>
       </defs>
-      {diagram.edges.map(([from, to]) => {
+      {diagram.edges.map(([from, to], index) => {
         const source = diagram.nodes.find((node) => node.id === from)!;
         const target = diagram.nodes.find((node) => node.id === to)!;
         const a = position(source),
@@ -106,9 +110,18 @@ export function UseCaseDiagram({ diagram }: { diagram: ScenarioDiagram }) {
         const y1 = narrow ? a.y + nodeHeight : a.y + nodeHeight / 2;
         const x2 = narrow ? b.x + nodeWidth / 2 : b.x;
         const y2 = narrow ? b.y : b.y + nodeHeight / 2;
+        // Finish the bend before the arrowhead. A short straight landing keeps
+        // the shaft out of its wings, including when several branches merge.
+        const endX = narrow ? x2 : x2 - 4;
+        const endY = narrow ? y2 - 4 : y2;
+        const landing = 12;
+        const curveX = narrow ? endX : endX - landing;
+        const curveY = narrow ? endY - landing : endY;
         const path = narrow
-          ? `M${x1} ${y1} C${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2 - 4}`
-          : `M${x1} ${y1} C${(x1 + x2) / 2} ${y1}, ${(x1 + x2) / 2} ${y2}, ${x2 - 4} ${y2}`;
+          ? `M${x1} ${y1} C${x1} ${(y1 + curveY) / 2}, ${curveX} ${(y1 + curveY) / 2}, ${curveX} ${curveY} L${endX} ${endY}`
+          : `M${x1} ${y1} C${(x1 + curveX) / 2} ${y1}, ${(x1 + curveX) / 2} ${curveY}, ${curveX} ${curveY} L${endX} ${endY}`;
+        // Incoming branches share a landing and need only one arrowhead.
+        const showArrow = diagram.edges.findIndex(([, targetId]) => targetId === to) === index;
         return (
           <path
             key={`${from}-${to}`}
@@ -119,7 +132,9 @@ export function UseCaseDiagram({ diagram }: { diagram: ScenarioDiagram }) {
             fill="none"
             stroke={DARK.accent}
             strokeWidth="1.5"
-            markerEnd={`url(#${marker})`}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            markerEnd={showArrow ? `url(#${marker})` : undefined}
           />
         );
       })}
@@ -149,7 +164,7 @@ export function UseCaseDiagram({ diagram }: { diagram: ScenarioDiagram }) {
               x={x + 12}
               y={y + 46}
               fill={DARK.muted}
-              fontSize={narrow ? 10 : 11}
+              fontSize={11}
             >
               {node.detail}
             </text>

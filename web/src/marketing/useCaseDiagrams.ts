@@ -31,6 +31,7 @@ export const SCENARIO_GROUPS = [
   {
     label: "Route and deliver events",
     items: [
+      { id: "sentry-discord", label: "Sentry errors to Discord" },
       { id: "fanout", label: "One event, multiple backends" },
       { id: "dynamic-routing", label: "Environment routing" },
       { id: "branching", label: "Conditional delivery" },
@@ -49,6 +50,23 @@ export const SCENARIO_GROUPS = [
 
 // Simplified paths explain the pattern; the linked YAML is the full configuration.
 export const SCENARIO_DIAGRAMS: Record<string, ScenarioDiagram> = {
+  "sentry-discord": {
+    label:
+      "Sentry alerts from a web project and an API project share one Hookway endpoint, which verifies the signature and sends readable messages to Discord.",
+    caption:
+      "Reuse one endpoint across projects in a Sentry organization. Each Discord message identifies the project and links to the error.",
+    nodes: [
+      node("web", "Sentry web project", "Issue alerts", 0, 0),
+      node("api", "Sentry API project", "Issue alerts", 0, 1),
+      node("hookway", "Hookway endpoint", "Verify · format · queue", 1),
+      node("discord", "Discord channel", "Error title + project", 2),
+    ],
+    edges: [
+      ["web", "hookway"],
+      ["api", "hookway"],
+      ["hookway", "discord"],
+    ],
+  },
   "mcp-events": {
     label:
       "An issue webhook creates a named event, Hookway delivers a signed callback to a matching subscriber, and the agent calls get_issue through MCP.",

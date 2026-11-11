@@ -73,25 +73,70 @@ flows:
         script: |
           const data = (input.body && input.body.data) || {};
           const event = data.event || {};
-          // Bound each field, remove control characters and escape Discord markdown.
+          const issue = data.issue || {};
+
+          function meaningful(value) {
+            if (typeof value !== 'string') return '';
+            const result = value.trim();
+            return /^(?:\?+|<?untitled>?|unknown|undefined|null|\(no title\))?$/i.test(result) ? '' : result;
+          }
+          function first() {
+            for (let i = 0; i < arguments.length; i++) {
+              const result = meaningful(arguments[i]);
+              if (result) return result;
+            }
+            return '';
+          }
           function text(value, fallback, limit) {
-            if (typeof value !== 'string' && typeof value !== 'number') value = fallback;
+            if (value === '' || (typeof value !== 'string' && typeof value !== 'number')) value = fallback;
             return String(value).replace(/[\u0000-\u001f\u007f]/g, ' ')
               .slice(0, limit).replace(/[\\*_`~|<>]/g, '\\$&');
           }
-          const title = text(event.title || event.message, 'Issue alert triggered', 250);
-          const rule = text(data.triggered_rule, 'Sentry issue alert', 100);
-          const project = text(event.project, 'unknown', 60);
-          let environment = event.environment;
-          if (!environment && Array.isArray(event.tags)) {
-            const tag = event.tags.find(t => Array.isArray(t) && t[0] === 'environment');
-            if (tag) environment = tag[1];
+          function exceptionTitle(value) {
+            if (!value || typeof value !== 'object') return '';
+            const kind = meaningful(value.type);
+            const detail = meaningful(value.value);
+            return kind && detail && detail.indexOf(kind + ':') !== 0 ? kind + ': ' + detail : detail || kind;
           }
-          const env = text(environment, 'unknown', 60);
+          const entries = Array.isArray(event.entries) ? event.entries : [];
+          const exceptionEntry = entries.find(entry => entry && entry.type === 'exception');
+          const exceptions = event.exception && Array.isArray(event.exception.values)
+            ? event.exception.values : exceptionEntry && exceptionEntry.data && exceptionEntry.data.values;
+          let exception = '';
+          if (Array.isArray(exceptions)) {
+            for (let i = exceptions.length - 1; i >= 0 && !exception; i--) exception = exceptionTitle(exceptions[i]);
+          }
+          const message = event.message && typeof event.message === 'object' ? event.message : {};
+          const logentry = event.logentry || {};
+          const title = text(first(event.title, event.message, message.formatted, message.message,
+            logentry.formatted, logentry.message, exception, exceptionTitle(event.metadata), issue.title),
+            'Issue alert triggered', 250);
+          const rule = text(first(data.triggered_rule, data.issue_alert && data.issue_alert.title), 'Sentry issue alert', 100);
+
+          function namedProject(value) {
+            if (value && typeof value === 'object') return first(value.name, value.slug);
+            const result = meaningful(value);
+            return /^\d+$/.test(result) ? '' : result;
+          }
+          function tag(name) {
+            if (!Array.isArray(event.tags)) return '';
+            const found = event.tags.find(t => Array.isArray(t) && t[0] === name);
+            return found ? meaningful(found[1]) : '';
+          }
+          // Sentry's event API URL contains the project slug even when project is an ID.
+          let urlProject = '';
+          if (typeof event.url === 'string') {
+            const match = /^https:\/\/[^/]+\/api\/0\/projects\/[^/]+\/([^/?#]+)\/events\//.exec(event.url);
+            if (match) {
+              try { urlProject = decodeURIComponent(match[1]); } catch (_) { urlProject = match[1]; }
+            }
+          }
+          const project = text(first(namedProject(event.project), namedProject(data.project), namedProject(issue.project),
+            event.project_name, event.project_slug, tag('project'), tag('project.slug'), urlProject), 'unknown project', 60);
+          const env = text(first(event.environment, tag('environment')), 'unknown', 60);
           const level = text(event.level, 'unknown', 30);
           let content = '**Sentry: ' + title + '**\nRule: ' + rule +
             '\nProject: ' + project + ' · Environment: ' + env + ' · Level: ' + level;
-          // Use the human-facing URL, never the event/issue API URL.
           if (typeof event.web_url === 'string' && event.web_url.length <= 800 &&
               /^https:\/\/[^\s<>]+$/.test(event.web_url)) content += '\n<' + event.web_url + '>';
           return {body: {content: content, allowed_mentions: {parse: []}}, vars: input.vars};
