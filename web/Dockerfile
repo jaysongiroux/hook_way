@@ -1,6 +1,6 @@
 # Build from the repository root: docker build -f web/Dockerfile .
 # WASM and wasm_exec.js always come from the same pinned Go toolchain.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS wasm
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS wasm
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
