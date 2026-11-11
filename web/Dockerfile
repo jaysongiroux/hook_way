@@ -24,13 +24,11 @@ FROM nginxinc/nginx-unprivileged:1.31.7-alpine@sha256:b5047b9b76845eac124358373c
 USER root
 # Python is used only at startup for strict URL validation/JSON serialization,
 # and by the local health check. Nginx serves all HTTP requests.
-# Upgrade the inherited TIFF library to include the CVE-2026-4775 fix.
-# Require patched Expat (CVE-2026-77214) and X11 (CVE-2026-88806) libraries.
-# Require patched Brotli (CVE-2026-111497) inherited from the Nginx image.
-# Require patched curl/libcurl (CVE-2026-92392) inherited from the Nginx image.
+# Minimum versions include security fixes in libraries inherited from Nginx.
 RUN apk add --no-cache python3 'tiff>=4.7.2-r0' \
-    'libexpat>=2.9.0-r0' 'libx11>=1.8.14-r0' 'brotli-libs>=1.2.1-r0' \
-    'curl>=8.23.0-r0' 'libcurl>=8.23.0-r0'
+    'libexpat>=2.10.0-r0' 'libx11>=1.8.14-r0' 'brotli-libs>=1.2.1-r0' \
+    'curl>=8.23.0-r0' 'libcurl>=8.23.0-r0' 'libxslt>=1.1.43-r4' \
+    'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' 'zlib>=1.3.2-r1'
 COPY --from=ui /web/dist-console/ /usr/share/nginx/html/
 COPY web/runtime_config.py /opt/hookway/runtime_config.py
 USER 101:101
