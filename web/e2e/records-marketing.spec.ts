@@ -18,6 +18,11 @@ for (const [label, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 8
     await replay.screenshot({ path: testInfo.outputPath(`records-marketing-replay-${label}.png`), animations: "disabled", style: "header { visibility: hidden !important; }" });
     await page.goto("/use-cases/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    if (width <= 768) {
+      await page.getByLabel("Choose a use case").selectOption("sampled-inspection");
+    } else {
+      await page.getByRole("link", { name: "Sample traffic for inspection", exact: true }).click();
+    }
     const inspection = page.locator("article#sampled-inspection");
     await inspection.scrollIntoViewIfNeeded();
     await inspection.getByText("How this pattern works", { exact: true }).click();

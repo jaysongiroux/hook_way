@@ -58,7 +58,9 @@ test("scenario details support keyboard access", async ({ page }) => {
   await page.getByRole("link", { name: "Events for agents", exact: true }).click();
   const scenario = page.locator("article#mcp-events");
   const summary = scenario.locator("summary");
+  await expect(summary).toBeVisible();
   await summary.focus();
+  await expect(summary).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(scenario.locator("details")).toHaveAttribute("open", "");
   await expect(scenario.getByRole("img")).toBeVisible();
