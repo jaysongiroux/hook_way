@@ -7,7 +7,7 @@ RUN go mod download
 COPY . .
 RUN mkdir -p /out && GOOS=js GOARCH=wasm go build -o /out/hookway.wasm ./cmd/hookway-wasm && cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" /out/wasm_exec.js
 
-FROM --platform=$BUILDPLATFORM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS ui
+FROM --platform=$BUILDPLATFORM node:26.13.1-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS ui
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
