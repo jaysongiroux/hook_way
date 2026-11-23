@@ -27,7 +27,7 @@ USER root
 # Minimum versions include security fixes in libraries inherited from Nginx.
 RUN apk add --no-cache python3 'tiff>=4.7.2-r0' \
     'libexpat>=2.10.0-r0' 'libx11>=1.8.14-r0' 'brotli-libs>=1.2.1-r0' \
-    'curl>=8.23.0-r0' 'libcurl>=8.23.0-r0' 'libxslt>=1.1.43-r4' \
+    'curl>=8.23.0-r0' 'libcurl>=8.23.0-r0' 'libxml2>=2.13.9-r3' 'libxslt>=1.1.43-r4' \
     'musl>=1.2.6-r3' 'musl-utils>=1.2.6-r3' 'zlib>=1.3.2-r1'
 COPY --from=ui /web/dist-console/ /usr/share/nginx/html/
 COPY web/runtime_config.py /opt/hookway/runtime_config.py
